@@ -52,14 +52,18 @@ export interface QueryStep {
   link?: StepLink;
 }
 
+export type Aggregate = "none" | "count";
+
 export interface QueryState {
   steps: QueryStep[];
   limit: number;
   /** Collapse bare hops into compact property paths. */
   pathsMode: boolean;
   distinct: boolean;
+  /** "count" turns the query into "how many", grouped by the first step. */
+  aggregate: Aggregate;
 }
 
 export function emptyQueryState(): QueryState {
-  return { steps: [], limit: 100, pathsMode: false, distinct: false };
+  return { steps: [], limit: 100, pathsMode: false, distinct: false, aggregate: "none" };
 }

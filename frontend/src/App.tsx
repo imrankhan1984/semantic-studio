@@ -259,6 +259,7 @@ export default function App() {
             theme={theme}
             builder={builder}
             onPickIri={selectAndFocus}
+            ontologyTriples={active?.triples ?? 0}
           />
         ) : (
           <DetailPanel

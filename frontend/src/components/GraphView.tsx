@@ -403,13 +403,6 @@ export default function GraphView({
         {data ? (
           <>
             <button
-              className={layoutRunning ? "tool-btn active" : "tool-btn"}
-              onClick={() => (layoutRunning ? stopLayout() : startLayout(15000))}
-              title="Toggle the ForceAtlas2 layout"
-            >
-              {layoutRunning ? "⏸" : "▶"} <span>{layoutRunning ? "Stop layout" : "Run layout"}</span>
-            </button>
-            <button
               className="tool-btn"
               onClick={() => sigmaRef.current?.getCamera().animatedReset({ duration: 400 })}
               title="Zoom out to fit the whole graph"
@@ -437,6 +430,21 @@ export default function GraphView({
               －
             </button>
             <div className="spacer" />
+            {/* Secondary: the layout runs automatically on load and while
+                dragging, so this is only for re-settling a big or fiddled
+                graph. Icon-only to keep it out of the way. */}
+            <button
+              className={layoutRunning ? "tool-btn icon-only active" : "tool-btn icon-only"}
+              onClick={() => (layoutRunning ? stopLayout() : startLayout(15000))}
+              aria-label={layoutRunning ? "Stop the layout" : "Re-run the layout"}
+              title={
+                layoutRunning
+                  ? "Stop the layout simulation"
+                  : "Re-run the layout to untangle the graph"
+              }
+            >
+              {layoutRunning ? "⏸" : "▶"}
+            </button>
             <button
               className="tool-btn"
               onClick={() => {

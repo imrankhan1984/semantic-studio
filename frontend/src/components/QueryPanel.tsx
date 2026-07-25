@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { deleteSavedQuery, listSavedQueries, runSparql, saveQuery } from "../api";
-import { assignVarNames, localName } from "../sparql/generate";
+import { describeQuery } from "../sparql/describe";
+import { assignVarNames, generateSparql, localName } from "../sparql/generate";
 import { linkOptionsBetween } from "../sparql/useQueryBuilder";
 import type { useQueryBuilder } from "../sparql/useQueryBuilder";
 import type { SavedQuery, SparqlResults, Theme } from "../types";
 import ClassPropsMenu from "./ClassPropsMenu";
+import NextSteps from "./NextSteps";
 import PathBar from "./PathBar";
 import type { OpenMenu } from "./PathBar";
 import PredicateMenu from "./PredicateMenu";
+import QueryStart from "./QueryStart";
 import ResultsTable from "./ResultsTable";
 import SparqlPreview from "./SparqlPreview";
 
@@ -16,9 +19,21 @@ interface Props {
   theme: Theme;
   builder: ReturnType<typeof useQueryBuilder>;
   onPickIri: (iri: string) => void;
+  /** Auto-preview is only worth running while it stays instant. */
+  ontologyTriples: number;
 }
 
-export default function QueryPanel({ ontologyId, theme, builder, onPickIri }: Props) {
+/** Above this size a preview is no longer guaranteed to feel immediate. */
+const AUTO_PREVIEW_MAX_TRIPLES = 50000;
+const PREVIEW_ROWS = 5;
+
+export default function QueryPanel({
+  ontologyId,
+  theme,
+  builder,
+  onPickIri,
+  ontologyTriples,
+}: Props) {
   const {
     schema,
     schemaError,
@@ -34,6 +49,9 @@ export default function QueryPanel({ ontologyId, theme, builder, onPickIri }: Pr
     openQuery,
     setOpenQuery,
     loadState,
+    addClass,
+    addNextStep,
+    nextStepOptions,
   } = builder;
 
   const [openMenu, setOpenMenu] = useState<OpenMenu | null>(null);
@@ -46,6 +64,7 @@ export default function QueryPanel({ ontologyId, theme, builder, onPickIri }: Pr
   const [saved, setSaved] = useState<SavedQuery[]>([]);
   const [saveName, setSaveName] = useState("");
   const [savePrompt, setSavePrompt] = useState(false);
+  const [isPreview, setIsPreview] = useState(false);
 
   const preview = auto ? sparql : frozen ?? sparql;
   const { stepVars } = useMemo(() => assignVarNames(state), [state]);
@@ -94,12 +113,18 @@ export default function QueryPanel({ ontologyId, theme, builder, onPickIri }: Pr
     if (openMenu && openMenu.index >= state.steps.length) setOpenMenu(null);
   }, [openMenu, state.steps.length]);
 
+  const plainEnglish = useMemo(
+    () => describeQuery(state, labelFor),
+    [state, labelFor],
+  );
+
   const execute = async () => {
     if (!ontologyId || !sparql) return;
     setRunning(true);
     setError(null);
     try {
       setResults(await runSparql(ontologyId, preview));
+      setIsPreview(false);
     } catch (e: unknown) {
       setResults(null);
       setError(e instanceof Error ? e.message : String(e));
@@ -107,6 +132,40 @@ export default function QueryPanel({ ontologyId, theme, builder, onPickIri }: Pr
       setRunning(false);
     }
   };
+
+  // Small ontologies preview themselves as the query is built, so a
+  // newcomer sees real rows immediately instead of guessing whether the
+  // query works. Larger ones wait for an explicit Execute.
+  const autoPreviewable =
+    ontologyTriples > 0 && ontologyTriples <= AUTO_PREVIEW_MAX_TRIPLES;
+
+  useEffect(() => {
+    if (!autoPreviewable || !ontologyId || state.steps.length === 0 || !schema) {
+      return;
+    }
+    const previewQuery = generateSparql(
+      { ...state, limit: PREVIEW_ROWS },
+      schema.namespaces,
+    );
+    if (!previewQuery) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      runSparql(ontologyId, previewQuery)
+        .then((res) => {
+          if (cancelled) return;
+          setResults(res);
+          setIsPreview(true);
+          setError(null);
+        })
+        .catch(() => {
+          /* a partially built query may not be valid yet; stay quiet */
+        });
+    }, 450);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [autoPreviewable, ontologyId, schema, state]);
 
   const doSave = async (name: string) => {
     if (!ontologyId || !name.trim()) return;
@@ -176,6 +235,30 @@ export default function QueryPanel({ ontologyId, theme, builder, onPickIri }: Pr
         {menu}
       </div>
 
+      {state.steps.length === 0 && !loadingSchema && (
+        <QueryStart
+          schema={schema}
+          theme={theme}
+          onUseStarter={(next, title) => {
+            setState(next);
+            setOpenQuery(null);
+            setSaveName(title);
+          }}
+          onPickClass={addClass}
+        />
+      )}
+
+      {state.steps.length > 0 && (
+        <>
+          <p className="plain-english">{plainEnglish}</p>
+          <NextSteps
+            options={nextStepOptions}
+            stepCount={state.steps.length}
+            onAdd={addNextStep}
+          />
+        </>
+      )}
+
       {hint && <p className="query-hint">{hint}</p>}
       {schema?.truncated && (
         <p className="query-hint">
@@ -214,6 +297,22 @@ export default function QueryPanel({ ontologyId, theme, builder, onPickIri }: Pr
           title="Remove duplicate rows"
         >
           Distinct
+        </button>
+        <button
+          className={state.aggregate === "count" ? "toggle-pill active" : "toggle-pill"}
+          onClick={() =>
+            setState({
+              ...state,
+              aggregate: state.aggregate === "count" ? "none" : "count",
+            })
+          }
+          title={
+            state.steps.length > 1
+              ? "Count the last step, grouped by the first"
+              : "Count how many there are"
+          }
+        >
+          Count
         </button>
         <label className="limit-field" title="Maximum rows to return">
           LIMIT
@@ -277,7 +376,16 @@ export default function QueryPanel({ ontologyId, theme, builder, onPickIri }: Pr
       <SparqlPreview sparql={preview} />
 
       {error && <p className="detail-error">{error}</p>}
-      {results && <ResultsTable results={results} onPickIri={onPickIri} />}
+      {results && (
+        <>
+          {isPreview && (
+            <p className="preview-badge">
+              Live preview — first {PREVIEW_ROWS} rows. Press Execute for the full result.
+            </p>
+          )}
+          <ResultsTable results={results} onPickIri={onPickIri} />
+        </>
+      )}
 
       {saved.length > 0 && (
         <section className="saved-queries">

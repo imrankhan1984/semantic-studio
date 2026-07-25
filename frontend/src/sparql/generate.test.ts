@@ -20,7 +20,7 @@ function link(anchor: number, predicate: string, extra: Partial<StepLink> = {}):
 }
 
 function state(steps: QueryStep[], extra: Partial<QueryState> = {}): QueryState {
-  return { steps, limit: 100, pathsMode: false, distinct: false, ...extra };
+  return { steps, limit: 100, pathsMode: false, distinct: false, aggregate: "none", ...extra };
 }
 
 function prop(name: string, extra: Partial<SelectedProp> = {}): SelectedProp {
@@ -348,6 +348,55 @@ describe("generateSparql", () => {
     );
     expect(sparql).toContain("SELECT DISTINCT ?planet");
     expect(sparql).toContain("LIMIT 25");
+  });
+
+  describe("count mode", () => {
+    it("counts a single step without grouping", () => {
+      const sparql = generateSparql(
+        state([step("Planet")], { aggregate: "count" }),
+        NAMESPACES,
+      );
+      expect(sparql).toContain("SELECT (COUNT(DISTINCT ?planet) AS ?count)");
+      expect(sparql).not.toContain("GROUP BY");
+    });
+
+    it("groups by the first step and counts the last", () => {
+      const sparql = generateSparql(
+        state(
+          [
+            step("SpaceAgency"),
+            step("Spacecraft", { link: link(0, "operates") }),
+          ],
+          { aggregate: "count" },
+        ),
+        NAMESPACES,
+      );
+      expect(sparql).toContain("SELECT ?spaceAgency (COUNT(DISTINCT ?spacecraft) AS ?count)");
+      expect(sparql).toContain("GROUP BY ?spaceAgency");
+      expect(sparql).toContain("ORDER BY DESC(?count)");
+    });
+
+    it("keeps filters but does not project data properties", () => {
+      const sparql = generateSparql(
+        state(
+          [
+            step("Spacecraft", {
+              props: [
+                prop("launchYear", {
+                  optional: false,
+                  filter: { op: "=", value: "2020" },
+                }),
+              ],
+            }),
+          ],
+          { aggregate: "count" },
+        ),
+        NAMESPACES,
+      );
+      expect(sparql).toContain("FILTER(");
+      expect(sparql).toContain("?spacecraft ex:launchYear ?spacecraftLaunchYear .");
+      expect(sparql).not.toContain("SELECT ?spacecraftLaunchYear");
+    });
   });
 
   it("ignores a step whose anchor is invalid", () => {

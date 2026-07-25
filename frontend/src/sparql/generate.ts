@@ -189,6 +189,8 @@ interface EmitContext extends Ctx {
   propVars: string[][];
   children: number[][];
   projected: string[];
+  /** Step variables only, in emission order — what counting groups by. */
+  stepProjected: string[];
   lines: string[];
 }
 
@@ -202,6 +204,7 @@ function emitStepBody(index: number, depth: number, ec: EmitContext): void {
   const varName = ec.stepVars[index];
   const pad = indent(depth);
   ec.projected.push(varName);
+  ec.stepProjected.push(varName);
   ec.lines.push(`${pad}?${varName} a ${shorten(step.classIri, ec)} .`);
   if (step.pin) {
     ec.lines.push(`${pad}VALUES ?${varName} { ${shorten(step.pin.iri, ec)} }`);
@@ -305,6 +308,7 @@ export function generateSparql(
     propVars,
     children,
     projected: [],
+    stepProjected: [],
     lines: [],
   };
 
@@ -315,9 +319,27 @@ export function generateSparql(
     .sort()
     .map((prefix) => `PREFIX ${prefix}: <${ctx.namespaces[prefix]}>`);
 
-  const selectClause = `SELECT ${state.distinct ? "DISTINCT " : ""}${ec.projected
-    .map((v) => `?${v}`)
-    .join(" ")}`;
+  const tail: string[] = [];
+  let selectClause: string;
+
+  if (state.aggregate === "count") {
+    // "How many": count the last step, grouped by the first when the path
+    // has more than one step. Data properties still constrain the match
+    // through their filters, but are not projected — they would otherwise
+    // have to join the GROUP BY and split the counts.
+    const groupVar = ec.stepProjected[0];
+    const countVar = ec.stepProjected[ec.stepProjected.length - 1];
+    if (ec.stepProjected.length > 1) {
+      selectClause = `SELECT ?${groupVar} (COUNT(DISTINCT ?${countVar}) AS ?count)`;
+      tail.push(`GROUP BY ?${groupVar}`, "ORDER BY DESC(?count)");
+    } else {
+      selectClause = `SELECT (COUNT(DISTINCT ?${countVar}) AS ?count)`;
+    }
+  } else {
+    selectClause = `SELECT ${state.distinct ? "DISTINCT " : ""}${ec.projected
+      .map((v) => `?${v}`)
+      .join(" ")}`;
+  }
 
   return [
     ...prefixLines,
@@ -326,6 +348,7 @@ export function generateSparql(
     "WHERE {",
     ...ec.lines,
     "}",
+    ...tail,
     `LIMIT ${state.limit}`,
   ].join("\n");
 }

@@ -137,6 +137,93 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
     return { classes, kinds };
   }, [schema, state.steps]);
 
+  /** Append a class, attaching it to the nearest step that relates to it. */
+  const appendClass = useCallback(
+    (
+      classIri: string,
+      label: string,
+      pin: { iri: string; label: string } | null,
+      currentSchema: QuerySchema,
+    ): boolean => {
+      const current = stateRef.current;
+      if (current.steps.length === 0) {
+        setState({ ...current, steps: [{ classIri, label, pin, props: [] }] });
+        return true;
+      }
+      for (let i = current.steps.length - 1; i >= 0; i -= 1) {
+        const options = linkOptionsBetween(currentSchema, current.steps[i].classIri, classIri);
+        if (options.length === 0) continue;
+        const primary = options[0];
+        setState({
+          ...current,
+          steps: [
+            ...current.steps,
+            {
+              classIri,
+              label,
+              pin,
+              props: [],
+              link: {
+                anchor: i,
+                predicates: [{ iri: primary.predicate, inverse: primary.inverse }],
+                modifier: "",
+                optional: false,
+              },
+            },
+          ],
+        });
+        return true;
+      }
+      return false;
+    },
+    [],
+  );
+
+  /** Start (or extend) the query from a class picked in the panel. */
+  const addClass = useCallback(
+    (classIri: string, label: string) => {
+      if (!schema) return;
+      setHint(null);
+      if (!appendClass(classIri, label, null, schema)) {
+        setHint(`No relationship connects “${label}” to the current path.`);
+      }
+    },
+    [schema, appendClass],
+  );
+
+  /** Add a specific continuation chosen from the panel's suggestions. */
+  const addNextStep = useCallback(
+    (option: {
+      anchor: number;
+      predicate: string;
+      inverse: boolean;
+      targetClass: string;
+      targetLabel: string;
+    }) => {
+      setHint(null);
+      const current = stateRef.current;
+      setState({
+        ...current,
+        steps: [
+          ...current.steps,
+          {
+            classIri: option.targetClass,
+            label: option.targetLabel,
+            pin: null,
+            props: [],
+            link: {
+              anchor: option.anchor,
+              predicates: [{ iri: option.predicate, inverse: option.inverse }],
+              modifier: "",
+              optional: false,
+            },
+          },
+        ],
+      });
+    },
+    [],
+  );
+
   const addNode = useCallback(
     async (nodeIri: string) => {
       if (!ontologyId || !schema) return;
@@ -156,37 +243,72 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
       }
       const label = info.isClass ? info.label : target?.label ?? classIri;
       const pin = info.isClass ? null : { iri: info.iri, label: info.label };
-      const current = stateRef.current;
 
-      if (current.steps.length === 0) {
-        setState({ ...current, steps: [{ classIri, label, pin, props: [] }] });
-        return;
+      // Attaches to the most recent step that actually relates to this class.
+      if (!appendClass(classIri, label, pin, schema)) {
+        setHint(
+          `No relationship in this ontology connects “${label}” to the current path. ` +
+            "Pick a highlighted node, or choose one of the suggested next steps.",
+        );
       }
-
-      // Attach to the most recent step that actually relates to this class.
-      for (let i = current.steps.length - 1; i >= 0; i -= 1) {
-        const options = linkOptionsBetween(schema, current.steps[i].classIri, classIri);
-        if (options.length === 0) continue;
-        const primary = options[0];
-        const link: StepLink = {
-          anchor: i,
-          predicates: [{ iri: primary.predicate, inverse: primary.inverse }],
-          modifier: "",
-          optional: false,
-        };
-        setState({
-          ...current,
-          steps: [...current.steps, { classIri, label, pin, props: [], link }],
-        });
-        return;
-      }
-      setHint(
-        `No relationship in this ontology connects “${label}” to the current path. ` +
-          "Pick a highlighted node instead.",
-      );
     },
-    [ontologyId, schema],
+    [ontologyId, schema, appendClass],
   );
+
+  /** Every continuation available from the current path, best first. */
+  const nextStepOptions = useMemo(() => {
+    if (!schema || state.steps.length === 0) return [];
+    const byKey = new Map<
+      string,
+      {
+        anchor: number;
+        anchorLabel: string;
+        predicate: string;
+        predicateLabel: string;
+        inverse: boolean;
+        targetClass: string;
+        targetLabel: string;
+        count: number;
+        declared: boolean;
+      }
+    >();
+    const classLabels = new Map(schema.classes.map((c) => [c.iri, c.label]));
+
+    state.steps.forEach((step, index) => {
+      for (const link of schema.links) {
+        const forward = link.source === step.classIri;
+        const backward = link.target === step.classIri;
+        if (!forward && !backward) continue;
+        const targetClass = forward ? link.target : link.source;
+        const targetLabel = classLabels.get(targetClass);
+        if (!targetLabel) continue;
+        const inverse = !forward;
+        const key = `${index}|${link.predicate}|${inverse}|${targetClass}`;
+        const existing = byKey.get(key);
+        if (!existing || link.count > existing.count) {
+          byKey.set(key, {
+            anchor: index,
+            anchorLabel: step.label,
+            predicate: link.predicate,
+            predicateLabel: link.label,
+            inverse,
+            targetClass,
+            targetLabel,
+            count: link.count,
+            declared: link.declared,
+          });
+        }
+      }
+    });
+
+    return [...byKey.values()].sort(
+      (a, b) =>
+        b.anchor - a.anchor || // continuing from the newest step feels natural
+        b.count - a.count ||
+        Number(b.declared) - Number(a.declared) ||
+        a.predicateLabel.localeCompare(b.predicateLabel),
+    );
+  }, [schema, state.steps]);
 
   /** Remove a step together with everything hanging off it. */
   const removeStep = useCallback((index: number) => {
@@ -245,6 +367,9 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
     pathIris,
     candidates,
     addNode,
+    addClass,
+    addNextStep,
+    nextStepOptions,
     removeStep,
     updateStep,
     updateLink,
