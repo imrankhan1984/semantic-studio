@@ -8,7 +8,7 @@ import httpx
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
-from ..graph_builder import build_viz_graph, node_details, search_nodes
+from ..graph_builder import node_details, search_nodes
 from ..store import ParseError, detect_format, store
 
 router = APIRouter(prefix="/api/ontologies", tags=["ontologies"])
@@ -59,27 +59,6 @@ class FetchRequest(BaseModel):
     name: Optional[str] = None
 
 
-def _summary(ontology) -> dict:
-    viz = _viz(ontology)
-    return {
-        "id": ontology.id,
-        "name": ontology.name,
-        "source": ontology.source,
-        "format": ontology.format,
-        "triples": ontology.triple_count,
-        "nodes": viz["stats"]["nodeCount"],
-        "edges": viz["stats"]["edgeCount"],
-        "kindCounts": viz["stats"]["kindCounts"],
-        "namespaces": ontology.namespaces(),
-    }
-
-
-def _viz(ontology) -> dict:
-    if ontology.viz_cache is None:
-        ontology.viz_cache = build_viz_graph(ontology.graph)
-    return ontology.viz_cache
-
-
 def _get_or_404(oid: str):
     ontology = store.get(oid)
     if ontology is None:
@@ -89,7 +68,7 @@ def _get_or_404(oid: str):
 
 @router.get("")
 def list_ontologies() -> list[dict]:
-    return [_summary(o) for o in store.list()]
+    return [o.summary() for o in store.list()]
 
 
 @router.post("/upload")
@@ -110,7 +89,7 @@ async def upload_ontology(
         )
     except ParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return _summary(ontology)
+    return ontology.summary()
 
 
 def to_raw_url(url: str) -> str:
@@ -164,7 +143,7 @@ async def fetch_ontology(request: FetchRequest) -> dict:
         )
     except ParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return _summary(ontology)
+    return ontology.summary()
 
 
 @router.delete("/{oid}")
@@ -176,13 +155,13 @@ def delete_ontology(oid: str) -> dict:
 
 @router.get("/{oid}/graph")
 def get_graph(oid: str) -> dict:
-    return _viz(_get_or_404(oid))
+    return _get_or_404(oid).viz()
 
 
 @router.get("/{oid}/node")
 def get_node(oid: str, iri: str = Query(...)) -> dict:
     ontology = _get_or_404(oid)
-    details = node_details(ontology.graph, iri)
+    details = node_details(ontology.ensure_loaded(), iri)
     if details is None:
         raise HTTPException(status_code=404, detail=f"No triples found for {iri}")
     return details
@@ -191,4 +170,4 @@ def get_node(oid: str, iri: str = Query(...)) -> dict:
 @router.get("/{oid}/search")
 def search(oid: str, q: str = Query(...), limit: int = Query(default=25, le=100)) -> list[dict]:
     ontology = _get_or_404(oid)
-    return search_nodes(_viz(ontology), q, limit)
+    return search_nodes(ontology.viz(), q, limit)

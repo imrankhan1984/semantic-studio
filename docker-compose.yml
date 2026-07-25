@@ -4,4 +4,11 @@ services:
     image: semantic-viewer:latest
     ports:
       - "8000:8000"
+    volumes:
+      # Ontologies loaded in the app are persisted here and survive
+      # container rebuilds and recreations.
+      - semantic-viewer-data:/data
     restart: unless-stopped
+
+volumes:
+  semantic-viewer-data:
