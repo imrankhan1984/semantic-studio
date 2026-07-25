@@ -1,0 +1,7 @@
+services:
+  semantic-viewer:
+    build: .
+    image: semantic-viewer:latest
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
