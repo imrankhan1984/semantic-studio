@@ -39,6 +39,9 @@ graph.
 - **Legend & filters**: color-coded node kinds (classes, object/datatype/
   annotation properties, SKOS concepts, schemes, individuals…) and relation
   types; click a kind to show/hide it.
+- **Visual SPARQL query builder** (*Query* mode): build queries by clicking
+  the graph — no SPARQL typing required. See
+  [Building queries visually](#building-queries-visually).
 - **Dark & light mode** with adapted graph palettes.
 - **PNG export** of the current graph view.
 - Multiple ontologies can be loaded side by side and switched via a dropdown.
@@ -108,6 +111,51 @@ load it via file upload. Real-world files that load well, pasted into
 Ontologies hosted on **GitHub Enterprise** must be downloaded locally and
 loaded via file upload — see the note above.
 
+## Building queries visually
+
+Switch the toolbar to **Query** and build a SPARQL SELECT by clicking, with a
+live preview that updates on every edit.
+
+1. **Click a node in the graph** (or use the search box, which adds a step in
+   Query mode) to start the path. Clicking a class steps on the class;
+   clicking an individual or a SKOS concept steps on its type and *pins* that
+   entity with `VALUES`, so you can ask questions like "everything under this
+   concept".
+2. **Keep clicking** to extend the path. Nodes that can extend it stay
+   highlighted; everything else dims. A new step attaches to the most recent
+   earlier step it actually relates to, so paths **branch** — an `Order` can
+   fan out to `Customer`, `Shipper` and `Employee` rather than forming one
+   rigid chain. A branched hop is labelled `↳N` with the step it hangs off.
+3. **Click a relationship chip** to change the hop: reverse its direction
+   (`^`), tick several predicates to form an alternation (`|`), apply a path
+   modifier (`*`, `+`, `?`), or make the hop **OPTIONAL** — which wraps that
+   hop *and everything hanging off it*, so no later pattern can reference an
+   unbound variable.
+4. **Click a class chip** to pick data properties to return and to filter
+   them (`=`, `≠`, `>`, `≥`, `<`, `≤`, contains, starts with, language is).
+   Selected properties are OPTIONAL by default; adding a filter makes the
+   property required, since filtering implies it must be present.
+5. **Toggle `Paths`** to collapse hops through steps that carry no data of
+   their own into compact property paths
+   (`?mission (:uses)/(:operatedBy) ?spaceAgency`), `Distinct` to drop
+   duplicate rows, and set `LIMIT`. `Auto` regenerates the preview on every
+   edit; turn it off to freeze the query and refresh manually.
+6. **Execute** to run the query against the loaded ontology. Results appear in
+   a sortable table; IRI cells are clickable and centre that node in the
+   graph.
+7. **Save** the query to reuse later. Saved queries are stored with the
+   ontologies (see below) and keep the *visual* state, so reopening one
+   restores the path, pins, modifiers and filters — not just the query text.
+
+SKOS taxonomies are fully supported: `skos:Concept` and friends are steppable
+types, and a self-hop offers both `broader` and `^broader` (narrower), so
+`?concept (^skos:broader)+ ?descendant` is a few clicks away.
+
+**Limits.** Queries run against the ontology loaded in the app — remote SPARQL
+endpoints are not supported yet. Execution is SELECT-only, capped at 1,000
+rows and 30 seconds, and unbounded `*` / `+` modifiers on very large graphs
+can be slow.
+
 ## Where your ontologies are stored
 
 Every ontology you load (uploaded file or URL fetch) is persisted so it is
@@ -122,7 +170,9 @@ a small metadata file are written to a per-user data directory:
 | Docker / Docker Compose | `/data/ontologies` inside the container (see below) |
 
 Set the `SEMANTIC_VIEWER_DATA_DIR` environment variable to store the files
-somewhere else.
+somewhere else. Saved visual queries live beside them, in a `queries`
+subfolder of the same directory; removing an ontology also removes its
+saved queries.
 
 Restoring is **lazy**: on startup the dropdown is populated instantly from
 the stored metadata (name, triple/node counts), and the RDF itself is only
@@ -173,6 +223,16 @@ The image stores ontologies in the `/data` volume:
   list/delete, graph, node details, search.
 - `frontend/src/components/GraphView.tsx` — Sigma renderer, layout engine
   selection, drag physics, highlighting.
+- `backend/app/query_schema.py` — class-level schema for the query builder:
+  which predicates connect instances of one class to another, and which
+  literal properties a class carries, derived from both declared
+  `rdfs:domain`/`rdfs:range` (propagated down `rdfs:subClassOf`) and the
+  instance data actually present.
+- `backend/app/sparql_exec.py` — SELECT-only execution with a row cap and a
+  wall-clock timeout on a worker thread.
+- `frontend/src/sparql/generate.ts` — pure, unit-tested state → SPARQL
+  generator; `useQueryBuilder.ts` holds the builder state shared by the graph
+  and the query panel.
 
 ### API overview
 
@@ -185,10 +245,15 @@ The image stores ontologies in the `/data` volume:
 | `GET  /api/ontologies/{id}/graph`   | Visualization nodes/edges            |
 | `GET  /api/ontologies/{id}/node`    | `?iri=` — all statements for an IRI  |
 | `GET  /api/ontologies/{id}/search`  | `?q=` — label/IRI search             |
+| `GET  /api/ontologies/{id}/query-schema` | Class-level schema for the builder |
+| `GET  /api/ontologies/{id}/query-node`   | `?iri=` — class/type of a clicked node |
+| `POST /api/ontologies/{id}/sparql`  | `{query}` — run a SELECT             |
+| `GET/POST /api/queries`             | List / save visual queries           |
+| `DELETE /api/queries/{id}`          | Delete a saved query                 |
 
 ## Roadmap
 
-- SPARQL querying (the rdflib store already supports it server-side).
+- Running the built queries against remote SPARQL endpoints.
 - Editing and serialization back to RDF.
 - GitHub Enterprise support (configurable hosts, per-user access tokens,
   corporate proxy handling) — until then, download files and upload them.

@@ -1,4 +1,14 @@
-import type { NodeDetails, OntologySummary, VizGraph, VizNode } from "./types";
+import type { QueryState } from "./sparql/types";
+import type {
+  NodeDetails,
+  OntologySummary,
+  QueryNodeInfo,
+  QuerySchema,
+  SavedQuery,
+  SparqlResults,
+  VizGraph,
+  VizNode,
+} from "./types";
 
 async function handle<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -52,4 +62,48 @@ export function searchNodes(id: string, q: string): Promise<VizNode[]> {
   return fetch(`/api/ontologies/${id}/search?q=${encodeURIComponent(q)}`).then((r) =>
     handle<VizNode[]>(r),
   );
+}
+
+/* --- visual query builder ------------------------------------------------ */
+
+export function getQuerySchema(id: string): Promise<QuerySchema> {
+  return fetch(`/api/ontologies/${id}/query-schema`).then((r) => handle<QuerySchema>(r));
+}
+
+export function getQueryNode(id: string, iri: string): Promise<QueryNodeInfo> {
+  return fetch(`/api/ontologies/${id}/query-node?iri=${encodeURIComponent(iri)}`).then((r) =>
+    handle<QueryNodeInfo>(r),
+  );
+}
+
+export function runSparql(id: string, query: string): Promise<SparqlResults> {
+  return fetch(`/api/ontologies/${id}/sparql`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  }).then((r) => handle<SparqlResults>(r));
+}
+
+export function listSavedQueries(ontologyId: string): Promise<SavedQuery[]> {
+  return fetch(`/api/queries?ontology=${encodeURIComponent(ontologyId)}`).then((r) =>
+    handle<SavedQuery[]>(r),
+  );
+}
+
+export function saveQuery(payload: {
+  id?: string;
+  name: string;
+  ontologyId: string;
+  state: QueryState;
+  sparql: string;
+}): Promise<SavedQuery> {
+  return fetch("/api/queries", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).then((r) => handle<SavedQuery>(r));
+}
+
+export function deleteSavedQuery(qid: string): Promise<void> {
+  return fetch(`/api/queries/${qid}`, { method: "DELETE" }).then((r) => handle(r));
 }

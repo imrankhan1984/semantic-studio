@@ -300,7 +300,9 @@ def build_query_schema(graph: Graph) -> dict:
         "classes": classes_out,
         "links": links_out,
         "dataProperties": dict(data_props),
-        "namespaces": {prefix: str(ns) for prefix, ns in graph.namespaces() if prefix},
+        # The empty prefix is kept: many ontologies declare `@prefix : <...>`
+        # for their own terms, and `PREFIX : <...>` / `:Term` is valid SPARQL.
+        "namespaces": {prefix: str(ns) for prefix, ns in graph.namespaces()},
         "truncated": truncated,
     }
 

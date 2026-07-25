@@ -4,8 +4,10 @@ import DetailPanel from "./components/DetailPanel";
 import GraphView from "./components/GraphView";
 import Legend from "./components/Legend";
 import LoadDialog from "./components/LoadDialog";
+import QueryPanel from "./components/QueryPanel";
 import SearchBox from "./components/SearchBox";
-import type { OntologySummary, Theme, VizGraph } from "./types";
+import { useQueryBuilder } from "./sparql/useQueryBuilder";
+import type { AppMode, OntologySummary, Theme, VizGraph } from "./types";
 
 function initialTheme(): Theme {
   const saved = localStorage.getItem("semantic-viewer-theme");
@@ -24,6 +26,8 @@ export default function App() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [loadingGraph, setLoadingGraph] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<AppMode>("explore");
+  const builder = useQueryBuilder(activeId, mode === "query");
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -87,6 +91,29 @@ export default function App() {
     if (iri) setFocusTick((t) => t + 1);
   }, []);
 
+  // In Explore mode a click opens the detail panel; in Query mode it
+  // appends a step to the query being built.
+  const onGraphSelect = useCallback(
+    (iri: string | null) => {
+      if (mode === "query") {
+        if (iri) void builder.addNode(iri);
+        return;
+      }
+      setSelected(iri);
+    },
+    [mode, builder],
+  );
+
+  // Searching in Query mode adds the match to the path, so a query can be
+  // built by name without hunting for a node in a large graph.
+  const onSearchPick = useCallback(
+    (iri: string) => {
+      selectAndFocus(iri);
+      if (mode === "query") void builder.addNode(iri);
+    },
+    [mode, builder, selectAndFocus],
+  );
+
   const edgeKinds = useMemo(() => {
     if (!graphData) return [];
     const kinds = new Set(graphData.edges.map((e) => e.kind));
@@ -102,6 +129,26 @@ export default function App() {
         <button className="primary" onClick={() => setDialogOpen(true)}>
           + Load ontology
         </button>
+        <div className="mode-switch" role="tablist" aria-label="Mode">
+          <button
+            role="tab"
+            aria-selected={mode === "explore"}
+            className={mode === "explore" ? "mode-tab active" : "mode-tab"}
+            onClick={() => setMode("explore")}
+            title="Browse the ontology and inspect entities"
+          >
+            Explore
+          </button>
+          <button
+            role="tab"
+            aria-selected={mode === "query"}
+            className={mode === "query" ? "mode-tab active" : "mode-tab"}
+            onClick={() => setMode("query")}
+            title="Build a SPARQL query by clicking the graph"
+          >
+            Query
+          </button>
+        </div>
         {ontologies.length > 0 && (
           <select
             value={activeId ?? ""}
@@ -125,7 +172,14 @@ export default function App() {
           </button>
         )}
         <div className="spacer" />
-        <SearchBox ontologyId={activeId} theme={theme} onPick={selectAndFocus} />
+        <SearchBox
+          ontologyId={activeId}
+          theme={theme}
+          onPick={onSearchPick}
+          placeholder={
+            mode === "query" ? "Search to add a step…" : "Search concepts, properties…"
+          }
+        />
         <button
           className="ghost icon-btn theme-toggle"
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -148,8 +202,11 @@ export default function App() {
             theme={theme}
             hiddenKinds={hiddenKinds}
             selected={selected}
-            onSelect={setSelected}
+            onSelect={onGraphSelect}
             focusTick={focusTick}
+            queryMode={mode === "query"}
+            queryPathIris={builder.pathIris}
+            queryCandidates={builder.candidates}
           />
           {graphData && (
             <Legend
@@ -169,12 +226,21 @@ export default function App() {
           )}
           {loadingGraph && <div className="loading-overlay">Building graph…</div>}
         </div>
-        <DetailPanel
-          ontologyId={activeId}
-          iri={selected}
-          onNavigate={selectAndFocus}
-          onClose={() => setSelected(null)}
-        />
+        {mode === "query" ? (
+          <QueryPanel
+            ontologyId={activeId}
+            theme={theme}
+            builder={builder}
+            onPickIri={selectAndFocus}
+          />
+        ) : (
+          <DetailPanel
+            ontologyId={activeId}
+            iri={selected}
+            onNavigate={selectAndFocus}
+            onClose={() => setSelected(null)}
+          />
+        )}
       </main>
 
       <footer className="status-bar">

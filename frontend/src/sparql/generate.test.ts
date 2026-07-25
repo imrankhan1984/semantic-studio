@@ -235,10 +235,23 @@ describe("generateSparql", () => {
       expect(filterFor("lang", "en")).toContain('FILTER(LANG(?planetValue) = "en")');
     });
 
-    it("types temporal literals", () => {
+    it("types date and dateTime literals", () => {
       const sparql = filterFor(">", "1997-01-01", "http://www.w3.org/2001/XMLSchema#date");
       expect(sparql).toContain('FILTER(?planetValue > "1997-01-01"^^xsd:date)');
       expect(sparql).toContain("PREFIX xsd:");
+    });
+
+    it("compares xsd:gYear lexically", () => {
+      // rdflib (and other engines) silently match nothing when gYear is
+      // compared as a typed literal, so the lexical form is used instead.
+      const sparql = filterFor(">", "1980", "http://www.w3.org/2001/XMLSchema#gYear");
+      expect(sparql).toContain('FILTER(STR(?planetValue) > "1980")');
+      expect(sparql).not.toContain("^^xsd:gYear");
+    });
+
+    it("compares booleans as bare values", () => {
+      const sparql = filterFor("=", "true", "http://www.w3.org/2001/XMLSchema#boolean");
+      expect(sparql).toContain("FILTER(?planetValue = true)");
     });
 
     it("escapes quotes in values", () => {
@@ -312,6 +325,12 @@ describe("generateSparql", () => {
     );
     expect(sparql).toContain("?thing a <http://other.example/Thing> .");
     expect(sparql).not.toContain("PREFIX ex:");
+  });
+
+  it("supports the empty prefix used by many ontologies", () => {
+    const sparql = generateSparql(state([step("Planet")]), { "": NS });
+    expect(sparql).toContain("PREFIX : <http://example.org/space#>");
+    expect(sparql).toContain("?planet a :Planet .");
   });
 
   it("falls back to a full IRI when the local part is not a valid QName", () => {

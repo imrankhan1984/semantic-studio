@@ -7,9 +7,15 @@ interface Props {
   ontologyId: string | null;
   theme: Theme;
   onPick: (iri: string) => void;
+  placeholder?: string;
 }
 
-export default function SearchBox({ ontologyId, theme, onPick }: Props) {
+export default function SearchBox({
+  ontologyId,
+  theme,
+  onPick,
+  placeholder = "Search concepts, properties…",
+}: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<VizNode[]>([]);
   const [open, setOpen] = useState(false);
@@ -44,7 +50,7 @@ export default function SearchBox({ ontologyId, theme, onPick }: Props) {
     <div className="search-box" ref={wrapRef}>
       <input
         type="search"
-        placeholder="Search concepts, properties…"
+        placeholder={placeholder}
         value={query}
         disabled={!ontologyId}
         onChange={(e) => setQuery(e.target.value)}

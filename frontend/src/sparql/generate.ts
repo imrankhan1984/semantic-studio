@@ -20,7 +20,8 @@ const DEFAULT_NAMESPACES: Record<string, string> = {
 
 const XSD = DEFAULT_NAMESPACES.xsd;
 
-const NUMERIC_TYPES = new Set(
+/** Datatypes whose values are ordered, so comparison operators make sense. */
+export const NUMERIC_TYPES = new Set(
   [
     "integer",
     "decimal",
@@ -41,9 +42,17 @@ const NUMERIC_TYPES = new Set(
   ].map((t) => XSD + t),
 );
 
-const TEMPORAL_TYPES = new Set(
+export const TEMPORAL_TYPES = new Set(
   ["date", "dateTime", "time", "gYear", "gYearMonth", "duration"].map((t) => XSD + t),
 );
+
+/**
+ * Temporal types that SPARQL engines reliably order as typed literals.
+ * Others (notably xsd:gYear) silently match nothing when compared that
+ * way, so they are compared on their lexical form instead — correct for
+ * the zero-padded forms these datatypes use.
+ */
+const TYPED_COMPARABLE = new Set([`${XSD}date`, `${XSD}dateTime`]);
 
 interface Ctx {
   namespaces: Record<string, string>;
@@ -60,7 +69,7 @@ function shorten(iri: string, ctx: Ctx): string {
       bestNs = ns;
     }
   }
-  if (bestPrefix) {
+  if (bestPrefix !== null) {
     const local = iri.slice(bestNs.length);
     // Deliberately conservative: anything with a dot, slash or exotic
     // character is safer as a full IRI than as a possibly invalid QName.
@@ -143,27 +152,11 @@ function isSimpleHop(link: StepLink): boolean {
   return link.predicates.length === 1 && link.modifier === "";
 }
 
-function literalFor(prop: SelectedProp, value: string, ctx: Ctx): string {
-  const datatype = prop.datatype;
-  if (datatype && NUMERIC_TYPES.has(datatype) && value.trim() !== "" && !Number.isNaN(Number(value))) {
-    return value.trim();
-  }
-  if (datatype === `${XSD}boolean`) {
-    return value.trim().toLowerCase() === "true" ? "true" : "false";
-  }
-  if (datatype && TEMPORAL_TYPES.has(datatype)) {
-    return `"${escapeLiteral(value)}"^^${shorten(datatype, ctx)}`;
-  }
-  return `"${escapeLiteral(value)}"`;
-}
-
 function filterLine(prop: SelectedProp, varName: string, ctx: Ctx): string | null {
   const filter = prop.filter;
   if (!filter || filter.value.trim() === "") return null;
   const { op, value } = filter;
-  const isNumeric = prop.datatype ? NUMERIC_TYPES.has(prop.datatype) : false;
-  const isTemporal = prop.datatype ? TEMPORAL_TYPES.has(prop.datatype) : false;
-  const typed = literalFor(prop, value, ctx);
+  const datatype = prop.datatype;
 
   switch (op) {
     case "contains":
@@ -172,14 +165,21 @@ function filterLine(prop: SelectedProp, varName: string, ctx: Ctx): string | nul
       return `FILTER(STRSTARTS(LCASE(STR(?${varName})), "${escapeLiteral(value.toLowerCase())}"))`;
     case "lang":
       return `FILTER(LANG(?${varName}) = "${escapeLiteral(value)}")`;
-    case "=":
-    case "!=":
-      // Comparing the string form keeps plain, typed and language-tagged
-      // literals interchangeable, which is what a user picking "=" means.
-      if (isNumeric || isTemporal) return `FILTER(?${varName} ${op} ${typed})`;
-      return `FILTER(STR(?${varName}) ${op} ${typed})`;
-    default:
-      return `FILTER(?${varName} ${op} ${typed})`;
+    default: {
+      if (datatype && NUMERIC_TYPES.has(datatype) && value.trim() !== "" && !Number.isNaN(Number(value))) {
+        return `FILTER(?${varName} ${op} ${value.trim()})`;
+      }
+      if (datatype === `${XSD}boolean`) {
+        const bool = value.trim().toLowerCase() === "true" ? "true" : "false";
+        return `FILTER(?${varName} ${op} ${bool})`;
+      }
+      if (datatype && TYPED_COMPARABLE.has(datatype)) {
+        return `FILTER(?${varName} ${op} "${escapeLiteral(value)}"^^${shorten(datatype, ctx)})`;
+      }
+      // Lexical comparison also keeps plain, typed and language-tagged
+      // strings interchangeable, which is what picking "equals" implies.
+      return `FILTER(STR(?${varName}) ${op} "${escapeLiteral(value)}")`;
+    }
   }
 }
 

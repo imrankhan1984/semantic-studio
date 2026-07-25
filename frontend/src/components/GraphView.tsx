@@ -16,6 +16,10 @@ interface Props {
   onSelect: (iri: string | null) => void;
   /** bump this counter to re-center the camera on the selected node */
   focusTick: number;
+  /** Query mode paints the current path and its possible continuations. */
+  queryMode?: boolean;
+  queryPathIris?: Set<string>;
+  queryCandidates?: { classes: Set<string>; kinds: Set<string> };
 }
 
 // Graphs up to this many nodes animate with a per-frame synchronous
@@ -26,7 +30,19 @@ function nodeSize(degree: number): number {
   return Math.min(16, 3 + Math.log2(degree + 1) * 2.2);
 }
 
-export default function GraphView({ data, theme, hiddenKinds, selected, onSelect, focusTick }: Props) {
+const EMPTY_SET: Set<string> = new Set();
+
+export default function GraphView({
+  data,
+  theme,
+  hiddenKinds,
+  selected,
+  onSelect,
+  focusTick,
+  queryMode = false,
+  queryPathIris,
+  queryCandidates,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
   const graphRef = useRef<Graph | null>(null);
@@ -39,11 +55,17 @@ export default function GraphView({ data, theme, hiddenKinds, selected, onSelect
   const selectedRef = useRef<string | null>(null);
   const hiddenRef = useRef<Set<string>>(hiddenKinds);
   const paletteRef = useRef(PALETTES[theme]);
+  const queryModeRef = useRef(queryMode);
+  const pathRef = useRef<Set<string>>(queryPathIris ?? EMPTY_SET);
+  const candidateRef = useRef(queryCandidates);
   const [layoutRunning, setLayoutRunning] = useState(false);
 
   selectedRef.current = selected;
   hiddenRef.current = hiddenKinds;
   paletteRef.current = PALETTES[theme];
+  queryModeRef.current = queryMode;
+  pathRef.current = queryPathIris ?? EMPTY_SET;
+  candidateRef.current = queryCandidates;
 
   const stopLayout = () => {
     window.clearTimeout(layoutTimer.current);
@@ -159,6 +181,28 @@ export default function GraphView({ data, theme, hiddenKinds, selected, onSelect
           res.hidden = true;
           return res;
         }
+        if (queryModeRef.current) {
+          const hov = hoveredRef.current;
+          const inPath = pathRef.current.has(node);
+          const candidates = candidateRef.current;
+          const isCandidate =
+            !candidates ||
+            candidates.classes.has(node) ||
+            candidates.kinds.has(attrs.kind as string);
+          if (inPath) {
+            res.highlighted = true;
+            res.zIndex = 3;
+            res.size = (attrs.size as number) + 3;
+          } else if (node === hov) {
+            res.highlighted = true;
+            res.zIndex = 3;
+          } else if (!isCandidate) {
+            res.color = palette.dimNode;
+            res.label = "";
+            res.zIndex = 0;
+          }
+          return res;
+        }
         const sel = selectedRef.current;
         const hov = hoveredRef.current;
         const focusNode = hov ?? sel;
@@ -194,7 +238,9 @@ export default function GraphView({ data, theme, hiddenKinds, selected, onSelect
           res.hidden = true;
           return res;
         }
-        const focusNode = hoveredRef.current ?? selectedRef.current;
+        const focusNode = queryModeRef.current
+          ? hoveredRef.current
+          : hoveredRef.current ?? selectedRef.current;
         if (focusNode) {
           if (src === focusNode || dst === focusNode) {
             res.size = 2;
@@ -306,14 +352,14 @@ export default function GraphView({ data, theme, hiddenKinds, selected, onSelect
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
-  // Refresh rendering when filters, selection or theme change.
+  // Refresh rendering when filters, selection, theme or query state change.
   useEffect(() => {
     const renderer = sigmaRef.current;
     if (!renderer) return;
     renderer.setSetting("labelColor", { color: PALETTES[theme].label });
     renderer.setSetting("edgeLabelColor", { color: PALETTES[theme].edgeLabel });
     renderer.refresh({ skipIndexation: true });
-  }, [hiddenKinds, selected, theme]);
+  }, [hiddenKinds, selected, theme, queryMode, queryPathIris, queryCandidates]);
 
   // Center the camera on the selected node — but only for explicit focus
   // requests (search picks, detail-panel navigation), not plain graph clicks.
