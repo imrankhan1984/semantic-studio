@@ -66,6 +66,10 @@ export default function App() {
 
   const onRemove = async () => {
     if (!activeId) return;
+    const name = ontologies.find((o) => o.id === activeId)?.name ?? "this ontology";
+    if (!window.confirm(`Remove “${name}” and delete its stored copy? It will no longer appear after a restart.`)) {
+      return;
+    }
     try {
       await deleteOntology(activeId);
       setOntologies((prev) => {
@@ -112,7 +116,11 @@ export default function App() {
           </select>
         )}
         {active && (
-          <button className="ghost" onClick={() => void onRemove()} title="Remove this ontology from the viewer">
+          <button
+            className="ghost"
+            onClick={() => void onRemove()}
+            title="Remove this ontology and delete its stored copy"
+          >
             Remove
           </button>
         )}

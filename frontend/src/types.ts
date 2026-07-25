@@ -34,6 +34,10 @@ export interface OntologySummary {
   edges: number;
   kindCounts: Record<string, number>;
   namespaces: Record<string, string>;
+  /** ISO timestamp of when the ontology was first loaded (persisted). */
+  addedAt?: string;
+  /** Whether the RDF graph is currently parsed in server memory. */
+  loaded?: boolean;
 }
 
 export interface TermRef {
