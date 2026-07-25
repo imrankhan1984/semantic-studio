@@ -6,15 +6,18 @@ graph.
 
 ## Features
 
-- **Load ontologies** from a local file (drag & drop or file picker) or fetch
-  them from public repositories on standard **github.com**. GitHub `blob`
-  links are converted to raw file URLs automatically — paste a link straight
-  from the GitHub UI.
+- **Load ontologies** three ways:
+  1. **File upload** from your PC or laptop (drag & drop or file picker);
+  2. **Any directly reachable URL** serving an RDF file;
+  3. **Public github.com repositories** — GitHub `blob` links are converted
+     to raw file URLs automatically, so you can paste a link straight from
+     the GitHub UI.
 
-  > **⚠️ GitHub Enterprise is not currently supported.** URL fetching is
-  > restricted to standard `github.com` hosts. To view an ontology hosted on
-  > a GitHub Enterprise instance (or any other server), download the file to
-  > your PC first and load it into the application via file upload.
+  > **⚠️ GitHub Enterprise is not currently supported.** GHE instances sit
+  > behind corporate SSO that the app cannot authenticate against, so
+  > GHE-hosted files cannot be fetched by URL. To view an ontology hosted on
+  > a GitHub Enterprise instance, download the file to your PC first and
+  > load it into the application via file upload.
 - **Formats**: Turtle, RDF/XML, OWL (XML), N-Triples, N3, JSON-LD, TriG,
   N-Quads. The format is detected from the file extension and falls back to
   content sniffing.
@@ -92,13 +95,15 @@ cd backend
 
 A demo ontology mixing OWL classes, properties, individuals and a small SKOS
 scheme ships in [`examples/space-exploration.ttl`](examples/space-exploration.ttl) —
-load it via file upload. A real-world file that loads well, pasted into
-*Load ontology → github.com URL*:
+load it via file upload. Real-world files that load well, pasted into
+*Load ontology → URL / GitHub*:
 
 - `https://github.com/schemaorg/schemaorg/blob/main/data/releases/28.1/schemaorg-current-https.ttl`
+- `http://xmlns.com/foaf/spec/index.rdf`
+- `https://api.finto.fi/rest/v1/juho/data?format=text/turtle` (large SKOS)
 
-Ontologies from anywhere else (GitHub Enterprise, arbitrary web servers,
-SPARQL endpoints) must be downloaded locally and loaded via file upload.
+Ontologies hosted on **GitHub Enterprise** must be downloaded locally and
+loaded via file upload — see the note above.
 
 ## Architecture
 
