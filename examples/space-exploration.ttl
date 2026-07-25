@@ -1,0 +1,152 @@
+@prefix : <http://example.org/space#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+
+: a owl:Ontology ;
+    dcterms:title "Space Exploration Demo Ontology" ;
+    dcterms:description "A small demo ontology mixing OWL classes, properties, individuals and a SKOS vocabulary, used to exercise the Semantic Viewer." ;
+    dcterms:creator "Semantic Viewer" .
+
+### Classes
+
+:CelestialBody a owl:Class ;
+    rdfs:label "Celestial Body" ;
+    rdfs:comment "Any natural body outside of the Earth's atmosphere." .
+
+:Star a owl:Class ;
+    rdfs:subClassOf :CelestialBody ;
+    rdfs:label "Star" .
+
+:Planet a owl:Class ;
+    rdfs:subClassOf :CelestialBody ;
+    rdfs:label "Planet" ;
+    owl:disjointWith :Star .
+
+:DwarfPlanet a owl:Class ;
+    rdfs:subClassOf :Planet ;
+    rdfs:label "Dwarf Planet" .
+
+:Moon a owl:Class ;
+    rdfs:subClassOf :CelestialBody ;
+    rdfs:label "Moon" .
+
+:Spacecraft a owl:Class ;
+    rdfs:label "Spacecraft" ;
+    rdfs:comment "A vehicle designed for travel or operation in outer space." .
+
+:SpaceAgency a owl:Class ;
+    rdfs:label "Space Agency" .
+
+:Mission a owl:Class ;
+    rdfs:label "Mission" .
+
+### Object properties
+
+:orbits a owl:ObjectProperty ;
+    rdfs:label "orbits" ;
+    rdfs:domain :CelestialBody ;
+    rdfs:range :CelestialBody .
+
+:operatedBy a owl:ObjectProperty ;
+    rdfs:label "operated by" ;
+    rdfs:domain :Spacecraft ;
+    rdfs:range :SpaceAgency .
+
+:targets a owl:ObjectProperty ;
+    rdfs:label "targets" ;
+    rdfs:domain :Mission ;
+    rdfs:range :CelestialBody .
+
+:uses a owl:ObjectProperty ;
+    rdfs:label "uses" ;
+    rdfs:domain :Mission ;
+    rdfs:range :Spacecraft .
+
+### Datatype properties
+
+:launchYear a owl:DatatypeProperty ;
+    rdfs:label "launch year" ;
+    rdfs:domain :Spacecraft ;
+    rdfs:range xsd:gYear .
+
+:diameterKm a owl:DatatypeProperty ;
+    rdfs:label "diameter (km)" ;
+    rdfs:domain :CelestialBody ;
+    rdfs:range xsd:decimal .
+
+### Individuals
+
+:Sun a owl:NamedIndividual, :Star ;
+    rdfs:label "Sun" ;
+    :diameterKm 1392700 .
+
+:Earth a owl:NamedIndividual, :Planet ;
+    rdfs:label "Earth" ;
+    :orbits :Sun ;
+    :diameterKm 12742 .
+
+:Mars a owl:NamedIndividual, :Planet ;
+    rdfs:label "Mars" ;
+    :orbits :Sun ;
+    :diameterKm 6779 .
+
+:Pluto a owl:NamedIndividual, :DwarfPlanet ;
+    rdfs:label "Pluto" ;
+    :orbits :Sun .
+
+:TheMoon a owl:NamedIndividual, :Moon ;
+    rdfs:label "The Moon" ;
+    :orbits :Earth ;
+    :diameterKm 3474 .
+
+:NASA a owl:NamedIndividual, :SpaceAgency ;
+    rdfs:label "NASA" .
+
+:ESA a owl:NamedIndividual, :SpaceAgency ;
+    rdfs:label "ESA" .
+
+:Voyager1 a owl:NamedIndividual, :Spacecraft ;
+    rdfs:label "Voyager 1" ;
+    :operatedBy :NASA ;
+    :launchYear "1977"^^xsd:gYear .
+
+:Perseverance a owl:NamedIndividual, :Spacecraft ;
+    rdfs:label "Perseverance" ;
+    :operatedBy :NASA ;
+    :launchYear "2020"^^xsd:gYear .
+
+:Mars2020 a owl:NamedIndividual, :Mission ;
+    rdfs:label "Mars 2020" ;
+    :targets :Mars ;
+    :uses :Perseverance .
+
+### SKOS vocabulary of mission types
+
+:MissionTypeScheme a skos:ConceptScheme ;
+    skos:prefLabel "Mission Types"@en ;
+    skos:hasTopConcept :Exploration .
+
+:Exploration a skos:Concept ;
+    skos:prefLabel "Exploration"@en ;
+    skos:inScheme :MissionTypeScheme .
+
+:Flyby a skos:Concept ;
+    skos:prefLabel "Flyby"@en ;
+    skos:broader :Exploration ;
+    skos:inScheme :MissionTypeScheme .
+
+:Orbiter a skos:Concept ;
+    skos:prefLabel "Orbiter"@en ;
+    skos:broader :Exploration ;
+    skos:related :Flyby ;
+    skos:inScheme :MissionTypeScheme .
+
+:RoverMission a skos:Concept ;
+    skos:prefLabel "Rover Mission"@en ;
+    skos:altLabel "Surface Mission"@en ;
+    skos:broader :Exploration ;
+    skos:inScheme :MissionTypeScheme .
