@@ -25,6 +25,8 @@ from rdflib import Graph
 from rdflib.util import guess_format
 
 from .graph_builder import build_viz_graph
+from .queries_store import SavedQueryStore
+from .query_schema import build_query_schema
 
 # Formats accepted for parsing, keyed by common file extensions.
 EXTENSION_FORMATS = {
@@ -107,6 +109,7 @@ class Ontology:
     data_path: Path
     graph: Optional[Graph] = field(default=None, repr=False)
     viz_cache: Optional[dict] = field(default=None, repr=False)
+    schema_cache: Optional[dict] = field(default=None, repr=False)
     _load_lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def ensure_loaded(self) -> Graph:
@@ -122,6 +125,12 @@ class Ontology:
         if self.viz_cache is None:
             self.viz_cache = build_viz_graph(self.ensure_loaded())
         return self.viz_cache
+
+    def query_schema(self) -> dict:
+        """Class-level schema for the visual query builder (cached)."""
+        if self.schema_cache is None:
+            self.schema_cache = build_query_schema(self.ensure_loaded())
+        return self.schema_cache
 
     def summary(self) -> dict:
         stats = self.meta["stats"]
@@ -237,3 +246,4 @@ class OntologyStore:
 
 
 store = OntologyStore()
+saved_queries = SavedQueryStore(store.data_dir)
