@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
@@ -15,8 +16,41 @@ router = APIRouter(prefix="/api/ontologies", tags=["ontologies"])
 MAX_FETCH_BYTES = 200 * 1024 * 1024  # 200 MB safety cap
 
 GITHUB_BLOB_RE = re.compile(
-    r"^https?://github\.com/([^/]+)/([^/]+)/(?:blob|raw)/(.+)$"
+    r"^https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/(?:blob|raw)/(.+)$"
 )
+
+# Any directly reachable http(s) URL can be fetched, including public
+# github.com files. GitHub Enterprise instances are the one exception: they
+# sit behind corporate SSO the backend cannot authenticate against, so
+# GHE-looking hosts are rejected with an explicit explanation instead of a
+# confusing parse error.
+GITHUB_COM_HOSTS = {
+    "github.com",
+    "www.github.com",
+    "raw.githubusercontent.com",
+    "gist.github.com",
+    "gist.githubusercontent.com",
+    "objects.githubusercontent.com",
+    "media.githubusercontent.com",
+    "codeload.github.com",
+}
+
+GHE_NOT_SUPPORTED_DETAIL = (
+    "This looks like a GitHub Enterprise URL. GitHub Enterprise instances are "
+    "not currently supported — download the ontology file to your computer "
+    "and load it via file upload instead. Public github.com files and any "
+    "other directly reachable RDF URL can be fetched."
+)
+
+
+def is_github_enterprise_host(host: str) -> bool:
+    """True for GitHub-like hosts that are not part of standard github.com."""
+    if host in GITHUB_COM_HOSTS:
+        return False
+    # GitHub Pages / user content stay allowed (e.g. example.github.io).
+    if host.endswith(".github.io") or host.endswith(".githubusercontent.com"):
+        return False
+    return "github" in host
 
 
 class FetchRequest(BaseModel):
@@ -90,9 +124,14 @@ def to_raw_url(url: str) -> str:
 
 @router.post("/fetch")
 async def fetch_ontology(request: FetchRequest) -> dict:
-    url = to_raw_url(request.url.strip())
-    if not url.lower().startswith(("http://", "https://")):
+    raw_input = request.url.strip()
+    parsed = urlparse(raw_input)
+    if parsed.scheme not in ("http", "https"):
         raise HTTPException(status_code=400, detail="Only http(s) URLs are supported.")
+    host = (parsed.hostname or "").lower()
+    if is_github_enterprise_host(host):
+        raise HTTPException(status_code=400, detail=GHE_NOT_SUPPORTED_DETAIL)
+    url = to_raw_url(raw_input)
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
             response = await client.get(

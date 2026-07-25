@@ -103,7 +103,13 @@ export default function LoadDialog({ onLoaded, onClose }: Props) {
               Fetch
             </button>
             <p className="hint">
-              GitHub “blob” links are converted to raw file URLs automatically. Public repositories only.
+              Any directly reachable RDF URL works, including public <strong>github.com</strong>{" "}
+              repositories — “blob” links are converted to raw file URLs automatically.
+            </p>
+            <p className="hint">
+              <strong>GitHub Enterprise is not currently supported.</strong> To view an ontology
+              hosted on a GitHub Enterprise instance, download the file to your computer and load
+              it via the “Local file” tab.
             </p>
           </div>
         )}
