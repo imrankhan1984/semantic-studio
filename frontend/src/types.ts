@@ -36,6 +36,8 @@ export interface SchemaDataProp {
 export interface QuerySchema {
   classes: SchemaClass[];
   links: SchemaLink[];
+  /** Direct parents per class; declared links and properties inherit down. */
+  superClasses: Record<string, string[]>;
   dataProperties: Record<string, SchemaDataProp[]>;
   namespaces: Record<string, string>;
   truncated: boolean;

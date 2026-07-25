@@ -95,32 +95,12 @@ CLASS_KINDS = {
 XSD_NS = str(XSD)
 
 # Safety caps so pathological ontologies cannot blow up the response.
-MAX_LINKS = 20000
+MAX_LINKS = 60000
 MAX_DATA_PROPS_PER_CLASS = 200
-MAX_SUBCLASS_EXPANSION = 60
-MAX_SUBCLASS_DEPTH = 10
 
 
 def _is_literal_type(iri: URIRef) -> bool:
     return str(iri).startswith(XSD_NS) or iri == RDF.langString
-
-
-def _descendants(
-    direct: dict[URIRef, set[URIRef]], root: URIRef
-) -> set[URIRef]:
-    """Transitive subclasses of ``root`` (cycle- and depth-guarded)."""
-    seen: set[URIRef] = set()
-    frontier = [(root, 0)]
-    while frontier:
-        node, depth = frontier.pop()
-        if depth >= MAX_SUBCLASS_DEPTH or len(seen) >= MAX_SUBCLASS_EXPANSION:
-            continue
-        for child in direct.get(node, ()):  # noqa: SIM118 - defaultdict-safe
-            if child in seen:
-                continue
-            seen.add(child)
-            frontier.append((child, depth + 1))
-    return seen
 
 
 def build_query_schema(graph: Graph) -> dict:
@@ -146,14 +126,15 @@ def build_query_schema(graph: Graph) -> dict:
             if subject not in META_CLASSES:
                 classes.add(subject)
 
-    direct_subclasses: dict[URIRef, set[URIRef]] = defaultdict(set)
+    super_classes: dict[URIRef, set[URIRef]] = defaultdict(set)
     for subject, obj in graph.subject_objects(RDFS.subClassOf):
         if isinstance(subject, URIRef) and isinstance(obj, URIRef):
             if subject not in META_CLASSES:
                 classes.add(subject)
             if obj not in META_CLASSES:
                 classes.add(obj)
-            direct_subclasses[obj].add(subject)
+            if subject != obj:
+                super_classes[subject].add(obj)
 
     for _, obj in graph.subject_objects(RDFS.domain):
         if isinstance(obj, URIRef) and obj not in META_CLASSES:
@@ -192,13 +173,13 @@ def build_query_schema(graph: Graph) -> dict:
         ]
         if not domains or not ranges:
             continue
+        # Recorded once, at the level it is declared. Subclasses inherit it
+        # through the subClassOf map below: materializing the cross-product
+        # here explodes on real ontologies (one FIBO property with a broad
+        # domain and range produced thousands of near-identical links).
         for domain in domains:
-            src_set = {domain} | _descendants(direct_subclasses, domain)
             for range_ in ranges:
-                dst_set = {range_} | _descendants(direct_subclasses, range_)
-                for src in src_set:
-                    for dst in dst_set:
-                        add_link(src, prop, dst, declared=True)
+                add_link(domain, prop, range_, declared=True)
 
     # --- 3. links and data properties observed in the instance data ------
     data_counts: dict[tuple[URIRef, URIRef], Counter] = defaultdict(Counter)
@@ -231,12 +212,12 @@ def build_query_schema(graph: Graph) -> dict:
             continue
         ranges = [r for r in graph.objects(prop, RDFS.range) if isinstance(r, URIRef)]
         datatype = ranges[0] if ranges else XSD.string
+        # Also recorded at the declared level only; subclasses inherit.
         for domain in graph.objects(prop, RDFS.domain):
             if not isinstance(domain, URIRef) or domain not in classes:
                 continue
-            for target in {domain} | _descendants(direct_subclasses, domain):
-                if target in classes and not data_counts[(target, prop)]:
-                    data_counts[(target, prop)][datatype] = 0
+            if not data_counts[(domain, prop)]:
+                data_counts[(domain, prop)][datatype] = 0
 
     # --- 4. serialize ----------------------------------------------------
     label_cache: dict[URIRef, str] = {}
@@ -296,9 +277,19 @@ def build_query_schema(graph: Graph) -> dict:
     for bucket in data_props.values():
         bucket.sort(key=lambda p: p["label"].lower())
 
+    # Direct parents only — callers walk this to inherit declared links and
+    # data properties, which keeps the payload small.
+    super_out = {
+        str(child): sorted(str(parent) for parent in parents if parent in classes)
+        for child, parents in super_classes.items()
+        if child in classes and parents
+    }
+    super_out = {k: v for k, v in super_out.items() if v}
+
     return {
         "classes": classes_out,
         "links": links_out,
+        "superClasses": super_out,
         "dataProperties": dict(data_props),
         # The empty prefix is kept: many ontologies declare `@prefix : <...>`
         # for their own terms, and `PREFIX : <...>` / `:Term` is valid SPARQL.
@@ -325,6 +316,10 @@ def describe_query_node(graph: Graph, iri: str, schema: dict) -> Optional[dict]:
             types.append(known[str(obj)])
     if not types:
         return None
+    # Real ontologies type an individual many times over (a FIBO entity can
+    # carry a dozen). Order them so the caller's default pick is the type
+    # most of the data shares, rather than whatever the parser emitted first.
+    types.sort(key=lambda t: (-t["instances"], t["label"].lower()))
     return {
         "iri": iri,
         "isClass": False,

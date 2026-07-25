@@ -116,6 +116,11 @@ load it via file upload. Real-world files that load well, pasted into
 - `https://github.com/schemaorg/schemaorg/blob/main/data/releases/28.1/schemaorg-current-https.ttl`
 - `http://xmlns.com/foaf/spec/index.rdf`
 - `https://api.finto.fi/rest/v1/juho/data?format=text/turtle` (large SKOS)
+- `https://spec.edmcouncil.org/fibo/ontology/master/latest/prod.fibo-quickstart.ttl`
+  — the official FIBO production release (132k triples, 2,415 classes),
+  which the query builder is validated against: relationships there are
+  declared on broad domains and inherited by subclasses, so the builder
+  resolves `rdfs:subClassOf` when offering the next step.
 
 Ontologies hosted on **GitHub Enterprise** must be downloaded locally and
 loaded via file upload — see the note above.

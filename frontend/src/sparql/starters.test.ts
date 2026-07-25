@@ -31,6 +31,7 @@ const schema: QuerySchema = {
       count: 9,
     },
   ],
+  superClasses: {},
   dataProperties: {},
   namespaces: { "": NS, skos: SKOS },
   truncated: false,

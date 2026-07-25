@@ -25,6 +25,39 @@ export interface LinkOption {
   inverse: boolean;
   declared: boolean;
   count: number;
+  /** True when the link comes from an ancestor rather than the class itself. */
+  inherited?: boolean;
+}
+
+/**
+ * A class plus every ancestor, so a link declared on a broad domain (FIBO
+ * declares most of them that way) is offered on the specific subclasses
+ * users actually pick. Memoized because it is consulted per chip render.
+ */
+export function makeAncestorResolver(schema: QuerySchema | null) {
+  const cache = new Map<string, Set<string>>();
+  return (classIri: string): Set<string> => {
+    const hit = cache.get(classIri);
+    if (hit) return hit;
+    const result = new Set<string>([classIri]);
+    if (schema) {
+      const queue = [classIri];
+      // Guarded against cycles by the visited set, and against pathological
+      // hierarchies by a depth budget.
+      let budget = 200;
+      while (queue.length > 0 && budget-- > 0) {
+        const current = queue.shift() as string;
+        for (const parent of schema.superClasses?.[current] ?? []) {
+          if (!result.has(parent)) {
+            result.add(parent);
+            queue.push(parent);
+          }
+        }
+      }
+    }
+    cache.set(classIri, result);
+    return result;
+  };
 }
 
 /**
@@ -36,16 +69,29 @@ export function linkOptionsBetween(
   schema: QuerySchema | null,
   fromClass: string,
   toClass: string,
+  ancestorsOf: (iri: string) => Set<string> = (iri) => new Set([iri]),
 ): LinkOption[] {
   if (!schema) return [];
+  const fromFamily = ancestorsOf(fromClass);
+  const toFamily = ancestorsOf(toClass);
   const byKey = new Map<string, LinkOption>();
+
   for (const link of schema.links) {
     const candidates: LinkOption[] = [];
-    if (link.source === fromClass && link.target === toClass) {
-      candidates.push({ ...link, predicate: link.predicate, inverse: false });
+    // A link declared on an ancestor applies to the subclass too.
+    if (fromFamily.has(link.source) && toFamily.has(link.target)) {
+      candidates.push({
+        ...link,
+        inverse: false,
+        inherited: link.source !== fromClass || link.target !== toClass,
+      });
     }
-    if (link.source === toClass && link.target === fromClass) {
-      candidates.push({ ...link, predicate: link.predicate, inverse: true });
+    if (fromFamily.has(link.target) && toFamily.has(link.source)) {
+      candidates.push({
+        ...link,
+        inverse: true,
+        inherited: link.target !== fromClass || link.source !== toClass,
+      });
     }
     for (const option of candidates) {
       const key = `${option.predicate}|${option.inverse}`;
@@ -55,6 +101,8 @@ export function linkOptionsBetween(
   }
   return [...byKey.values()].sort(
     (a, b) =>
+      // Links on the class itself before ones inherited from an ancestor.
+      Number(!!a.inherited) - Number(!!b.inherited) ||
       Number(b.declared) - Number(a.declared) ||
       b.count - a.count ||
       a.label.localeCompare(b.label),
@@ -106,6 +154,8 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
     [state, schema],
   );
 
+  const ancestorsOf = useMemo(() => makeAncestorResolver(schema), [schema]);
+
   /** Node IRIs that belong to the current path (classes and pinned nodes). */
   const pathIris = useMemo(() => {
     const set = new Set<string>();
@@ -124,10 +174,15 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
     if (state.steps.length === 0) {
       for (const cls of schema.classes) classes.add(cls.iri);
     } else {
-      const inPath = new Set(state.steps.map((s) => s.classIri));
+      // Inherited links count: a step on a subclass can still use a link
+      // declared on one of its ancestors.
+      const family = new Set<string>();
+      for (const step of state.steps) {
+        for (const iri of ancestorsOf(step.classIri)) family.add(iri);
+      }
       for (const link of schema.links) {
-        if (inPath.has(link.source)) classes.add(link.target);
-        if (inPath.has(link.target)) classes.add(link.source);
+        if (family.has(link.source)) classes.add(link.target);
+        if (family.has(link.target)) classes.add(link.source);
       }
     }
     for (const iri of classes) {
@@ -135,7 +190,7 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
       if (kind) kinds.add(kind);
     }
     return { classes, kinds };
-  }, [schema, state.steps]);
+  }, [schema, state.steps, ancestorsOf]);
 
   /** Append a class, attaching it to the nearest step that relates to it. */
   const appendClass = useCallback(
@@ -151,7 +206,12 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
         return true;
       }
       for (let i = current.steps.length - 1; i >= 0; i -= 1) {
-        const options = linkOptionsBetween(currentSchema, current.steps[i].classIri, classIri);
+        const options = linkOptionsBetween(
+          currentSchema,
+          current.steps[i].classIri,
+          classIri,
+          ancestorsOf,
+        );
         if (options.length === 0) continue;
         const primary = options[0];
         setState({
@@ -176,7 +236,7 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
       }
       return false;
     },
-    [],
+    [ancestorsOf],
   );
 
   /** Start (or extend) the query from a class picked in the panel. */
@@ -275,9 +335,12 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
     const classLabels = new Map(schema.classes.map((c) => [c.iri, c.label]));
 
     state.steps.forEach((step, index) => {
+      const family = ancestorsOf(step.classIri);
       for (const link of schema.links) {
-        const forward = link.source === step.classIri;
-        const backward = link.target === step.classIri;
+        // Inherited links included: FIBO declares most relationships on a
+        // broad domain, so a subclass would otherwise offer nothing.
+        const forward = family.has(link.source);
+        const backward = family.has(link.target);
         if (!forward && !backward) continue;
         const targetClass = forward ? link.target : link.source;
         const targetLabel = classLabels.get(targetClass);
@@ -308,7 +371,25 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
         Number(b.declared) - Number(a.declared) ||
         a.predicateLabel.localeCompare(b.predicateLabel),
     );
-  }, [schema, state.steps]);
+  }, [schema, state.steps, ancestorsOf]);
+
+  /** Data properties of a class, including those declared on ancestors. */
+  const dataPropertiesFor = useCallback(
+    (classIri: string) => {
+      if (!schema) return [];
+      const seen = new Set<string>();
+      const result = [];
+      for (const iri of ancestorsOf(classIri)) {
+        for (const prop of schema.dataProperties[iri] ?? []) {
+          if (seen.has(prop.predicate)) continue;
+          seen.add(prop.predicate);
+          result.push(prop);
+        }
+      }
+      return result.sort((a, b) => a.label.localeCompare(b.label));
+    },
+    [schema, ancestorsOf],
+  );
 
   /** Remove a step together with everything hanging off it. */
   const removeStep = useCallback((index: number) => {
@@ -370,6 +451,8 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
     addClass,
     addNextStep,
     nextStepOptions,
+    dataPropertiesFor,
+    ancestorsOf,
     removeStep,
     updateStep,
     updateLink,

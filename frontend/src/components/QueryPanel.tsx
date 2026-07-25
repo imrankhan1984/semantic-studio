@@ -52,6 +52,8 @@ export default function QueryPanel({
     addClass,
     addNextStep,
     nextStepOptions,
+    dataPropertiesFor,
+    ancestorsOf,
   } = builder;
 
   const [openMenu, setOpenMenu] = useState<OpenMenu | null>(null);
@@ -194,7 +196,7 @@ export default function QueryPanel({
       return (
         <ClassPropsMenu
           step={step}
-          available={schema.dataProperties[step.classIri] ?? []}
+          available={dataPropertiesFor(step.classIri)}
           onChange={(patch) => updateStep(openMenu.index, patch)}
           onClose={() => setOpenMenu(null)}
         />
@@ -208,7 +210,7 @@ export default function QueryPanel({
         link={link}
         anchorLabel={anchor?.label ?? "?"}
         targetLabel={step.label}
-        options={linkOptionsBetween(schema, anchor?.classIri ?? "", step.classIri)}
+        options={linkOptionsBetween(schema, anchor?.classIri ?? "", step.classIri, ancestorsOf)}
         onChange={(patch) => updateLink(openMenu.index, patch)}
         onClose={() => setOpenMenu(null)}
       />

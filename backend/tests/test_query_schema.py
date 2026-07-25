@@ -66,11 +66,24 @@ def test_links_observed_from_instance_data(schema):
     assert _links(schema, SPACE + "Moon", SPACE + "orbits", SPACE + "Planet")
 
 
-def test_links_declared_via_domain_range_reach_subclasses(schema):
-    # :orbits has domain/range CelestialBody; Planet is a subclass of it.
-    declared = _links(schema, SPACE + "Planet", SPACE + "orbits", SPACE + "DwarfPlanet")
-    assert declared and declared[0]["declared"] is True
+def test_declared_links_are_recorded_once_not_expanded(schema):
+    """Declared links stay at their declared level.
+
+    Materializing them across every subclass pair explodes combinatorially
+    on real ontologies, so subclasses inherit through superClasses instead.
+    """
+    assert _links(schema, SPACE + "CelestialBody", SPACE + "orbits", SPACE + "CelestialBody")
+    # ...and is NOT duplicated onto each subclass pairing.
+    assert not _links(schema, SPACE + "Planet", SPACE + "orbits", SPACE + "DwarfPlanet")
     assert _links(schema, SPACE + "Spacecraft", SPACE + "operatedBy", SPACE + "SpaceAgency")
+
+
+def test_super_classes_exposed_for_inheritance(schema):
+    supers = schema["superClasses"]
+    assert supers[SPACE + "Planet"] == [SPACE + "CelestialBody"]
+    assert supers[SPACE + "DwarfPlanet"] == [SPACE + "Planet"]
+    # Classes without a parent are simply absent.
+    assert SPACE + "CelestialBody" not in supers
 
 
 def test_skos_hierarchy_links(schema):
@@ -87,6 +100,7 @@ def test_schema_predicates_are_not_traversable(schema):
 
 
 def test_data_properties(schema):
+    # Observed on Planet instances (Earth/Mars carry :diameterKm directly).
     planet_props = schema["dataProperties"][SPACE + "Planet"]
     by_iri = {p["predicate"]: p for p in planet_props}
     assert SPACE + "diameterKm" in by_iri
@@ -111,6 +125,12 @@ def test_describe_query_node(graph, schema):
     assert earth["isClass"] is False
     assert SPACE + "Planet" in {t["iri"] for t in earth["types"]}
     assert earth["label"] == "Earth"
+
+    # Multi-typed individuals put the most widely used type first, so the
+    # caller's default pick is deterministic rather than parser order.
+    sun = describe_query_node(graph, SPACE + "Sun", schema)
+    counts = [t["instances"] for t in sun["types"]]
+    assert counts == sorted(counts, reverse=True)
 
     # A SKOS concept maps to skos:Concept
     flyby = describe_query_node(graph, SPACE + "Flyby", schema)
