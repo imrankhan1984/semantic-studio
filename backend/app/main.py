@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .routers import ontologies, queries
 
-app = FastAPI(title="Semantic Viewer", version="0.1.0")
+app = FastAPI(title="Semantic Studio", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,

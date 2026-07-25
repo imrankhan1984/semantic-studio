@@ -55,8 +55,10 @@ class ParseError(Exception):
 
 
 def default_data_dir() -> Path:
-    """Per-user data directory, overridable with SEMANTIC_VIEWER_DATA_DIR."""
-    env = os.environ.get("SEMANTIC_VIEWER_DATA_DIR")
+    """Per-user data directory, overridable with SEMANTIC_STUDIO_DATA_DIR."""
+    env = os.environ.get("SEMANTIC_STUDIO_DATA_DIR") or os.environ.get(
+        "SEMANTIC_VIEWER_DATA_DIR"  # pre-rename variable
+    )
     if env:
         return Path(env)
     if sys.platform == "win32":
@@ -65,7 +67,17 @@ def default_data_dir() -> Path:
         base = Path.home() / "Library" / "Application Support"
     else:
         base = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
-    return base / "semantic-viewer"
+
+    current = base / "semantic-studio"
+    legacy = base / "semantic-viewer"
+    # The app was renamed from Semantic Viewer; move an existing library over
+    # once so previously loaded ontologies and saved queries are not orphaned.
+    if not current.exists() and legacy.is_dir():
+        try:
+            legacy.rename(current)
+        except OSError:
+            return legacy  # keep using it in place if the move is not possible
+    return current
 
 
 def detect_format(filename: Optional[str], explicit: Optional[str] = None) -> Optional[str]:

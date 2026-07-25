@@ -1,12 +1,18 @@
 :root,
 :root[data-theme="dark"] {
-  --bg: #12151c;
+  --bg: #0f1219;
   --bg-raised: #1a1f29;
-  --bg-panel: #161b24;
+  --bg-panel: #151a23;
+  --bg-header: #1b2029;
+  --bg-subhead: #161b24;
   --border: #2a3140;
+  --border-soft: #232a36;
   --text: #dbe2ee;
   --text-dim: #8a93a6;
   --accent: #4c9aff;
+  --accent-soft: #2d5c99;
+  --accent-2: #a78bfa;
+  --accent-3: #38c5b4;
   --accent-contrast: #0b1220;
   --error: #e15b64;
   --error-bg: #3a1e22;
@@ -18,13 +24,19 @@
 }
 
 :root[data-theme="light"] {
-  --bg: #f2f4f8;
+  --bg: #eef1f6;
   --bg-raised: #ffffff;
   --bg-panel: #fafbfd;
+  --bg-header: #ffffff;
+  --bg-subhead: #f5f7fa;
   --border: #d8dee9;
+  --border-soft: #e5e9f0;
   --text: #1f2430;
   --text-dim: #667085;
   --accent: #2472e8;
+  --accent-soft: #bcd3f7;
+  --accent-2: #7c3aed;
+  --accent-3: #0d9488;
   --accent-contrast: #ffffff;
   --error: #c92a35;
   --error-bg: #fdecee;
@@ -118,28 +130,160 @@ select:focus {
   flex-direction: column;
 }
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  background: var(--bg-panel);
+/* --- header: brand + nav row, then a context row --------------------- */
+
+.app-header {
+  flex: none;
+  background: var(--bg-header);
   border-bottom: 1px solid var(--border);
 }
 
-.brand {
-  font-weight: 700;
-  font-size: 15px;
-  margin-right: 6px;
-  white-space: nowrap;
+.nav-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 0 14px;
+  height: 58px;
 }
 
-.brand-mark {
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 20px;
+  margin-right: 8px;
+  border-right: 1px solid var(--border-soft);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.logo-mark .logo-arc-1 {
+  stroke: var(--accent);
+}
+
+.logo-mark .logo-arc-2 {
+  stroke: var(--accent-2);
+}
+
+.logo-mark .logo-arc-3 {
+  stroke: var(--accent-3);
+}
+
+.logo-mark .logo-core {
+  fill: var(--text);
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.brand-name {
+  display: flex;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  line-height: 1;
+}
+
+.brand-name-1 {
+  color: var(--accent-2);
+}
+
+.brand-name-2 {
+  color: var(--text);
+}
+
+.brand-tagline {
+  font-size: 8.5px;
+  letter-spacing: 0.22em;
+  color: var(--text-dim);
+  line-height: 1;
+}
+
+.main-nav {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 76px;
+  padding: 6px 12px 5px;
+  border: none;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.nav-item:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.nav-item.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.nav-item.active svg {
   color: var(--accent);
 }
 
-.toolbar select {
+.header-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.header-icon-btn:hover {
+  color: var(--text);
+  background: var(--bg-raised);
+}
+
+.context-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  background: var(--bg-subhead);
+  border-top: 1px solid var(--border-soft);
+}
+
+.context-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.context-row select {
   max-width: 340px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.icon-btn.danger:hover {
+  color: var(--error);
 }
 
 .spacer {
@@ -193,29 +337,68 @@ select:focus {
 
 /* --- graph ----------------------------------------------------------- */
 
+/* The canvas carries no overlays: the toolbar and legend are docked as
+   siblings, so nothing can hide a node or swallow a click meant for it. */
+
 .graph-wrap {
   position: absolute;
   inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.graph-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.graph-toolbar-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  padding: 4px 9px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.tool-btn:hover {
+  color: var(--text);
+  background: var(--bg-raised);
+  border-color: var(--border);
+}
+
+.tool-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.graph-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.graph-canvas-wrap {
+  flex: 1;
+  position: relative;
+  min-width: 0;
 }
 
 .graph-container {
   position: absolute;
   inset: 0;
-}
-
-.graph-controls {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  display: flex;
-  gap: 8px;
-  z-index: 5;
-}
-
-.graph-controls button {
-  font-size: 12px;
-  background: color-mix(in srgb, var(--bg-panel) 85%, transparent);
-  backdrop-filter: blur(4px);
 }
 
 .graph-empty {
@@ -251,18 +434,45 @@ select:focus {
 /* --- legend ---------------------------------------------------------- */
 
 .legend {
-  position: absolute;
-  bottom: 14px;
-  left: 12px;
-  z-index: 5;
-  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 10px;
+  flex: none;
+  width: 208px;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-soft);
+  padding: 10px 12px;
   font-size: 12px;
-  max-height: 60vh;
   overflow-y: auto;
-  min-width: 190px;
+}
+
+.legend.collapsed {
+  width: 32px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.legend-toggle {
+  width: 32px;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+}
+
+.legend-toggle:hover {
+  color: var(--text);
+  background: var(--bg-raised);
+}
+
+.legend-toggle-text {
+  writing-mode: vertical-rl;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  font-weight: 600;
 }
 
 .legend-header {
@@ -271,6 +481,8 @@ select:focus {
   gap: 12px;
   cursor: pointer;
   user-select: none;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .legend-section {

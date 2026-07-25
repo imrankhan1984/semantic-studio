@@ -4,13 +4,17 @@ import DetailPanel from "./components/DetailPanel";
 import GraphView from "./components/GraphView";
 import Legend from "./components/Legend";
 import LoadDialog from "./components/LoadDialog";
+import Logo from "./components/Logo";
 import QueryPanel from "./components/QueryPanel";
 import SearchBox from "./components/SearchBox";
+import { IconExplore, IconLoad, IconMoon, IconQuery, IconSun, IconTrash } from "./components/icons";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type { AppMode, OntologySummary, Theme, VizGraph } from "./types";
 
 function initialTheme(): Theme {
-  const saved = localStorage.getItem("semantic-viewer-theme");
+  const saved =
+    localStorage.getItem("semantic-studio-theme") ??
+    localStorage.getItem("semantic-viewer-theme"); // pre-rename preference
   if (saved === "dark" || saved === "light") return saved;
   return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
@@ -31,7 +35,7 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem("semantic-viewer-theme", theme);
+    localStorage.setItem("semantic-studio-theme", theme);
   }, [theme]);
 
   useEffect(() => {
@@ -122,71 +126,92 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="toolbar">
-        <div className="brand">
-          <span className="brand-mark">◉</span> Semantic Viewer
+      <header className="app-header">
+        <div className="nav-row">
+          <Logo />
+          <nav className="main-nav" role="tablist" aria-label="Workspace">
+            <button
+              className="nav-item"
+              onClick={() => setDialogOpen(true)}
+              title="Load an ontology from a file or a URL"
+            >
+              <IconLoad />
+              <span>Load</span>
+            </button>
+            <button
+              role="tab"
+              aria-selected={mode === "explore"}
+              className={mode === "explore" ? "nav-item active" : "nav-item"}
+              onClick={() => setMode("explore")}
+              title="Browse the ontology and inspect entities"
+            >
+              <IconExplore />
+              <span>Explore</span>
+            </button>
+            <button
+              role="tab"
+              aria-selected={mode === "query"}
+              className={mode === "query" ? "nav-item active" : "nav-item"}
+              onClick={() => setMode("query")}
+              title="Build a SPARQL query by clicking the graph"
+            >
+              <IconQuery />
+              <span>Query</span>
+            </button>
+          </nav>
+          <div className="spacer" />
+          <button
+            className="header-icon-btn"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            aria-label="Toggle colour theme"
+          >
+            {theme === "dark" ? <IconSun /> : <IconMoon />}
+          </button>
         </div>
-        <button className="primary" onClick={() => setDialogOpen(true)}>
-          + Load ontology
-        </button>
-        <div className="mode-switch" role="tablist" aria-label="Mode">
-          <button
-            role="tab"
-            aria-selected={mode === "explore"}
-            className={mode === "explore" ? "mode-tab active" : "mode-tab"}
-            onClick={() => setMode("explore")}
-            title="Browse the ontology and inspect entities"
-          >
-            Explore
-          </button>
-          <button
-            role="tab"
-            aria-selected={mode === "query"}
-            className={mode === "query" ? "mode-tab active" : "mode-tab"}
-            onClick={() => setMode("query")}
-            title="Build a SPARQL query by clicking the graph"
-          >
-            Query
-          </button>
+
+        <div className="context-row">
+          {ontologies.length > 0 ? (
+            <>
+              <label className="context-label" htmlFor="ontology-select">
+                ONTOLOGY
+              </label>
+              <select
+                id="ontology-select"
+                value={activeId ?? ""}
+                onChange={(e) => setActiveId(e.target.value || null)}
+                title="Active ontology"
+              >
+                {ontologies.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name} ({o.triples.toLocaleString()} triples)
+                  </option>
+                ))}
+              </select>
+              {active && (
+                <button
+                  className="ghost icon-btn danger"
+                  onClick={() => void onRemove()}
+                  title="Remove this ontology and delete its stored copy"
+                  aria-label="Remove ontology"
+                >
+                  <IconTrash />
+                </button>
+              )}
+            </>
+          ) : (
+            <span className="context-label">NO ONTOLOGY LOADED</span>
+          )}
+          <div className="spacer" />
+          <SearchBox
+            ontologyId={activeId}
+            theme={theme}
+            onPick={onSearchPick}
+            placeholder={
+              mode === "query" ? "Search to add a step…" : "Search concepts, properties…"
+            }
+          />
         </div>
-        {ontologies.length > 0 && (
-          <select
-            value={activeId ?? ""}
-            onChange={(e) => setActiveId(e.target.value || null)}
-            title="Active ontology"
-          >
-            {ontologies.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name} ({o.triples.toLocaleString()} triples)
-              </option>
-            ))}
-          </select>
-        )}
-        {active && (
-          <button
-            className="ghost"
-            onClick={() => void onRemove()}
-            title="Remove this ontology and delete its stored copy"
-          >
-            Remove
-          </button>
-        )}
-        <div className="spacer" />
-        <SearchBox
-          ontologyId={activeId}
-          theme={theme}
-          onPick={onSearchPick}
-          placeholder={
-            mode === "query" ? "Search to add a step…" : "Search concepts, properties…"
-          }
-        />
-        <button
-          className="ghost icon-btn theme-toggle"
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-        >
-          {theme === "dark" ? "☀" : "🌙"}
-        </button>
       </header>
 
       {error && (
@@ -207,23 +232,25 @@ export default function App() {
             queryMode={mode === "query"}
             queryPathIris={builder.pathIris}
             queryCandidates={builder.candidates}
+            leftRail={
+              graphData ? (
+                <Legend
+                  theme={theme}
+                  kindCounts={graphData.stats.kindCounts}
+                  edgeKinds={edgeKinds}
+                  hiddenKinds={hiddenKinds}
+                  onToggleKind={(kind) =>
+                    setHiddenKinds((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(kind)) next.delete(kind);
+                      else next.add(kind);
+                      return next;
+                    })
+                  }
+                />
+              ) : null
+            }
           />
-          {graphData && (
-            <Legend
-              theme={theme}
-              kindCounts={graphData.stats.kindCounts}
-              edgeKinds={edgeKinds}
-              hiddenKinds={hiddenKinds}
-              onToggleKind={(kind) =>
-                setHiddenKinds((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(kind)) next.delete(kind);
-                  else next.add(kind);
-                  return next;
-                })
-              }
-            />
-          )}
           {loadingGraph && <div className="loading-overlay">Building graph…</div>}
         </div>
         {mode === "query" ? (

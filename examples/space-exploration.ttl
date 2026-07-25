@@ -8,8 +8,8 @@
 
 : a owl:Ontology ;
     dcterms:title "Space Exploration Demo Ontology" ;
-    dcterms:description "A small demo ontology mixing OWL classes, properties, individuals and a SKOS vocabulary, used to exercise the Semantic Viewer." ;
-    dcterms:creator "Semantic Viewer" .
+    dcterms:description "A small demo ontology mixing OWL classes, properties, individuals and a SKOS vocabulary, used to exercise Semantic Studio." ;
+    dcterms:creator "Semantic Studio" .
 
 ### Classes
 

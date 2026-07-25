@@ -1,8 +1,17 @@
-# Semantic Viewer
+<h1>
+  <img src="frontend/public/logo.svg" width="28" height="28" alt="" valign="middle">
+  Semantic Studio
+</h1>
 
-A self-contained web application for visualizing Semantic Web ontologies and
-vocabularies — RDF, RDFS, OWL and SKOS — as an interactive, force-directed
-graph.
+**An ontology workspace for RDF, RDFS, OWL and SKOS.**
+
+A self-contained web application that turns Semantic Web ontologies and
+vocabularies into an interactive, force-directed graph — and lets you query
+them by clicking, without writing SPARQL by hand.
+
+> Formerly *Semantic Viewer*. The repository was renamed to
+> `semantic-studio`; GitHub redirects the old URL, so existing clones keep
+> working.
 
 ## Features
 
@@ -58,8 +67,8 @@ docker compose up --build
 or without compose:
 
 ```bash
-docker build -t semantic-viewer .
-docker run -p 8000:8000 semantic-viewer
+docker build -t semantic-studio .
+docker run -p 8000:8000 semantic-studio
 ```
 
 Open <http://localhost:8000>.
@@ -164,15 +173,20 @@ a small metadata file are written to a per-user data directory:
 
 | How you run the app | Storage location |
 | --- | --- |
-| Windows | `%LOCALAPPDATA%\semantic-viewer\ontologies` (typically `C:\Users\<you>\AppData\Local\semantic-viewer\ontologies`) |
-| Linux | `$XDG_DATA_HOME/semantic-viewer/ontologies` (typically `~/.local/share/semantic-viewer/ontologies`) |
-| macOS | `~/Library/Application Support/semantic-viewer/ontologies` |
+| Windows | `%LOCALAPPDATA%\semantic-studio\ontologies` (typically `C:\Users\<you>\AppData\Local\semantic-studio\ontologies`) |
+| Linux | `$XDG_DATA_HOME/semantic-studio/ontologies` (typically `~/.local/share/semantic-studio/ontologies`) |
+| macOS | `~/Library/Application Support/semantic-studio/ontologies` |
 | Docker / Docker Compose | `/data/ontologies` inside the container (see below) |
 
-Set the `SEMANTIC_VIEWER_DATA_DIR` environment variable to store the files
+Set the `SEMANTIC_STUDIO_DATA_DIR` environment variable to store the files
 somewhere else. Saved visual queries live beside them, in a `queries`
 subfolder of the same directory; removing an ontology also removes its
 saved queries.
+
+If you used the app under its old name, an existing `semantic-viewer`
+library folder is moved to `semantic-studio` automatically on first start,
+so nothing is lost. The old `SEMANTIC_VIEWER_DATA_DIR` variable is still
+honoured.
 
 Restoring is **lazy**: on startup the dropdown is populated instantly from
 the stored metadata (name, triple/node counts), and the RDF itself is only
@@ -185,19 +199,19 @@ copy from disk as well (you are asked to confirm).
 The image stores ontologies in the `/data` volume:
 
 - `docker compose up` automatically creates a named volume
-  (`semantic-viewer-data`) mapped to `/data`, so your ontologies survive
+  (`semantic-studio-data`) mapped to `/data`, so your ontologies survive
   `docker compose down`, image rebuilds, and container recreation. Only
   `docker compose down -v` (or `docker volume rm`) deletes them.
 - With plain `docker run`, pass a volume yourself to get the same behavior,
   e.g.:
 
   ```bash
-  docker run -p 8000:8000 -v semantic-viewer-data:/data semantic-viewer
+  docker run -p 8000:8000 -v semantic-studio-data:/data semantic-studio
   ```
 
   To keep the files in a normal folder on the host instead, bind-mount one,
-  e.g. `-v "$HOME/semantic-viewer-data:/data"` (Linux/macOS) or
-  `-v "%USERPROFILE%\semantic-viewer-data:/data"` (Windows).
+  e.g. `-v "$HOME/semantic-studio-data:/data"` (Linux/macOS) or
+  `-v "%USERPROFILE%\semantic-studio-data:/data"` (Windows).
 - Without any volume, files written to `/data` are lost when the container
   is removed.
 
