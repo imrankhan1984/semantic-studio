@@ -366,7 +366,7 @@ export default function GraphView({ data, theme, hiddenKinds, selected, onSelect
       {!data && (
         <div className="graph-empty">
           <p>No ontology loaded yet.</p>
-          <p className="hint">Use “Load ontology” to upload a file or fetch one from a URL / GitHub.</p>
+          <p className="hint">Use “Load ontology” to upload a file or fetch one from github.com.</p>
         </div>
       )}
     </div>

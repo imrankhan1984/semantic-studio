@@ -7,8 +7,14 @@ graph.
 ## Features
 
 - **Load ontologies** from a local file (drag & drop or file picker) or fetch
-  them from any URL. GitHub `blob` links are converted to raw file URLs
-  automatically — paste a link straight from the GitHub UI.
+  them from public repositories on standard **github.com**. GitHub `blob`
+  links are converted to raw file URLs automatically — paste a link straight
+  from the GitHub UI.
+
+  > **⚠️ GitHub Enterprise is not currently supported.** URL fetching is
+  > restricted to standard `github.com` hosts. To view an ontology hosted on
+  > a GitHub Enterprise instance (or any other server), download the file to
+  > your PC first and load it into the application via file upload.
 - **Formats**: Turtle, RDF/XML, OWL (XML), N-Triples, N3, JSON-LD, TriG,
   N-Quads. The format is detected from the file extension and falls back to
   content sniffing.
@@ -85,12 +91,14 @@ cd backend
 ## Try it
 
 A demo ontology mixing OWL classes, properties, individuals and a small SKOS
-scheme ships in [`examples/space-exploration.ttl`](examples/space-exploration.ttl).
-Real-world files that load well, pasted into *Load ontology → URL / GitHub*:
+scheme ships in [`examples/space-exploration.ttl`](examples/space-exploration.ttl) —
+load it via file upload. A real-world file that loads well, pasted into
+*Load ontology → github.com URL*:
 
 - `https://github.com/schemaorg/schemaorg/blob/main/data/releases/28.1/schemaorg-current-https.ttl`
-- `http://xmlns.com/foaf/spec/index.rdf`
-- `https://api.finto.fi/rest/v1/juho/data?format=text/turtle` (large SKOS)
+
+Ontologies from anywhere else (GitHub Enterprise, arbitrary web servers,
+SPARQL endpoints) must be downloaded locally and loaded via file upload.
 
 ## Architecture
 
@@ -131,7 +139,9 @@ Real-world files that load well, pasted into *Load ontology → URL / GitHub*:
 
 - SPARQL querying (the rdflib store already supports it server-side).
 - Editing and serialization back to RDF.
-- Private GitHub repositories via personal access token.
+- GitHub Enterprise support (configurable hosts, per-user access tokens,
+  corporate proxy handling) — until then, download files and upload them.
+- Private github.com repositories via personal access token.
 
 ## Licenses of major dependencies
 

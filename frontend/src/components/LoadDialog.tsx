@@ -53,7 +53,7 @@ export default function LoadDialog({ onLoaded, onClose }: Props) {
             Local file
           </button>
           <button className={tab === "url" ? "tab active" : "tab"} onClick={() => setTab("url")}>
-            URL / GitHub
+            github.com URL
           </button>
         </div>
 
@@ -93,7 +93,7 @@ export default function LoadDialog({ onLoaded, onClose }: Props) {
           <div className="url-form">
             <input
               type="text"
-              placeholder="https://github.com/owner/repo/blob/main/ontology.ttl or any raw RDF URL"
+              placeholder="https://github.com/owner/repo/blob/main/ontology.ttl"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void submitUrl()}
@@ -103,7 +103,13 @@ export default function LoadDialog({ onLoaded, onClose }: Props) {
               Fetch
             </button>
             <p className="hint">
-              GitHub “blob” links are converted to raw file URLs automatically. Public repositories only.
+              Public repositories on standard <strong>github.com</strong> only — “blob” links are
+              converted to raw file URLs automatically.
+            </p>
+            <p className="hint">
+              <strong>GitHub Enterprise is not currently supported.</strong> To view an ontology
+              hosted on a GitHub Enterprise instance, download the file to your computer and load
+              it via the “Local file” tab.
             </p>
           </div>
         )}

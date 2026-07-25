@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
@@ -15,7 +16,25 @@ router = APIRouter(prefix="/api/ontologies", tags=["ontologies"])
 MAX_FETCH_BYTES = 200 * 1024 * 1024  # 200 MB safety cap
 
 GITHUB_BLOB_RE = re.compile(
-    r"^https?://github\.com/([^/]+)/([^/]+)/(?:blob|raw)/(.+)$"
+    r"^https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/(?:blob|raw)/(.+)$"
+)
+
+# URL fetching is deliberately restricted to files hosted on standard
+# github.com. GitHub Enterprise instances (and arbitrary web servers) are NOT
+# supported: their files must be downloaded locally and loaded via file upload.
+ALLOWED_GITHUB_HOSTS = {
+    "github.com",
+    "www.github.com",
+    "raw.githubusercontent.com",
+    "gist.github.com",
+    "gist.githubusercontent.com",
+}
+
+URL_NOT_SUPPORTED_DETAIL = (
+    "Only files hosted on standard github.com (public repositories) can be "
+    "fetched by URL. GitHub Enterprise instances and other servers are not "
+    "currently supported — download the ontology file to your computer and "
+    "load it via file upload instead."
 )
 
 
@@ -90,9 +109,14 @@ def to_raw_url(url: str) -> str:
 
 @router.post("/fetch")
 async def fetch_ontology(request: FetchRequest) -> dict:
-    url = to_raw_url(request.url.strip())
-    if not url.lower().startswith(("http://", "https://")):
+    raw_input = request.url.strip()
+    parsed = urlparse(raw_input)
+    if parsed.scheme not in ("http", "https"):
         raise HTTPException(status_code=400, detail="Only http(s) URLs are supported.")
+    host = (parsed.hostname or "").lower()
+    if host not in ALLOWED_GITHUB_HOSTS:
+        raise HTTPException(status_code=400, detail=URL_NOT_SUPPORTED_DETAIL)
+    url = to_raw_url(raw_input)
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
             response = await client.get(
