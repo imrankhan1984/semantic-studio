@@ -1,3 +1,29 @@
+/*
+================================================================================
+FILE: frontend/src/components/Legend.tsx
+================================================================================
+
+SUMMARY
+    The docked legend + filter rail beside the graph. Lists node kinds (with
+    counts) and relation kinds with their colours, and lets the user click a
+    node kind to show/hide it in the graph. Collapsible to a thin strip.
+
+BASIC IDEA
+    Purely presentational over data passed in. Clicking a node-kind row calls
+    onToggleKind; the parent (App) tracks hidden kinds and GraphView dims them.
+    A collapsed state saves space on small screens.
+
+INPUTS / INPUT SOURCES (props)
+    - theme: for the swatch colours.
+    - kindCounts: node count per kind (from graph stats).
+    - edgeKinds: which relation kinds are present.
+    - hiddenKinds + onToggleKind: the show/hide filter state and its setter.
+
+EXPECTED OUTPUT
+    - The rendered legend/filter rail (or a collapsed toggle button).
+================================================================================
+*/
+
 import { useState } from "react";
 import type { Theme } from "../types";
 import { KIND_LABELS, PALETTES, kindColor } from "../types";

@@ -1,7 +1,36 @@
+/*
+================================================================================
+FILE: frontend/src/components/PathBar.tsx
+================================================================================
+
+SUMMARY
+    The chip bar at the top of the query panel showing the query PATH: numbered
+    class chips with predicate chips between them, plus per-step remove and a
+    clear-all. Clicking a chip opens its menu (class -> properties; predicate ->
+    relationship options).
+
+BASIC IDEA
+    Purely presentational over the QueryState. It signals which chip's menu
+    should open (via onOpenMenu / the OpenMenu type), shows branch markers (dN)
+    when a hop attaches to an earlier step, pins, and property counts. The
+    actual menus and edits live in sibling components / the hook.
+
+INPUTS / INPUT SOURCES (props)
+    - state + stepVars: the path to render and its variable names.
+    - theme, classKinds, labelFor: for colours and labels.
+    - openMenu + onOpenMenu: which chip's menu is open.
+    - onRemoveStep, onClear: edit actions.
+
+EXPECTED OUTPUT
+    - The rendered path bar; menu-open and edit callbacks.
+================================================================================
+*/
+
 import type { QueryState } from "../sparql/types";
 import type { Theme } from "../types";
 import { kindColor } from "../types";
 
+// Identifies which chip's popover menu is open: a class chip or a predicate chip.
 export interface OpenMenu {
   kind: "class" | "link";
   index: number;

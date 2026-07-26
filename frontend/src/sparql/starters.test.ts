@@ -1,3 +1,27 @@
+/*
+================================================================================
+FILE: frontend/src/sparql/starters.test.ts
+================================================================================
+
+SUMMARY
+    Unit tests for the starter-query and entry-point suggestions: the most
+    populated class is suggested first, a counting question is offered, SKOS
+    taxonomies get hierarchy starters, real relationships become two-step
+    starters, every starter produces valid-looking SPARQL, the max is
+    respected, and entryPoints ranks connected/populated classes first.
+
+BASIC IDEA
+    A hand-built QuerySchema stands in for a real ontology, so the ranking and
+    shape of the generated starters can be asserted deterministically.
+
+INPUTS / INPUT SOURCES
+    - A fixed, hand-constructed QuerySchema.
+
+EXPECTED OUTPUT
+    - Pass/fail per assertion; failures indicate a starters/entryPoints bug.
+================================================================================
+*/
+
 import { describe, expect, it } from "vitest";
 import { buildStarters, entryPoints } from "./starters";
 import { generateSparql } from "./generate";

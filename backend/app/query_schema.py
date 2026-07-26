@@ -1,30 +1,61 @@
-"""Class-level schema extraction for the visual query builder.
+"""
+================================================================================
+FILE: backend/app/query_schema.py
+================================================================================
 
-The visualization graph (``graph_builder``) describes individual entities.
-The query builder needs something different: how *types* relate to each
-other — which predicates connect instances of class A to instances of
-class B, and which literal-valued predicates a class carries.
+SUMMARY
+    Extracts the CLASS-LEVEL schema the visual query builder needs: which
+    classes exist, which predicates connect one class to another (in either
+    direction), the subclass hierarchy, and which literal-valued (data)
+    properties each class carries.
 
-Both are derived from two sources:
+BASIC IDEA
+    graph_builder describes individual ENTITIES; the query builder instead
+    needs to know how *types* relate — e.g. "instances of Corporation are
+    incorporatedIn a Jurisdiction". Those relationships come from three
+    sources, combined here:
+      1. Declared axioms: rdfs:domain / rdfs:range on properties.
+      2. OWL restrictions: `Class subClassOf [ onProperty p ; someValuesFrom T ]`,
+         often nested in intersections — the style FIBO uses for most relations.
+      3. Observed instance data: actual triples between typed resources, which
+         is what makes real datasets and SKOS taxonomies usable.
+    Declared/restriction links are recorded once at the level they are stated;
+    the frontend inherits them down the subclass hierarchy at lookup time
+    (materializing every subclass pair here explodes combinatorially on FIBO).
 
-1. **Declared axioms** — ``rdfs:domain`` / ``rdfs:range`` on properties,
-   propagated down the ``rdfs:subClassOf`` hierarchy.
-2. **Observed instance data** — actual triples between typed resources.
-   This is what makes real-world datasets (and SKOS taxonomies, where
-   ``skos:Concept`` is the only "class") usable in the builder.
+INPUTS / INPUT SOURCES
+    - An rdflib.Graph (from store.Ontology.ensure_loaded), via build_query_schema.
+    - A clicked node's IRI plus the already-built schema, via describe_query_node.
+
+EXPECTED OUTPUT
+    - build_query_schema -> a JSON-ready dict with keys: classes, links,
+      superClasses, dataProperties, namespaces, truncated. Consumed by
+      frontend/src/sparql/useQueryBuilder.ts.
+    - describe_query_node -> how a clicked node maps to a steppable class (the
+      class itself, or the types of an individual, best-shared type first).
+
+SAFETY
+    Bounded by MAX_LINKS / MAX_DATA_PROPS_PER_CLASS / MAX_EXPRESSION_DEPTH so a
+    pathological ontology cannot blow up memory or the response.
+================================================================================
 """
 
 from __future__ import annotations
 
+# Counter    - tally instance counts and observed-link frequencies
+# defaultdict - accumulate multi-valued maps (types per subject, parents per class)
 from collections import Counter, defaultdict
 from typing import Optional
 
 from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 
+# Shared label/prefix helpers keep class and predicate labels consistent with
+# the graph view.
 from .graph_builder import pick_label, prefixed
 
-# Meta-classes: never offered as steppable classes in the builder.
+# Meta-classes: the RDF/OWL vocabulary terms themselves. These describe the
+# schema language, so they are never offered as steppable classes to query.
 META_CLASSES = {
     OWL.Class,
     RDFS.Class,
@@ -77,7 +108,8 @@ SCHEMA_PREDICATES = {
     OWL.versionInfo,
 }
 
-# SKOS types are treated as first-class steppable types so taxonomies work.
+# SKOS taxonomies declare no owl:Class, so their concepts are the only thing
+# worth querying. These SKOS types are therefore treated as steppable "classes".
 SKOS_PSEUDO_CLASSES = {
     SKOS.Concept,
     SKOS.ConceptScheme,
@@ -85,6 +117,8 @@ SKOS_PSEUDO_CLASSES = {
     SKOS.OrderedCollection,
 }
 
+# Maps a steppable SKOS type to the node "kind" the frontend colours it with;
+# anything not listed defaults to "class".
 CLASS_KINDS = {
     SKOS.Concept: "concept",
     SKOS.ConceptScheme: "conceptScheme",
@@ -92,6 +126,7 @@ CLASS_KINDS = {
     SKOS.OrderedCollection: "collection",
 }
 
+# XSD namespace prefix, used to recognise literal (data) ranges.
 XSD_NS = str(XSD)
 
 # Safety caps so pathological ontologies cannot blow up the response.
@@ -116,23 +151,30 @@ SET_OPERATORS = (OWL.intersectionOf, OWL.unionOf)
 
 
 def _is_literal_type(iri: URIRef) -> bool:
+    """True for a datatype (xsd:* or rdf:langString) — i.e. a data range, not a class."""
     return str(iri).startswith(XSD_NS) or iri == RDF.langString
 
 
 def _list_items(graph: Graph, head) -> list:
-    """Members of an RDF collection (rdf:first/rdf:rest chain)."""
+    """Members of an RDF collection (the rdf:first/rdf:rest linked list).
+
+    OWL set operators (intersectionOf/unionOf) point at such lists.
+    Cycle-guarded via `seen` in case of a malformed self-referential list.
+    """
     items: list = []
     seen: set = set()
     current = head
     while current is not None and current != RDF.nil and current not in seen:
         seen.add(current)
+        # rdf:first holds this cell's value; rdf:rest points to the next cell.
         items.extend(graph.objects(current, RDF.first))
         current = next(iter(graph.objects(current, RDF.rest)), None)
     return items
 
 
 def _named_classes(graph: Graph, expression, depth: int) -> list[URIRef]:
-    """Named classes buried inside a nested set expression."""
+    """Named classes buried inside a nested set expression (union/intersection)."""
+    # Depth guard: class expressions can nest arbitrarily.
     if depth > MAX_EXPRESSION_DEPTH:
         return []
     found: list[URIRef] = []
@@ -160,6 +202,7 @@ def _restriction_targets(
     ``Class subClassOf [ onProperty p ; someValuesFrom T ]``, often nested
     inside an intersection — so those axioms are read here too.
     """
+    # Depth and cycle guards: expressions nest and can (in bad data) loop.
     if depth > MAX_EXPRESSION_DEPTH:
         return
     if visited is None:
@@ -168,11 +211,14 @@ def _restriction_targets(
         return
     visited.add(expression)
 
+    # A restriction pins one property via owl:onProperty; find it.
     prop = next(
         (p for p in graph.objects(expression, OWL.onProperty) if isinstance(p, URIRef)),
         None,
     )
     if prop is not None:
+        # The filler (someValuesFrom / allValuesFrom / onClass) names the class
+        # on the other end of the relationship.
         for filler_predicate in RESTRICTION_FILLERS:
             for filler in graph.objects(expression, filler_predicate):
                 if isinstance(filler, URIRef):
@@ -186,6 +232,7 @@ def _restriction_targets(
                 for value_type in instance_types.get(value, ()):
                     yield prop, value_type
 
+    # A restriction can be nested inside an intersection/union; recurse in.
     for operator in SET_OPERATORS:
         for collection in graph.objects(expression, operator):
             for member in _list_items(graph, collection):
@@ -196,28 +243,40 @@ def _restriction_targets(
 
 
 def build_query_schema(graph: Graph) -> dict:
-    """Extract the class-level schema used by the visual query builder."""
+    """Extract the class-level schema used by the visual query builder.
+
+    Runs in five phases (typing -> restrictions -> domain/range -> observed
+    instance data -> serialize) and returns the JSON dict the frontend uses.
+    `truncated` is set if any safety cap was hit.
+    """
     truncated = False
 
     # --- 1. which types can instances have? ------------------------------
+    # type_counts: how many instances each class has (drives ranking/starters).
+    # instance_types: for each resource, the list of classes it is an instance of.
     type_counts: Counter[URIRef] = Counter()
     instance_types: dict[URIRef, list[URIRef]] = defaultdict(list)
     for subject, obj in graph.subject_objects(RDF.type):
         if not isinstance(subject, URIRef) or not isinstance(obj, URIRef):
             continue
+        # Ignore the vocabulary meta-classes; they are not queryable types.
         if obj in META_CLASSES:
             continue
         type_counts[obj] += 1
         instance_types[subject].append(obj)
 
+    # Start the class set with every type that has at least one instance.
     classes: set[URIRef] = set(type_counts)
 
-    # Declared classes, even when they have no instances.
+    # Also include classes that are DECLARED but have no instances, so an empty
+    # ontology schema still lists them.
     for subject, obj in graph.subject_objects(RDF.type):
         if isinstance(subject, URIRef) and obj in (OWL.Class, RDFS.Class):
             if subject not in META_CLASSES:
                 classes.add(subject)
 
+    # Record direct parents (child -> {parents}); the frontend walks this to
+    # inherit links/properties down the hierarchy at lookup time.
     super_classes: dict[URIRef, set[URIRef]] = defaultdict(set)
     for subject, obj in graph.subject_objects(RDFS.subClassOf):
         if isinstance(subject, URIRef) and isinstance(obj, URIRef):
@@ -228,12 +287,14 @@ def build_query_schema(graph: Graph) -> dict:
             if subject != obj:
                 super_classes[subject].add(obj)
 
+    # Any class used as a property's domain or (non-literal) range is a class
+    # worth listing, even if nothing is typed as it directly.
     for _, obj in graph.subject_objects(RDFS.domain):
         if isinstance(obj, URIRef) and obj not in META_CLASSES:
             classes.add(obj)
     for _, obj in graph.subject_objects(RDFS.range):
         if isinstance(obj, URIRef) and obj not in META_CLASSES:
-            if not _is_literal_type(obj):
+            if not _is_literal_type(obj):  # literal ranges are data props, not classes
                 classes.add(obj)
 
     # --- 2. relationships stated as OWL restrictions ---------------------
@@ -252,6 +313,9 @@ def build_query_schema(graph: Graph) -> dict:
                     restriction_links.append((cls, prop, target))
 
     # --- 3. links declared through domain / range ------------------------
+    # links: keyed by (source class, predicate, target class) -> provenance dict
+    # {declared, restriction, count}. add_link merges duplicates and enforces
+    # the MAX_LINKS cap.
     links: dict[tuple[URIRef, URIRef, URIRef], dict] = {}
 
     def add_link(
@@ -264,23 +328,29 @@ def build_query_schema(graph: Graph) -> dict:
         restriction: bool = False,
     ) -> None:
         nonlocal truncated
+        # Both endpoints must be known classes, or there is nothing to step to.
         if src not in classes or dst not in classes:
             return
         key = (src, pred, dst)
         entry = links.get(key)
         if entry is None:
+            # New link: respect the cap (flag truncation and drop it if over).
             if len(links) >= MAX_LINKS:
                 truncated = True
                 return
             links[key] = {"declared": declared, "count": count, "restriction": restriction}
         else:
+            # Existing link: merge provenance flags and add to the observed count.
             entry["declared"] = entry["declared"] or declared
             entry["restriction"] = entry["restriction"] or restriction
             entry["count"] += count
 
+    # Feed in the restriction-derived links gathered in phase 2.
     for src, prop, target in restriction_links:
         add_link(src, prop, target, declared=False, restriction=True)
 
+    # Every property that declares a domain and/or a range becomes a link from
+    # each declared domain class to each declared (non-literal) range class.
     for prop in set(graph.subjects(RDFS.domain, None)) | set(graph.subjects(RDFS.range, None)):
         if not isinstance(prop, URIRef):
             continue
@@ -301,16 +371,21 @@ def build_query_schema(graph: Graph) -> dict:
                 add_link(domain, prop, range_, declared=True)
 
     # --- 4. links and data properties observed in the instance data ------
+    # data_counts: (class, predicate) -> Counter of datatypes seen (literal props).
+    # observed:    (srcClass, predicate, dstClass) -> how often it actually occurs.
     data_counts: dict[tuple[URIRef, URIRef], Counter] = defaultdict(Counter)
     observed: Counter[tuple[URIRef, URIRef, URIRef]] = Counter()
 
+    # Scan every triple once, attributing it to the subject's (and object's) types.
     for subject, predicate, obj in graph:
+        # Skip schema-defining predicates and unnamed subjects.
         if predicate in SCHEMA_PREDICATES or not isinstance(subject, URIRef):
             continue
         subject_types = instance_types.get(subject)
         if not subject_types:
             continue
         if isinstance(obj, URIRef):
+            # Object is a resource: this is a class-to-class link, per its types.
             object_types = instance_types.get(obj)
             if not object_types:
                 continue
@@ -318,14 +393,16 @@ def build_query_schema(graph: Graph) -> dict:
                 for dst in object_types:
                     observed[(src, predicate, dst)] += 1
         elif isinstance(obj, Literal):
+            # Object is a literal: this is a data property; record its datatype.
             datatype = obj.datatype or (RDF.langString if obj.language else XSD.string)
             for src in subject_types:
                 data_counts[(src, predicate)][datatype] += 1
 
+    # Turn observed class-to-class occurrences into links (with their counts).
     for (src, predicate, dst), count in observed.items():
         add_link(src, predicate, dst, declared=False, count=count)
 
-    # Declared datatype properties, even without instance data.
+    # Include declared datatype properties even when no instance uses them yet.
     for prop in graph.subjects(RDF.type, OWL.DatatypeProperty):
         if not isinstance(prop, URIRef):
             continue
@@ -339,6 +416,7 @@ def build_query_schema(graph: Graph) -> dict:
                 data_counts[(domain, prop)][datatype] = 0
 
     # --- 5. serialize ----------------------------------------------------
+    # Label lookups are repeated across classes/links; cache them.
     label_cache: dict[URIRef, str] = {}
 
     def label_of(iri: URIRef) -> str:
@@ -348,6 +426,8 @@ def build_query_schema(graph: Graph) -> dict:
             label_cache[iri] = cached
         return cached
 
+    # Classes, richest first (most instances, then alphabetical) so the UI's
+    # "start from" list and starters surface the useful ones.
     classes_out = [
         {
             "iri": str(iri),
@@ -375,14 +455,17 @@ def build_query_schema(graph: Graph) -> dict:
     ]
     links_out.sort(key=lambda link: (link["source"], -link["count"], link["predicate"]))
 
+    # Data (literal-valued) properties, grouped per class.
     data_props: dict[str, list[dict]] = defaultdict(list)
     for (cls, predicate), datatypes in data_counts.items():
         if cls not in classes:
             continue
         bucket = data_props[str(cls)]
+        # Cap how many data props one class can carry, to bound the payload.
         if len(bucket) >= MAX_DATA_PROPS_PER_CLASS:
             truncated = True
             continue
+        # Report the most commonly observed datatype for filter-input typing.
         datatype, _ = datatypes.most_common(1)[0] if datatypes else (XSD.string, 0)
         bucket.append(
             {
@@ -426,16 +509,19 @@ def describe_query_node(graph: Graph, iri: str, schema: dict) -> Optional[dict]:
     while pinning that concept).
     """
     ref = URIRef(iri)
+    # Index the schema's classes by IRI for O(1) membership checks.
     known = {cls["iri"]: cls for cls in schema["classes"]}
+    # If the clicked node IS a class, step directly on it.
     if iri in known:
         return {"iri": iri, "isClass": True, "label": known[iri]["label"], "types": []}
 
+    # Otherwise it is (presumably) an individual: collect its known types.
     types = []
     for obj in graph.objects(ref, RDF.type):
         if isinstance(obj, URIRef) and str(obj) in known:
             types.append(known[str(obj)])
     if not types:
-        return None
+        return None  # not a class and untyped -> nothing to query on
     # Real ontologies type an individual many times over (a FIBO entity can
     # carry a dozen). Order them so the caller's default pick is the type
     # most of the data shares, rather than whatever the parser emitted first.

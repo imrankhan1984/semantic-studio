@@ -1,3 +1,30 @@
+/*
+================================================================================
+FILE: frontend/src/components/ClassPropsMenu.tsx
+================================================================================
+
+SUMMARY
+    The popover for a class chip: choose which data (literal) properties to
+    return for that step, and optionally add a filter to each (operator + value),
+    with the operator set and input type chosen from the property's datatype.
+    Also unpins a pinned individual.
+
+BASIC IDEA
+    Presentational over one QueryStep and the class's available data properties.
+    Toggling a property adds/removes it; a filter forces the property present
+    (so its "optional" toggle disables). Datatype drives which operators and
+    input control are offered. It calls onChange with a partial QueryStep patch.
+
+INPUTS / INPUT SOURCES (props)
+    - step: the step being edited.
+    - available: the class's data properties (from the hook, incl. inherited).
+    - onChange, onClose: edit and dismiss.
+
+EXPECTED OUTPUT
+    - The rendered menu; onChange patches to the step (props / pin).
+================================================================================
+*/
+
 import { NUMERIC_TYPES, TEMPORAL_TYPES } from "../sparql/generate";
 import type { FilterOp, QueryStep, SelectedProp } from "../sparql/types";
 import type { SchemaDataProp } from "../types";

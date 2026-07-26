@@ -1,5 +1,26 @@
-/** Inline nav icons — stroked, 20px grid, inherit currentColor. */
+/*
+================================================================================
+FILE: frontend/src/components/icons.tsx
+================================================================================
 
+SUMMARY
+    A set of small inline SVG icons used in the header nav and toolbar (Load,
+    View, Explore, Query, sun/moon theme toggle, trash).
+
+BASIC IDEA
+    Inlining a handful of stroked icons avoids an icon-font/library dependency.
+    They inherit the surrounding text colour (stroke: currentColor) and share
+    one `base` set of SVG attributes so they look consistent.
+
+INPUTS / INPUT SOURCES
+    - None; each is a stateless presentational component.
+
+EXPECTED OUTPUT
+    - <svg> icon elements coloured by their CSS context.
+================================================================================
+*/
+
+// Shared SVG attributes: 20px, 24-unit viewBox, stroked in the current colour.
 const base = {
   width: 20,
   height: 20,

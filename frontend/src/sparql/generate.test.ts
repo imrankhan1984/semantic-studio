@@ -1,3 +1,27 @@
+/*
+================================================================================
+FILE: frontend/src/sparql/generate.test.ts
+================================================================================
+
+SUMMARY
+    Unit tests for the SPARQL generator. Because the generator is pure, these
+    assert its exact output for hand-built QueryStates: single class, multi-hop
+    paths, inverse hops, alternation, each modifier, OPTIONAL subtree wrapping,
+    filters (every operator/datatype), paths-mode collapsing, count mode,
+    variable dedup, prefix handling, and edge cases.
+
+BASIC IDEA
+    Small helper factories (step/link/state/prop) make each test read as the
+    query it describes; assertions check substrings of the generated SPARQL.
+
+INPUTS / INPUT SOURCES
+    - Hand-constructed QueryState objects and a fixed namespace map.
+
+EXPECTED OUTPUT
+    - Pass/fail per assertion; failures pinpoint a generator regression.
+================================================================================
+*/
+
 import { describe, expect, it } from "vitest";
 import { assignVarNames, generateSparql } from "./generate";
 import type { QueryState, QueryStep, SelectedProp, StepLink } from "./types";

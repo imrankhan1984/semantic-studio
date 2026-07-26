@@ -1,3 +1,27 @@
+/*
+================================================================================
+FILE: frontend/src/components/ResultsTable.tsx
+================================================================================
+
+SUMMARY
+    Renders SPARQL query results as a sortable table: a column per variable,
+    a row count and duration, a truncation notice, URI cells as clickable chips
+    and literal cells as text (unbound cells shown as em dashes).
+
+BASIC IDEA
+    Presentational over one SparqlResults. Column headers toggle client-side
+    sort (numeric where possible, else case-insensitive text). Clicking a URI
+    chip calls onPickIri to centre that node in the graph.
+
+INPUTS / INPUT SOURCES (props)
+    - results: the SparqlResults to display.
+    - onPickIri: focus a node when its result chip is clicked.
+
+EXPECTED OUTPUT
+    - The rendered results table (or an empty-result note); onPickIri on click.
+================================================================================
+*/
+
 import { useMemo, useState } from "react";
 import type { SparqlResults, SparqlTerm } from "../types";
 

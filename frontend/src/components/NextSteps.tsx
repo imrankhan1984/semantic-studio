@@ -1,5 +1,32 @@
+/*
+================================================================================
+FILE: frontend/src/components/NextSteps.tsx
+================================================================================
+
+SUMMARY
+    The "Add a step" chip cloud in the query panel: every possible continuation
+    of the current path, as clickable chips (predicate -> target class),
+    filterable and collapsible when there are many.
+
+BASIC IDEA
+    Hunting for the right node in a large graph is impractical, so the panel
+    offers the same moves the graph does. This is presentational over the
+    options computed by the hook; clicking a chip calls onAdd, which appends
+    that step — so a whole query can be built without touching the graph.
+
+INPUTS / INPUT SOURCES (props)
+    - options: every available continuation (from the hook).
+    - stepCount: used to decide whether to show the anchor number.
+    - onAdd: append the chosen continuation.
+
+EXPECTED OUTPUT
+    - The rendered chip cloud; onAdd on click.
+================================================================================
+*/
+
 import { useMemo, useState } from "react";
 
+// One available continuation of the path (an anchor step + a predicate + a target).
 export interface NextStepOption {
   anchor: number;
   anchorLabel: string;

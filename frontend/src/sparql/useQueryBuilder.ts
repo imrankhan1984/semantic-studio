@@ -1,3 +1,36 @@
+/*
+================================================================================
+FILE: frontend/src/sparql/useQueryBuilder.ts
+================================================================================
+
+SUMMARY
+    The React hook that owns all query-builder state and behaviour. It fetches
+    the ontology's query schema, holds the current QueryState, derives the live
+    SPARQL and the graph highlighting, and exposes the actions the UI calls to
+    build the query (add a class, add a next step, remove a step, edit a hop,
+    load a saved query, etc.).
+
+BASIC IDEA
+    Both the graph (GraphView) and the panel (QueryPanel) need to build the SAME
+    query and stay in sync. Centralising everything in one hook, shared by App,
+    guarantees that. The hook also resolves the class hierarchy so a relationship
+    declared on a broad ancestor (as FIBO does) is offered on the specific
+    subclass the user actually picked.
+
+INPUTS / INPUT SOURCES
+    - ontologyId: which ontology to build against.
+    - active: whether Query mode is on (the schema is only fetched then).
+    - The backend /query-schema and /query-node endpoints (via api.ts).
+    - User actions dispatched from the query components.
+
+EXPECTED OUTPUT
+    - A bag of state and callbacks consumed by App / GraphView / QueryPanel:
+      schema, current state, live sparql, candidate highlighting, and the
+      builder actions.
+    - Also exports pure helpers: makeAncestorResolver, linkOptionsBetween.
+================================================================================
+*/
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getQueryNode, getQuerySchema } from "../api";
 import type { QueryNodeInfo, QuerySchema } from "../types";
@@ -18,6 +51,7 @@ const KIND_OF_CLASS: Record<string, string> = {
   [`${SKOS}OrderedCollection`]: "collection",
 };
 
+// One selectable relationship between two classes in the predicate menu.
 export interface LinkOption {
   predicate: string;
   label: string;
@@ -114,14 +148,16 @@ export function linkOptionsBetween(
   );
 }
 
+/** The hook itself: owns the builder state and exposes state + actions. */
 export function useQueryBuilder(ontologyId: string | null, active: boolean) {
-  const [schema, setSchema] = useState<QuerySchema | null>(null);
-  const [schemaError, setSchemaError] = useState<string | null>(null);
+  const [schema, setSchema] = useState<QuerySchema | null>(null);      // class-level schema
+  const [schemaError, setSchemaError] = useState<string | null>(null); // schema fetch error
   const [loadingSchema, setLoadingSchema] = useState(false);
-  const [state, setState] = useState<QueryState>(emptyQueryState);
-  const [hint, setHint] = useState<string | null>(null);
-  const [openQuery, setOpenQuery] = useState<{ id: string; name: string } | null>(null);
-  const requestedFor = useRef<string | null>(null);
+  const [state, setState] = useState<QueryState>(emptyQueryState);     // the query being built
+  const [hint, setHint] = useState<string | null>(null);               // transient user guidance
+  const [openQuery, setOpenQuery] = useState<{ id: string; name: string } | null>(null); // saved query being edited
+  const requestedFor = useRef<string | null>(null);  // ontology whose schema we already fetched
+  // A ref mirror of state so async callbacks read the latest without re-binding.
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -154,11 +190,13 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
     };
   }, [active, ontologyId]);
 
+  // The live SPARQL, regenerated whenever the state or namespaces change.
   const sparql = useMemo(
     () => generateSparql(state, schema?.namespaces ?? {}),
     [state, schema],
   );
 
+  // A memoized ancestor resolver for the current schema (used all over below).
   const ancestorsOf = useMemo(() => makeAncestorResolver(schema), [schema]);
 
   /** Node IRIs that belong to the current path (classes and pinned nodes). */
@@ -399,10 +437,13 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
   /** Remove a step together with everything hanging off it. */
   const removeStep = useCallback((index: number) => {
     const current = stateRef.current;
+    // Mark the step and, transitively, every step anchored to a doomed one.
     const doomed = new Set<number>([index]);
     current.steps.forEach((step, i) => {
       if (step.link && doomed.has(step.link.anchor)) doomed.add(i);
     });
+    // Keep the survivors, and remap old indices to their new positions so each
+    // surviving link's anchor still points at the right step.
     const kept = current.steps.map((_, i) => i).filter((i) => !doomed.has(i));
     const remap = new Map(kept.map((oldIndex, newIndex) => [oldIndex, newIndex]));
     const steps = kept.map((oldIndex) => {
@@ -429,18 +470,21 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
     }));
   }, []);
 
+  /** Empty the path back to a blank query. */
   const clear = useCallback(() => {
     setState((prev) => ({ ...prev, steps: [] }));
     setHint(null);
     setOpenQuery(null);
   }, []);
 
+  /** Load a saved query's state and remember which saved query it is. */
   const loadState = useCallback((next: QueryState, opened: { id: string; name: string }) => {
     setState({ ...emptyQueryState(), ...next });
     setOpenQuery(opened);
     setHint(null);
   }, []);
 
+  // Everything the graph and the panel need, in one object.
   return {
     schema,
     schemaError,

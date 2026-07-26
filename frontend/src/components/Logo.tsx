@@ -1,8 +1,27 @@
-/**
- * Abstract brand mark: three open arcs turning around a faceted core — an
- * aperture for "studio", and relations converging on a concept for the
- * semantics. Colours come from CSS variables so it follows the theme.
- */
+/*
+================================================================================
+FILE: frontend/src/components/Logo.tsx
+================================================================================
+
+SUMMARY
+    The Semantic Studio brand mark and wordmark shown in the header.
+
+BASIC IDEA
+    An abstract logo: three open arcs turning around a faceted core — an
+    aperture for "studio", and relations converging on a concept for the
+    semantics. Drawn as inline SVG whose colours come from CSS variables, so it
+    follows the active theme. LogoMark is the icon alone; Logo adds the wordmark
+    and tagline.
+
+INPUTS / INPUT SOURCES (props)
+    - LogoMark: an optional pixel size.
+
+EXPECTED OUTPUT
+    - The rendered SVG mark, or the full brand block (mark + text).
+================================================================================
+*/
+
+/** The icon alone: three arcs around a faceted core, sized in pixels. */
 export function LogoMark({ size = 30 }: { size?: number }) {
   return (
     <svg

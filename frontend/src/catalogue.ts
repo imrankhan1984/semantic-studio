@@ -1,20 +1,38 @@
-/**
- * Well-known ontologies offered in the Load dialog.
- *
- * Nothing is fetched until the user picks one, so this costs nothing at
- * startup. Every entry is a stable, publicly reachable URL published by
- * the vocabulary's own maintainers.
- */
+/*
+================================================================================
+FILE: frontend/src/catalogue.ts
+================================================================================
 
+SUMMARY
+    A static list of well-known ontologies offered in the Load dialog's
+    "Suggested" tab (FIBO, schema.org, FOAF, a large SKOS thesaurus).
+
+BASIC IDEA
+    A newcomer with no ontology of their own needs a starting point. This gives
+    them one-click access to real vocabularies. Nothing is fetched until the
+    user picks one, so it costs nothing at startup. Each entry is a stable,
+    publicly reachable URL published by the vocabulary's own maintainers.
+
+INPUTS / INPUT SOURCES
+    - None at runtime; this is a hand-maintained constant.
+
+EXPECTED OUTPUT
+    - CATALOGUE: the array LoadDialog renders as clickable suggestions.
+================================================================================
+*/
+
+/** One suggested ontology shown in the Load dialog. */
 export interface CatalogueEntry {
-  id: string;
-  name: string;
-  description: string;
+  id: string;          // stable key for React lists / loading state
+  name: string;        // display name
+  description: string; // one-line explanation of what it is
   /** Rough guide so nobody is surprised by a long download or parse. */
   size: string;
-  url: string;
+  url: string;         // the file to fetch when picked
 }
 
+// The suggestions, in the order shown. FIBO is first because it is the primary
+// validation target and the richest example of OWL-restriction relationships.
 export const CATALOGUE: CatalogueEntry[] = [
   {
     id: "fibo",

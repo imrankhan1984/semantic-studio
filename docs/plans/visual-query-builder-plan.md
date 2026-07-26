@@ -23,8 +23,8 @@ Add a **Query** mode to Semantic Viewer that lets users build SPARQL queries
 - **Execute** runs the query against the loaded ontology and shows a results
   table.
 
-Reference workflow: RDF Studio's "Visual Query Composer"
-(https://rdf-studio.com). The user's video shows: a PATH chip bar above a
+Reference workflow: a visual "query composer" pattern demonstrated in a
+screen recording the user supplied. The video shows: a PATH chip bar above a
 SPARQL preview pane docked to the right of the graph; numbered class chips
 with predicate chips between them; a per-edge menu with "Make OPTIONAL",
 path modifier radio (`none/*/+/?`), and relationship checkboxes ("check
