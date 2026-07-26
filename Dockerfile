@@ -20,7 +20,7 @@ COPY --from=frontend /build/dist ./static
 ENV STATIC_DIR=/app/static
 # Persisted ontologies live here — mount a volume to keep them across
 # container recreations (docker-compose.yml does this automatically).
-ENV SEMANTIC_VIEWER_DATA_DIR=/data
+ENV SEMANTIC_STUDIO_DATA_DIR=/data
 VOLUME ["/data"]
 EXPOSE 8000
 

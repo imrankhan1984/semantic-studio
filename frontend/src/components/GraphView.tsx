@@ -1,3 +1,4 @@
+import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import Graph from "graphology";
 import { circular } from "graphology-layout";
@@ -16,6 +17,15 @@ interface Props {
   onSelect: (iri: string | null) => void;
   /** bump this counter to re-center the camera on the selected node */
   focusTick: number;
+  /** Query mode paints the current path and its possible continuations. */
+  queryMode?: boolean;
+  queryPathIris?: Set<string>;
+  queryCandidates?: { classes: Set<string>; kinds: Set<string> };
+  /**
+   * Docked beside the canvas (the legend). Rendered as a sibling rather than
+   * an overlay so it can never hide or swallow clicks on nodes beneath it.
+   */
+  leftRail?: React.ReactNode;
 }
 
 // Graphs up to this many nodes animate with a per-frame synchronous
@@ -26,7 +36,20 @@ function nodeSize(degree: number): number {
   return Math.min(16, 3 + Math.log2(degree + 1) * 2.2);
 }
 
-export default function GraphView({ data, theme, hiddenKinds, selected, onSelect, focusTick }: Props) {
+const EMPTY_SET: Set<string> = new Set();
+
+export default function GraphView({
+  data,
+  theme,
+  hiddenKinds,
+  selected,
+  onSelect,
+  focusTick,
+  queryMode = false,
+  queryPathIris,
+  queryCandidates,
+  leftRail,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
   const graphRef = useRef<Graph | null>(null);
@@ -39,11 +62,17 @@ export default function GraphView({ data, theme, hiddenKinds, selected, onSelect
   const selectedRef = useRef<string | null>(null);
   const hiddenRef = useRef<Set<string>>(hiddenKinds);
   const paletteRef = useRef(PALETTES[theme]);
+  const queryModeRef = useRef(queryMode);
+  const pathRef = useRef<Set<string>>(queryPathIris ?? EMPTY_SET);
+  const candidateRef = useRef(queryCandidates);
   const [layoutRunning, setLayoutRunning] = useState(false);
 
   selectedRef.current = selected;
   hiddenRef.current = hiddenKinds;
   paletteRef.current = PALETTES[theme];
+  queryModeRef.current = queryMode;
+  pathRef.current = queryPathIris ?? EMPTY_SET;
+  candidateRef.current = queryCandidates;
 
   const stopLayout = () => {
     window.clearTimeout(layoutTimer.current);
@@ -159,6 +188,28 @@ export default function GraphView({ data, theme, hiddenKinds, selected, onSelect
           res.hidden = true;
           return res;
         }
+        if (queryModeRef.current) {
+          const hov = hoveredRef.current;
+          const inPath = pathRef.current.has(node);
+          const candidates = candidateRef.current;
+          const isCandidate =
+            !candidates ||
+            candidates.classes.has(node) ||
+            candidates.kinds.has(attrs.kind as string);
+          if (inPath) {
+            res.highlighted = true;
+            res.zIndex = 3;
+            res.size = (attrs.size as number) + 3;
+          } else if (node === hov) {
+            res.highlighted = true;
+            res.zIndex = 3;
+          } else if (!isCandidate) {
+            res.color = palette.dimNode;
+            res.label = "";
+            res.zIndex = 0;
+          }
+          return res;
+        }
         const sel = selectedRef.current;
         const hov = hoveredRef.current;
         const focusNode = hov ?? sel;
@@ -194,7 +245,25 @@ export default function GraphView({ data, theme, hiddenKinds, selected, onSelect
           res.hidden = true;
           return res;
         }
-        const focusNode = hoveredRef.current ?? selectedRef.current;
+        if (queryModeRef.current) {
+          // Match the node rule: an edge between two nodes that cannot take
+          // part in the query recedes, so the steppable graph stands out.
+          const candidates = candidateRef.current;
+          const relevant = (node: string) => {
+            if (pathRef.current.has(node)) return true;
+            if (!candidates) return true;
+            const kind = g.getNodeAttribute(node, "kind") as string;
+            return candidates.classes.has(node) || candidates.kinds.has(kind);
+          };
+          if (!relevant(src) && !relevant(dst)) {
+            res.color = palette.dimEdge;
+            res.label = "";
+            res.zIndex = 0;
+          }
+        }
+        const focusNode = queryModeRef.current
+          ? hoveredRef.current
+          : hoveredRef.current ?? selectedRef.current;
         if (focusNode) {
           if (src === focusNode || dst === focusNode) {
             res.size = 2;
@@ -306,14 +375,14 @@ export default function GraphView({ data, theme, hiddenKinds, selected, onSelect
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
-  // Refresh rendering when filters, selection or theme change.
+  // Refresh rendering when filters, selection, theme or query state change.
   useEffect(() => {
     const renderer = sigmaRef.current;
     if (!renderer) return;
     renderer.setSetting("labelColor", { color: PALETTES[theme].label });
     renderer.setSetting("edgeLabelColor", { color: PALETTES[theme].edgeLabel });
     renderer.refresh({ skipIndexation: true });
-  }, [hiddenKinds, selected, theme]);
+  }, [hiddenKinds, selected, theme, queryMode, queryPathIris, queryCandidates]);
 
   // Center the camera on the selected node — but only for explicit focus
   // requests (search picks, detail-panel navigation), not plain graph clicks.
@@ -330,45 +399,85 @@ export default function GraphView({ data, theme, hiddenKinds, selected, onSelect
 
   return (
     <div className="graph-wrap">
-      <div ref={containerRef} className="graph-container" />
-      {data && (
-        <div className="graph-controls">
-          <button
-            onClick={() => (layoutRunning ? stopLayout() : startLayout(15000))}
-            title="Toggle the ForceAtlas2 layout"
-          >
-            {layoutRunning ? "⏸ Stop layout" : "▶ Run layout"}
-          </button>
-          <button
-            onClick={() => {
-              const camera = sigmaRef.current?.getCamera();
-              camera?.animatedReset({ duration: 400 });
-            }}
-            title="Reset zoom to fit the graph"
-          >
-            ⤢ Fit
-          </button>
-          <button
-            onClick={() => {
-              const renderer = sigmaRef.current;
-              if (!renderer) return;
-              void downloadAsPNG(renderer, {
-                fileName: "ontology-graph",
-                backgroundColor: paletteRef.current.background,
-              });
-            }}
-            title="Save the current graph view as a PNG image"
-          >
-            ⬇ PNG
-          </button>
+      <div className="graph-toolbar">
+        {data ? (
+          <>
+            <button
+              className="tool-btn"
+              onClick={() => sigmaRef.current?.getCamera().animatedReset({ duration: 400 })}
+              title="Zoom out to fit the whole graph"
+            >
+              ⤢ <span>Fit</span>
+            </button>
+            <button
+              className="tool-btn"
+              onClick={() => {
+                const camera = sigmaRef.current?.getCamera();
+                if (camera) camera.animatedZoom({ duration: 200 });
+              }}
+              title="Zoom in"
+            >
+              ＋
+            </button>
+            <button
+              className="tool-btn"
+              onClick={() => {
+                const camera = sigmaRef.current?.getCamera();
+                if (camera) camera.animatedUnzoom({ duration: 200 });
+              }}
+              title="Zoom out"
+            >
+              －
+            </button>
+            <div className="spacer" />
+            {/* Secondary: the layout runs automatically on load and while
+                dragging, so this is only for re-settling a big or fiddled
+                graph. Icon-only to keep it out of the way. */}
+            <button
+              className={layoutRunning ? "tool-btn icon-only active" : "tool-btn icon-only"}
+              onClick={() => (layoutRunning ? stopLayout() : startLayout(15000))}
+              aria-label={layoutRunning ? "Stop the layout" : "Re-run the layout"}
+              title={
+                layoutRunning
+                  ? "Stop the layout simulation"
+                  : "Re-run the layout to untangle the graph"
+              }
+            >
+              {layoutRunning ? "⏸" : "▶"}
+            </button>
+            <button
+              className="tool-btn"
+              onClick={() => {
+                const renderer = sigmaRef.current;
+                if (!renderer) return;
+                void downloadAsPNG(renderer, {
+                  fileName: "ontology-graph",
+                  backgroundColor: paletteRef.current.background,
+                });
+              }}
+              title="Save the current graph view as a PNG image"
+            >
+              ⬇ <span>PNG</span>
+            </button>
+          </>
+        ) : (
+          <span className="graph-toolbar-hint">No ontology loaded</span>
+        )}
+      </div>
+      <div className="graph-body">
+        {data ? leftRail : null}
+        <div className="graph-canvas-wrap">
+          <div ref={containerRef} className="graph-container" />
+          {!data && (
+            <div className="graph-empty">
+              <p>No ontology loaded yet.</p>
+              <p className="hint">
+                Use “Load” to upload a file or fetch one from a URL / GitHub.
+              </p>
+            </div>
+          )}
         </div>
-      )}
-      {!data && (
-        <div className="graph-empty">
-          <p>No ontology loaded yet.</p>
-          <p className="hint">Use “Load ontology” to upload a file or fetch one from a URL / GitHub.</p>
-        </div>
-      )}
+      </div>
     </div>
   );
 }

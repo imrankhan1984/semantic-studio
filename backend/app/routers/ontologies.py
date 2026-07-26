@@ -9,7 +9,9 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from ..graph_builder import node_details, search_nodes
-from ..store import ParseError, detect_format, store
+from ..query_schema import describe_query_node
+from ..sparql_exec import QueryError, QueryTimeout, execute_select
+from ..store import ParseError, detect_format, saved_queries, store
 
 router = APIRouter(prefix="/api/ontologies", tags=["ontologies"])
 
@@ -57,6 +59,10 @@ class FetchRequest(BaseModel):
     url: str
     format: Optional[str] = None
     name: Optional[str] = None
+
+
+class SparqlRequest(BaseModel):
+    query: str
 
 
 def _get_or_404(oid: str):
@@ -150,6 +156,10 @@ async def fetch_ontology(request: FetchRequest) -> dict:
 def delete_ontology(oid: str) -> dict:
     if not store.remove(oid):
         raise HTTPException(status_code=404, detail=f"Unknown ontology id: {oid}")
+    # Saved queries belong to an ontology; leaving them would orphan them
+    # because a re-loaded file gets a fresh id.
+    for entry in saved_queries.list(ontology_id=oid):
+        saved_queries.delete(entry["id"])
     return {"deleted": oid}
 
 
@@ -171,3 +181,33 @@ def get_node(oid: str, iri: str = Query(...)) -> dict:
 def search(oid: str, q: str = Query(...), limit: int = Query(default=25, le=100)) -> list[dict]:
     ontology = _get_or_404(oid)
     return search_nodes(ontology.viz(), q, limit)
+
+
+@router.get("/{oid}/query-schema")
+def get_query_schema(oid: str) -> dict:
+    """Class-level schema powering the visual query builder."""
+    return _get_or_404(oid).query_schema()
+
+
+@router.get("/{oid}/query-node")
+def get_query_node(oid: str, iri: str = Query(...)) -> dict:
+    """Map a clicked graph node to the class (and optional instance pin)."""
+    ontology = _get_or_404(oid)
+    described = describe_query_node(ontology.ensure_loaded(), iri, ontology.query_schema())
+    if described is None:
+        raise HTTPException(
+            status_code=404,
+            detail="This node is not a class and has no type that can be queried.",
+        )
+    return described
+
+
+@router.post("/{oid}/sparql")
+def run_sparql(oid: str, request: SparqlRequest) -> dict:
+    ontology = _get_or_404(oid)
+    try:
+        return execute_select(ontology.ensure_loaded(), request.query)
+    except QueryTimeout as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except QueryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

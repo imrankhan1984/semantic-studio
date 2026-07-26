@@ -35,11 +35,26 @@ export default function Legend({ theme, kindCounts, edgeKinds, hiddenKinds, onTo
   if (kinds.length === 0) return null;
   const palette = PALETTES[theme];
 
+  if (collapsed) {
+    return (
+      <div className="legend collapsed">
+        <button
+          className="legend-toggle"
+          onClick={() => setCollapsed(false)}
+          title="Show legend and filters"
+        >
+          <span className="legend-toggle-icon">▸</span>
+          <span className="legend-toggle-text">LEGEND &amp; FILTERS</span>
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="legend">
-      <div className="legend-header" onClick={() => setCollapsed(!collapsed)}>
-        <strong>Legend & filters</strong>
-        <span>{collapsed ? "▸" : "▾"}</span>
+      <div className="legend-header" onClick={() => setCollapsed(true)}>
+        <strong>Legend &amp; filters</strong>
+        <span title="Collapse">◂</span>
       </div>
       {!collapsed && (
         <>

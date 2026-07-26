@@ -3,11 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Semantic Viewer</title>
+    <title>Semantic Studio</title>
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <meta name="description" content="Semantic Studio — an ontology workspace for RDF, RDFS, OWL and SKOS." />
     <script>
       // Apply the saved theme before the app renders to avoid a flash.
       (function () {
-        var saved = localStorage.getItem("semantic-viewer-theme");
+        var saved =
+          localStorage.getItem("semantic-studio-theme") ||
+          localStorage.getItem("semantic-viewer-theme");
         var theme =
           saved === "light" || saved === "dark"
             ? saved

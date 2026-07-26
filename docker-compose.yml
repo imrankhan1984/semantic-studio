@@ -1,14 +1,14 @@
 services:
-  semantic-viewer:
+  semantic-studio:
     build: .
-    image: semantic-viewer:latest
+    image: semantic-studio:latest
     ports:
       - "8000:8000"
     volumes:
       # Ontologies loaded in the app are persisted here and survive
       # container rebuilds and recreations.
-      - semantic-viewer-data:/data
+      - semantic-studio-data:/data
     restart: unless-stopped
 
 volumes:
-  semantic-viewer-data:
+  semantic-studio-data:

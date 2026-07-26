@@ -1,4 +1,82 @@
+import type { QueryState } from "./sparql/types";
+
 export type Theme = "dark" | "light";
+
+export type AppMode = "explore" | "query";
+
+/* --- visual query builder ------------------------------------------------ */
+
+export interface SchemaClass {
+  iri: string;
+  label: string;
+  prefixed: string;
+  instances: number;
+  kind: string;
+}
+
+export interface SchemaLink {
+  source: string;
+  target: string;
+  predicate: string;
+  label: string;
+  prefixed: string;
+  declared: boolean;
+  count: number;
+}
+
+export interface SchemaDataProp {
+  predicate: string;
+  label: string;
+  prefixed: string;
+  datatype: string;
+  datatypePrefixed: string;
+  count: number;
+}
+
+export interface QuerySchema {
+  classes: SchemaClass[];
+  links: SchemaLink[];
+  /** Direct parents per class; declared links and properties inherit down. */
+  superClasses: Record<string, string[]>;
+  dataProperties: Record<string, SchemaDataProp[]>;
+  namespaces: Record<string, string>;
+  truncated: boolean;
+}
+
+export interface QueryNodeInfo {
+  iri: string;
+  isClass: boolean;
+  label: string;
+  types: SchemaClass[];
+}
+
+export interface SparqlTerm {
+  type: "uri" | "literal" | "bnode" | "unknown";
+  value: string;
+  label?: string;
+  prefixed?: string;
+  lang?: string | null;
+  datatype?: string | null;
+}
+
+export interface SparqlResults {
+  vars: string[];
+  rows: (SparqlTerm | null)[][];
+  rowCount: number;
+  truncated: boolean;
+  durationMs: number;
+}
+
+export interface SavedQuery {
+  id: string;
+  name: string;
+  ontologyId: string;
+  ontologyName: string;
+  state: QueryState;
+  sparql: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface VizNode {
   id: string;

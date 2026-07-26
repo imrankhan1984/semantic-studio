@@ -4,11 +4,17 @@ import DetailPanel from "./components/DetailPanel";
 import GraphView from "./components/GraphView";
 import Legend from "./components/Legend";
 import LoadDialog from "./components/LoadDialog";
+import Logo from "./components/Logo";
+import QueryPanel from "./components/QueryPanel";
 import SearchBox from "./components/SearchBox";
-import type { OntologySummary, Theme, VizGraph } from "./types";
+import { IconExplore, IconLoad, IconMoon, IconQuery, IconSun, IconTrash } from "./components/icons";
+import { useQueryBuilder } from "./sparql/useQueryBuilder";
+import type { AppMode, OntologySummary, Theme, VizGraph } from "./types";
 
 function initialTheme(): Theme {
-  const saved = localStorage.getItem("semantic-viewer-theme");
+  const saved =
+    localStorage.getItem("semantic-studio-theme") ??
+    localStorage.getItem("semantic-viewer-theme"); // pre-rename preference
   if (saved === "dark" || saved === "light") return saved;
   return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
@@ -24,10 +30,12 @@ export default function App() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [loadingGraph, setLoadingGraph] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<AppMode>("explore");
+  const builder = useQueryBuilder(activeId, mode === "query");
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem("semantic-viewer-theme", theme);
+    localStorage.setItem("semantic-studio-theme", theme);
   }, [theme]);
 
   useEffect(() => {
@@ -87,6 +95,29 @@ export default function App() {
     if (iri) setFocusTick((t) => t + 1);
   }, []);
 
+  // In Explore mode a click opens the detail panel; in Query mode it
+  // appends a step to the query being built.
+  const onGraphSelect = useCallback(
+    (iri: string | null) => {
+      if (mode === "query") {
+        if (iri) void builder.addNode(iri);
+        return;
+      }
+      setSelected(iri);
+    },
+    [mode, builder],
+  );
+
+  // Searching in Query mode adds the match to the path, so a query can be
+  // built by name without hunting for a node in a large graph.
+  const onSearchPick = useCallback(
+    (iri: string) => {
+      selectAndFocus(iri);
+      if (mode === "query") void builder.addNode(iri);
+    },
+    [mode, builder, selectAndFocus],
+  );
+
   const edgeKinds = useMemo(() => {
     if (!graphData) return [];
     const kinds = new Set(graphData.edges.map((e) => e.kind));
@@ -95,44 +126,92 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="toolbar">
-        <div className="brand">
-          <span className="brand-mark">◉</span> Semantic Viewer
-        </div>
-        <button className="primary" onClick={() => setDialogOpen(true)}>
-          + Load ontology
-        </button>
-        {ontologies.length > 0 && (
-          <select
-            value={activeId ?? ""}
-            onChange={(e) => setActiveId(e.target.value || null)}
-            title="Active ontology"
-          >
-            {ontologies.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name} ({o.triples.toLocaleString()} triples)
-              </option>
-            ))}
-          </select>
-        )}
-        {active && (
+      <header className="app-header">
+        <div className="nav-row">
+          <Logo />
+          <nav className="main-nav" role="tablist" aria-label="Workspace">
+            <button
+              className="nav-item"
+              onClick={() => setDialogOpen(true)}
+              title="Load an ontology from a file or a URL"
+            >
+              <IconLoad />
+              <span>Load</span>
+            </button>
+            <button
+              role="tab"
+              aria-selected={mode === "explore"}
+              className={mode === "explore" ? "nav-item active" : "nav-item"}
+              onClick={() => setMode("explore")}
+              title="Browse the ontology and inspect entities"
+            >
+              <IconExplore />
+              <span>Explore</span>
+            </button>
+            <button
+              role="tab"
+              aria-selected={mode === "query"}
+              className={mode === "query" ? "nav-item active" : "nav-item"}
+              onClick={() => setMode("query")}
+              title="Build a SPARQL query by clicking the graph"
+            >
+              <IconQuery />
+              <span>Query</span>
+            </button>
+          </nav>
+          <div className="spacer" />
           <button
-            className="ghost"
-            onClick={() => void onRemove()}
-            title="Remove this ontology and delete its stored copy"
+            className="header-icon-btn"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            aria-label="Toggle colour theme"
           >
-            Remove
+            {theme === "dark" ? <IconSun /> : <IconMoon />}
           </button>
-        )}
-        <div className="spacer" />
-        <SearchBox ontologyId={activeId} theme={theme} onPick={selectAndFocus} />
-        <button
-          className="ghost icon-btn theme-toggle"
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-        >
-          {theme === "dark" ? "☀" : "🌙"}
-        </button>
+        </div>
+
+        <div className="context-row">
+          {ontologies.length > 0 ? (
+            <>
+              <label className="context-label" htmlFor="ontology-select">
+                ONTOLOGY
+              </label>
+              <select
+                id="ontology-select"
+                value={activeId ?? ""}
+                onChange={(e) => setActiveId(e.target.value || null)}
+                title="Active ontology"
+              >
+                {ontologies.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name} ({o.triples.toLocaleString()} triples)
+                  </option>
+                ))}
+              </select>
+              {active && (
+                <button
+                  className="ghost icon-btn danger"
+                  onClick={() => void onRemove()}
+                  title="Remove this ontology and delete its stored copy"
+                  aria-label="Remove ontology"
+                >
+                  <IconTrash />
+                </button>
+              )}
+            </>
+          ) : (
+            <span className="context-label">NO ONTOLOGY LOADED</span>
+          )}
+          <div className="spacer" />
+          <SearchBox
+            ontologyId={activeId}
+            theme={theme}
+            onPick={onSearchPick}
+            placeholder={
+              mode === "query" ? "Search to add a step…" : "Search concepts, properties…"
+            }
+          />
+        </div>
       </header>
 
       {error && (
@@ -148,33 +227,48 @@ export default function App() {
             theme={theme}
             hiddenKinds={hiddenKinds}
             selected={selected}
-            onSelect={setSelected}
+            onSelect={onGraphSelect}
             focusTick={focusTick}
+            queryMode={mode === "query"}
+            queryPathIris={builder.pathIris}
+            queryCandidates={builder.candidates}
+            leftRail={
+              graphData ? (
+                <Legend
+                  theme={theme}
+                  kindCounts={graphData.stats.kindCounts}
+                  edgeKinds={edgeKinds}
+                  hiddenKinds={hiddenKinds}
+                  onToggleKind={(kind) =>
+                    setHiddenKinds((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(kind)) next.delete(kind);
+                      else next.add(kind);
+                      return next;
+                    })
+                  }
+                />
+              ) : null
+            }
           />
-          {graphData && (
-            <Legend
-              theme={theme}
-              kindCounts={graphData.stats.kindCounts}
-              edgeKinds={edgeKinds}
-              hiddenKinds={hiddenKinds}
-              onToggleKind={(kind) =>
-                setHiddenKinds((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(kind)) next.delete(kind);
-                  else next.add(kind);
-                  return next;
-                })
-              }
-            />
-          )}
           {loadingGraph && <div className="loading-overlay">Building graph…</div>}
         </div>
-        <DetailPanel
-          ontologyId={activeId}
-          iri={selected}
-          onNavigate={selectAndFocus}
-          onClose={() => setSelected(null)}
-        />
+        {mode === "query" ? (
+          <QueryPanel
+            ontologyId={activeId}
+            theme={theme}
+            builder={builder}
+            onPickIri={selectAndFocus}
+            ontologyTriples={active?.triples ?? 0}
+          />
+        ) : (
+          <DetailPanel
+            ontologyId={activeId}
+            iri={selected}
+            onNavigate={selectAndFocus}
+            onClose={() => setSelected(null)}
+          />
+        )}
       </main>
 
       <footer className="status-bar">
