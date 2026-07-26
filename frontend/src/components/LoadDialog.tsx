@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { fetchOntology, uploadOntology } from "../api";
+import { CATALOGUE } from "../catalogue";
 import type { OntologySummary } from "../types";
 
 interface Props {
@@ -8,7 +9,8 @@ interface Props {
 }
 
 export default function LoadDialog({ onLoaded, onClose }: Props) {
-  const [tab, setTab] = useState<"file" | "url">("file");
+  const [tab, setTab] = useState<"file" | "url" | "suggested">("suggested");
+  const [fetching, setFetching] = useState<string | null>(null);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,6 +42,20 @@ export default function LoadDialog({ onLoaded, onClose }: Props) {
     }
   };
 
+  const loadSuggested = async (entry: (typeof CATALOGUE)[number]) => {
+    setBusy(true);
+    setFetching(entry.id);
+    setError(null);
+    try {
+      onLoaded(await fetchOntology(entry.url));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      setFetching(null);
+    }
+  };
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -49,6 +65,12 @@ export default function LoadDialog({ onLoaded, onClose }: Props) {
         </div>
 
         <div className="tabs">
+          <button
+            className={tab === "suggested" ? "tab active" : "tab"}
+            onClick={() => setTab("suggested")}
+          >
+            Suggested
+          </button>
           <button className={tab === "file" ? "tab active" : "tab"} onClick={() => setTab("file")}>
             Local file
           </button>
@@ -56,6 +78,30 @@ export default function LoadDialog({ onLoaded, onClose }: Props) {
             URL / GitHub
           </button>
         </div>
+
+        {tab === "suggested" && (
+          <div className="catalogue">
+            <p className="hint">
+              Well-known public ontologies — nothing is downloaded until you pick one.
+            </p>
+            {CATALOGUE.map((entry) => (
+              <button
+                key={entry.id}
+                className="catalogue-entry"
+                disabled={busy}
+                onClick={() => void loadSuggested(entry)}
+                title={entry.url}
+              >
+                <span className="catalogue-name">
+                  {entry.name}
+                  {fetching === entry.id && <span className="catalogue-loading"> · loading…</span>}
+                </span>
+                <span className="catalogue-desc">{entry.description}</span>
+                <span className="catalogue-size">{entry.size}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         {tab === "file" && (
           <div

@@ -20,7 +20,10 @@ export interface SchemaLink {
   predicate: string;
   label: string;
   prefixed: string;
+  /** Stated through rdfs:domain / rdfs:range. */
   declared: boolean;
+  /** Stated through an owl:Restriction axiom. */
+  restriction?: boolean;
   count: number;
 }
 

@@ -1,8 +1,14 @@
 from pathlib import Path
 
+from rdflib import Graph
+
 from app.store import OntologyStore
 
 EXAMPLE = Path(__file__).parent.parent.parent / "examples" / "space-exploration.ttl"
+
+# Derived from the file rather than hard-coded, so extending the example
+# ontology does not break unrelated persistence tests.
+EXAMPLE_TRIPLES = len(Graph().parse(EXAMPLE, format="turtle"))
 
 
 def _add_example(store: OntologyStore):
@@ -20,7 +26,7 @@ def test_add_persists_files(tmp_path):
     assert (tmp_path / "ontologies" / f"{ontology.id}.rdf").exists()
     assert (tmp_path / "ontologies" / f"{ontology.id}.meta.json").exists()
     summary = ontology.summary()
-    assert summary["triples"] == 115
+    assert summary["triples"] == EXAMPLE_TRIPLES
     assert summary["loaded"] is True
 
 
@@ -37,16 +43,16 @@ def test_previous_session_restored_lazily(tmp_path):
     summary = restored.summary()
     assert restored.graph is None
     assert summary["loaded"] is False
-    assert summary["triples"] == 115
-    assert summary["nodes"] == 30
+    assert summary["triples"] == EXAMPLE_TRIPLES
+    assert summary["nodes"] > 0
     assert summary["name"] == "space-exploration.ttl"
 
     # First real use parses the persisted bytes.
     graph = restored.ensure_loaded()
-    assert len(graph) == 115
+    assert len(graph) == EXAMPLE_TRIPLES
     assert restored.summary()["loaded"] is True
     viz = restored.viz()
-    assert viz["stats"]["nodeCount"] == 30
+    assert viz["stats"]["nodeCount"] == summary["nodes"]
 
 
 def test_multiple_restores_keep_insertion_order(tmp_path):

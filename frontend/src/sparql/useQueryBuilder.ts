@@ -24,6 +24,7 @@ export interface LinkOption {
   prefixed: string;
   inverse: boolean;
   declared: boolean;
+  restriction?: boolean;
   count: number;
   /** True when the link comes from an ancestor rather than the class itself. */
   inherited?: boolean;
@@ -103,7 +104,11 @@ export function linkOptionsBetween(
     (a, b) =>
       // Links on the class itself before ones inherited from an ancestor.
       Number(!!a.inherited) - Number(!!b.inherited) ||
+      // Then whatever the data actually contains.
+      Number(b.count > 0) - Number(a.count > 0) ||
+      // Then rdfs:domain/range, then relationships read from restrictions.
       Number(b.declared) - Number(a.declared) ||
+      Number(!!a.restriction) - Number(!!b.restriction) ||
       b.count - a.count ||
       a.label.localeCompare(b.label),
   );

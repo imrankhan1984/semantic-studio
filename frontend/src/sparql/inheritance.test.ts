@@ -90,6 +90,28 @@ describe("linkOptionsBetween with inheritance", () => {
     expect(options[0].inherited).toBe(false);
   });
 
+  it("ranks domain/range links above ones read from restrictions", () => {
+    const extended: QuerySchema = {
+      ...schema,
+      links: [
+        ...schema.links,
+        {
+          source: `${NS}Party`,
+          target: `${NS}Contract`,
+          predicate: `${NS}signs`,
+          label: "signs",
+          prefixed: ":signs",
+          declared: false,
+          restriction: true,
+          count: 0,
+        },
+      ],
+    };
+    const options = linkOptionsBetween(extended, `${NS}Bank`, `${NS}Loan`, ancestorsOf);
+    expect(options.map((o) => o.predicate)).toEqual([`${NS}isPartyTo`, `${NS}signs`]);
+    expect(options[1].restriction).toBe(true);
+  });
+
   it("ranks direct links above inherited ones", () => {
     const extended: QuerySchema = {
       ...schema,
