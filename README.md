@@ -9,10 +9,6 @@ A self-contained web application that turns Semantic Web ontologies and
 vocabularies into an interactive, force-directed graph — and lets you query
 them by clicking, without writing SPARQL by hand.
 
-> Formerly *Semantic Viewer*. The repository was renamed to
-> `semantic-studio`; GitHub redirects the old URL, so existing clones keep
-> working.
-
 ## Features
 
 - **Load ontologies** three ways:
