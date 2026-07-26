@@ -1,6 +1,7 @@
 import type { QueryState } from "./sparql/types";
 import type {
   NodeDetails,
+  OntologySource,
   OntologySummary,
   QueryNodeInfo,
   QuerySchema,
@@ -61,6 +62,12 @@ export function getNodeDetails(id: string, iri: string): Promise<NodeDetails> {
 export function searchNodes(id: string, q: string): Promise<VizNode[]> {
   return fetch(`/api/ontologies/${id}/search?q=${encodeURIComponent(q)}`).then((r) =>
     handle<VizNode[]>(r),
+  );
+}
+
+export function getSource(id: string, pretty = false): Promise<OntologySource> {
+  return fetch(`/api/ontologies/${id}/source?pretty=${pretty}`).then((r) =>
+    handle<OntologySource>(r),
   );
 }
 

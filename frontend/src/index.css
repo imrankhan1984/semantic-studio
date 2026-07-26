@@ -294,6 +294,87 @@ select:focus {
   flex: 1;
   display: flex;
   min-height: 0;
+  position: relative;
+}
+
+/* --- source view ------------------------------------------------------ */
+
+.source-view {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.source-view.empty {
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+}
+
+.source-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.mode-switch.small .mode-tab {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.source-search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.source-search input {
+  width: 190px;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.source-match-count {
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 78px;
+}
+
+.source-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.source-scroll {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding: 8px 0 24px;
+}
+
+.source-scroll pre {
+  margin: 0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.source-line.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.show-more {
+  margin: 12px;
+  font-size: 12px;
 }
 
 .graph-area {

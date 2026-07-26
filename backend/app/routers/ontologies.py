@@ -17,6 +17,11 @@ router = APIRouter(prefix="/api/ontologies", tags=["ontologies"])
 
 MAX_FETCH_BYTES = 200 * 1024 * 1024  # 200 MB safety cap
 
+# How much source text the viewer receives in one request. The browser has
+# to render this, so it is deliberately far below the parse limit.
+SOURCE_MAX_BYTES = 2 * 1024 * 1024
+SOURCE_HARD_MAX_BYTES = 16 * 1024 * 1024
+
 GITHUB_BLOB_RE = re.compile(
     r"^https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/(?:blob|raw)/(.+)$"
 )
@@ -181,6 +186,49 @@ def get_node(oid: str, iri: str = Query(...)) -> dict:
 def search(oid: str, q: str = Query(...), limit: int = Query(default=25, le=100)) -> list[dict]:
     ontology = _get_or_404(oid)
     return search_nodes(ontology.viz(), q, limit)
+
+
+@router.get("/{oid}/source")
+def get_source(
+    oid: str,
+    pretty: bool = Query(default=False),
+    max_bytes: int = Query(default=SOURCE_MAX_BYTES, le=SOURCE_HARD_MAX_BYTES),
+) -> dict:
+    """The ontology as text: the original file, or re-serialized Turtle.
+
+    Large files are truncated at a line boundary so the browser is never
+    asked to render tens of megabytes at once.
+    """
+    ontology = _get_or_404(oid)
+    if pretty:
+        text = ontology.pretty_turtle()
+        fmt = "turtle"
+    else:
+        try:
+            raw = ontology.data_path.read_bytes()
+        except OSError as exc:
+            raise HTTPException(
+                status_code=404, detail="The stored source file is no longer available."
+            ) from exc
+        # Normalized so a file written on Windows does not render with a
+        # stray carriage return at the end of every line.
+        text = raw.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+        fmt = ontology.format
+
+    total_bytes = len(text.encode("utf-8", errors="replace"))
+    truncated = len(text) > max_bytes
+    if truncated:
+        cut = text.rfind("\n", 0, max_bytes)
+        text = text[: cut if cut > 0 else max_bytes]
+    return {
+        "text": text,
+        "format": fmt,
+        "pretty": pretty,
+        "truncated": truncated,
+        "bytes": total_bytes,
+        "lines": text.count("\n") + 1,
+        "name": ontology.name,
+    }
 
 
 @router.get("/{oid}/query-schema")

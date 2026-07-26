@@ -36,6 +36,16 @@ export function IconExplore() {
   );
 }
 
+export function IconView() {
+  return (
+    <svg {...base}>
+      <path d="M5 4h9l5 5v11a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1z" />
+      <path d="M14 4v5h5" />
+      <path d="M8 13h7M8 17h5" />
+    </svg>
+  );
+}
+
 export function IconQuery() {
   return (
     <svg {...base}>

@@ -2,7 +2,17 @@ import type { QueryState } from "./sparql/types";
 
 export type Theme = "dark" | "light";
 
-export type AppMode = "explore" | "query";
+export type AppMode = "view" | "explore" | "query";
+
+export interface OntologySource {
+  text: string;
+  format: string;
+  pretty: boolean;
+  truncated: boolean;
+  bytes: number;
+  lines: number;
+  name: string;
+}
 
 /* --- visual query builder ------------------------------------------------ */
 
