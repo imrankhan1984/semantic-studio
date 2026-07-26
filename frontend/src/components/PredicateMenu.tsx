@@ -1,6 +1,33 @@
+/*
+================================================================================
+FILE: frontend/src/components/PredicateMenu.tsx
+================================================================================
+
+SUMMARY
+    The popover for a predicate (link) chip: toggle OPTIONAL, pick a path
+    modifier (none / * / + / ?), and check one or more relationships (each with
+    a direction and provenance badge) — checking several forms an alternation.
+
+BASIC IDEA
+    Presentational over one StepLink and the list of candidate LinkOptions. It
+    calls onChange with a partial StepLink patch; the hook applies it. At least
+    one relationship must stay checked.
+
+INPUTS / INPUT SOURCES (props)
+    - link: the current hop being edited.
+    - anchorLabel / targetLabel: the two classes it connects.
+    - options: every relationship that could connect them (from the hook).
+    - onChange, onClose: edit and dismiss.
+
+EXPECTED OUTPUT
+    - The rendered menu; onChange patches to the hop.
+================================================================================
+*/
+
 import type { LinkOption } from "../sparql/useQueryBuilder";
 import type { Modifier, StepLink } from "../sparql/types";
 
+// The path-modifier radio options, with human labels and hints.
 const MODIFIERS: { value: Modifier; label: string; hint: string }[] = [
   { value: "", label: "none (exact)", hint: "Exactly one hop" },
   { value: "*", label: "* (zero or more)", hint: "Matches 0 or more hops" },

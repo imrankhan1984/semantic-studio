@@ -1,3 +1,27 @@
+"""
+================================================================================
+FILE: backend/tests/test_fetch_restrictions.py
+================================================================================
+
+SUMMARY
+    Tests the URL-fetch guard rails: which hosts are allowed, how GitHub
+    Enterprise URLs are rejected, and how github.com "blob" URLs are rewritten
+    to raw download URLs. Also confirms plain file upload still works.
+
+BASIC IDEA
+    The /fetch endpoint and its helpers (is_github_enterprise_host, to_raw_url)
+    decide what may be downloaded. These tests exercise those rules directly
+    and via the HTTP layer using FastAPI's TestClient.
+
+INPUTS / INPUT SOURCES
+    - Constructed URLs (github.com, GitHub Enterprise-looking, arbitrary).
+    - examples/space-exploration.ttl for the upload path.
+
+EXPECTED OUTPUT
+    - Pass/fail per assertion; failures indicate the fetch policy regressed.
+================================================================================
+"""
+
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -7,6 +31,7 @@ from app.routers.ontologies import is_github_enterprise_host, to_raw_url
 
 EXAMPLE = Path(__file__).parent.parent.parent / "examples" / "space-exploration.ttl"
 
+# In-process HTTP client that drives the FastAPI app without a real server.
 client = TestClient(app)
 
 

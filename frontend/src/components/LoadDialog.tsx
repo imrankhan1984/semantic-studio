@@ -1,3 +1,28 @@
+/*
+================================================================================
+FILE: frontend/src/components/LoadDialog.tsx
+================================================================================
+
+SUMMARY
+    The modal for adding an ontology, with three tabs: Suggested (the built-in
+    catalogue), Local file (drag/drop or picker), and URL / GitHub.
+
+BASIC IDEA
+    Each tab is a different way to obtain an ontology; all three end by calling
+    uploadOntology or fetchOntology and then onLoaded with the resulting
+    summary. Busy/error state gives feedback while a large file downloads or
+    parses. The GHE limitation is explained inline on the URL tab.
+
+INPUTS / INPUT SOURCES (props)
+    - onLoaded: called with the new ontology's summary on success.
+    - onClose: dismiss the dialog.
+    Plus the CATALOGUE constant and the api upload/fetch functions.
+
+EXPECTED OUTPUT
+    - The rendered modal; on success, a loaded ontology reported via onLoaded.
+================================================================================
+*/
+
 import { useRef, useState } from "react";
 import { fetchOntology, uploadOntology } from "../api";
 import { CATALOGUE } from "../catalogue";

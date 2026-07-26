@@ -1,3 +1,26 @@
+/*
+================================================================================
+FILE: frontend/src/sparql/describe.test.ts
+================================================================================
+
+SUMMARY
+    Unit tests for the plain-English describer: empty query, single class,
+    pinned start, hop ordering, reversed/repeated/optional hop wording, shown
+    properties vs filter conditions, counting (single and grouped), and
+    pluralisation of awkward labels.
+
+BASIC IDEA
+    Feed hand-built QueryStates plus a fixed predicate-label map into
+    describeQuery and assert the exact sentence fragments it should produce.
+
+INPUTS / INPUT SOURCES
+    - Hand-constructed QueryState objects and a label lookup.
+
+EXPECTED OUTPUT
+    - Pass/fail per assertion; failures indicate a describer regression.
+================================================================================
+*/
+
 import { describe, expect, it } from "vitest";
 import { describeQuery } from "./describe";
 import { emptyQueryState } from "./types";

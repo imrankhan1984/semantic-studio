@@ -1,3 +1,26 @@
+"""
+================================================================================
+FILE: backend/tests/test_source_view.py
+================================================================================
+
+SUMMARY
+    Tests the /source endpoint that powers the View tab: the original file is
+    returned verbatim, the "pretty" form re-serializes to valid Turtle with the
+    same triple count, large files truncate on a line boundary while reporting
+    the true size, and an absurd size request is rejected.
+
+BASIC IDEA
+    Uploads the demo ontology, then requests its source in both modes and with
+    a tiny max_bytes, asserting the text, format flags and truncation metadata.
+
+INPUTS / INPUT SOURCES
+    - examples/space-exploration.ttl (uploaded via the API).
+
+EXPECTED OUTPUT
+    - Pass/fail per assertion; failures indicate a source-view regression.
+================================================================================
+"""
+
 from pathlib import Path
 
 import pytest

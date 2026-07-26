@@ -1,3 +1,28 @@
+"""
+================================================================================
+FILE: backend/tests/test_query_schema.py
+================================================================================
+
+SUMMARY
+    Tests the class-level schema extraction: that classes (including SKOS
+    concepts) are found, meta-classes excluded, links derived from observed
+    data / domain+range / owl:Restriction axioms, the subclass hierarchy is
+    exposed, data properties are found, and a clicked node maps to the right
+    class(es).
+
+BASIC IDEA
+    The demo ontology deliberately contains OWL classes, SKOS concepts, and a
+    restriction-based class (CrewedMission), so one fixed file exercises every
+    schema-extraction path. Tests assert exact IRIs against the known example.
+
+INPUTS / INPUT SOURCES
+    - examples/space-exploration.ttl.
+
+EXPECTED OUTPUT
+    - Pass/fail per assertion; failures indicate a query-schema regression.
+================================================================================
+"""
+
 from pathlib import Path
 
 import pytest

@@ -1,3 +1,29 @@
+/*
+================================================================================
+FILE: frontend/src/components/SourceView.tsx
+================================================================================
+
+SUMMARY
+    The View tab. Shows the ontology's source text with line numbers and syntax
+    highlighting, an Original / Formatted-Turtle toggle, find-in-file with match
+    navigation, copy, and safe handling of very large files.
+
+BASIC IDEA
+    Fetches /source (original or pretty). To keep an 8 MB file from freezing the
+    browser, only a window of lines is rendered at once ("show more" / search
+    reveal more). Search runs over the whole loaded document (not just the
+    rendered window) and scrolls the active match into view. The correct
+    highlighter (Turtle vs XML) is chosen from the format.
+
+INPUTS / INPUT SOURCES (props)
+    - ontologyId: which ontology's source to show (null = empty state).
+    Plus getSource (the API) and highlighterFor (the tokenizer picker).
+
+EXPECTED OUTPUT
+    - The rendered, searchable, highlighted source pane.
+================================================================================
+*/
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSource } from "../api";
 import { highlighterFor } from "../sparql/highlight";

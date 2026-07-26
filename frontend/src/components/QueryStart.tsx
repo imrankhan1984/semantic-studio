@@ -1,3 +1,30 @@
+/*
+================================================================================
+FILE: frontend/src/components/QueryStart.tsx
+================================================================================
+
+SUMMARY
+    What the query panel shows before the first step: a "Try one of these" list
+    of ready-made starter queries plus an "Or start from" cloud of entry-point
+    classes — both derived from the loaded ontology's schema.
+
+BASIC IDEA
+    An empty builder tells a newcomer nothing. This turns the schema into
+    concrete first moves: clicking a starter loads a ready QueryState (via
+    onUseStarter), clicking a class begins the path (via onPickClass). The lists
+    themselves come from the pure starters module.
+
+INPUTS / INPUT SOURCES (props)
+    - schema: the ontology's query schema (null -> renders nothing).
+    - theme: for the class swatches.
+    - onUseStarter: load a starter's ready state.
+    - onPickClass: begin the path from a class.
+
+EXPECTED OUTPUT
+    - The rendered guided-start section; the two callbacks on interaction.
+================================================================================
+*/
+
 import { useMemo } from "react";
 import { buildStarters, entryPoints } from "../sparql/starters";
 import type { QueryState } from "../sparql/types";

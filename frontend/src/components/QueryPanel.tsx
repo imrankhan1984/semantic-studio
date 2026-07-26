@@ -1,3 +1,34 @@
+/*
+================================================================================
+FILE: frontend/src/components/QueryPanel.tsx
+================================================================================
+
+SUMMARY
+    The right-hand panel shown in Query mode. It ties the whole visual query
+    builder together: the guided start, the path bar, the per-chip menus, the
+    live plain-English + SPARQL preview, the toolbar (Auto/Paths/Distinct/
+    Count/LIMIT/Copy/Save/Execute), the results table, and the saved-query list.
+
+BASIC IDEA
+    QueryPanel is mostly orchestration. The real state lives in the shared
+    useQueryBuilder hook (passed in as `builder`); this component renders it and
+    wires the buttons. It adds a few local concerns: an auto-preview that runs a
+    small LIMITed query as you build (only on small ontologies, so it stays
+    instant), the Auto/refresh toggle for the preview, and the save flow.
+
+INPUTS / INPUT SOURCES (props)
+    - ontologyId: the active ontology.
+    - theme: colour theme (passed to child chips).
+    - builder: the useQueryBuilder return value (state + actions).
+    - onPickIri: focus a node in the graph when a result chip is clicked.
+    - ontologyTriples: size gate for the auto-preview.
+
+EXPECTED OUTPUT
+    - The rendered query panel and the side effects of its controls (executing
+      queries, saving/loading/deleting saved queries).
+================================================================================
+*/
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { deleteSavedQuery, listSavedQueries, runSparql, saveQuery } from "../api";
 import { describeQuery } from "../sparql/describe";

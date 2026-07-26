@@ -1,9 +1,36 @@
-"""Turn an rdflib.Graph into a visualization-friendly node/edge structure.
+"""
+================================================================================
+FILE: backend/app/graph_builder.py
+================================================================================
 
-Nodes are the named entities of the ontology (classes, properties, SKOS
-concepts, individuals). Edges are the structural relations between them
-(subclass, domain/range, broader/narrower, assertions, ...). Blank nodes
-are excluded from the visual graph but still appear in the detail view.
+SUMMARY
+    Turns an rdflib.Graph into the node/edge structure the frontend graph view
+    draws, plus helpers for a single node's detail panel and for label/IRI
+    search. Also provides the shared label-picking and prefix-shortening
+    helpers reused by other backend modules.
+
+BASIC IDEA
+    An ontology is a bag of RDF triples. The graph view needs named entities
+    as "nodes" (each tagged with a kind: class, property, SKOS concept,
+    individual, ...) and the structural relations between them as typed
+    "edges" (subClassOf, domain/range, broader, property assertions, ...).
+    This module walks the triples in a few passes to derive those, choosing a
+    human label and a "best" kind for each entity. Blank nodes are excluded
+    from the visual graph (they clutter it) but still appear in a node's
+    detail view.
+
+INPUTS / INPUT SOURCES
+    - An rdflib.Graph produced by store.parse_rdf (build_viz_graph, node_details).
+    - The pre-built viz dict for label/IRI search (search_nodes).
+    - A specific entity IRI for the detail panel (node_details).
+
+EXPECTED OUTPUT
+    - build_viz_graph -> {"nodes": [...], "edges": [...], "stats": {...}} as
+      JSON-ready dicts consumed by frontend/src/components/GraphView.tsx.
+    - node_details -> every outgoing/incoming statement for one IRI (or None).
+    - search_nodes -> ranked node matches for the search box.
+    - pick_label / prefixed are imported by query_schema.py and sparql_exec.py.
+================================================================================
 """
 
 from __future__ import annotations
@@ -15,6 +42,8 @@ from rdflib import Graph, Literal, URIRef, BNode
 from rdflib.namespace import DC, DCTERMS, OWL, RDF, RDFS, SKOS, XSD
 
 # --- node kinds -------------------------------------------------------------
+# String tags attached to each node. The frontend colours nodes by kind and
+# the legend/filters key off these exact strings, so they are a shared contract.
 
 KIND_CLASS = "class"
 KIND_OBJECT_PROPERTY = "objectProperty"
@@ -43,6 +72,8 @@ KIND_PRIORITY = [
     KIND_OTHER,
 ]
 
+# Maps an rdf:type object (an RDF/OWL/SKOS meta-class) to our node kind, so a
+# resource typed as e.g. owl:ObjectProperty becomes a node of kind objectProperty.
 TYPE_TO_KIND = {
     OWL.Ontology: KIND_ONTOLOGY,
     OWL.Class: KIND_CLASS,
@@ -63,6 +94,7 @@ TYPE_TO_KIND = {
     OWL.NamedIndividual: KIND_INDIVIDUAL,
 }
 
+# Predicates checked, in order of preference, when choosing a human label.
 LABEL_PREDICATES = [
     SKOS.prefLabel,
     RDFS.label,
@@ -95,10 +127,16 @@ INVERTED_EDGE_PREDICATES = {
     SKOS.hasTopConcept: "inScheme",
 }
 
+# The XSD namespace as a plain string, used to detect literal-typed ranges.
 XSD_NS = str(XSD)
 
 
 def _best_kind(kinds: set[str]) -> str:
+    """Collapse a set of possible kinds to the single most specific one.
+
+    An entity can be typed several ways (e.g. both owl:Class and skos:Concept);
+    KIND_PRIORITY decides which wins, earliest = most specific.
+    """
     for kind in KIND_PRIORITY:
         if kind in kinds:
             return kind
@@ -106,8 +144,10 @@ def _best_kind(kinds: set[str]) -> str:
 
 
 def _local_name(iri: str) -> str:
+    """The trailing name of an IRI (after the last # / or :), for a fallback label."""
     for sep in ("#", "/", ":"):
         if sep in iri:
+            # rstrip drops a trailing separator so ".../Foo/" still yields "Foo".
             tail = iri.rstrip("#/").rsplit(sep, 1)[-1]
             if tail:
                 return tail
@@ -115,49 +155,70 @@ def _local_name(iri: str) -> str:
 
 
 def pick_label(graph: Graph, node: URIRef) -> str:
-    """Preferred human label: skos:prefLabel > rdfs:label > titles > local name."""
+    """Preferred human label: skos:prefLabel > rdfs:label > titles > local name.
+
+    Prefers an English (or untagged) label, but remembers the first
+    other-language value as a fallback so nothing is left unlabelled.
+    """
     fallback: Optional[str] = None
     for predicate in LABEL_PREDICATES:
         for value in graph.objects(node, predicate):
             if isinstance(value, Literal):
+                # Untagged or English label: use it immediately.
                 if value.language in (None, "en") :
                     return str(value)
+                # Otherwise keep the first foreign-language label as a backup.
                 if fallback is None:
                     fallback = str(value)
+        # A label at a higher-priority predicate wins over lower ones.
         if fallback is not None:
             return fallback
+    # No label predicate matched; fall back to the IRI's local name.
     return _local_name(str(node))
 
 
 def prefixed(graph: Graph, iri: URIRef) -> str:
+    """Shorten an IRI to prefix:local using the graph's namespaces, else the full IRI."""
     try:
         qname = graph.namespace_manager.qname(iri)
         # rdflib can produce ugly generated prefixes like ns1:; keep them anyway
         return qname
     except Exception:
+        # qname raises when no prefix matches; the full IRI is the safe fallback.
         return str(iri)
 
 
 def build_viz_graph(graph: Graph) -> dict:
-    """Extract nodes and edges for visualization from an rdflib graph."""
+    """Extract nodes and edges for visualization from an rdflib graph.
+
+    Walks the triples in three passes and returns JSON-ready nodes, edges and
+    summary stats. Node "kind" is accumulated as a set during the passes and
+    collapsed to the best single kind at the end.
+    """
+    # kinds: every kind we have seen for each entity (collapsed later).
     kinds: dict[URIRef, set[str]] = defaultdict(set)
+    # edges: a set (dedupes) of (source, edge-kind, target, label) tuples.
     edges: set[tuple[URIRef, str, URIRef, str]] = set()  # (src, kind, dst, label)
 
-    # Pass 1: explicit typing
+    # Pass 1: explicit typing — read rdf:type to tag entities by their meta-class.
     object_properties: set[URIRef] = set()
     datatype_properties: set[URIRef] = set()
     for subject, obj in graph.subject_objects(RDF.type):
+        # Ignore blank nodes and literal types; we only draw named entities.
         if not isinstance(subject, URIRef) or not isinstance(obj, URIRef):
             continue
         kind = TYPE_TO_KIND.get(obj)
         if kind:
             kinds[subject].add(kind)
+            # Remember object properties so pass 3 can draw their assertions,
+            # and datatype properties for completeness.
             if kind == KIND_OBJECT_PROPERTY:
                 object_properties.add(subject)
             elif kind == KIND_DATATYPE_PROPERTY:
                 datatype_properties.add(subject)
 
-    # Pass 2: structural edges + implied kinds
+    # Pass 2: structural edges (subClassOf, domain/range, broader, ...) plus the
+    # kinds those edges imply (e.g. both ends of subClassOf must be classes).
     for s, p, o in graph:
         if not isinstance(s, URIRef):
             continue
@@ -174,35 +235,45 @@ def build_viz_graph(graph: Graph) -> dict:
             elif p in (SKOS.broader, SKOS.related):
                 kinds[s].add(KIND_CONCEPT)
                 kinds[o].add(KIND_CONCEPT)
+        # skos:narrower / skos:hasTopConcept are stored as their inverse edge so
+        # the graph has a single, consistent direction (broader / inScheme).
         elif p in INVERTED_EDGE_PREDICATES and isinstance(o, URIRef):
             edges.add((o, INVERTED_EDGE_PREDICATES[p], s, ""))
             if p == SKOS.narrower:
                 kinds[s].add(KIND_CONCEPT)
                 kinds[o].add(KIND_CONCEPT)
 
-    # Pass 3: instance-of edges and object property assertions
+    # Pass 3: instance-of edges and object-property assertions between individuals.
+    # class_like = everything we now know to be a class.
     class_like = {n for n, ks in kinds.items() if KIND_CLASS in ks}
     for s, o in graph.subject_objects(RDF.type):
+        # Draw "instanceOf" from a resource to any of its types that is a class.
         if isinstance(s, URIRef) and isinstance(o, URIRef) and o in class_like:
             edges.add((s, "instanceOf", o, ""))
+            # If it is not itself a class/scheme/concept, it is an individual.
             if not kinds[s] & {KIND_CLASS, KIND_SCHEME, KIND_CONCEPT}:
                 kinds[s].add(KIND_INDIVIDUAL)
+    # For each object property, draw an "assertion" edge for every actual use,
+    # labelled with the property's name (e.g. Earth --orbits--> Sun).
     for prop in object_properties:
         prop_label = _local_name(str(prop))
         for s, o in graph.subject_objects(prop):
             if isinstance(s, URIRef) and isinstance(o, URIRef):
                 edges.add((s, "assertion", o, prop_label))
 
-    # Make sure every edge endpoint is a node
+    # An edge might reference an entity we never typed; make sure both ends of
+    # every edge exist as a node (kind OTHER if nothing more specific is known).
     for src, _, dst, _ in edges:
         kinds.setdefault(src, set()).add(KIND_OTHER)
         kinds.setdefault(dst, set()).add(KIND_OTHER)
 
+    # Degree = number of edges touching a node; used by the frontend to size nodes.
     degree: dict[URIRef, int] = defaultdict(int)
     for src, _, dst, _ in edges:
         degree[src] += 1
         degree[dst] += 1
 
+    # Build the JSON node list: id, human label, best single kind, and degree.
     nodes = [
         {
             "id": str(iri),
@@ -212,11 +283,13 @@ def build_viz_graph(graph: Graph) -> dict:
         }
         for iri, ks in kinds.items()
     ]
+    # Build the JSON edge list from the deduped edge tuples.
     edge_list = [
         {"source": str(src), "target": str(dst), "kind": kind, "label": label}
         for src, kind, dst, label in edges
     ]
 
+    # Tally how many nodes of each kind exist, for the legend counts.
     kind_counts: dict[str, int] = defaultdict(int)
     for node in nodes:
         kind_counts[node["kind"]] += 1
@@ -233,8 +306,10 @@ def build_viz_graph(graph: Graph) -> dict:
 
 
 # --- node details -----------------------------------------------------------
+# Everything below powers the right-hand detail panel and the search box.
 
 def _term_json(graph: Graph, term) -> dict:
+    """Serialize one RDF term (URI, literal or blank node) for the detail panel."""
     if isinstance(term, URIRef):
         return {
             "type": "uri",
@@ -265,11 +340,18 @@ def _term_json(graph: Graph, term) -> dict:
 
 
 def node_details(graph: Graph, iri: str, limit: int = 500) -> Optional[dict]:
+    """Every statement about one entity, for the detail panel.
+
+    Returns outgoing statements (iri as subject) and incoming ones (iri as
+    object), each capped at `limit` rows but with the true totals reported so
+    the UI can say "showing 500 of N". Returns None if the IRI has no triples.
+    """
     ref = URIRef(iri)
     outgoing = []
     incoming = []
     out_total = 0
     in_total = 0
+    # Outgoing: predicate -> object triples where this entity is the subject.
     for p, o in graph.predicate_objects(ref):
         out_total += 1
         if len(outgoing) < limit:
@@ -277,6 +359,7 @@ def node_details(graph: Graph, iri: str, limit: int = 500) -> Optional[dict]:
                 "predicate": _term_json(graph, p),
                 "object": _term_json(graph, o),
             })
+    # Incoming: subject -> predicate triples where this entity is the object.
     for s, p in graph.subject_predicates(ref):
         in_total += 1
         if len(incoming) < limit and isinstance(s, URIRef):
@@ -284,6 +367,7 @@ def node_details(graph: Graph, iri: str, limit: int = 500) -> Optional[dict]:
                 "subject": _term_json(graph, s),
                 "predicate": _term_json(graph, p),
             })
+    # Nothing references or is stated about this IRI -> not a real entity.
     if out_total == 0 and in_total == 0:
         return None
     return {
@@ -298,9 +382,15 @@ def node_details(graph: Graph, iri: str, limit: int = 500) -> Optional[dict]:
 
 
 def search_nodes(viz: dict, query: str, limit: int = 25) -> list[dict]:
+    """Rank nodes for the search box: label-prefix matches first, then substrings.
+
+    Searches the already-built viz dict (not the raw graph), matching on both
+    the label and the IRI, case-insensitively.
+    """
     q = query.strip().lower()
     if not q:
         return []
+    # Two buckets so prefix matches ("mar" -> "Mars") rank above mere substrings.
     starts: list[dict] = []
     contains: list[dict] = []
     for node in viz["nodes"]:
@@ -310,6 +400,8 @@ def search_nodes(viz: dict, query: str, limit: int = 25) -> list[dict]:
             starts.append(node)
         elif q in label or q in iri:
             contains.append(node)
+        # Stop early once we have enough strong (prefix) matches.
         if len(starts) >= limit:
             break
+    # Prefix matches first, then substring matches, capped at limit.
     return (starts + contains)[:limit]

@@ -1,3 +1,29 @@
+"""
+================================================================================
+FILE: backend/tests/test_sparql_endpoint.py
+================================================================================
+
+SUMMARY
+    Tests SPARQL execution and its safety rails: SELECT returns rows, literals
+    and unbound OPTIONAL variables serialize correctly, UPDATE/CONSTRUCT/ASK
+    and malformed queries are rejected, the row cap truncates, and the
+    schema/query-node/saved-query endpoints behave.
+
+BASIC IDEA
+    Uploads the demo ontology through the HTTP layer, then runs known queries
+    against it and asserts both the results and the error handling. Also calls
+    execute_select directly to test the row cap and non-SELECT rejection.
+
+INPUTS / INPUT SOURCES
+    - examples/space-exploration.ttl (uploaded via the API).
+    - Hand-written SPARQL query strings.
+
+EXPECTED OUTPUT
+    - Pass/fail per assertion; failures indicate a query-execution or
+      safety-rail regression.
+================================================================================
+"""
+
 from pathlib import Path
 
 import pytest

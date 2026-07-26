@@ -1,10 +1,38 @@
-/** Minimal SPARQL tokenizer for the read-only preview (no dependencies). */
+/*
+================================================================================
+FILE: frontend/src/sparql/highlight.ts
+================================================================================
 
+SUMMARY
+    Tiny, dependency-free syntax highlighters for the read-only code panes:
+    one for the generated SPARQL preview, and one each for Turtle and XML shown
+    in the View tab.
+
+BASIC IDEA
+    Rather than pull in a heavy editor/highlighter library for what is only
+    ever read-only display, each highlighter runs one big regular expression
+    over a line and returns an array of {text, cls} tokens. The React panes map
+    each token to a <span> with a CSS class. Every alternative in the regex is a
+    numbered capture group, and a parallel *_CLASSES array maps the matched
+    group index to a CSS class name.
+
+INPUTS / INPUT SOURCES
+    - A single line of source text.
+    - highlighterFor(format) picks Turtle vs XML by the ontology's format.
+
+EXPECTED OUTPUT
+    - An array of Token objects for the pane to render as coloured spans.
+================================================================================
+*/
+
+/** One highlighted span: its text and the CSS class to colour it with. */
 export interface Token {
   text: string;
   cls: string;
 }
 
+// --- SPARQL preview tokenizer ------------------------------------------------
+// The keyword/function lists are alternation groups baked into PATTERN below.
 const KEYWORDS =
   "PREFIX|SELECT|DISTINCT|REDUCED|WHERE|OPTIONAL|FILTER|VALUES|LIMIT|OFFSET|ORDER|BY|ASC|DESC|GROUP|HAVING|UNION|MINUS|BIND|AS|GRAPH|SERVICE";
 const FUNCTIONS = "CONTAINS|STRSTARTS|STRENDS|LCASE|UCASE|STR|LANG|DATATYPE|REGEX|BOUND|COUNT|SUM|AVG|MIN|MAX";
@@ -70,13 +98,15 @@ const TURTLE_CLASSES = [
 /** Tokenizer for Turtle / N-Triples source shown in the View tab. */
 export function highlightTurtle(line: string): Token[] {
   const tokens: Token[] = [];
-  let last = 0;
-  TURTLE_PATTERN.lastIndex = 0;
+  let last = 0;                 // end of the previously emitted token
+  TURTLE_PATTERN.lastIndex = 0; // reset the shared regex before scanning a line
   let match = TURTLE_PATTERN.exec(line);
   while (match) {
+    // Emit any plain text between the last match and this one.
     if (match.index > last) {
       tokens.push({ text: line.slice(last, match.index), cls: "sparql-plain" });
     }
+    // Which capture group fired -> which CSS class this token gets.
     const groupIndex = TURTLE_CLASSES.findIndex((_, i) => match![i + 1] !== undefined);
     tokens.push({
       text: match[0],
@@ -85,6 +115,7 @@ export function highlightTurtle(line: string): Token[] {
     last = match.index + match[0].length;
     match = TURTLE_PATTERN.exec(line);
   }
+  // Trailing plain text after the last match.
   if (last < line.length) {
     tokens.push({ text: line.slice(last), cls: "sparql-plain" });
   }
@@ -119,12 +150,13 @@ export function highlightXml(line: string): Token[] {
   return tokens;
 }
 
-/** Picks a tokenizer for an RDF serialization. */
+/** Picks a tokenizer for an RDF serialization (XML-family vs Turtle-family). */
 export function highlighterFor(format: string): (line: string) => Token[] {
   if (format === "xml" || format === "rdf" || format === "owl") return highlightXml;
   return highlightTurtle;
 }
 
+/** Tokenizer for the generated SPARQL preview (same scan loop as above). */
 export function highlightSparql(line: string): Token[] {
   const tokens: Token[] = [];
   let last = 0;

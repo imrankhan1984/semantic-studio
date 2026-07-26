@@ -1,3 +1,30 @@
+/*
+================================================================================
+FILE: frontend/src/components/SearchBox.tsx
+================================================================================
+
+SUMMARY
+    The header search box. Debounced type-ahead over the loaded ontology's
+    nodes; picking a result calls onPick (which centres the graph on it, and in
+    Query mode also adds it to the path).
+
+BASIC IDEA
+    On each keystroke (debounced, min 2 chars) it queries /search and shows a
+    dropdown. A document mousedown listener closes the dropdown on outside
+    click. The placeholder changes in Query mode to signal that picking adds a
+    step.
+
+INPUTS / INPUT SOURCES (props)
+    - ontologyId: which ontology to search (disabled when null).
+    - theme: for the result swatches.
+    - onPick: called with the chosen node's IRI.
+    - placeholder: prompt text (differs per mode).
+
+EXPECTED OUTPUT
+    - The rendered search box and dropdown; onPick on selection.
+================================================================================
+*/
+
 import { useEffect, useRef, useState } from "react";
 import { searchNodes } from "../api";
 import type { Theme, VizNode } from "../types";

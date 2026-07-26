@@ -1,25 +1,46 @@
-/**
- * Suggested starting points, derived from the ontology's own schema.
- *
- * A newcomer facing an empty builder has no idea what the data can answer.
- * These give concrete, one-click queries that already work against the
- * loaded ontology, and stay editable afterwards — learning by example
- * rather than by guessing at the graph.
- */
+/*
+================================================================================
+FILE: frontend/src/sparql/starters.ts
+================================================================================
+
+SUMMARY
+    Builds "suggested starting points": ready-made queries and entry-point
+    classes derived from the loaded ontology's own schema, shown on the empty
+    query panel.
+
+BASIC IDEA
+    A newcomer facing an empty builder has no idea what the data can answer.
+    These give concrete, one-click queries that already work against the loaded
+    ontology and stay editable afterwards — learning by example rather than by
+    guessing at the graph. Suggestions are derived from the richest parts of
+    the schema (most-populated classes, real relationships, SKOS hierarchy).
+
+INPUTS / INPUT SOURCES
+    - The QuerySchema returned by the backend (classes, links, instance counts).
+
+EXPECTED OUTPUT
+    - buildStarters -> a short list of Starter objects (title, detail, ready
+      QueryState) for the "Try one of these" section.
+    - entryPoints -> the classes worth offering in "Or start from".
+================================================================================
+*/
 
 import type { QuerySchema, SchemaClass, SchemaLink } from "../types";
 import { plural } from "./describe";
 import { emptyQueryState } from "./types";
 import type { QueryState } from "./types";
 
-/** "Concept" -> "Concepts", capitalised for use in a title. */
+// SKOS namespace, used to build the taxonomy-specific starters and to skip SKOS
+// classes in the generic relationship starters.
+const SKOS = "http://www.w3.org/2004/02/skos/core#";
+
+/** "Concept" -> "Concepts", capitalised for use in a starter title. */
 function pluralTitle(label: string): string {
   const word = plural(label);
   return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
-const SKOS = "http://www.w3.org/2004/02/skos/core#";
-
+/** One suggested query: a label, a one-line detail, and a ready-to-run state. */
 export interface Starter {
   id: string;
   title: string;
@@ -27,10 +48,12 @@ export interface Starter {
   state: QueryState;
 }
 
+/** Look up a schema class by IRI. */
 function classOf(schema: QuerySchema, iri: string): SchemaClass | undefined {
   return schema.classes.find((c) => c.iri === iri);
 }
 
+/** A one-step query over a single class (optionally with extra state, e.g. count). */
 function singleStep(cls: SchemaClass, extra: Partial<QueryState> = {}): QueryState {
   return {
     ...emptyQueryState(),
@@ -39,6 +62,7 @@ function singleStep(cls: SchemaClass, extra: Partial<QueryState> = {}): QuerySta
   };
 }
 
+/** A two-step "source -> predicate -> target" query for a relationship. */
 function twoStep(source: SchemaClass, link: SchemaLink, target: SchemaClass): QueryState {
   return {
     ...emptyQueryState(),
@@ -49,7 +73,7 @@ function twoStep(source: SchemaClass, link: SchemaLink, target: SchemaClass): Qu
         label: target.label,
         props: [],
         link: {
-          anchor: 0,
+          anchor: 0,  // hangs off the source step
           predicates: [{ iri: link.predicate, inverse: false }],
           modifier: "",
           optional: false,
@@ -59,23 +83,28 @@ function twoStep(source: SchemaClass, link: SchemaLink, target: SchemaClass): Qu
   };
 }
 
-/** Links worth suggesting: real connections, richest first. */
+/** Links worth suggesting: real connections, richest first (top 40). */
 function rankedLinks(schema: QuerySchema): SchemaLink[] {
   return [...schema.links]
+    // Keep only links that occur in data or are formally declared.
     .filter((link) => link.count > 0 || link.declared)
+    // Declared first, then by how often they occur.
     .sort((a, b) => Number(b.declared) - Number(a.declared) || b.count - a.count)
     .slice(0, 40);
 }
 
+/** Assemble up to `max` starter queries for the loaded ontology. */
 export function buildStarters(schema: QuerySchema | null, max = 5): Starter[] {
   if (!schema) return [];
-  // Sorted here rather than trusting the caller's ordering.
+  // Classes that actually have instances, richest first. Sorted here rather
+  // than trusting the caller's ordering.
   const populated = schema.classes
     .filter((c) => c.instances > 0)
     .sort((a, b) => b.instances - a.instances || a.label.localeCompare(b.label));
   const starters: Starter[] = [];
   const seen = new Set<string>();
 
+  // Add a starter unless we are full or it duplicates one already added.
   const push = (starter: Starter) => {
     if (starters.length >= max || seen.has(starter.id)) return;
     seen.add(starter.id);
@@ -177,11 +206,13 @@ export function buildStarters(schema: QuerySchema | null, max = 5): Starter[] {
 /** Classes worth offering as a first step, most useful first. */
 export function entryPoints(schema: QuerySchema | null, max = 10): SchemaClass[] {
   if (!schema) return [];
+  // A class is "connected" if any link touches it — those make better starts.
   const connected = new Set<string>();
   for (const link of schema.links) {
     connected.add(link.source);
     connected.add(link.target);
   }
+  // Rank: connected first, then by instance count, then alphabetically.
   return [...schema.classes]
     .sort(
       (a, b) =>

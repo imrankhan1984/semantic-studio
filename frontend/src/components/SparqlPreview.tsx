@@ -1,3 +1,24 @@
+/*
+================================================================================
+FILE: frontend/src/components/SparqlPreview.tsx
+================================================================================
+
+SUMMARY
+    A small read-only pane that renders the generated SPARQL with line numbers
+    and syntax highlighting (or a hint when the query is empty).
+
+BASIC IDEA
+    Splits the query into lines and highlights each with highlightSparql,
+    rendering tokens as coloured spans. Purely presentational.
+
+INPUTS / INPUT SOURCES (props)
+    - sparql: the query text to display.
+
+EXPECTED OUTPUT
+    - The rendered, highlighted, line-numbered query (or an empty-state hint).
+================================================================================
+*/
+
 import { highlightSparql } from "../sparql/highlight";
 
 interface Props {

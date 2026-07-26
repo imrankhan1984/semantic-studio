@@ -1,3 +1,29 @@
+/*
+================================================================================
+FILE: frontend/src/sparql/inheritance.test.ts
+================================================================================
+
+SUMMARY
+    Tests the class-hierarchy resolution that makes FIBO-style ontologies
+    usable: ancestor resolution (including cycle safety), and that
+    linkOptionsBetween offers a relationship declared on an ancestor to the
+    specific subclass, marks it inherited, ranks direct links above inherited
+    ones, and prefers domain/range links over restriction-derived ones.
+
+BASIC IDEA
+    A hand-built schema mirrors the FIBO shape (relationships declared on a
+    broad Party/Contract, with Bank/Loan several subclasses below). The tests
+    assert that without resolution a subclass pair finds nothing, but with it
+    the inherited link is offered.
+
+INPUTS / INPUT SOURCES
+    - A fixed, hand-constructed QuerySchema with a subclass hierarchy.
+
+EXPECTED OUTPUT
+    - Pass/fail per assertion; failures indicate an inheritance-resolution bug.
+================================================================================
+*/
+
 import { describe, expect, it } from "vitest";
 import { linkOptionsBetween, makeAncestorResolver } from "./useQueryBuilder";
 import type { QuerySchema } from "../types";

@@ -1,3 +1,29 @@
+/*
+================================================================================
+FILE: frontend/src/components/DetailPanel.tsx
+================================================================================
+
+SUMMARY
+    The right-hand panel shown in Explore mode. When a node is selected it
+    fetches and displays every statement about that entity — its outgoing
+    statements and everything that references it — with clickable IRIs.
+
+BASIC IDEA
+    Clicking a node sets `iri`; this component fetches /node for it and renders
+    two tables (statements, referenced-by). Each URI term is a button that
+    navigates to that node (onNavigate), so the user can walk the graph through
+    the panel. A cancelled flag drops a stale response if the selection changes.
+
+INPUTS / INPUT SOURCES (props)
+    - ontologyId + iri: which entity to describe (null iri = panel hidden).
+    - onNavigate: select another entity when its IRI is clicked.
+    - onClose: close the panel.
+
+EXPECTED OUTPUT
+    - The rendered detail panel (or nothing when no node is selected).
+================================================================================
+*/
+
 import { useEffect, useState } from "react";
 import { getNodeDetails } from "../api";
 import type { NodeDetails, TermRef } from "../types";

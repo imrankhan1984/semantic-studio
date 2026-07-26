@@ -1,3 +1,28 @@
+"""
+================================================================================
+FILE: backend/tests/test_graph_builder.py
+================================================================================
+
+SUMMARY
+    Unit tests for graph_builder: verifies that the demo ontology is turned
+    into the right nodes (with correct kinds), the right structural/assertion
+    edges, correct node-detail output, working search, and correct format
+    detection/sniffing.
+
+BASIC IDEA
+    Parse the shipped example ontology once (fixtures), build the viz graph
+    from it, then assert specific nodes/edges/details exist and are shaped as
+    the frontend expects. Because the example is fixed and known, exact IRIs
+    can be asserted.
+
+INPUTS / INPUT SOURCES
+    - examples/space-exploration.ttl (a small, known ontology).
+
+EXPECTED OUTPUT
+    - Pass/fail per assertion; failures pinpoint a regression in graph_builder.
+================================================================================
+"""
+
 from pathlib import Path
 
 import pytest
@@ -6,6 +31,7 @@ from rdflib import Graph
 from app.graph_builder import build_viz_graph, node_details, search_nodes
 from app.store import detect_format, parse_rdf
 
+# The shipped demo ontology and its namespace, reused across assertions.
 EXAMPLE = Path(__file__).parent.parent.parent / "examples" / "space-exploration.ttl"
 SPACE = "http://example.org/space#"
 

@@ -1,27 +1,58 @@
+/*
+================================================================================
+FILE: frontend/src/types.ts
+================================================================================
+
+SUMMARY
+    The shared, app-wide TypeScript types that mirror the backend's JSON
+    shapes (ontology summaries, graph, node details, query schema, SPARQL
+    results, saved queries), plus the theme-aware colour palettes and label
+    maps used to render the graph.
+
+BASIC IDEA
+    One source of truth for the data shapes crossing the API boundary keeps the
+    frontend honest about what the backend sends. The palette/label section
+    lives here too because colours are keyed by the same node/edge "kind"
+    strings the backend emits, so keeping them beside the types avoids drift.
+    (The query-builder-specific state model lives in sparql/types.ts.)
+
+INPUTS / INPUT SOURCES
+    - None at runtime; these are type declarations and colour constants.
+
+EXPECTED OUTPUT
+    - Types imported across the app; PALETTES / kindColor / KIND_LABELS for
+      rendering the graph and legend.
+================================================================================
+*/
+
 import type { QueryState } from "./sparql/types";
 
+// Which colour theme is active.
 export type Theme = "dark" | "light";
 
+// The three top-level modes selected by the header tabs.
 export type AppMode = "view" | "explore" | "query";
 
+// Response of GET /source: the file text plus render/truncation metadata.
 export interface OntologySource {
   text: string;
   format: string;
-  pretty: boolean;
-  truncated: boolean;
-  bytes: number;
+  pretty: boolean;     // true when this is the re-serialized Turtle form
+  truncated: boolean;  // true when only the first max_bytes are included
+  bytes: number;       // true total size
   lines: number;
   name: string;
 }
 
 /* --- visual query builder ------------------------------------------------ */
 
+// A queryable class in the schema: its IRI, labels, instance count and kind.
 export interface SchemaClass {
   iri: string;
   label: string;
   prefixed: string;
-  instances: number;
-  kind: string;
+  instances: number;  // how many instances it has (drives ranking)
+  kind: string;       // node kind for colouring (class/concept/...)
 }
 
 export interface SchemaLink {
@@ -37,12 +68,13 @@ export interface SchemaLink {
   count: number;
 }
 
+// A literal-valued (data) property a class carries, with its observed datatype.
 export interface SchemaDataProp {
   predicate: string;
   label: string;
   prefixed: string;
-  datatype: string;
-  datatypePrefixed: string;
+  datatype: string;          // full datatype IRI, used to type filter literals
+  datatypePrefixed: string;  // shortened form, for display
   count: number;
 }
 
@@ -56,6 +88,8 @@ export interface QuerySchema {
   truncated: boolean;
 }
 
+// Result of clicking a node: whether it is itself a class, or an individual
+// whose types can be stepped on (best-shared type first).
 export interface QueryNodeInfo {
   iri: string;
   isClass: boolean;
@@ -63,6 +97,7 @@ export interface QueryNodeInfo {
   types: SchemaClass[];
 }
 
+// One cell in a SPARQL result row (null = an unbound OPTIONAL variable).
 export interface SparqlTerm {
   type: "uri" | "literal" | "bnode" | "unknown";
   value: string;
@@ -72,49 +107,55 @@ export interface SparqlTerm {
   datatype?: string | null;
 }
 
+// The full result set of a SPARQL query.
 export interface SparqlResults {
   vars: string[];
   rows: (SparqlTerm | null)[][];
   rowCount: number;
-  truncated: boolean;
+  truncated: boolean;   // true when the server row cap was hit
   durationMs: number;
 }
 
+// A persisted query in the saved-query library.
 export interface SavedQuery {
   id: string;
   name: string;
   ontologyId: string;
   ontologyName: string;
-  state: QueryState;
-  sparql: string;
+  state: QueryState;  // the visual state, so it reopens in the builder
+  sparql: string;     // the generated text, for reference
   createdAt: string;
   updatedAt: string;
 }
 
+// One node in the graph view.
 export interface VizNode {
   id: string;
   label: string;
-  kind: string;
-  degree: number;
+  kind: string;    // colours the node and keys the legend
+  degree: number;  // edge count, used to size the node
 }
 
+// One edge in the graph view.
 export interface VizEdge {
   source: string;
   target: string;
-  kind: string;
-  label: string;
+  kind: string;   // colours the edge (subClassOf, assertion, ...)
+  label: string;  // shown on the edge (e.g. the property name)
 }
 
+// The whole graph plus summary counts (the /graph response).
 export interface VizGraph {
   nodes: VizNode[];
   edges: VizEdge[];
   stats: {
     nodeCount: number;
     edgeCount: number;
-    kindCounts: Record<string, number>;
+    kindCounts: Record<string, number>;  // per-kind totals for the legend
   };
 }
 
+// The lightweight per-ontology summary shown in the dropdown (the /list response).
 export interface OntologySummary {
   id: string;
   name: string;
@@ -131,6 +172,7 @@ export interface OntologySummary {
   loaded?: boolean;
 }
 
+// One RDF term as shown in the detail panel (a URI, literal, or blank node).
 export interface TermRef {
   type: "uri" | "literal" | "bnode" | "unknown";
   value: string;
@@ -140,6 +182,8 @@ export interface TermRef {
   datatype?: string | null;
 }
 
+// The detail-panel payload for one entity: its outgoing/incoming statements,
+// capped, with the true totals so the UI can say "showing N of M".
 export interface NodeDetails {
   iri: string;
   prefixed: string;
@@ -151,6 +195,8 @@ export interface NodeDetails {
 }
 
 /* --- theme-aware palettes ------------------------------------------------ */
+// Node colours per kind, one map per theme. Keys match the backend's node
+// "kind" strings so a new kind only needs a colour added here.
 
 const KIND_COLORS_DARK: Record<string, string> = {
   class: "#4c9aff",
@@ -180,6 +226,7 @@ const KIND_COLORS_LIGHT: Record<string, string> = {
   other: "#64748b",
 };
 
+// Edge colours per relation kind, one map per theme.
 const EDGE_COLORS_DARK: Record<string, string> = {
   subClassOf: "#4c9aff",
   subPropertyOf: "#e07b53",
@@ -218,17 +265,19 @@ const EDGE_COLORS_LIGHT: Record<string, string> = {
   seeAlso: "#64748b",
 };
 
+// The complete set of colours the graph renderer needs for one theme.
 export interface GraphPalette {
-  kind: Record<string, string>;
-  edge: Record<string, string>;
-  defaultEdge: string;
-  dimNode: string;
-  dimEdge: string;
-  label: string;
-  edgeLabel: string;
-  background: string;
+  kind: Record<string, string>;   // node colour by kind
+  edge: Record<string, string>;   // edge colour by kind
+  defaultEdge: string;            // fallback edge colour
+  dimNode: string;                // dimmed (out-of-focus) node colour
+  dimEdge: string;                // dimmed edge colour
+  label: string;                  // node label colour
+  edgeLabel: string;              // edge label colour
+  background: string;             // canvas background (also PNG export bg)
 }
 
+// Assembled palette per theme, consumed by GraphView.
 export const PALETTES: Record<Theme, GraphPalette> = {
   dark: {
     kind: KIND_COLORS_DARK,
@@ -252,11 +301,13 @@ export const PALETTES: Record<Theme, GraphPalette> = {
   },
 };
 
+/** The colour for a node kind in the given theme (falls back to "other"). */
 export function kindColor(kind: string, theme: Theme): string {
   const palette = PALETTES[theme].kind;
   return palette[kind] ?? palette.other;
 }
 
+// Human-readable names for each node kind, shown in the legend and menus.
 export const KIND_LABELS: Record<string, string> = {
   class: "Class",
   objectProperty: "Object property",

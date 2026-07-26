@@ -1,3 +1,33 @@
+/*
+================================================================================
+FILE: frontend/src/App.tsx
+================================================================================
+
+SUMMARY
+    The root component. It owns the top-level application state (theme, the list
+    of loaded ontologies, which one is active, its graph data, the selected
+    node, the current mode) and lays out the header, the graph area, and the
+    right-hand panel that changes with the mode.
+
+BASIC IDEA
+    App is the conductor: it fetches the ontology list and the active graph,
+    holds the query-builder hook (shared by the graph and the query panel), and
+    routes user actions. The three modes (View / Explore / Query) all render
+    over the SAME graph so switching between them never throws away the settled
+    layout — View overlays a source pane, Explore shows the detail panel, Query
+    shows the builder panel.
+
+INPUTS / INPUT SOURCES
+    - The backend API (via api.ts) for the ontology list and graph.
+    - User interaction: header tabs, dropdown, graph clicks, search.
+    - localStorage for the remembered theme.
+
+EXPECTED OUTPUT
+    - The full rendered application UI, and the side effects of user actions
+      (loading, switching, removing ontologies; building/running queries).
+================================================================================
+*/
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { deleteOntology, getGraph, listOntologies } from "./api";
 import DetailPanel from "./components/DetailPanel";
@@ -20,6 +50,7 @@ import {
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type { AppMode, OntologySummary, Theme, VizGraph } from "./types";
 
+/** The theme to start in: saved preference, else the OS setting, else dark. */
 function initialTheme(): Theme {
   const saved =
     localStorage.getItem("semantic-studio-theme") ??
@@ -29,24 +60,28 @@ function initialTheme(): Theme {
 }
 
 export default function App() {
+  // --- top-level state ---
   const [theme, setTheme] = useState<Theme>(initialTheme);
-  const [ontologies, setOntologies] = useState<OntologySummary[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [graphData, setGraphData] = useState<VizGraph | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [focusTick, setFocusTick] = useState(0);
-  const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set());
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [ontologies, setOntologies] = useState<OntologySummary[]>([]);   // dropdown list
+  const [activeId, setActiveId] = useState<string | null>(null);          // selected ontology
+  const [graphData, setGraphData] = useState<VizGraph | null>(null);      // its graph
+  const [selected, setSelected] = useState<string | null>(null);          // clicked node (Explore)
+  const [focusTick, setFocusTick] = useState(0);                          // bump to re-centre camera
+  const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set()); // legend filters
+  const [dialogOpen, setDialogOpen] = useState(false);                    // Load dialog open?
   const [loadingGraph, setLoadingGraph] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<AppMode>("explore");
+  // The shared query-builder state; the schema is only fetched in Query mode.
   const builder = useQueryBuilder(activeId, mode === "query");
 
+  // Apply and persist the theme whenever it changes (data-theme drives the CSS).
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("semantic-studio-theme", theme);
   }, [theme]);
 
+  // On first mount, load the ontology list and select the most recent one.
   useEffect(() => {
     listOntologies()
       .then((list) => {
@@ -56,6 +91,9 @@ export default function App() {
       .catch((e) => setError(String(e.message ?? e)));
   }, []);
 
+  // Whenever the active ontology changes, fetch its graph and reset view state.
+  // The `cancelled` flag ignores a stale response if the user switches again
+  // before it arrives.
   useEffect(() => {
     setGraphData(null);
     setSelected(null);
@@ -72,8 +110,10 @@ export default function App() {
     };
   }, [activeId]);
 
+  // The currently active ontology's summary (or null).
   const active = ontologies.find((o) => o.id === activeId) ?? null;
 
+  // Called by the Load dialog once an ontology is loaded: add it and select it.
   const onLoaded = (summary: OntologySummary) => {
     setOntologies((prev) => [...prev, summary]);
     setActiveId(summary.id);
@@ -81,6 +121,7 @@ export default function App() {
     setError(null);
   };
 
+  // Remove the active ontology after confirmation, then select another (or none).
   const onRemove = async () => {
     if (!activeId) return;
     const name = ontologies.find((o) => o.id === activeId)?.name ?? "this ontology";
@@ -91,6 +132,7 @@ export default function App() {
       await deleteOntology(activeId);
       setOntologies((prev) => {
         const next = prev.filter((o) => o.id !== activeId);
+        // Fall back to the last remaining ontology, or clear if none left.
         setActiveId(next.length > 0 ? next[next.length - 1].id : null);
         return next;
       });
@@ -99,6 +141,8 @@ export default function App() {
     }
   };
 
+  // Select a node AND re-centre the camera on it (focusTick is the trigger the
+  // graph watches). Used by search picks and detail-panel navigation.
   const selectAndFocus = useCallback((iri: string | null) => {
     setSelected(iri);
     if (iri) setFocusTick((t) => t + 1);
@@ -127,12 +171,15 @@ export default function App() {
     [mode, builder, selectAndFocus],
   );
 
+  // The distinct edge kinds present, for the legend's "relations" section.
   const edgeKinds = useMemo(() => {
     if (!graphData) return [];
     const kinds = new Set(graphData.edges.map((e) => e.kind));
     return [...kinds].sort();
   }, [graphData]);
 
+  // Layout: a header (brand + nav rows), a main area (graph + right panel that
+  // depends on the mode), a status bar, and the Load dialog when open.
   return (
     <div className="app">
       <header className="app-header">

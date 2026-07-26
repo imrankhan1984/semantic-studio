@@ -1,14 +1,52 @@
+/*
+================================================================================
+FILE: frontend/src/components/GraphView.tsx
+================================================================================
+
+SUMMARY
+    The interactive graph canvas. Builds a graphology graph from the backend's
+    nodes/edges, renders it with Sigma (WebGL), runs a ForceAtlas2 force layout,
+    supports drag-to-reposition with live physics, highlights hover/selection,
+    dims/paints for Query mode, and exports the view as PNG.
+
+BASIC IDEA
+    Sigma draws the graph on a canvas; graphology holds the data and positions;
+    ForceAtlas2 spreads the nodes out. For fluid motion on small/medium graphs
+    the physics run synchronously once per animation frame; very large graphs
+    offload the physics to a web worker to keep the UI responsive. Node/edge
+    "reducers" recolour and dim nodes on the fly for hover, selection and Query
+    mode without rebuilding the graph. Everything that must survive re-renders
+    (the Sigma instance, the layout, timers, current selection) is kept in refs.
+
+INPUTS / INPUT SOURCES (props)
+    - data: the VizGraph to draw (or null for the empty state).
+    - theme: which colour palette to use.
+    - hiddenKinds: kinds toggled off in the legend (hidden).
+    - selected + focusTick: the selected node and a counter that, when bumped,
+      re-centres the camera on it.
+    - onSelect: called with a clicked node's IRI (or null on empty click).
+    - queryMode / queryPathIris / queryCandidates: Query-mode highlighting.
+    - leftRail: the legend, docked beside the canvas (never an overlay, so it
+      cannot swallow clicks meant for nodes beneath it).
+
+EXPECTED OUTPUT
+    - The rendered graph with its docked toolbar and legend; onSelect callbacks;
+      a downloaded PNG on demand.
+================================================================================
+*/
+
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
-import Graph from "graphology";
-import { circular } from "graphology-layout";
-import forceAtlas2, { inferSettings } from "graphology-layout-forceatlas2";
-import FA2Layout from "graphology-layout-forceatlas2/worker";
-import Sigma from "sigma";
-import { downloadAsPNG } from "@sigma/export-image";
+import Graph from "graphology";                       // in-memory graph data structure
+import { circular } from "graphology-layout";         // initial ring placement
+import forceAtlas2, { inferSettings } from "graphology-layout-forceatlas2"; // sync physics
+import FA2Layout from "graphology-layout-forceatlas2/worker";               // worker physics
+import Sigma from "sigma";                             // WebGL renderer
+import { downloadAsPNG } from "@sigma/export-image";   // PNG export
 import type { Theme, VizGraph } from "../types";
 import { PALETTES } from "../types";
 
+// Props — see the file header for the meaning of each.
 interface Props {
   data: VizGraph | null;
   theme: Theme;
