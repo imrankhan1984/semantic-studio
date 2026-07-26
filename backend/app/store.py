@@ -122,6 +122,7 @@ class Ontology:
     graph: Optional[Graph] = field(default=None, repr=False)
     viz_cache: Optional[dict] = field(default=None, repr=False)
     schema_cache: Optional[dict] = field(default=None, repr=False)
+    pretty_cache: Optional[str] = field(default=None, repr=False)
     _load_lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def ensure_loaded(self) -> Graph:
@@ -137,6 +138,16 @@ class Ontology:
         if self.viz_cache is None:
             self.viz_cache = build_viz_graph(self.ensure_loaded())
         return self.viz_cache
+
+    def pretty_turtle(self) -> str:
+        """The graph re-serialized as tidy, prefixed Turtle (cached).
+
+        Re-serializing a large graph is expensive, and the viewer asks for
+        it every time the format toggle is flipped.
+        """
+        if self.pretty_cache is None:
+            self.pretty_cache = self.ensure_loaded().serialize(format="turtle")
+        return self.pretty_cache
 
     def query_schema(self) -> dict:
         """Class-level schema for the visual query builder (cached)."""

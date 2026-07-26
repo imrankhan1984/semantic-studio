@@ -7,7 +7,16 @@ import LoadDialog from "./components/LoadDialog";
 import Logo from "./components/Logo";
 import QueryPanel from "./components/QueryPanel";
 import SearchBox from "./components/SearchBox";
-import { IconExplore, IconLoad, IconMoon, IconQuery, IconSun, IconTrash } from "./components/icons";
+import SourceView from "./components/SourceView";
+import {
+  IconExplore,
+  IconLoad,
+  IconMoon,
+  IconQuery,
+  IconSun,
+  IconTrash,
+  IconView,
+} from "./components/icons";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type { AppMode, OntologySummary, Theme, VizGraph } from "./types";
 
@@ -140,6 +149,16 @@ export default function App() {
             </button>
             <button
               role="tab"
+              aria-selected={mode === "view"}
+              className={mode === "view" ? "nav-item active" : "nav-item"}
+              onClick={() => setMode("view")}
+              title="Read the ontology file itself"
+            >
+              <IconView />
+              <span>View</span>
+            </button>
+            <button
+              role="tab"
               aria-selected={mode === "explore"}
               className={mode === "explore" ? "nav-item active" : "nav-item"}
               onClick={() => setMode("explore")}
@@ -253,6 +272,9 @@ export default function App() {
           />
           {loadingGraph && <div className="loading-overlay">Building graph…</div>}
         </div>
+        {/* View sits over the graph rather than replacing it, so switching
+            back to Explore does not throw away the settled layout. */}
+        {mode === "view" && <SourceView ontologyId={activeId} />}
         {mode === "query" ? (
           <QueryPanel
             ontologyId={activeId}
@@ -261,14 +283,14 @@ export default function App() {
             onPickIri={selectAndFocus}
             ontologyTriples={active?.triples ?? 0}
           />
-        ) : (
+        ) : mode === "explore" ? (
           <DetailPanel
             ontologyId={activeId}
             iri={selected}
             onNavigate={selectAndFocus}
             onClose={() => setSelected(null)}
           />
-        )}
+        ) : null}
       </main>
 
       <footer className="status-bar">
