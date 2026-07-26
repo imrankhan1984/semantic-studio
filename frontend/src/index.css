@@ -805,6 +805,57 @@ select:focus {
   min-width: 260px;
 }
 
+.catalogue {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+
+.catalogue-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-raised);
+}
+
+.catalogue-entry:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-raised));
+}
+
+.catalogue-entry:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.catalogue-name {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.catalogue-loading {
+  color: var(--accent);
+  font-weight: 400;
+}
+
+.catalogue-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+.catalogue-size {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: ui-monospace, Consolas, monospace;
+}
+
 /* --- visual query builder --------------------------------------------- */
 
 .mode-switch {

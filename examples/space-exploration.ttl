@@ -44,6 +44,38 @@
 :Mission a owl:Class ;
     rdfs:label "Mission" .
 
+# Relationships stated as OWL restrictions rather than domain/range — the
+# style FIBO and most serious OWL ontologies use.
+:CrewedMission a owl:Class ;
+    rdfs:label "Crewed Mission" ;
+    rdfs:subClassOf :Mission ;
+    rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty :carries ;
+        owl:someValuesFrom :Astronaut
+    ] ;
+    rdfs:subClassOf [
+        a owl:Class ;
+        owl:intersectionOf (
+            [ a owl:Restriction ;
+              owl:onProperty :uses ;
+              owl:allValuesFrom :Spacecraft ]
+            [ a owl:Restriction ;
+              owl:onProperty :commandedBy ;
+              owl:onClass :Astronaut ;
+              owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ]
+        )
+    ] .
+
+:Astronaut a owl:Class ;
+    rdfs:label "Astronaut" .
+
+:carries a owl:ObjectProperty ;
+    rdfs:label "carries" .
+
+:commandedBy a owl:ObjectProperty ;
+    rdfs:label "commanded by" .
+
 ### Object properties
 
 :orbits a owl:ObjectProperty ;

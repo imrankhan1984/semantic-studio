@@ -91,7 +91,9 @@ export default function PredicateMenu({
             </span>
             <span className="hint">
               {option.inverse ? "inverse" : "forward"} · {option.prefixed}
-              {option.declared ? " · declared" : ""}
+              {option.declared ? " · domain/range" : ""}
+              {option.restriction && !option.declared ? " · from restriction" : ""}
+              {option.inherited ? " · inherited" : ""}
               {option.count > 0 ? ` · ${option.count.toLocaleString()} in data` : ""}
             </span>
           </span>

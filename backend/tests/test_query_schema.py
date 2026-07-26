@@ -86,6 +86,33 @@ def test_super_classes_exposed_for_inheritance(schema):
     assert SPACE + "CelestialBody" not in supers
 
 
+def test_links_from_owl_restrictions(schema):
+    """FIBO-style ontologies state relationships as restrictions."""
+    # subClassOf [ onProperty :carries ; someValuesFrom :Astronaut ]
+    carries = _links(schema, SPACE + "CrewedMission", SPACE + "carries", SPACE + "Astronaut")
+    assert carries, "someValuesFrom restriction should produce a link"
+    assert carries[0]["restriction"] is True
+    assert carries[0]["declared"] is False
+
+    # Nested inside an owl:intersectionOf, via allValuesFrom...
+    assert _links(schema, SPACE + "CrewedMission", SPACE + "uses", SPACE + "Spacecraft")
+    # ...and via a qualified cardinality restriction's owl:onClass.
+    assert _links(
+        SPACE and schema, SPACE + "CrewedMission", SPACE + "commandedBy", SPACE + "Astronaut"
+    )
+
+
+def test_restriction_only_classes_are_registered(schema):
+    """A class reachable only through a restriction is still steppable."""
+    assert SPACE + "Astronaut" in _class_iris(schema)
+
+
+def test_domain_range_links_are_not_marked_as_restrictions(schema):
+    orbits = _links(schema, SPACE + "CelestialBody", SPACE + "orbits", SPACE + "CelestialBody")
+    assert orbits[0]["declared"] is True
+    assert orbits[0]["restriction"] is False
+
+
 def test_skos_hierarchy_links(schema):
     concept = str(SKOS.Concept)
     assert _links(schema, concept, str(SKOS.broader), concept)

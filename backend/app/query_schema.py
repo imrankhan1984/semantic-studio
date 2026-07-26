@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from typing import Optional
 
-from rdflib import Graph, Literal, URIRef
+from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 
 from .graph_builder import pick_label, prefixed
@@ -97,10 +97,102 @@ XSD_NS = str(XSD)
 # Safety caps so pathological ontologies cannot blow up the response.
 MAX_LINKS = 60000
 MAX_DATA_PROPS_PER_CLASS = 200
+# Class expressions nest (intersections of restrictions of unions...), so
+# the walker is depth-limited as well as cycle-guarded.
+MAX_EXPRESSION_DEPTH = 8
+
+# Restriction fillers that name the class on the other end of the relation.
+RESTRICTION_FILLERS = (
+    OWL.someValuesFrom,
+    OWL.allValuesFrom,
+    OWL.onClass,
+)
+
+# Where a class expression can hang off a class.
+CLASS_EXPRESSION_PREDICATES = (RDFS.subClassOf, OWL.equivalentClass)
+
+# Set operators whose members are themselves class expressions.
+SET_OPERATORS = (OWL.intersectionOf, OWL.unionOf)
 
 
 def _is_literal_type(iri: URIRef) -> bool:
     return str(iri).startswith(XSD_NS) or iri == RDF.langString
+
+
+def _list_items(graph: Graph, head) -> list:
+    """Members of an RDF collection (rdf:first/rdf:rest chain)."""
+    items: list = []
+    seen: set = set()
+    current = head
+    while current is not None and current != RDF.nil and current not in seen:
+        seen.add(current)
+        items.extend(graph.objects(current, RDF.first))
+        current = next(iter(graph.objects(current, RDF.rest)), None)
+    return items
+
+
+def _named_classes(graph: Graph, expression, depth: int) -> list[URIRef]:
+    """Named classes buried inside a nested set expression."""
+    if depth > MAX_EXPRESSION_DEPTH:
+        return []
+    found: list[URIRef] = []
+    for operator in SET_OPERATORS:
+        for collection in graph.objects(expression, operator):
+            for member in _list_items(graph, collection):
+                if isinstance(member, URIRef):
+                    found.append(member)
+                elif isinstance(member, BNode):
+                    found.extend(_named_classes(graph, member, depth + 1))
+    return found
+
+
+def _restriction_targets(
+    graph: Graph,
+    expression,
+    instance_types: dict,
+    depth: int = 0,
+    visited: Optional[set] = None,
+):
+    """Yield (property, target class) pairs stated by a class expression.
+
+    Ontologies like FIBO express most of their relationships as OWL
+    restrictions rather than rdfs:domain / rdfs:range — typically
+    ``Class subClassOf [ onProperty p ; someValuesFrom T ]``, often nested
+    inside an intersection — so those axioms are read here too.
+    """
+    if depth > MAX_EXPRESSION_DEPTH:
+        return
+    if visited is None:
+        visited = set()
+    if expression in visited:
+        return
+    visited.add(expression)
+
+    prop = next(
+        (p for p in graph.objects(expression, OWL.onProperty) if isinstance(p, URIRef)),
+        None,
+    )
+    if prop is not None:
+        for filler_predicate in RESTRICTION_FILLERS:
+            for filler in graph.objects(expression, filler_predicate):
+                if isinstance(filler, URIRef):
+                    yield prop, filler
+                elif isinstance(filler, BNode):
+                    for named in _named_classes(graph, filler, depth + 1):
+                        yield prop, named
+        # owl:hasValue names an individual; its types stand in for the class.
+        for value in graph.objects(expression, OWL.hasValue):
+            if isinstance(value, URIRef):
+                for value_type in instance_types.get(value, ()):
+                    yield prop, value_type
+
+    for operator in SET_OPERATORS:
+        for collection in graph.objects(expression, operator):
+            for member in _list_items(graph, collection):
+                if isinstance(member, (BNode, URIRef)):
+                    yield from _restriction_targets(
+                        graph, member, instance_types, depth + 1, visited
+                    )
 
 
 def build_query_schema(graph: Graph) -> dict:
@@ -144,10 +236,33 @@ def build_query_schema(graph: Graph) -> dict:
             if not _is_literal_type(obj):
                 classes.add(obj)
 
-    # --- 2. links declared through domain / range ------------------------
+    # --- 2. relationships stated as OWL restrictions ---------------------
+    # Collected before links are built so restriction fillers can join the
+    # class set; otherwise the links would be dropped as unknown classes.
+    restriction_links: list[tuple[URIRef, URIRef, URIRef]] = []
+    for cls in list(classes):
+        for expression_predicate in CLASS_EXPRESSION_PREDICATES:
+            for expression in graph.objects(cls, expression_predicate):
+                if not isinstance(expression, BNode):
+                    continue
+                for prop, target in _restriction_targets(graph, expression, instance_types):
+                    if target in META_CLASSES or _is_literal_type(target):
+                        continue
+                    classes.add(target)
+                    restriction_links.append((cls, prop, target))
+
+    # --- 3. links declared through domain / range ------------------------
     links: dict[tuple[URIRef, URIRef, URIRef], dict] = {}
 
-    def add_link(src: URIRef, pred: URIRef, dst: URIRef, *, declared: bool, count: int = 0) -> None:
+    def add_link(
+        src: URIRef,
+        pred: URIRef,
+        dst: URIRef,
+        *,
+        declared: bool,
+        count: int = 0,
+        restriction: bool = False,
+    ) -> None:
         nonlocal truncated
         if src not in classes or dst not in classes:
             return
@@ -157,10 +272,14 @@ def build_query_schema(graph: Graph) -> dict:
             if len(links) >= MAX_LINKS:
                 truncated = True
                 return
-            links[key] = {"declared": declared, "count": count}
+            links[key] = {"declared": declared, "count": count, "restriction": restriction}
         else:
             entry["declared"] = entry["declared"] or declared
+            entry["restriction"] = entry["restriction"] or restriction
             entry["count"] += count
+
+    for src, prop, target in restriction_links:
+        add_link(src, prop, target, declared=False, restriction=True)
 
     for prop in set(graph.subjects(RDFS.domain, None)) | set(graph.subjects(RDFS.range, None)):
         if not isinstance(prop, URIRef):
@@ -181,7 +300,7 @@ def build_query_schema(graph: Graph) -> dict:
             for range_ in ranges:
                 add_link(domain, prop, range_, declared=True)
 
-    # --- 3. links and data properties observed in the instance data ------
+    # --- 4. links and data properties observed in the instance data ------
     data_counts: dict[tuple[URIRef, URIRef], Counter] = defaultdict(Counter)
     observed: Counter[tuple[URIRef, URIRef, URIRef]] = Counter()
 
@@ -219,7 +338,7 @@ def build_query_schema(graph: Graph) -> dict:
             if not data_counts[(domain, prop)]:
                 data_counts[(domain, prop)][datatype] = 0
 
-    # --- 4. serialize ----------------------------------------------------
+    # --- 5. serialize ----------------------------------------------------
     label_cache: dict[URIRef, str] = {}
 
     def label_of(iri: URIRef) -> str:
@@ -249,6 +368,7 @@ def build_query_schema(graph: Graph) -> dict:
             "label": label_of(pred),
             "prefixed": prefixed(graph, pred),
             "declared": entry["declared"],
+            "restriction": entry["restriction"],
             "count": entry["count"],
         }
         for (src, pred, dst), entry in links.items()
