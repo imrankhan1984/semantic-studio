@@ -18,9 +18,14 @@ BASIC IDEA
     ontology is actually used. Expensive derived products are cached on the
     Ontology object so they are computed once.
 
+    A parse can be given a wall-clock timeout by the caller. It runs on a
+    worker thread so the request can be released; the work itself cannot be
+    killed, which is why the upload size cap matters (see D-013).
+
 INPUTS / INPUT SOURCES
     - Raw file bytes from uploads or URL fetches (passed to `add`).
     - A format hint from the file extension / caller, else content sniffing.
+    - An optional parse timeout, supplied by the router from configuration.
     - Previously persisted <id>.rdf and <id>.meta.json files in the data dir.
     - Environment variable SEMANTIC_STUDIO_DATA_DIR (or the legacy
       SEMANTIC_VIEWER_DATA_DIR) to relocate the data directory.
@@ -28,6 +33,8 @@ INPUTS / INPUT SOURCES
 EXPECTED OUTPUT
     - Ontology objects with a stable id, metadata summary, and lazily parsed
       graph, plus cached viz/schema/pretty views.
+    - Raises ParseError for unparseable input and ParseTimeout when a bounded
+      parse runs out of time; the router maps them to HTTP 422 and 504.
     - Two module-level singletons imported across the app: `store` (the
       ontology store) and `saved_queries` (the saved-query library, kept in a
       sibling directory).
@@ -49,6 +56,8 @@ import re
 import sys
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -90,6 +99,10 @@ SNIFF_ORDER = ["turtle", "xml", "json-ld", "nt", "trig"]
 
 class ParseError(Exception):
     """Raised when the payload cannot be parsed as RDF in any known format."""
+
+
+class ParseTimeout(Exception):
+    """Raised when a parse outlasts its wall-clock budget (maps to HTTP 504)."""
 
 
 def default_data_dir() -> Path:
@@ -147,12 +160,8 @@ def detect_format(filename: Optional[str], explicit: Optional[str] = None) -> Op
     return None
 
 
-def parse_rdf(data: bytes, fmt: Optional[str]) -> tuple[Graph, str]:
-    """Parse RDF bytes, trying the given format first, then sniffing others.
-
-    Returns the parsed Graph and the format that actually worked. Raises
-    ParseError (with every attempt's error) if nothing parses.
-    """
+def _parse_rdf_blocking(data: bytes, fmt: Optional[str]) -> tuple[Graph, str]:
+    """The actual parse loop: hinted format first, then the sniff order."""
     # Try the hinted format first (if any), then the remaining sniff formats.
     attempts = [fmt] if fmt else []
     attempts += [f for f in SNIFF_ORDER if f not in attempts]
@@ -169,6 +178,40 @@ def parse_rdf(data: bytes, fmt: Optional[str]) -> tuple[Graph, str]:
     raise ParseError(
         "Could not parse the file as RDF. Attempts:\n" + "\n".join(errors)
     )
+
+
+def parse_rdf(
+    data: bytes, fmt: Optional[str], *, timeout: Optional[float] = None
+) -> tuple[Graph, str]:
+    """Parse RDF bytes, optionally bounded by a wall-clock timeout.
+
+    Returns the parsed Graph and the format that actually worked. Raises
+    ParseError (with every attempt's error) if nothing parses, or ParseTimeout
+    if ``timeout`` elapses first.
+
+    **What the timeout does and does not do.** It bounds how long the caller
+    waits, not how long the work runs. A Python thread cannot be killed from
+    outside, so an abandoned parse keeps going until it finishes. That is a real
+    improvement over waiting forever, and it is not full protection. It is
+    acceptable here only because the upload size cap bounds the abandoned work
+    too: the two limits are designed to hold each other up. See decision D-013.
+    """
+    if timeout is None:
+        return _parse_rdf_blocking(data, fmt)
+    # Same pattern as sparql_exec: a single-worker pool so the request thread
+    # can stop waiting, since rdflib offers no way to interrupt a parse.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_parse_rdf_blocking, data, fmt)
+        try:
+            return future.result(timeout=timeout)
+        except FuturesTimeout as exc:
+            # Do not block shutting the pool down on the abandoned worker.
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise ParseTimeout(
+                f"This file took longer than {timeout:g} seconds to parse and "
+                "was stopped. You can raise the limit with "
+                "SEMANTIC_STUDIO_PARSE_TIMEOUT."
+            ) from exc
 
 
 @dataclass
@@ -307,10 +350,22 @@ class OntologyStore:
         for ontology in entries:
             self._items[ontology.id] = ontology
 
-    def add(self, name: str, source: str, data: bytes, fmt: Optional[str]) -> Ontology:
-        """Parse, persist and register a new ontology; return it (graph loaded)."""
+    def add(
+        self,
+        name: str,
+        source: str,
+        data: bytes,
+        fmt: Optional[str],
+        *,
+        parse_timeout: Optional[float] = None,
+    ) -> Ontology:
+        """Parse, persist and register a new ontology; return it (graph loaded).
+
+        ``parse_timeout`` bounds the parse only. Nothing is written to disk
+        until it succeeds, so a timed-out upload leaves no trace in the library.
+        """
         # Parse now so we can fail fast on bad input and compute the summary.
-        graph, used_format = parse_rdf(data, fmt)
+        graph, used_format = parse_rdf(data, fmt, timeout=parse_timeout)
         viz = build_viz_graph(graph)
         # A short random id keeps URLs and filenames stable across restarts.
         oid = "ont-" + uuid.uuid4().hex[:12]

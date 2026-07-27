@@ -18,6 +18,14 @@ them by clicking, without writing SPARQL by hand.
      to raw file URLs automatically, so you can paste a link straight from
      the GitHub UI.
 
+  > **⚠️ Only public web addresses can be fetched.** The server refuses URLs
+  > whose host resolves to a loopback, private, link-local or other
+  > non-public address, and re-checks after every redirect. To load an
+  > ontology from a machine on your own network, download the file first and
+  > use the **Local file** tab. This also means a container-to-container
+  > setup, where one container serves an ontology to another over a private
+  > address, will not work.
+
   > **⚠️ GitHub Enterprise is not currently supported.** GHE instances sit
   > behind corporate SSO that the app cannot authenticate against, so
   > GHE-hosted files cannot be fetched by URL. To view an ontology hosted on
@@ -161,10 +169,27 @@ SKOS taxonomies are fully supported: `skos:Concept` and friends are steppable
 types, and a self-hop offers both `broader` and `^broader` (narrower), so
 `?concept (^skos:broader)+ ?descendant` is a few clicks away.
 
-**Limits.** Queries run against the ontology loaded in the app — remote SPARQL
+**Limits.** Queries run against the ontology loaded in the app. Federated
+queries using `SERVICE` are refused. Remote SPARQL
 endpoints are not supported yet. Execution is SELECT-only, capped at 1,000
 rows and 30 seconds, and unbounded `*` / `+` modifiers on very large graphs
 can be slow.
+
+## Size and time limits
+
+Loading an ontology is bounded so that a mistake — or a hostile file — costs you
+a message rather than a restart. Each limit can be raised with an environment
+variable if you have a known-good file that needs it.
+
+| Limit | Default | Environment variable |
+| --- | --- | --- |
+| Upload size | 50 MB | `SEMANTIC_STUDIO_MAX_UPLOAD_BYTES` |
+| Fetch size | 50 MB | `SEMANTIC_STUDIO_MAX_FETCH_BYTES` |
+| Parse time | 60 seconds | `SEMANTIC_STUDIO_PARSE_TIMEOUT` |
+
+50 MB comfortably covers the largest ontology in the suggested list, the JUHO
+thesaurus at about 26 MB. Both size limits are applied *while* the file is being
+read, so an oversized file is refused without ever being held in memory.
 
 ## Where your ontologies are stored
 

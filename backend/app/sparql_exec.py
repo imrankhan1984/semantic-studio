@@ -15,6 +15,9 @@ BASIC IDEA
     rails are enforced here rather than assumed:
       * only SELECT is accepted (CONSTRUCT/DESCRIBE/ASK are rejected, and
         UPDATE syntax fails to parse as a query at all);
+      * a SERVICE clause is refused at any nesting depth, because it is legal
+        inside a SELECT and would make the server call out to an address the
+        query names;
       * results are capped independently of whatever LIMIT the query carries;
       * evaluation runs in a worker thread with a wall-clock timeout, because
         rdflib itself offers no way to interrupt a running query.
@@ -63,11 +66,51 @@ class QueryTimeout(Exception):
     """The query took longer than the allowed wall-clock time (maps to HTTP 504)."""
 
 
+# The algebra node rdflib 7.6.0 produces for a SERVICE clause. Verified to be
+# this name for a plain SERVICE, for SERVICE SILENT, and when nested inside
+# UNION, OPTIONAL or a subselect.
+SERVICE_NODE_NAME = "ServiceGraphPattern"
+
+# Shown when a query asks the server to call another endpoint. It describes a
+# product boundary that the README already states, rather than announcing a
+# security control, because that is what it is: federated query is backlog Q-3.
+SERVICE_REFUSED_DETAIL = (
+    "Semantic Studio runs queries against the ontology loaded in the app. "
+    "Federated queries using SERVICE are not supported."
+)
+
+
+def _contains_service(node, depth: int = 0) -> bool:
+    """True if ``node`` or anything beneath it is a service call.
+
+    Walks the parsed algebra rather than the query text. Text matching is
+    defeated by comments, casing and whitespace, and it would refuse a perfectly
+    good query that merely has a variable named ``?service``.
+
+    A SERVICE nested inside a UNION, an OPTIONAL or a subselect is still a
+    SERVICE, so the whole tree is walked and not only the top level.
+    """
+    # rdflib's algebra is deeply nested but not unboundedly so; the bound is a
+    # guard against a pathological query rather than an expected condition.
+    if depth > 64:
+        return False
+    if getattr(node, "name", None) == SERVICE_NODE_NAME:
+        return True
+    # CompValue is a dict subclass, so its values are the child nodes.
+    if isinstance(node, dict):
+        return any(_contains_service(child, depth + 1) for child in node.values())
+    # Lists and tuples hold sibling patterns (a UNION's branches, for instance).
+    if isinstance(node, (list, tuple)) and not isinstance(node, str):
+        return any(_contains_service(child, depth + 1) for child in node)
+    return False
+
+
 def prepare_select(query: str):
-    """Parse ``query`` and reject anything that is not a SELECT.
+    """Parse ``query`` and reject anything that is not a plain, local SELECT.
 
     Returns the prepared query object on success; raises QueryError otherwise.
-    This is the security gate: only read-only SELECT is allowed through.
+    This is the security gate: only read-only SELECT is allowed through, and
+    only against the graph loaded in this process.
     """
     try:
         prepared = prepareQuery(query)
@@ -82,6 +125,11 @@ def prepare_select(query: str):
             "Only SELECT queries can be executed here. "
             "Updates and other query forms are not supported."
         )
+    # SELECT-only is not enough on its own: a SERVICE clause is legal inside a
+    # SELECT and makes rdflib POST to whatever address the query names, which
+    # turns this endpoint into a way to reach hosts the user could not.
+    if _contains_service(prepared.algebra):
+        raise QueryError(SERVICE_REFUSED_DETAIL)
     return prepared
 
 

@@ -15,41 +15,92 @@ BASIC IDEA
     (converting github.com "blob" links to raw ones and rejecting GitHub
     Enterprise hosts we cannot authenticate against) and the source-text view.
 
+    The two paths that accept bytes from outside are bounded here, and the
+    bounding happens *while* reading rather than after. An upload is read in
+    chunks and refused the moment it passes the cap; a fetch follows its own
+    redirects so `net_guard` can judge every hop before the connection is made,
+    then streams the body under the same kind of cap. Parsing is handed a
+    wall-clock timeout. Doing any of these afterwards would report a number
+    rather than prevent the harm.
+
 INPUTS / INPUT SOURCES
     - HTTP requests from the frontend / API clients.
     - Uploaded files (multipart) and JSON fetch/sparql request bodies.
     - Remote RDF files fetched over HTTP for the /fetch endpoint.
     - The shared `store` and `saved_queries` singletons.
+    - Environment: SEMANTIC_STUDIO_MAX_UPLOAD_BYTES, SEMANTIC_STUDIO_MAX_FETCH_BYTES
+      and SEMANTIC_STUDIO_PARSE_TIMEOUT override the default caps.
 
 EXPECTED OUTPUT
     - JSON responses (ontology summaries, graph, node details, search results,
-      query schema, source text, SPARQL results) and appropriate HTTP errors.
+      query schema, source text, SPARQL results) and appropriate HTTP errors:
+      400 for a blocked address or refused query, 413 for a body over the cap,
+      504 for a parse that ran out of time.
 ================================================================================
 """
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 # httpx is the async HTTP client used to fetch remote ontology files.
 import httpx
 # FastAPI request-shaping helpers: File/Form/UploadFile for uploads, Query for
 # query params, HTTPException for error responses, APIRouter to group endpoints.
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel  # declares/validates JSON request bodies
 
 # Delegate the real work to the domain modules.
 from ..graph_builder import node_details, search_nodes
+from ..net_guard import MAX_REDIRECTS, BlockedAddress, assert_url_fetchable
 from ..query_schema import describe_query_node
 from ..sparql_exec import QueryError, QueryTimeout, execute_select
-from ..store import ParseError, detect_format, saved_queries, store
+from ..store import ParseError, ParseTimeout, detect_format, saved_queries, store
 
 # All routes below hang off /api/ontologies; "tags" groups them in the docs.
 router = APIRouter(prefix="/api/ontologies", tags=["ontologies"])
 
-MAX_FETCH_BYTES = 200 * 1024 * 1024  # 200 MB safety cap
+
+def _env_int(name: str, default: int) -> int:
+    """Read a positive integer from the environment, falling back on nonsense."""
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read a positive float from the environment, falling back on nonsense."""
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+# Both caps default to 50 MB, chosen against the catalogue the application
+# itself suggests: the largest entry, the JUHO thesaurus, is about 26 MB. A
+# default that refused content the interface recommends would be a bug rather
+# than a control. An administrator with a known-good larger file raises them.
+MAX_UPLOAD_BYTES = _env_int("SEMANTIC_STUDIO_MAX_UPLOAD_BYTES", 50 * 1024 * 1024)
+MAX_FETCH_BYTES = _env_int("SEMANTIC_STUDIO_MAX_FETCH_BYTES", 50 * 1024 * 1024)
+# Roughly ten times the 5.4 seconds measured for 400,000 triples, which leaves
+# room for slower machines and denser formats such as RDF/XML.
+PARSE_TIMEOUT_SECONDS = _env_float("SEMANTIC_STUDIO_PARSE_TIMEOUT", 60.0)
+
+# Read size for the streaming upload and download paths. Small enough that the
+# overshoot past a limit is negligible, large enough not to dominate the cost.
+CHUNK_BYTES = 64 * 1024
 
 # How much source text the viewer receives in one request. The browser has
 # to render this, so it is deliberately far below the parse limit.
@@ -129,13 +180,55 @@ def list_ontologies() -> list[dict]:
     return [o.summary() for o in store.list()]
 
 
+def too_large_detail(limit: int, variable: str) -> str:
+    """The message for a refused oversized body: the limit, and how to raise it."""
+    return (
+        f"This file is larger than the {limit // (1024 * 1024)} MB limit. "
+        f"You can raise the limit with the {variable} environment variable."
+    )
+
+
+async def _read_capped(file: UploadFile, limit: int, variable: str) -> bytes:
+    """Read an upload in chunks, refusing the moment it passes ``limit``.
+
+    The point is the refusal happening *during* the read. `await file.read()`
+    with no argument pulls the whole body into memory first, which means a size
+    check afterwards reports a number after the harm rather than preventing it.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            # Stop here. The rest of the body is never read into this process.
+            raise HTTPException(status_code=413, detail=too_large_detail(limit, variable))
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @router.post("/upload")
 async def upload_ontology(
+    request: Request,
     file: UploadFile = File(...),
     format: Optional[str] = Form(default=None),
 ) -> dict:
     """POST /api/ontologies/upload -> parse and store an uploaded file."""
-    data = await file.read()
+    # Refuse an obviously oversized body before reading a single byte of it.
+    # Content-Length covers the whole multipart envelope, not just the file, so
+    # a generous allowance for the framing keeps a file that is legitimately
+    # just under the limit from being refused on its boundary text alone. The
+    # chunked read below is what enforces the limit exactly.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit():
+        if int(declared) > MAX_UPLOAD_BYTES + CHUNK_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=too_large_detail(MAX_UPLOAD_BYTES, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES"),
+            )
+    data = await _read_capped(file, MAX_UPLOAD_BYTES, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES")
     if not data:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
     # Detect the RDF format from the filename (or the caller's override).
@@ -146,7 +239,10 @@ async def upload_ontology(
             source="upload",
             data=data,
             fmt=fmt,
+            parse_timeout=PARSE_TIMEOUT_SECONDS,
         )
+    except ParseTimeout as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except ParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return ontology.summary()
@@ -159,6 +255,60 @@ def to_raw_url(url: str) -> str:
         owner, repo, rest = match.groups()
         return f"https://raw.githubusercontent.com/{owner}/{repo}/{rest}"
     return url
+
+
+FETCH_HEADERS = {
+    "Accept": "text/turtle, application/rdf+xml, application/ld+json, "
+    "application/n-triples, */*"
+}
+
+
+async def _download_capped(client: httpx.AsyncClient, url: str) -> tuple[str, bytes]:
+    """Follow redirects by hand, checking each hop, and stream the body under a cap.
+
+    Returns the final URL and its bytes. Redirects are followed here rather than
+    by httpx because `follow_redirects=True` would take the hop before anything
+    could judge it: a permitted public host that redirects to 127.0.0.1 defeats
+    a check applied only to the URL the user typed.
+    """
+    current = url
+    for _hop in range(MAX_REDIRECTS + 1):
+        # Judge every URL, including the first, immediately before connecting.
+        assert_url_fetchable(current, after_redirect=current != url)
+        async with client.stream("GET", current, headers=FETCH_HEADERS) as response:
+            if response.is_redirect:
+                location = response.headers.get("location")
+                if not location:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Fetching {current} failed: redirect without a location.",
+                    )
+                # A Location header may be relative to the URL that sent it.
+                current = urljoin(str(response.url), location)
+                continue
+            response.raise_for_status()
+            too_large = HTTPException(
+                status_code=413,
+                detail=too_large_detail(MAX_FETCH_BYTES, "SEMANTIC_STUDIO_MAX_FETCH_BYTES"),
+            )
+            # A declared length over the cap means there is no point starting.
+            declared = response.headers.get("content-length")
+            if declared and declared.isdigit() and int(declared) > MAX_FETCH_BYTES:
+                raise too_large
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in response.aiter_bytes(CHUNK_BYTES):
+                total += len(chunk)
+                if total > MAX_FETCH_BYTES:
+                    # Abandon the response; the connection closes on exit and
+                    # the remainder is never pulled into this process.
+                    raise too_large
+                chunks.append(chunk)
+            return current, b"".join(chunks)
+    raise HTTPException(
+        status_code=502,
+        detail=f"That URL redirected more than {MAX_REDIRECTS} times and was not followed.",
+    )
 
 
 @router.post("/fetch")
@@ -176,17 +326,18 @@ async def fetch_ontology(request: FetchRequest) -> dict:
     # Turn a github.com "blob" page URL into the raw download URL.
     url = to_raw_url(raw_input)
     try:
-        # follow_redirects handles the raw->CDN hop; Accept nudges content negotiation.
-        async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
-            response = await client.get(
-                url,
-                headers={
-                    "Accept": "text/turtle, application/rdf+xml, application/ld+json, "
-                    "application/n-triples, */*"
-                },
-            )
-            response.raise_for_status()
-            data = response.content
+        # trust_env=False is part of the guard, not a preference. With a proxy
+        # set in the environment httpx would hand the hostname to the proxy and
+        # let *it* resolve and connect, so the address check here would decide
+        # nothing at all. Ontology fetches go direct or not at all.
+        # Redirects are handled in _download_capped so each hop can be judged.
+        async with httpx.AsyncClient(
+            follow_redirects=False, timeout=60, trust_env=False
+        ) as client:
+            final_url, data = await _download_capped(client, url)
+    except BlockedAddress as exc:
+        # Refused before any connection was made to the address in question.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except httpx.HTTPStatusError as exc:
         # The remote server returned an error status (404, 403, ...).
         raise HTTPException(
@@ -196,20 +347,20 @@ async def fetch_ontology(request: FetchRequest) -> dict:
     except httpx.HTTPError as exc:
         # Connection/timeout/DNS failure.
         raise HTTPException(status_code=502, detail=f"Fetching {url} failed: {exc}") from exc
-    # Guard against a hostile or accidental multi-gigabyte download.
-    if len(data) > MAX_FETCH_BYTES:
-        raise HTTPException(status_code=413, detail="The fetched file is too large.")
 
     # Name defaults to the URL's last path segment; format from the extension.
-    filename = url.rsplit("/", 1)[-1] or url
+    filename = final_url.rsplit("/", 1)[-1] or final_url
     fmt = detect_format(filename, request.format)
     try:
         ontology = store.add(
             name=request.name or filename,
-            source=url,
+            source=final_url,
             data=data,
             fmt=fmt,
+            parse_timeout=PARSE_TIMEOUT_SECONDS,
         )
+    except ParseTimeout as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except ParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return ontology.summary()

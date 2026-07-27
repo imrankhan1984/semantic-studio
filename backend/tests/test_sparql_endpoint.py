@@ -6,7 +6,8 @@ FILE: backend/tests/test_sparql_endpoint.py
 SUMMARY
     Tests SPARQL execution and its safety rails: SELECT returns rows, literals
     and unbound OPTIONAL variables serialize correctly, UPDATE/CONSTRUCT/ASK
-    and malformed queries are rejected, the row cap truncates, and the
+    and malformed queries are rejected, a SERVICE clause is refused at any
+    nesting depth without a request being made, the row cap truncates, and the
     schema/query-node/saved-query endpoints behave.
 
 BASIC IDEA
@@ -14,9 +15,15 @@ BASIC IDEA
     against it and asserts both the results and the error handling. Also calls
     execute_select directly to test the row cap and non-SELECT rejection.
 
+    The SERVICE tests point the clause at a loopback server that records every
+    request it receives, and assert it received none. A status code alone would
+    also pass against an application that made the call and then discarded the
+    answer, which is exactly the defect being fixed.
+
 INPUTS / INPUT SOURCES
     - examples/space-exploration.ttl (uploaded via the API).
     - Hand-written SPARQL query strings.
+    - A ThreadingHTTPServer on 127.0.0.1 standing in for a SPARQL endpoint.
 
 EXPECTED OUTPUT
     - Pass/fail per assertion; failures indicate a query-execution or
@@ -24,14 +31,18 @@ EXPECTED OUTPUT
 ================================================================================
 """
 
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from rdflib import Graph
+from rdflib.plugins.sparql import prepareQuery
 
 from app.main import app
-from app.sparql_exec import QueryError, execute_select
+from app.sparql_exec import QueryError, _contains_service, execute_select, prepare_select
 
 EXAMPLE = Path(__file__).parent.parent.parent / "examples" / "space-exploration.ttl"
 SPACE = "http://example.org/space#"
@@ -192,3 +203,136 @@ def test_saved_query_requires_known_ontology():
         json={"name": "x", "ontologyId": "ont-nope", "state": {}, "sparql": "SELECT * {}"},
     )
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# SERVICE refusal — backlog S-2, spec section 5.2. SEC-6 to SEC-8 and UNIT-2.
+#
+# A SERVICE clause is legal inside a SELECT, so SELECT-only does not stop it.
+# rdflib resolves one by POSTing to the address in the query, which turns this
+# endpoint into a way to reach hosts the user could not reach themselves.
+# ---------------------------------------------------------------------------
+
+
+class _SparqlRecorder(BaseHTTPRequestHandler):
+    """Records any request rdflib manages to make, and answers plausibly."""
+
+    RESULTS = json.dumps(
+        {"head": {"vars": ["s"]}, "results": {"bindings": []}}
+    ).encode()
+
+    def _record_and_answer(self):
+        self.server.requests.append(self.path)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/sparql-results+json")
+        self.send_header("Content-Length", str(len(self.RESULTS)))
+        self.end_headers()
+        self.wfile.write(self.RESULTS)
+
+    do_GET = _record_and_answer
+    do_POST = _record_and_answer
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def sparql_recorder():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _SparqlRecorder)
+    server.requests = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_service_is_refused_and_never_called(ontology_id, sparql_recorder):
+    """SEC-6. The zero-requests assertion is the real test, not the 400."""
+    endpoint = f"http://127.0.0.1:{sparql_recorder.server_address[1]}/sparql"
+    query = f"SELECT ?s WHERE {{ SERVICE <{endpoint}> {{ ?s ?p ?o }} }}"
+    response = client.post(f"/api/ontologies/{ontology_id}/sparql", json={"query": query})
+    # The decisive assertion first: the refusal is worth nothing if the request
+    # was made anyway and the result merely thrown away.
+    assert sparql_recorder.requests == [], "rdflib called out to the SERVICE endpoint"
+    assert response.status_code == 400
+    assert "SERVICE" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "SELECT ?s WHERE {{ SERVICE SILENT <{ep}> {{ ?s ?p ?o }} }}",
+        "SELECT ?s WHERE {{ {{ ?s ?p ?o }} UNION {{ SERVICE <{ep}> {{ ?s ?p ?o }} }} }}",
+        "SELECT ?s WHERE {{ ?s ?p ?o OPTIONAL {{ SERVICE <{ep}> {{ ?s ?p ?q }} }} }}",
+        "SELECT ?s WHERE {{ {{ SELECT ?s WHERE {{ SERVICE <{ep}> {{ ?s ?p ?o }} }} }} }}",
+        "SELECT ?s WHERE {{ GRAPH ?g {{ SERVICE <{ep}> {{ ?s ?p ?o }} }} }}",
+    ],
+    ids=["silent", "union", "optional", "subselect", "graph"],
+)
+def test_service_is_refused_at_every_nesting_depth(ontology_id, sparql_recorder, template):
+    """SEC-7 and UNIT-2. Checking only the top level of the algebra is not enough.
+
+    SILENT matters especially: it tells rdflib to swallow errors, so a naive
+    implementation would call out and report success either way.
+    """
+    endpoint = f"http://127.0.0.1:{sparql_recorder.server_address[1]}/sparql"
+    query = template.format(ep=endpoint)
+    response = client.post(f"/api/ontologies/{ontology_id}/sparql", json={"query": query})
+    assert sparql_recorder.requests == [], f"called out for: {query}"
+    assert response.status_code == 400, query
+
+
+def test_service_detection_walks_the_algebra_not_the_text():
+    """UNIT-2, at the function itself, with no HTTP in the way.
+
+    `_contains_service` is asserted against a parsed algebra directly so a
+    failure points at the walk rather than at the endpoint wiring.
+    """
+    endpoint = "http://127.0.0.1:9/sparql"
+    nested = [
+        f"SELECT ?s WHERE {{ SERVICE <{endpoint}> {{ ?s ?p ?o }} }}",
+        f"SELECT ?s WHERE {{ ?s ?p ?o . OPTIONAL {{ SERVICE SILENT <{endpoint}> {{ ?s ?p ?q }} }} }}",
+        f"SELECT ?s WHERE {{ {{ ?s ?p ?o }} UNION {{ SERVICE <{endpoint}> {{ ?s ?p ?o }} }} }}",
+    ]
+    for query in nested:
+        assert _contains_service(prepareQuery(query).algebra), query
+        with pytest.raises(QueryError) as caught:
+            prepare_select(query)
+        assert "SERVICE" in str(caught.value)
+
+    # And no false positives on queries that merely mention the word.
+    for query in (
+        "SELECT ?service WHERE { ?service ?p ?o }",
+        "# SERVICE\nSELECT ?s WHERE { ?s ?p 'SERVICE' }",
+    ):
+        assert not _contains_service(prepareQuery(query).algebra), query
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        # The word in a comment.
+        "# a service query\nSELECT ?s WHERE { ?s ?p ?o } LIMIT 1",
+        # The word as a variable name.
+        "SELECT ?service WHERE { ?service ?p ?o } LIMIT 1",
+        # The word in a literal, in the casing the clause uses.
+        "SELECT ?s WHERE { ?s ?p ?o . FILTER(?o != 'SERVICE') } LIMIT 1",
+        # A property whose IRI contains it.
+        "SELECT ?s WHERE { ?s ?p ?o . FILTER(STRSTARTS(STR(?p), 'http://example.org/service')) } LIMIT 1",
+    ],
+    ids=["comment", "variable", "literal", "iri-fragment"],
+)
+def test_the_word_service_alone_does_not_refuse_a_query(ontology_id, query):
+    """SEC-8 / AC-6. Text matching would fail every one of these."""
+    response = client.post(f"/api/ontologies/{ontology_id}/sparql", json={"query": query})
+    assert response.status_code == 200, response.json()
+
+
+def test_ordinary_queries_still_run(ontology_id):
+    """The fix must not cost the feature. A plain SELECT is unaffected."""
+    response = client.post(f"/api/ontologies/{ontology_id}/sparql", json={"query": PLANETS})
+    assert response.status_code == 200
+    assert response.json()["rowCount"] == 2
