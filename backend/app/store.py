@@ -70,8 +70,14 @@ from rdflib.util import guess_format
 
 # Derived-view builders and the saved-query store live in sibling modules.
 from .graph_builder import build_viz_graph
+from .net_guard import BlockedAddress, install_rdflib_guard
 from .queries_store import SavedQueryStore
 from .query_schema import build_query_schema
+
+# Installed once, at import, because it is a property of the process rather
+# than of any one parse: a document may ask rdflib to fetch a remote JSON-LD
+# @context, and that request must be judged wherever it originates. See D-016.
+install_rdflib_guard()
 
 # Map common file extensions to the rdflib parser name. Detection prefers this
 # table (it is more reliable than rdflib's own guesser for our formats).
@@ -171,6 +177,12 @@ def _parse_rdf_blocking(data: bytes, fmt: Optional[str]) -> tuple[Graph, str]:
         try:
             graph.parse(data=data, format=candidate)
             return graph, candidate
+        except BlockedAddress as exc:
+            # Not "this format did not match". The format matched well enough
+            # for the parser to act on the document and ask for a resource we
+            # refused, so trying the remaining formats would only bury the one
+            # message that explains what happened. Stop and lead with it.
+            raise ParseError(str(exc)) from exc
         except Exception as exc:  # rdflib raises many parser-specific errors
             # Record why this candidate failed and keep trying the next one.
             errors.append(f"{candidate}: {exc}")

@@ -49,7 +49,7 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 128 tests (+1 marked `network`, deselected)
+cd backend  && python -m pytest tests    # 139 tests (+2 marked `network`, deselected)
 cd frontend && npm run test              # 67 tests, vitest
 ```
 
@@ -153,10 +153,15 @@ prove a change works in the application rather than in the test suite.
   and uploads are capped at 50 MB with a 60 second parse timeout. The tests that
   prove it assert a recording server saw **zero** requests, not just a 4xx — keep
   that property if you touch them.
-- **One outbound path is still open: S-4.** rdflib's JSON-LD parser fetches a
-  remote `@context`, so an uploaded JSON-LD file can make the server request any
-  address, bypassing `net_guard` entirely (the upload path never consults it).
-  Reproduced. Needs its own spec; do not patch rdflib internals casually.
+- **S-4 is fixed too** (2026-07-27, spec `parser-initiated-requests`). rdflib
+  fetches a remote JSON-LD `@context` while parsing, which let an uploaded file
+  choose where the server connected. `net_guard.install_rdflib_guard()` replaces
+  `rdflib._networking._urlopen` *and* `rdflib.parser._urlopen` — both, because
+  the latter imports the name directly — with a version that judges each
+  redirect hop and caps the body. It is installed once at import in `store.py`.
+  This patches a private function of a third-party library: `UNIT-4` asserts the
+  guard is still installed, so an rdflib upgrade that moves it fails the suite
+  rather than silently removing the protection. See D-016.
 - **`backend/tests/test_fetch_restrictions.py` does not restrict the network**
   despite its name. It tests GitHub Enterprise host detection and blob URL
   rewriting. Do not cite it as protection, and do not add network tests to it —
