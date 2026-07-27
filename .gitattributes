@@ -1,0 +1,24 @@
+# Line endings are decided here, not by each machine's core.autocrlf setting.
+#
+# Without this file, whether a checkout has LF or CRLF depends on a local git
+# config that is not stored in the repository. On 2026-07-26 that produced a
+# working tree reporting all 72 files as modified when nothing had been edited.
+#
+# text=auto: git stores LF in the repository (which is already true of every
+# blob here) and leaves the working copy alone. Every modern editor on Windows
+# handles LF, so no eol= override is needed.
+
+* text=auto
+
+# Shell scripts must stay LF even on Windows, or they will not run in the
+# container or the sandbox.
+*.sh    text eol=lf
+*.mjs   text eol=lf
+
+# Never touched.
+*.png   binary
+*.jpg   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
