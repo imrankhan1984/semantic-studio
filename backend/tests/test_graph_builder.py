@@ -28,7 +28,7 @@ from pathlib import Path
 import pytest
 from rdflib import Graph
 
-from app.graph_builder import build_viz_graph, node_details, search_nodes
+from app.graph_builder import budget_viz, build_viz_graph, node_details, search_nodes
 from app.store import detect_format, parse_rdf
 
 # The shipped demo ontology and its namespace, reused across assertions.
@@ -114,6 +114,24 @@ def test_search(viz):
     ids = [r["id"] for r in results]
     assert SPACE + "Mars" in ids
     assert search_nodes(viz, "") == []
+
+
+def test_search_still_finds_undrawn_entities(viz):
+    """AC-14. Search reads the full viz dict, never the budgeted response.
+
+    This is the property that makes the node budget survivable: an entity the
+    budget dropped is still reachable by name. If search ever starts reading
+    the budgeted graph instead, a large ontology loses entities entirely and
+    the interface gives no sign of it.
+    """
+    # A budget of 1 keeps only the single highest-degree node.
+    budgeted = budget_viz(viz, 1)
+    assert budgeted["stats"]["truncated"] is True
+    drawn = {n["id"] for n in budgeted["nodes"]}
+    assert SPACE + "Mars" not in drawn
+
+    results = search_nodes(viz, "mars")
+    assert SPACE + "Mars" in [r["id"] for r in results]
 
 
 def test_format_detection_and_sniffing():

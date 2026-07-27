@@ -412,6 +412,43 @@ select:focus {
   white-space: pre-wrap;
 }
 
+/* The partial-graph notice. Informational, so it deliberately does not borrow
+   the error bar's colours: nothing has gone wrong. */
+.graph-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  font-size: 13px;
+}
+
+.graph-notice-icon {
+  color: var(--accent);
+  flex: none;
+}
+
+.graph-notice-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.graph-notice button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* An explicit focus ring rather than the browser's. The user agent default is
+   sub-pixel and its colour is not ours, so a keyboard user gets a different
+   and fainter indicator per browser. Scoped to this notice deliberately: the
+   application has no global focus-visible rule, and adding one is backlog X-1,
+   not this change. */
+.graph-notice button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .theme-toggle {
   font-size: 16px;
 }
@@ -676,6 +713,19 @@ select:focus {
 .result-kind {
   color: var(--text-dim);
   font-size: 11px;
+}
+
+/* "not drawn" on a search result. The border and the text carry the meaning;
+   the colour only reinforces it, so it survives being read aloud or printed. */
+.result-undrawn {
+  flex: none;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
 }
 
 /* --- detail panel ----------------------------------------------------- */

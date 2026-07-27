@@ -49,16 +49,26 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 139 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 67 tests, vitest
+cd backend  && python -m pytest tests    # 156 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 79 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
 
-**Know the gap.** All 67 frontend tests are in `src/sparql/`. **No React
-component has a test.** A change to a component is adding the first test for
-that file, and should. Two visual defects reached a running application because
-this gap exists.
+Three backend tests carry `@pytest.mark.perf` and hold the graph endpoint's
+performance budget. Unlike `network`, they **run by default** — a budget nobody
+enforces is a note in a document. Deselect them on a slow machine with
+`-m "not perf"`.
+
+**Know the gap.** 67 of the 79 frontend tests are in `src/sparql/`. The other 12
+are the project's first component tests, added 2026-07-27:
+`GraphNotice.test.tsx`, `App.test.tsx` and `SearchBox.test.tsx`. Copy their
+pattern — a `// @vitest-environment jsdom` docblock per file, `vi.mock` over
+`api.ts`, and a stub for `GraphView` because Sigma needs a WebGL context jsdom
+does not have. **`GraphView.tsx`, `QueryPanel.tsx`, `DetailPanel.tsx`,
+`Legend.tsx` and the rest are still untested.** A change to one of those is
+adding the first test for that file, and should. Two visual defects reached a
+running application because this gap exists.
 
 ## Conventions that are not negotiable
 
@@ -171,13 +181,25 @@ prove a change works in the application rather than in the test suite.
   refuses a declared oversize before FastAPI parses the body; `_read_capped` in
   the router enforces the real size while reading. Removing either one removes a
   real protection — see D-015. Measured: 124 MB peak became 5 MB.
-- **The graph endpoint has no cap.** It returns every node and every edge. At
-  40,000 nodes that is 6.45 MB of JSON, and the browser cannot cope. Loading
-  FIBO makes the interface unresponsive.
-- **Accessibility is weak.** Thirteen interactive elements are exposed to
-  assistive technology for the entire application. The graph, the legend rows
-  and the search results are not among them. `index.css` sets `outline: none` on
-  focused inputs. There is no `prefers-reduced-motion` rule. Do not add to this.
+- **The graph endpoint is capped** (2026-07-27, spec `partial-graph-rendering`,
+  stage 1). `GET /{oid}/graph?limit=N` returns the N highest-degree nodes, ties
+  broken by node id, and only edges whose both ends survived. The default is
+  2,000 (`SEMANTIC_STUDIO_GRAPH_NODE_BUDGET`), the maximum is 20,000, and a
+  request above it is clamped and the clamped value reported rather than
+  refused. `stats` carries `nodeTotal`, `edgeTotal`, `truncated` and `budget`
+  beside the drawn counts. `kindCounts` deliberately still counts the **whole**
+  ontology — see D-017; a test asserts the mismatch so nobody "fixes" it.
+  Measured: a 40,000-node ontology at FIBO's density fell from 18.98 MB to 0.607
+  MB. **Stage 2, expand-on-demand, is not built.** An entity outside the budget
+  is findable by search and marked *not drawn*, but cannot yet be drawn.
+- **Accessibility is weak.** Fifteen interactive elements are exposed to
+  assistive technology for the entire application — thirteen, plus *Show more*
+  and dismiss on the graph notice. The graph, the legend rows and the search
+  results are still not among them, so the *not drawn* marker on a search result
+  sits in a row a keyboard user cannot reach. `index.css` sets `outline: none` on
+  focused inputs and has **no global `:focus-visible` rule**; the only two are
+  `.chip.open` and `.graph-notice button`. There is no `prefers-reduced-motion`
+  rule. Do not add to this.
 
 ## Pull requests
 

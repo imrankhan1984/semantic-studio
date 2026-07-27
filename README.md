@@ -186,10 +186,30 @@ variable if you have a known-good file that needs it.
 | Upload size | 50 MB | `SEMANTIC_STUDIO_MAX_UPLOAD_BYTES` |
 | Fetch size | 50 MB | `SEMANTIC_STUDIO_MAX_FETCH_BYTES` |
 | Parse time | 60 seconds | `SEMANTIC_STUDIO_PARSE_TIMEOUT` |
+| Entities drawn at once | 2,000 | `SEMANTIC_STUDIO_GRAPH_NODE_BUDGET` |
 
 50 MB comfortably covers the largest ontology in the suggested list, the JUHO
 thesaurus at about 26 MB. Both size limits are applied *while* the file is being
 read, so an oversized file is refused without ever being held in memory.
+
+## Large ontologies
+
+A big ontology is loaded in full but **drawn in part**. The graph shows the
+2,000 most connected entities by default, because drawing tens of thousands at
+once makes the browser tab unresponsive rather than informative.
+
+When that happens the app says so above the graph — *Showing the 2,000 most
+connected of 18,717 entities* — and the status bar keeps both numbers even if
+you dismiss the notice. Nothing is hidden silently.
+
+- **Show more** draws twice as many, up to a ceiling of 20,000.
+- **Search still covers the whole ontology.** A result that is not on the canvas
+  is marked *not drawn*; selecting it opens its details.
+- The legend counts the **whole** ontology, not just what is drawn, so its
+  numbers will be larger than what you can see. That is deliberate: it describes
+  the file, not the canvas.
+
+Raise `SEMANTIC_STUDIO_GRAPH_NODE_BUDGET` if your machine copes with more.
 
 ## Where your ontologies are stored
 

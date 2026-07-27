@@ -28,8 +28,9 @@ INPUTS / INPUT SOURCES
     - Uploaded files (multipart) and JSON fetch/sparql request bodies.
     - Remote RDF files fetched over HTTP for the /fetch endpoint.
     - The shared `store` and `saved_queries` singletons.
-    - Environment: SEMANTIC_STUDIO_MAX_UPLOAD_BYTES, SEMANTIC_STUDIO_MAX_FETCH_BYTES
-      and SEMANTIC_STUDIO_PARSE_TIMEOUT override the default caps.
+    - Environment: SEMANTIC_STUDIO_MAX_UPLOAD_BYTES, SEMANTIC_STUDIO_MAX_FETCH_BYTES,
+      SEMANTIC_STUDIO_PARSE_TIMEOUT and SEMANTIC_STUDIO_GRAPH_NODE_BUDGET
+      override the default caps.
 
 EXPECTED OUTPUT
     - JSON responses (ontology summaries, graph, node details, search results,
@@ -54,7 +55,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from pydantic import BaseModel  # declares/validates JSON request bodies
 
 # Delegate the real work to the domain modules.
-from ..graph_builder import node_details, search_nodes
+from ..graph_builder import budget_viz, node_details, search_nodes
 from ..net_guard import MAX_REDIRECTS, BlockedAddress, assert_url_fetchable
 from ..query_schema import describe_query_node
 from ..sparql_exec import QueryError, QueryTimeout, execute_select
@@ -106,6 +107,17 @@ CHUNK_BYTES = 64 * 1024
 # to render this, so it is deliberately far below the parse limit.
 SOURCE_MAX_BYTES = 2 * 1024 * 1024
 SOURCE_HARD_MAX_BYTES = 16 * 1024 * 1024
+
+# How many graph nodes one /graph response may carry. The failure this bounds
+# is in the browser, not here: 18,717 nodes left the tab unresponsive for over
+# 95 seconds and it never recovered. 2,000 is a safety net rather than an
+# optimum — it is roughly nine times below the observed failure, and being
+# wrong costs a change to the environment variable rather than a release.
+DEFAULT_GRAPH_NODE_BUDGET = _env_int("SEMANTIC_STUDIO_GRAPH_NODE_BUDGET", 2000)
+# The ceiling "Show more" climbs towards. A request above it is clamped and the
+# clamped value is reported back, so the interface can say the maximum was
+# reached, rather than being refused as if the caller had made an error.
+MAX_GRAPH_NODE_BUDGET = 20000
 
 # Matches a github.com "blob" (or "raw") web URL and captures owner/repo/rest,
 # so we can rewrite it to the raw.githubusercontent.com download URL.
@@ -379,9 +391,21 @@ def delete_ontology(oid: str) -> dict:
 
 
 @router.get("/{oid}/graph")
-def get_graph(oid: str) -> dict:
-    """GET /{oid}/graph -> the visualization nodes/edges for the graph view."""
-    return _get_or_404(oid).viz()
+def get_graph(oid: str, limit: Optional[int] = Query(default=None, ge=1)) -> dict:
+    """GET /{oid}/graph?limit=N -> the highest-degree N nodes and their edges.
+
+    `ge=1` gives the 422 for zero and negatives through FastAPI's own
+    validation. The default is resolved here rather than being written into
+    the signature so that it is read at call time: as a `Query(...)` default it
+    would be bound at import, and the environment variable could then only be
+    moved by reloading the module.
+
+    Over the maximum the request is clamped rather than refused, because a
+    caller asking for more than the view can draw has not made an error — the
+    response reports the clamped `budget` so the interface can say so.
+    """
+    budget = min(DEFAULT_GRAPH_NODE_BUDGET if limit is None else limit, MAX_GRAPH_NODE_BUDGET)
+    return budget_viz(_get_or_404(oid).viz(), budget)
 
 
 @router.get("/{oid}/node")

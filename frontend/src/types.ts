@@ -145,13 +145,24 @@ export interface VizEdge {
 }
 
 // The whole graph plus summary counts (the /graph response).
+// The response is budgeted: it carries the highest-degree `budget` nodes, so
+// nodeCount/edgeCount describe what is DRAWN and the *Total fields describe the
+// ontology. Every added field is required, not optional: made optional, a stale
+// backend that omitted them would render a confident and wrong notice.
 export interface VizGraph {
   nodes: VizNode[];
   edges: VizEdge[];
   stats: {
-    nodeCount: number;
-    edgeCount: number;
-    kindCounts: Record<string, number>;  // per-kind totals for the legend
+    nodeCount: number;   // drawn
+    edgeCount: number;   // drawn
+    nodeTotal: number;   // in the ontology
+    edgeTotal: number;   // in the ontology
+    truncated: boolean;  // true when the budget dropped something
+    budget: number;      // the budget actually applied, after clamping
+    // Per-kind totals for the legend. Counts the WHOLE ontology, not the drawn
+    // subset, so these will not add up to nodeCount. That is deliberate: the
+    // legend describes the ontology, not the canvas. See D-017.
+    kindCounts: Record<string, number>;
   };
 }
 

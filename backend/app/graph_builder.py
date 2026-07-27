@@ -7,7 +7,8 @@ SUMMARY
     Turns an rdflib.Graph into the node/edge structure the frontend graph view
     draws, plus helpers for a single node's detail panel and for label/IRI
     search. Also provides the shared label-picking and prefix-shortening
-    helpers reused by other backend modules.
+    helpers reused by other backend modules, and the node budget that keeps a
+    large ontology from being shipped to the browser in one piece.
 
 BASIC IDEA
     An ontology is a bag of RDF triples. The graph view needs named entities
@@ -21,12 +22,15 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES
     - An rdflib.Graph produced by store.parse_rdf (build_viz_graph, node_details).
-    - The pre-built viz dict for label/IRI search (search_nodes).
+    - The pre-built viz dict for label/IRI search (search_nodes) and for the
+      node budget (budget_viz).
     - A specific entity IRI for the detail panel (node_details).
 
 EXPECTED OUTPUT
     - build_viz_graph -> {"nodes": [...], "edges": [...], "stats": {...}} as
       JSON-ready dicts consumed by frontend/src/components/GraphView.tsx.
+    - budget_viz -> the same shape reduced to the highest-degree nodes, with
+      the true totals and a truncation flag added to stats.
     - node_details -> every outgoing/incoming statement for one IRI (or None).
     - search_nodes -> ranked node matches for the search box.
     - pick_label / prefixed are imported by query_schema.py and sparql_exec.py.
@@ -301,6 +305,66 @@ def build_viz_graph(graph: Graph) -> dict:
             "nodeCount": len(nodes),
             "edgeCount": len(edge_list),
             "kindCounts": dict(kind_counts),
+        },
+    }
+
+
+# --- node budget ------------------------------------------------------------
+
+
+def budget_viz(viz: dict, limit: int) -> dict:
+    """The `limit` highest-degree nodes of a built viz graph, plus the edges
+    among them. Ties broken by node id so the result is deterministic.
+    Returns the same shape as build_viz_graph with four extra stats fields.
+
+    This is a pure function over an already-built viz dict and never touches
+    the rdflib graph. build_viz_graph keeps producing the *complete* graph,
+    because search, the ontology summary and the cache all depend on it; the
+    budget is applied on top, per request. Measured at 3 ms over 40,000 nodes,
+    which is why there is no second cache to invalidate. See D-018.
+    """
+    nodes = viz["nodes"]
+    edges = viz["edges"]
+    node_total = len(nodes)
+    edge_total = len(edges)
+    truncated = node_total > limit
+
+    if truncated:
+        # Descending degree, then ascending id. The id tiebreak is not
+        # cosmetic: without it two calls can return different node sets for
+        # the same ontology, and the view would shuffle for no visible reason.
+        ranked = sorted(nodes, key=lambda n: (-n["degree"], n["id"]))
+        kept_nodes = ranked[:limit]
+        kept_ids = {n["id"] for n in kept_nodes}
+        # Both ends must survive. A retained node whose every neighbour was
+        # dropped is drawn unconnected, which is correct: it is a real entity
+        # that happens to have no retained neighbour.
+        kept_edges = [
+            e for e in edges if e["source"] in kept_ids and e["target"] in kept_ids
+        ]
+    else:
+        # Copy the lists even when nothing is dropped. They are the cache's own
+        # lists; handing them out would let any caller that mutates a response
+        # corrupt the full graph every other feature reads.
+        kept_nodes = list(nodes)
+        kept_edges = list(edges)
+
+    return {
+        "nodes": kept_nodes,
+        "edges": kept_edges,
+        "stats": {
+            "nodeCount": len(kept_nodes),
+            "edgeCount": len(kept_edges),
+            "nodeTotal": node_total,
+            "edgeTotal": edge_total,
+            "truncated": truncated,
+            "budget": limit,
+            # Deliberately the WHOLE ontology, not the drawn subset. The legend
+            # is a statement about the ontology, not about the canvas: if it
+            # counted only drawn nodes its numbers would change every time the
+            # user expanded something, and a learner would never see the real
+            # composition. This will read as a bug. It is not. See D-017.
+            "kindCounts": dict(viz["stats"]["kindCounts"]),
         },
     }
 

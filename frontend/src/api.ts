@@ -82,9 +82,18 @@ export function deleteOntology(id: string): Promise<void> {
   return fetch(`/api/ontologies/${id}`, { method: "DELETE" }).then((r) => handle(r));
 }
 
-// The visualization nodes/edges for the graph view.
-export function getGraph(id: string): Promise<VizGraph> {
-  return fetch(`/api/ontologies/${id}/graph`).then((r) => handle<VizGraph>(r));
+/**
+ * The visualization nodes/edges for the graph view.
+ *
+ * `limit` is omitted on the first request on purpose, so the server applies
+ * its own configured default. Sending 2,000 from here would hard-code the
+ * number in a second place and make SEMANTIC_STUDIO_GRAPH_NODE_BUDGET do
+ * nothing, which is the setting the whole choice of default relies on.
+ * Callers pass a limit only once the user has asked for more.
+ */
+export function getGraph(id: string, limit?: number): Promise<VizGraph> {
+  const query = limit === undefined ? "" : `?limit=${limit}`;
+  return fetch(`/api/ontologies/${id}/graph${query}`).then((r) => handle<VizGraph>(r));
 }
 
 // Every statement about one entity, for the detail panel.

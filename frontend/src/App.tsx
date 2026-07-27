@@ -31,6 +31,7 @@ EXPECTED OUTPUT
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { deleteOntology, getGraph, listOntologies } from "./api";
 import DetailPanel from "./components/DetailPanel";
+import GraphNotice from "./components/GraphNotice";
 import GraphView from "./components/GraphView";
 import Legend from "./components/Legend";
 import LoadDialog from "./components/LoadDialog";
@@ -59,6 +60,18 @@ function initialTheme(): Theme {
   return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
+/**
+ * The status-bar count for nodes or edges: "34" normally, "2,000 of 18,717"
+ * when the budget dropped something, and "…" while the graph is loading.
+ */
+function countOf(graph: VizGraph | null, what: "node" | "edge"): string {
+  if (!graph) return "…";
+  const drawn = what === "node" ? graph.stats.nodeCount : graph.stats.edgeCount;
+  const total = what === "node" ? graph.stats.nodeTotal : graph.stats.edgeTotal;
+  if (!graph.stats.truncated) return drawn.toLocaleString();
+  return `${drawn.toLocaleString()} of ${total.toLocaleString()}`;
+}
+
 export default function App() {
   // --- top-level state ---
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -72,6 +85,12 @@ export default function App() {
   const [loadingGraph, setLoadingGraph] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<AppMode>("explore");
+  // How many nodes to ask for. null means "do not send a limit", so the server
+  // applies its own configured default; it becomes a number only once the user
+  // presses Show more. Both this and the dismissal are per-ontology state and
+  // are reset below when the active ontology changes.
+  const [graphBudget, setGraphBudget] = useState<number | null>(null);
+  const [noticeDismissed, setNoticeDismissed] = useState(false);
   // The shared query-builder state; the schema is only fetched in Query mode.
   const builder = useQueryBuilder(activeId, mode === "query");
 
@@ -91,24 +110,35 @@ export default function App() {
       .catch((e) => setError(String(e.message ?? e)));
   }, []);
 
-  // Whenever the active ontology changes, fetch its graph and reset view state.
+  // Reset the per-ontology view state the moment the ontology changes, during
+  // render rather than in an effect. In an effect the fetch below would fire
+  // once against the new ontology while still carrying the previous one's
+  // budget, then again after the reset — two requests, the first one wrong.
+  const [budgetFor, setBudgetFor] = useState<string | null>(null);
+  if (budgetFor !== activeId) {
+    setBudgetFor(activeId);
+    setGraphBudget(null);
+    setNoticeDismissed(false);
+    setSelected(null);
+    setHiddenKinds(new Set());
+  }
+
+  // Fetch the graph whenever the ontology or the requested budget changes.
   // The `cancelled` flag ignores a stale response if the user switches again
   // before it arrives.
   useEffect(() => {
     setGraphData(null);
-    setSelected(null);
-    setHiddenKinds(new Set());
     if (!activeId) return;
     setLoadingGraph(true);
     let cancelled = false;
-    getGraph(activeId)
+    getGraph(activeId, graphBudget ?? undefined)
       .then((g) => !cancelled && setGraphData(g))
       .catch((e) => !cancelled && setError(String(e.message ?? e)))
       .finally(() => !cancelled && setLoadingGraph(false));
     return () => {
       cancelled = true;
     };
-  }, [activeId]);
+  }, [activeId, graphBudget]);
 
   // The currently active ontology's summary (or null).
   const active = ontologies.find((o) => o.id === activeId) ?? null;
@@ -177,6 +207,21 @@ export default function App() {
     const kinds = new Set(graphData.edges.map((e) => e.kind));
     return [...kinds].sort();
   }, [graphData]);
+
+  // Which entities are actually on the canvas, so the search box can mark the
+  // results that are not. Search reads the whole ontology, so under a budget it
+  // routinely finds entities the graph cannot show.
+  const drawnIds = useMemo(
+    () => (graphData ? new Set(graphData.nodes.map((n) => n.id)) : null),
+    [graphData],
+  );
+
+  // The server clamps a budget above its maximum and reports what it clamped
+  // to, so asking for more than we got is what "no more to draw" looks like.
+  // Derived rather than mirroring the server's constant here, which would be a
+  // second copy of a number to keep in step.
+  const atMaximum =
+    graphData !== null && graphBudget !== null && graphBudget > graphData.stats.budget;
 
   // Layout: a header (brand + nav rows), a main area (graph + right panel that
   // depends on the mode), a status bar, and the Load dialog when open.
@@ -273,6 +318,7 @@ export default function App() {
             ontologyId={activeId}
             theme={theme}
             onPick={onSearchPick}
+            drawnIds={drawnIds}
             placeholder={
               mode === "query" ? "Search to add a step…" : "Search concepts, properties…"
             }
@@ -284,6 +330,17 @@ export default function App() {
         <div className="error-bar" onClick={() => setError(null)} title="Click to dismiss">
           {error}
         </div>
+      )}
+
+      {/* Above the canvas, below the search box, so it reads before the graph
+          and sits where the tab order already is. */}
+      {graphData && !noticeDismissed && (
+        <GraphNotice
+          stats={graphData.stats}
+          atMaximum={atMaximum}
+          onShowMore={() => setGraphBudget(graphData.stats.budget * 2)}
+          onDismiss={() => setNoticeDismissed(true)}
+        />
       )}
 
       <main className="main">
@@ -345,8 +402,11 @@ export default function App() {
           <>
             <span>{active.name}</span>
             <span>{active.triples.toLocaleString()} triples</span>
-            <span>{graphData?.stats.nodeCount.toLocaleString() ?? "…"} nodes</span>
-            <span>{graphData?.stats.edgeCount.toLocaleString() ?? "…"} edges</span>
+            {/* Under a budget these read "2,000 of 18,717". The status bar
+                keeps saying so after the notice is dismissed, so the fact that
+                the view is partial is never fully hidden. */}
+            <span>{countOf(graphData, "node")} nodes</span>
+            <span>{countOf(graphData, "edge")} edges</span>
             <span className="dim">{active.format}</span>
             {active.source !== "upload" && <span className="dim src">{active.source}</span>}
           </>
