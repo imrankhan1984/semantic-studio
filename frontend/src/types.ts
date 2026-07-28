@@ -284,6 +284,10 @@ export interface GraphPalette {
   dimNode: string;                // dimmed (out-of-focus) node colour
   dimEdge: string;                // dimmed edge colour
   label: string;                  // node label colour
+  /** Fill behind the hovered/selected node's label. Must contrast with `label`:
+   *  Sigma hard-codes this to #FFF, which is invisible under a near-white
+   *  dark-theme label colour. See drawNodeHover in GraphView.tsx. */
+  labelBackground: string;
   edgeLabel: string;              // edge label colour
   background: string;             // canvas background (also PNG export bg)
 }
@@ -297,6 +301,10 @@ export const PALETTES: Record<Theme, GraphPalette> = {
     dimNode: "#333a47",
     dimEdge: "#262c37",
     label: "#f2f5fa",
+    // --bg-panel, not the canvas background --bg-panel is one step lighter than
+    // the canvas, so the pill stays visible when the label is drawn over a
+    // brightly coloured node instead of appearing to float.
+    labelBackground: "#1a1f29",
     edgeLabel: "#93a0b8",
     background: "#12151c",
   },
@@ -307,6 +315,8 @@ export const PALETTES: Record<Theme, GraphPalette> = {
     dimNode: "#d5dae3",
     dimEdge: "#e3e7ee",
     label: "#141821",
+    // What Sigma already draws, so light mode is unchanged by construction.
+    labelBackground: "#ffffff",
     edgeLabel: "#5d6a77",
     background: "#f2f4f8",
   },

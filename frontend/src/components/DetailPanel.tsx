@@ -37,13 +37,19 @@ interface Props {
 
 function Term({ term, onNavigate }: { term: TermRef; onNavigate: (iri: string) => void }) {
   if (term.type === "uri") {
+    // Long predicates are truncated with a CSS ellipsis, so the title has to
+    // carry the readable label as well as the IRI: a truncated label is
+    // precisely the text the user is trying to finish reading. The truncation
+    // is visual only — nothing is shortened here, so the full string stays in
+    // the accessible name.
+    const display = term.label && term.label !== term.prefixed ? term.label : term.prefixed;
     return (
       <button
         className="term-link"
-        title={term.value}
+        title={display && display !== term.value ? `${display} — ${term.value}` : term.value}
         onClick={() => onNavigate(term.value)}
       >
-        {term.label && term.label !== term.prefixed ? term.label : term.prefixed}
+        {display}
       </button>
     );
   }
