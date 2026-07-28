@@ -42,9 +42,87 @@ import { circular } from "graphology-layout";         // initial ring placement
 import forceAtlas2, { inferSettings } from "graphology-layout-forceatlas2"; // sync physics
 import FA2Layout from "graphology-layout-forceatlas2/worker";               // worker physics
 import Sigma from "sigma";                             // WebGL renderer
+import { drawDiscNodeLabel } from "sigma/rendering";   // Sigma's own label drawing
+import type { NodeHoverDrawingFunction } from "sigma/rendering";
 import { downloadAsPNG } from "@sigma/export-image";   // PNG export
 import type { Theme, VizGraph } from "../types";
 import { PALETTES } from "../types";
+
+/**
+ * Sigma's own `drawDiscNodeHover` hard-codes the label pill to `#FFF`, while
+ * the label text colour comes from `settings.labelColor`. In the dark theme
+ * that is `#f2f5fa`, so the selected node's label rendered as white on white —
+ * invisible, on the label of the thing the user just clicked.
+ *
+ * This is the same geometry with the one constant made theme-aware. It is a
+ * copy rather than a wrapper because the fill happens in the middle of the
+ * path-building, with no seam to hook into.
+ *
+ * Version risk, stated rather than hidden: this will not track changes to
+ * Sigma's own hover drawing. `defaultDrawNodeHover` is a documented setting and
+ * `drawDiscNodeLabel` a public export, so the worst case is that the pill
+ * geometry drifts from Sigma's — not that anything silently breaks. No test can
+ * catch that.
+ */
+function makeDrawNodeHover(labelBackground: string): NodeHoverDrawingFunction {
+  return function drawNodeHover(context, data, settings) {
+    const size = settings.labelSize;
+    const font = settings.labelFont;
+    const weight = settings.labelWeight;
+    context.font = `${weight} ${size}px ${font}`;
+
+    // The one line this function exists for.
+    context.fillStyle = labelBackground;
+    context.shadowOffsetX = 0;
+    context.shadowOffsetY = 0;
+    context.shadowBlur = 8;
+    context.shadowColor = "#000";
+
+    const PADDING = 2;
+    if (typeof data.label === "string") {
+      const textWidth = context.measureText(data.label).width;
+      const boxWidth = Math.round(textWidth + 5);
+      const boxHeight = Math.round(size + 2 * PADDING);
+      const radius = Math.max(data.size, size / 2) + PADDING;
+      const angleRadian = Math.asin(boxHeight / 2 / radius);
+      const xDeltaCoord = Math.sqrt(
+        Math.abs(Math.pow(radius, 2) - Math.pow(boxHeight / 2, 2)),
+      );
+      context.beginPath();
+      context.moveTo(data.x + xDeltaCoord, data.y + boxHeight / 2);
+      context.lineTo(data.x + radius + boxWidth, data.y + boxHeight / 2);
+      context.lineTo(data.x + radius + boxWidth, data.y - boxHeight / 2);
+      context.lineTo(data.x + xDeltaCoord, data.y - boxHeight / 2);
+      context.arc(data.x, data.y, radius, angleRadian, -angleRadian);
+      context.closePath();
+      context.fill();
+    } else {
+      // No label: Sigma draws a plain shadowed disc instead of a pill.
+      context.beginPath();
+      context.arc(data.x, data.y, data.size + PADDING, 0, Math.PI * 2);
+      context.closePath();
+      context.fill();
+    }
+    context.shadowOffsetX = 0;
+    context.shadowOffsetY = 0;
+    context.shadowBlur = 0;
+
+    drawDiscNodeLabel(context, data, settings);
+  };
+}
+
+/**
+ * One drawing function per theme, built once at module load.
+ *
+ * Built here rather than inside the theme effect because that effect also runs
+ * on every selection and filter change: a factory call there would allocate a
+ * closure on each one. Two functions for the lifetime of the module is the
+ * whole cost, and the per-frame path allocates nothing.
+ */
+export const NODE_HOVER_DRAWERS: Record<Theme, NodeHoverDrawingFunction> = {
+  dark: makeDrawNodeHover(PALETTES.dark.labelBackground),
+  light: makeDrawNodeHover(PALETTES.light.labelBackground),
+};
 
 // Props — see the file header for the meaning of each.
 interface Props {
@@ -206,6 +284,9 @@ export default function GraphView({
       renderEdgeLabels: graph.size <= 3000,
       labelColor: { color: paletteRef.current.label },
       edgeLabelColor: { color: paletteRef.current.edgeLabel },
+      // Every node the reducer marks `highlighted` draws through this, so the
+      // selected, the hovered and the query-path nodes all get the same pill.
+      defaultDrawNodeHover: NODE_HOVER_DRAWERS[theme],
       labelFont: "Inter, system-ui, sans-serif",
       edgeLabelFont: "Inter, system-ui, sans-serif",
       labelWeight: "600",
@@ -419,6 +500,10 @@ export default function GraphView({
     if (!renderer) return;
     renderer.setSetting("labelColor", { color: PALETTES[theme].label });
     renderer.setSetting("edgeLabelColor", { color: PALETTES[theme].edgeLabel });
+    // Swapped alongside labelColor, so a theme switch repaints the pill behind
+    // an already-selected node's label without recreating the renderer or
+    // needing the user to reselect.
+    renderer.setSetting("defaultDrawNodeHover", NODE_HOVER_DRAWERS[theme]);
     renderer.refresh({ skipIndexation: true });
   }, [hiddenKinds, selected, theme, queryMode, queryPathIris, queryCandidates]);
 

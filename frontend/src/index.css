@@ -118,8 +118,30 @@ select {
 
 input:focus,
 select:focus {
-  outline: none;
   border-color: var(--accent);
+}
+
+/* One focus ring for the whole application.
+   Written globally rather than per component because five specifications each
+   promised "a visible focus indicator" and each assumed this rule already
+   existed. It did not — and the `input:focus, select:focus` block just above
+   set `outline: none`, which actively removed the ring from the ontology
+   dropdown and the search box, two of the handful of elements a keyboard user
+   can reach at all. That declaration was deleted, not overridden; only its
+   `border-color` remains. Do not add it back.
+
+   `:focus-visible` rather than `:focus` is the point: it fires for keyboard
+   navigation and not for mouse clicks, which is the real annoyance the deleted
+   declaration was reaching for. It solved a fair problem with the wrong tool.
+
+   Scope is deliberately this and nothing else. Keyboard reach for the graph,
+   the legend rows and the search results, screen reader support for all three,
+   and `prefers-reduced-motion` are all backlog X-1 and are not touched here.
+   A focus ring is not keyboard reach: an element that cannot be tabbed to has
+   nothing to show a ring on. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* --- layout ---------------------------------------------------------- */
@@ -439,15 +461,9 @@ select:focus {
   cursor: default;
 }
 
-/* An explicit focus ring rather than the browser's. The user agent default is
-   sub-pixel and its colour is not ours, so a keyboard user gets a different
-   and fainter indicator per browser. Scoped to this notice deliberately: the
-   application has no global focus-visible rule, and adding one is backlog X-1,
-   not this change. */
-.graph-notice button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
+/* The notice's buttons had their own :focus-visible rule when they were added,
+   because no global one existed. There is one now, with identical values, so
+   this block was deleted rather than left as a copy that could drift. */
 
 .theme-toggle {
   font-size: 16px;
@@ -801,6 +817,12 @@ select:focus {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
+  /* The fix for the column collision, and it has to be on the table.
+     Under automatic layout the algorithm sizes columns from their content and
+     a `max-width` on a cell is advisory, so the old 150px cap did nothing: with
+     `white-space: nowrap` the cell simply grew past it and the ellipsis never
+     applied. Fixed layout makes the widths below binding. */
+  table-layout: fixed;
 }
 
 .detail-table td {
@@ -812,12 +834,26 @@ select:focus {
 
 .detail-table td.pred {
   color: var(--text-dim);
+  /* 40% rather than a pixel value: 152px at the current 380px panel, close to
+     the 150px the old rule intended, and it survives a change to the width. */
+  width: 40%;
+  padding-right: 10px;   /* the gap that was missing when the columns collided */
   white-space: nowrap;
-  max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: ui-monospace, Consolas, monospace;
   font-size: 12px;
+}
+
+/* Easy to miss, and the ellipsis does not appear without it. The cell's content
+   is a <button>, which establishes its own box: clipping the cell alone leaves
+   the button overflowing it. The truncation has to be applied to the button. */
+.detail-table td.pred .term-link {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .term-link {
@@ -830,7 +866,10 @@ select:focus {
   overflow-wrap: anywhere;
 }
 
-.term-link:hover {
+/* Focus gets the same affordance as hover, so a keyboard user is not left
+   without the cue that a truncated predicate has more text behind it. */
+.term-link:hover,
+.term-link:focus-visible {
   text-decoration: underline;
 }
 
