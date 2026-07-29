@@ -5,7 +5,7 @@ FILE: frontend/src/components/icons.tsx
 
 SUMMARY
     A set of small inline SVG icons used in the header nav and toolbar (Load,
-    View, Explore, Query, sun/moon theme toggle, trash).
+    View, Explore, Query, sun/moon theme toggle, close, trash).
 
 BASIC IDEA
     Inlining a handful of stroked icons avoids an icon-font/library dependency.
@@ -89,6 +89,19 @@ export function IconMoon() {
   return (
     <svg {...base}>
       <path d="M20 14.5A8.5 8.5 0 019.5 4a8.5 8.5 0 1010.5 10.5z" />
+    </svg>
+  );
+}
+
+/* Closing an ontology sits next to the red trash button that deletes one, so
+   the two must not read as the same action. This is a plain cross at the trash
+   icon's size, and it is used WITHOUT the `danger` class: colour is the only
+   thing separating them visually, and the accessible names separate them for
+   everyone else. */
+export function IconClose() {
+  return (
+    <svg {...base} width={16} height={16}>
+      <path d="M6 6l12 12M18 6L6 18" />
     </svg>
   );
 }

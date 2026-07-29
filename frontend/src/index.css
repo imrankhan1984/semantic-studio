@@ -264,6 +264,27 @@ select:focus {
   color: var(--accent);
 }
 
+/* With no ontology open the three mode tabs are disabled, and one of them still
+   carries `.active` because a mode is always selected underneath. Dimmed AND
+   stripped of the accent underline, or the chooser would show a tab that looks
+   like the current view while doing nothing when pressed. The title attribute
+   says why; this is the same fact in the one channel a title cannot reach. */
+.nav-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.nav-item:disabled,
+.nav-item:disabled:hover {
+  color: var(--text-dim);
+  background: transparent;
+  border-bottom-color: transparent;
+}
+
+.nav-item:disabled svg {
+  color: var(--text-dim);
+}
+
 .header-icon-btn {
   display: inline-flex;
   align-items: center;
@@ -403,6 +424,155 @@ select:focus {
   flex: 1;
   position: relative;
   min-width: 0;
+}
+
+/* --- start screen ------------------------------------------------------ */
+/* The chooser takes the place of .main, so it carries the same flex sizing.
+   No new colour variables: everything here is --bg-panel, --border, --text and
+   --text-dim, as the rest of the application is. */
+
+.start-screen {
+  /* It carries `.main` too, so flex:1 and min-height:0 are restated here
+     rather than inherited by source order — the block display below is an
+     override of that rule and the sizing must not depend on which wins. */
+  flex: 1;
+  min-height: 0;
+  display: block;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+/* The one row the chooser moves focus to on mount.
+
+   Chrome matches :focus-visible for script-driven focus on a fresh page load,
+   so the global rule covers a cold start on its own. It does NOT match when
+   the last interaction was a pointer — which is what happens when the user
+   presses "Close this ontology" with the mouse and lands back here. Measured
+   both ways, 2026-07-29. Without this rule that second path leaves focus on a
+   row showing nothing.
+
+   StartScreen sets the marker when it takes focus and removes it on blur, so
+   this applies to exactly one element for exactly as long as it is focused;
+   everything else on the screen is the global rule's job. */
+.start-screen [data-start-focus]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.start-screen-inner {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 40px 24px 56px;
+}
+
+.start-screen h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.start-lede {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+}
+
+/* The live region is empty most of the time. It still occupies the flow rather
+   than being display:none, because a region that is hidden when the text
+   arrives is not reliably announced. */
+.start-live {
+  min-height: 18px;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.start-section {
+  margin-top: 22px;
+}
+
+.start-section h2 {
+  margin: 0 0 8px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.start-section .hint {
+  margin-top: 0;
+}
+
+.start-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.start-row {
+  display: grid;
+  /* Name and counts share the first line; the format line spans both. A grid
+     rather than a flex row so a long ontology name cannot push the counts off
+     the end of the card. */
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 16px;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-raised);
+}
+
+.start-row:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-raised));
+}
+
+.start-row:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.start-row-name {
+  font-weight: 600;
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.start-row-counts {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-family: ui-monospace, Consolas, monospace;
+  white-space: nowrap;
+}
+
+.start-row-meta {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.start-empty {
+  margin: 0;
+  padding: 14px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.start-error {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.start-routes {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .status-bar {
