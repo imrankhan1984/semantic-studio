@@ -60,6 +60,7 @@ const DATA_DIR = process.env.DATA_DIR || join(tmpdir(), 'semantic-studio-driver-
 // that break when a component is restyled, and a driver that fails here is
 // telling you a class name moved, not that the app is broken.
 const SEL = {
+  startRow: '.start-screen .start-row',
   search: '.search-box input',
   results: '.search-results li',
   detail: '.detail-panel',
@@ -466,6 +467,24 @@ async function cmdSmoke() {
     browser = await Browser.launch();
     await browser.goto(BASE);
     log('ui', `loaded ${BASE}, title=${await browser.eval('document.title')}`);
+
+    // The application opens on the chooser and renders nothing until asked, so
+    // the graph has to be requested by picking the ontology uploaded above.
+    // Before the startup-chooser-screen spec this step did not exist: the app
+    // auto-selected the most recent ontology on mount, which is exactly the
+    // behaviour that feature removed. A driver that skipped this would sit
+    // here waiting for canvases that are correctly absent.
+    await browser.waitFor(
+      `document.querySelectorAll("${SEL.startRow}").length > 0`,
+      30_000, 'start screen library rows',
+    );
+    log('ui-chooser', `chooser shown -> ${await browser.shot('00-chooser')}`);
+    // Nothing may have been drawn yet: the whole point is that the graph costs
+    // nothing until this click.
+    if (await browser.eval('document.querySelectorAll("canvas").length > 0')) {
+      fail('ui-chooser', 'a canvas was mounted before any ontology was picked');
+    }
+    await browser.click(`${SEL.startRow}:first-child`);
 
     await browser.waitFor(
       'document.querySelector("canvas") && document.querySelectorAll("canvas").length >= 2',

@@ -16,7 +16,10 @@ BASIC IDEA
 INPUTS / INPUT SOURCES (props)
     - onLoaded: called with the new ontology's summary on success.
     - onClose: dismiss the dialog.
-    Plus the CATALOGUE constant and the api upload/fetch functions.
+    - initialTab: which tab to open on, so the start screen's "Open a file"
+      and "Load from a URL" land on the right one. Defaults to "suggested",
+      which is how the Load button in the header still opens it.
+    Plus CatalogueList and the api upload/fetch functions.
 
 EXPECTED OUTPUT
     - The rendered modal; on success, a loaded ontology reported via onLoaded.
@@ -25,16 +28,20 @@ EXPECTED OUTPUT
 
 import { useRef, useState } from "react";
 import { fetchOntology, uploadOntology } from "../api";
-import { CATALOGUE } from "../catalogue";
+import type { CatalogueEntry } from "../catalogue";
+import CatalogueList from "./CatalogueList";
 import type { OntologySummary } from "../types";
+
+type Tab = "file" | "url" | "suggested";
 
 interface Props {
   onLoaded: (summary: OntologySummary) => void;
   onClose: () => void;
+  initialTab?: Tab;
 }
 
-export default function LoadDialog({ onLoaded, onClose }: Props) {
-  const [tab, setTab] = useState<"file" | "url" | "suggested">("suggested");
+export default function LoadDialog({ onLoaded, onClose, initialTab = "suggested" }: Props) {
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [fetching, setFetching] = useState<string | null>(null);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
@@ -67,7 +74,7 @@ export default function LoadDialog({ onLoaded, onClose }: Props) {
     }
   };
 
-  const loadSuggested = async (entry: (typeof CATALOGUE)[number]) => {
+  const loadSuggested = async (entry: CatalogueEntry) => {
     setBusy(true);
     setFetching(entry.id);
     setError(null);
@@ -105,27 +112,19 @@ export default function LoadDialog({ onLoaded, onClose }: Props) {
         </div>
 
         {tab === "suggested" && (
-          <div className="catalogue">
+          <>
             <p className="hint">
               Well-known public ontologies — nothing is downloaded until you pick one.
             </p>
-            {CATALOGUE.map((entry) => (
-              <button
-                key={entry.id}
-                className="catalogue-entry"
-                disabled={busy}
-                onClick={() => void loadSuggested(entry)}
-                title={entry.url}
-              >
-                <span className="catalogue-name">
-                  {entry.name}
-                  {fetching === entry.id && <span className="catalogue-loading"> · loading…</span>}
-                </span>
-                <span className="catalogue-desc">{entry.description}</span>
-                <span className="catalogue-size">{entry.size}</span>
-              </button>
-            ))}
-          </div>
+            {/* The same component the start screen renders. Two copies of this
+                markup would drift the moment either screen's wording or the
+                catalogue's order changed. */}
+            <CatalogueList
+              fetchingId={fetching}
+              busy={busy}
+              onPick={(entry) => void loadSuggested(entry)}
+            />
+          </>
         )}
 
         {tab === "file" && (

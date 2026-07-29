@@ -17,6 +17,12 @@ BASIC IDEA
     layout — View overlays a source pane, Explore shows the detail panel, Query
     shows the builder panel.
 
+    Nothing is fetched or parsed until the user picks an ontology. With no
+    active id the main area is the StartScreen chooser and the mode tabs are
+    disabled; App requests the ontology list and nothing else. That is a change
+    from selecting the most recently added ontology on mount, which rendered
+    18,717 nodes on every page load for anyone with FIBO stored.
+
 INPUTS / INPUT SOURCES
     - The backend API (via api.ts) for the ontology list and graph.
     - User interaction: header tabs, dropdown, graph clicks, search.
@@ -39,7 +45,9 @@ import Logo from "./components/Logo";
 import QueryPanel from "./components/QueryPanel";
 import SearchBox from "./components/SearchBox";
 import SourceView from "./components/SourceView";
+import StartScreen from "./components/StartScreen";
 import {
+  IconClose,
   IconExplore,
   IconLoad,
   IconMoon,
@@ -50,6 +58,11 @@ import {
 } from "./components/icons";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type { AppMode, OntologySummary, Theme, VizGraph } from "./types";
+
+/** Why the three mode tabs are disabled with nothing open. One string, because
+ *  it is the same reason on all three and it belongs in the title attribute
+ *  rather than only in the disabled styling. */
+const NO_ONTOLOGY_TITLE = "Open an ontology first";
 
 /** The theme to start in: saved preference, else the OS setting, else dark. */
 function initialTheme(): Theme {
@@ -82,8 +95,15 @@ export default function App() {
   const [focusTick, setFocusTick] = useState(0);                          // bump to re-centre camera
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set()); // legend filters
   const [dialogOpen, setDialogOpen] = useState(false);                    // Load dialog open?
+  const [dialogTab, setDialogTab] = useState<"file" | "url" | "suggested">("suggested");
   const [loadingGraph, setLoadingGraph] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The ontology list's own loading and failure state, kept apart from `error`
+  // above. A list that will not load is reported inside the chooser's library
+  // section, because the catalogue and the file routes still work without it
+  // and the error bar would imply the whole screen was broken.
+  const [listLoading, setListLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [mode, setMode] = useState<AppMode>("explore");
   // How many nodes to ask for. null means "do not send a limit", so the server
   // applies its own configured default; it becomes a number only once the user
@@ -100,15 +120,22 @@ export default function App() {
     localStorage.setItem("semantic-studio-theme", theme);
   }, [theme]);
 
-  // On first mount, load the ontology list and select the most recent one.
-  useEffect(() => {
+  // Load the ontology list. It sets the list and NOTHING else: selecting the
+  // most recent entry here is what made every page load render whatever the
+  // user last happened to add. `activeId` stays null, so the chooser decides.
+  // Also the retry the chooser offers when this fails.
+  const refreshList = useCallback(() => {
+    setListLoading(true);
+    setListError(null);
     listOntologies()
-      .then((list) => {
-        setOntologies(list);
-        if (list.length > 0) setActiveId(list[list.length - 1].id);
-      })
-      .catch((e) => setError(String(e.message ?? e)));
+      .then((list) => setOntologies(list))
+      .catch((e) => setListError(String(e.message ?? e)))
+      .finally(() => setListLoading(false));
   }, []);
+
+  useEffect(() => {
+    refreshList();
+  }, [refreshList]);
 
   // Reset the per-ontology view state the moment the ontology changes, during
   // render rather than in an effect. In an effect the fetch below would fire
@@ -143,15 +170,21 @@ export default function App() {
   // The currently active ontology's summary (or null).
   const active = ontologies.find((o) => o.id === activeId) ?? null;
 
-  // Called by the Load dialog once an ontology is loaded: add it and select it.
+  // Called by the Load dialog and the chooser's catalogue once an ontology is
+  // loaded: add it and select it. Someone who deliberately loaded a file
+  // expects to see it, so this one path does open a graph without a second
+  // click. Deduplicated by id because the same catalogue entry can be fetched
+  // twice in a session and the backend returns the existing summary.
   const onLoaded = (summary: OntologySummary) => {
-    setOntologies((prev) => [...prev, summary]);
+    setOntologies((prev) => [...prev.filter((o) => o.id !== summary.id), summary]);
     setActiveId(summary.id);
     setDialogOpen(false);
     setError(null);
   };
 
-  // Remove the active ontology after confirmation, then select another (or none).
+  // Remove the active ontology after confirmation, then return to the chooser.
+  // It used to fall back to the last remaining ontology, which reintroduced
+  // exactly the unasked-for render this screen exists to stop.
   const onRemove = async () => {
     if (!activeId) return;
     const name = ontologies.find((o) => o.id === activeId)?.name ?? "this ontology";
@@ -160,15 +193,25 @@ export default function App() {
     }
     try {
       await deleteOntology(activeId);
-      setOntologies((prev) => {
-        const next = prev.filter((o) => o.id !== activeId);
-        // Fall back to the last remaining ontology, or clear if none left.
-        setActiveId(next.length > 0 ? next[next.length - 1].id : null);
-        return next;
-      });
+      setOntologies((prev) => prev.filter((o) => o.id !== activeId));
+      setActiveId(null);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     }
+  };
+
+  // Close without deleting: back to the chooser, the stored copy untouched.
+  const onCloseOntology = () => {
+    setActiveId(null);
+    setError(null);
+  };
+
+  // Open the Load dialog on a named tab, so the chooser's file and URL routes
+  // reuse the dialog's drag-and-drop and GitHub URL rewriting rather than
+  // growing a second copy of either.
+  const openDialog = (tab: "file" | "url" | "suggested") => {
+    setDialogTab(tab);
+    setDialogOpen(true);
   };
 
   // Select a node AND re-centre the camera on it (focusTick is the trigger the
@@ -231,9 +274,11 @@ export default function App() {
         <div className="nav-row">
           <Logo />
           <nav className="main-nav" role="tablist" aria-label="Workspace">
+            {/* Load stays enabled with no ontology open: it is the way out of
+                an empty library, so disabling it would be a dead end. */}
             <button
               className="nav-item"
-              onClick={() => setDialogOpen(true)}
+              onClick={() => openDialog("suggested")}
               title="Load an ontology from a file or a URL"
             >
               <IconLoad />
@@ -244,7 +289,8 @@ export default function App() {
               aria-selected={mode === "view"}
               className={mode === "view" ? "nav-item active" : "nav-item"}
               onClick={() => setMode("view")}
-              title="Read the ontology file itself"
+              disabled={!activeId}
+              title={activeId ? "Read the ontology file itself" : NO_ONTOLOGY_TITLE}
             >
               <IconView />
               <span>View</span>
@@ -254,7 +300,8 @@ export default function App() {
               aria-selected={mode === "explore"}
               className={mode === "explore" ? "nav-item active" : "nav-item"}
               onClick={() => setMode("explore")}
-              title="Browse the ontology and inspect entities"
+              disabled={!activeId}
+              title={activeId ? "Browse the ontology and inspect entities" : NO_ONTOLOGY_TITLE}
             >
               <IconExplore />
               <span>Explore</span>
@@ -264,7 +311,8 @@ export default function App() {
               aria-selected={mode === "query"}
               className={mode === "query" ? "nav-item active" : "nav-item"}
               onClick={() => setMode("query")}
-              title="Build a SPARQL query by clicking the graph"
+              disabled={!activeId}
+              title={activeId ? "Build a SPARQL query by clicking the graph" : NO_ONTOLOGY_TITLE}
             >
               <IconQuery />
               <span>Query</span>
@@ -282,7 +330,10 @@ export default function App() {
         </div>
 
         <div className="context-row">
-          {ontologies.length > 0 ? (
+          {/* Keyed off `active`, not the list length: with a saved library and
+              the chooser open there is nothing for the dropdown to select, and
+              a select showing a blank row would look like a defect. */}
+          {active ? (
             <>
               <label className="context-label" htmlFor="ontology-select">
                 ONTOLOGY
@@ -299,19 +350,28 @@ export default function App() {
                   </option>
                 ))}
               </select>
-              {active && (
-                <button
-                  className="ghost icon-btn danger"
-                  onClick={() => void onRemove()}
-                  title="Remove this ontology and delete its stored copy"
-                  aria-label="Remove ontology"
-                >
-                  <IconTrash />
-                </button>
-              )}
+              {/* Close and remove sit side by side and do very different
+                  things, so only one of them is red and their accessible names
+                  say which is which. Close is the ordinary icon button. */}
+              <button
+                className="ghost icon-btn"
+                onClick={onCloseOntology}
+                title="Close this ontology and return to the start screen"
+                aria-label="Close this ontology"
+              >
+                <IconClose />
+              </button>
+              <button
+                className="ghost icon-btn danger"
+                onClick={() => void onRemove()}
+                title="Remove this ontology and delete its stored copy"
+                aria-label="Remove ontology"
+              >
+                <IconTrash />
+              </button>
             </>
           ) : (
-            <span className="context-label">NO ONTOLOGY LOADED</span>
+            <span className="context-label">NO ONTOLOGY OPEN</span>
           )}
           <div className="spacer" />
           <SearchBox
@@ -343,59 +403,74 @@ export default function App() {
         />
       )}
 
-      <main className="main">
-        <div className="graph-area">
-          <GraphView
-            data={graphData}
-            theme={theme}
-            hiddenKinds={hiddenKinds}
-            selected={selected}
-            onSelect={onGraphSelect}
-            focusTick={focusTick}
-            queryMode={mode === "query"}
-            queryPathIris={builder.pathIris}
-            queryCandidates={builder.candidates}
-            leftRail={
-              graphData ? (
-                <Legend
-                  theme={theme}
-                  kindCounts={graphData.stats.kindCounts}
-                  edgeKinds={edgeKinds}
-                  hiddenKinds={hiddenKinds}
-                  onToggleKind={(kind) =>
-                    setHiddenKinds((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(kind)) next.delete(kind);
-                      else next.add(kind);
-                      return next;
-                    })
-                  }
-                />
-              ) : null
-            }
-          />
-          {loadingGraph && <div className="loading-overlay">Building graph…</div>}
-        </div>
-        {/* View sits over the graph rather than replacing it, so switching
-            back to Explore does not throw away the settled layout. */}
-        {mode === "view" && <SourceView ontologyId={activeId} />}
-        {mode === "query" ? (
-          <QueryPanel
-            ontologyId={activeId}
-            theme={theme}
-            builder={builder}
-            onPickIri={selectAndFocus}
-            ontologyTriples={active?.triples ?? 0}
-          />
-        ) : mode === "explore" ? (
-          <DetailPanel
-            ontologyId={activeId}
-            iri={selected}
-            onNavigate={selectAndFocus}
-            onClose={() => setSelected(null)}
-          />
-        ) : null}
-      </main>
+      {/* With nothing open the chooser IS the main region, rather than sitting
+          inside one: it carries its own <main> and its own heading, so the
+          document never has two. */}
+      {activeId === null ? (
+        <StartScreen
+          ontologies={ontologies}
+          loading={listLoading}
+          error={listError}
+          onRetry={refreshList}
+          onOpen={setActiveId}
+          onLoaded={onLoaded}
+          onOpenDialog={openDialog}
+        />
+      ) : (
+        <main className="main">
+          <div className="graph-area">
+            <GraphView
+              data={graphData}
+              theme={theme}
+              hiddenKinds={hiddenKinds}
+              selected={selected}
+              onSelect={onGraphSelect}
+              focusTick={focusTick}
+              queryMode={mode === "query"}
+              queryPathIris={builder.pathIris}
+              queryCandidates={builder.candidates}
+              leftRail={
+                graphData ? (
+                  <Legend
+                    theme={theme}
+                    kindCounts={graphData.stats.kindCounts}
+                    edgeKinds={edgeKinds}
+                    hiddenKinds={hiddenKinds}
+                    onToggleKind={(kind) =>
+                      setHiddenKinds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(kind)) next.delete(kind);
+                        else next.add(kind);
+                        return next;
+                      })
+                    }
+                  />
+                ) : null
+              }
+            />
+            {loadingGraph && <div className="loading-overlay">Building graph…</div>}
+          </div>
+          {/* View sits over the graph rather than replacing it, so switching
+              back to Explore does not throw away the settled layout. */}
+          {mode === "view" && <SourceView ontologyId={activeId} />}
+          {mode === "query" ? (
+            <QueryPanel
+              ontologyId={activeId}
+              theme={theme}
+              builder={builder}
+              onPickIri={selectAndFocus}
+              ontologyTriples={active?.triples ?? 0}
+            />
+          ) : mode === "explore" ? (
+            <DetailPanel
+              ontologyId={activeId}
+              iri={selected}
+              onNavigate={selectAndFocus}
+              onClose={() => setSelected(null)}
+            />
+          ) : null}
+        </main>
+      )}
 
       <footer className="status-bar">
         {active ? (
@@ -415,7 +490,13 @@ export default function App() {
         )}
       </footer>
 
-      {dialogOpen && <LoadDialog onLoaded={onLoaded} onClose={() => setDialogOpen(false)} />}
+      {dialogOpen && (
+        <LoadDialog
+          onLoaded={onLoaded}
+          onClose={() => setDialogOpen(false)}
+          initialTab={dialogTab}
+        />
+      )}
     </div>
   );
 }

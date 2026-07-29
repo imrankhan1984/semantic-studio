@@ -50,7 +50,7 @@ app writes into the real per-user ontology library.
 
 ```bash
 cd backend  && python -m pytest tests    # 156 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 98 tests, vitest
+cd frontend && npm run test              # 129 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -60,15 +60,17 @@ performance budget. Unlike `network`, they **run by default** — a budget nobod
 enforces is a note in a document. Deselect them on a slow machine with
 `-m "not perf"`.
 
-**Know the gap.** 67 of the 98 frontend tests are in `src/sparql/`. The rest were
-added on 2026-07-27 and are the project's first component tests. Copy their
-pattern — a `// @vitest-environment jsdom` docblock per file and `vi.mock` over
-`api.ts`. For anything touching the graph, either stub `GraphView` (see
+**Know the gap.** 67 of the 129 frontend tests are in `src/sparql/`. The rest
+were added from 2026-07-27 onward and are the project's component tests. Copy
+their pattern — a `// @vitest-environment jsdom` docblock per file and `vi.mock`
+over `api.ts`. For anything touching the graph, either stub `GraphView` (see
 `App.test.tsx`) or stub the two WebGL globals so Sigma's module can load (see
 `GraphView.test.tsx`); Sigma reads `WebGL2RenderingContext` at import time and
-jsdom does not define it. **`QueryPanel.tsx`, `Legend.tsx`, `SourceView.tsx`,
-`LoadDialog.tsx` and the rest are still untested.** A change to one of those is
-adding the first test for that file, and should.
+jsdom does not define it. **`QueryPanel.tsx`, `Legend.tsx`, `SourceView.tsx`
+and the rest are still untested.** A change to one of those is adding the first
+test for that file, and should. `LoadDialog.tsx` is covered only through
+`CatalogueList.test.tsx`, which renders it to prove the catalogue matches the
+start screen's — its file, URL and drag-and-drop tabs have no test.
 
 **If you write a test that reads a file and asserts something is absent, assert
 first that the file loaded.** vitest stubs CSS out of the module graph, so
@@ -206,12 +208,32 @@ prove a change works in the application rather than in the test suite.
   either changes back. Do not add a per-component focus rule; the global one
   covers it.
 
-  What is still missing is keyboard **reach**, which a focus ring is not.
-  Fifteen interactive elements are exposed to assistive technology for the whole
-  application. The graph, the legend rows and the search results are not among
-  them, so the *not drawn* marker on a search result sits in a row a keyboard
-  user cannot get to, and it has nothing to show a ring on. There is still no
-  `prefers-reduced-motion` rule. All of that is backlog X-1. Do not add to it.
+  **One documented exception, and it is not a licence for others.**
+  `.start-screen [data-start-focus]:focus` in `index.css` draws a ring on the
+  row the chooser moves focus to on mount. Measured in Chrome 2026-07-29:
+  script-driven focus **does** match `:focus-visible` on a fresh page load, but
+  **does not** once the last interaction was a pointer — so pressing *Close this
+  ontology* with the mouse landed focus on a row showing nothing.
+  `:focus-visible` excludes that case by design and no global rule can reach it.
+  `StartScreen.tsx` sets the marker when it takes focus and drops it on blur.
+  See D-022. If you need a focus rule anywhere else, you almost certainly do not.
+
+  What is still missing is keyboard **reach**, which a focus ring is not. Around
+  twenty interactive elements are exposed to assistive technology for the whole
+  application — the chooser added several, but the graph, the legend rows and
+  the search results are still not among them, so the *not drawn* marker on a
+  search result sits in a row a keyboard user cannot get to, and it has nothing
+  to show a ring on. There is still no `prefers-reduced-motion` rule. All of
+  that is backlog X-1. Do not add to it.
+- **The application opens on a chooser and renders nothing until asked**
+  (2026-07-29, spec `startup-chooser-screen`). `App.tsx` no longer selects the
+  most recent ontology on mount: `activeId` stays `null`, `StartScreen.tsx`
+  fills the main area, and the mode tabs are disabled. Mount makes **exactly
+  one** request, `GET /api/ontologies`, and `App.test.tsx` fails if a second
+  appears. Both ways back to the chooser — *Close this ontology* and removing
+  the active one — set `activeId` to `null` rather than falling back to another
+  entry. `CatalogueList.tsx` is shared by the chooser and the Load dialog so
+  backlog L-1's reordering lands on both; do not inline a second copy.
 
 ## Pull requests
 
