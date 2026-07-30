@@ -33,7 +33,8 @@ INPUTS / INPUT SOURCES (props)
     - hiddenKinds: kinds toggled off in the legend (hidden).
     - selected + focusTick: the selected node and a counter that, when bumped,
       re-centres the camera on it. `selected` is NOT guaranteed to be a node in
-      this graph — see focusTarget.
+      this graph — see focusTarget. When it is not, the request is honoured
+      later by whichever merge draws it, and not at all if none does.
     - onSelect: called with a clicked node's IRI (or null on empty click).
     - queryMode / queryPathIris / queryCandidates: Query-mode highlighting.
     - expansion: a neighbourhood to merge in, with a token that changes per
@@ -264,6 +265,21 @@ export default function GraphView({
   pathRef.current = queryPathIris ?? EMPTY_SET;
   candidateRef.current = queryCandidates;
   expandedRef.current = onExpanded;
+
+  /**
+   * Bring one node to the middle of the view.
+   *
+   * Shared by the two places that need it — an explicit focus request, and a
+   * merge that has just drawn the entity a focus request was made for. They
+   * were one line each and drifted immediately: the second case exists because
+   * the first cannot see a node that does not yet exist.
+   */
+  const centerOn = (node: string) => {
+    const renderer = sigmaRef.current;
+    const display = renderer?.getNodeDisplayData(node);
+    if (!renderer || !display) return;
+    renderer.getCamera().animate({ x: display.x, y: display.y, ratio: 0.25 }, { duration: 500 });
+  };
 
   const stopLayout = () => {
     window.clearTimeout(layoutTimer.current);
@@ -672,6 +688,22 @@ export default function GraphView({
     // Full indexation, not skipIndexation: the graph gained nodes and edges,
     // and Sigma's index is what maps them to what is drawn.
     sigmaRef.current?.refresh();
+
+    // Arrive at the entity this expansion was for, if this merge is what drew
+    // it. The camera effect below cannot do it: focus is requested at the
+    // moment of selection, and at that moment the node does not exist, so it
+    // bails on `hasNode` and the request is lost. Without this, picking an
+    // entity outside the node budget draws it somewhere off screen and leaves
+    // the user looking at where it was not — which is most of the difference
+    // between "the result led somewhere" and "the result did nothing".
+    //
+    // Conditioned on the selection having just been ADDED, not merely on it
+    // being drawn: growing the view from the detail panel's "Show its
+    // connections" expands around an entity already centred, and re-running the
+    // camera there would zoom a view the user had settled.
+    const sel = selectedRef.current;
+    if (sel && addedNodes.includes(sel)) centerOn(sel);
+
     expandedRef.current?.({ addedNodes, addedEdges });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expansion?.token]);
@@ -692,13 +724,9 @@ export default function GraphView({
   // Center the camera on the selected node — but only for explicit focus
   // requests (search picks, detail-panel navigation), not plain graph clicks.
   useEffect(() => {
-    const renderer = sigmaRef.current;
     const sel = selectedRef.current;
-    if (!focusTick || !renderer || !sel || !graphRef.current?.hasNode(sel)) return;
-    const display = renderer.getNodeDisplayData(sel);
-    if (display) {
-      renderer.getCamera().animate({ x: display.x, y: display.y, ratio: 0.25 }, { duration: 500 });
-    }
+    if (!focusTick || !sel || !graphRef.current?.hasNode(sel)) return;
+    centerOn(sel);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusTick]);
 

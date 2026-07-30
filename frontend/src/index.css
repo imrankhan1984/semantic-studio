@@ -378,6 +378,20 @@ select:focus {
   border-bottom: 1px solid var(--border-soft);
 }
 
+/* The pane's heading, and what focus lands on when a result row switches the
+   mode. Sized down to toolbar scale rather than left at h2 defaults: it is a
+   label on a strip of controls, not a page title. `flex: none` because every
+   other toolbar child is a flex item and a shrunk heading would wrap. */
+.source-title {
+  flex: none;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
 .mode-switch.small .mode-tab {
   padding: 4px 10px;
   font-size: 12px;
@@ -423,6 +437,15 @@ select:focus {
 
 .source-line.active {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* Where a result row sent the reader. Distinct from .active, which is the
+   current find-in-file hit, and stronger — it marks one line rather than one of
+   many, and the left rule survives on a display that renders the tint faintly.
+   Nothing is conveyed by this alone: the arrival is also announced. */
+.source-line.target {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .show-more {
@@ -1944,6 +1967,16 @@ select:focus {
   font-size: 9px;
 }
 
+/* The chip and its source control, side by side. inline-flex rather than a
+   block so the pair stays on the cell's baseline with the literal cells beside
+   it, and align-items keeps the small control centred against the taller chip. */
+.result-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+}
+
 .result-chip {
   border: 1px solid var(--border);
   background: var(--bg-raised);
@@ -1955,6 +1988,26 @@ select:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Secondary by design: no border, dimmed until hovered or focused, so the chip
+   stays the thing a click lands on. It is a real tab stop and the global
+   :focus-visible ring is what shows a keyboard user where they are. */
+.result-source {
+  flex: none;
+  border: none;
+  background: none;
+  padding: 1px 3px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-dim);
+  border-radius: 4px;
+}
+
+.result-source:hover,
+.result-source:focus-visible {
+  color: var(--accent);
+  background: var(--bg-raised);
 }
 
 .result-literal {

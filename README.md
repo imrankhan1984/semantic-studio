@@ -170,11 +170,13 @@ live preview that updates on every edit.
    edit; turn it off to freeze the query and refresh manually.
 6. **Execute** to run the query against the loaded ontology. Results appear in
    a sortable table, fifteen rows to a page; IRI cells are clickable and centre
-   that node in the graph. Sorting applies to the whole result set rather than
-   the page you happen to be on, so page one shows the true top rows. The query
-   text stays pinned above the results while you scroll them, and **Clear
-   results** empties the table without touching the query — unlike *Clear path*,
-   which resets the query itself.
+   that node in the graph — drawing it first if the node budget left it out, so
+   a result is never a dead end. Beside each one, a small **◧** control opens
+   *View* mode at that entity's first line in the file. Sorting applies to the
+   whole result set rather than the page you happen to be on, so page one shows
+   the true top rows. The query text stays pinned above the results while you
+   scroll them, and **Clear results** empties the table without touching the
+   query — unlike *Clear path*, which resets the query itself.
 7. **Save** the query to reuse later. Saved queries are stored with the
    ontologies (see below) and keep the *visual* state, so reopening one
    restores the path, pins, modifiers and filters — not just the query text.
@@ -220,6 +222,9 @@ you dismiss the notice. Nothing is hidden silently.
 - **Search still covers the whole ontology.** A result that is not on the canvas
   is marked *not drawn* — and picking it draws it, together with everything it
   connects to.
+- **Query results do the same.** A query can return any entity in the ontology,
+  so a result row regularly names one the budget left out; clicking it draws
+  that entity and the camera arrives on it, exactly as a search hit does.
 - **Show its connections**, on any entity's detail panel, grows the graph
   outward from that entity. The view only ever gets bigger; to go back to the
   budgeted graph, reopen the ontology.

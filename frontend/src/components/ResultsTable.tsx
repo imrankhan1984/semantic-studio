@@ -6,36 +6,49 @@ FILE: frontend/src/components/ResultsTable.tsx
 SUMMARY
     Renders SPARQL query results as a sortable, paged table: a column per
     variable, a row count, duration and page position, a truncation notice, a
-    control that empties the results area, URI cells as clickable chips and
-    literal cells as text (unbound cells shown as em dashes).
+    control that empties the results area, URI cells as clickable chips with a
+    secondary "view in source" control, and literal cells as text (unbound
+    cells shown as em dashes).
 
 BASIC IDEA
     Presentational over one SparqlResults. Column headers toggle client-side
     sort (numeric where possible, else case-insensitive text). Clicking a URI
-    chip calls onPickIri to centre that node in the graph.
+    chip calls onPickIri, which selects the entity and draws it if the node
+    budget left it out; the small control beside it calls onViewInSource, which
+    switches to View mode positioned at that entity's first line.
 
     Only one page of rows is in the document at a time. The server caps a
     result set at 1,000 rows, and putting all of them in a 40vh scroller buried
     the panel — so the sort runs over every row and the slice happens after it,
     which is the only ordering that lets page one show the true top rows.
 
+    The component is memoised. Growing the graph from a result chip changes
+    App's state several times over — the neighbourhood, what the merge added,
+    the live-region sentence — and every one of those renders QueryPanel again.
+    Without the memo the table under the user's cursor would be rebuilt each
+    time for no change at all. It only bites while all four props keep their
+    identity, which is why QueryPanel and App hand over callbacks that do.
+
 INPUTS / INPUT SOURCES (props)
     - results: the SparqlResults to display.
-    - onPickIri: focus a node when its result chip is clicked.
+    - onPickIri: select an entity when its result chip is clicked, drawing it
+      first if it is not on the canvas.
+    - onViewInSource: show that entity's first line in the raw source.
     - onClear: empty the results area, leaving the query untouched.
 
 EXPECTED OUTPUT
-    - The rendered results table (or an empty-result note); onPickIri on click;
-      onClear when the clear control is pressed.
+    - The rendered results table (or an empty-result note); onPickIri and
+      onViewInSource on click; onClear when the clear control is pressed.
 ================================================================================
 */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { SparqlResults, SparqlTerm } from "../types";
 
 interface Props {
   results: SparqlResults;
   onPickIri: (iri: string) => void;
+  onViewInSource: (iri: string, prefixed?: string) => void;
   onClear: () => void;
 }
 
@@ -49,6 +62,11 @@ const PAGE_SIZE = 15;
 /** Which pagination control was last pressed, so focus can survive the change. */
 type Pressed = "first" | "prev" | "next" | "last";
 
+/** What a URI cell shows: the label if there is one, else the shortened IRI. */
+function chipLabel(term: SparqlTerm): string {
+  return term.label || term.prefixed || term.value;
+}
+
 function sortValue(term: SparqlTerm | null): string | number {
   if (!term) return "";
   if (term.type === "literal") {
@@ -58,7 +76,7 @@ function sortValue(term: SparqlTerm | null): string | number {
   return (term.label ?? term.value).toLowerCase();
 }
 
-export default function ResultsTable({ results, onPickIri, onClear }: Props) {
+function ResultsTable({ results, onPickIri, onViewInSource, onClear }: Props) {
   const [sort, setSort] = useState<{ column: number; asc: boolean } | null>(null);
   const [page, setPage] = useState(0);
 
@@ -191,13 +209,32 @@ export default function ResultsTable({ results, onPickIri, onClear }: Props) {
                         {term === null ? (
                           <span className="dim">—</span>
                         ) : term.type === "uri" ? (
-                          <button
-                            className="result-chip"
-                            title={term.value}
-                            onClick={() => onPickIri(term.value)}
-                          >
-                            {term.label || term.prefixed || term.value}
-                          </button>
+                          // The chip keeps the meaning it has always had; the
+                          // source control is deliberately second, smaller and
+                          // not the thing a click lands on.
+                          <span className="result-cell">
+                            <button
+                              className="result-chip"
+                              title={term.value}
+                              onClick={() => onPickIri(term.value)}
+                            >
+                              {chipLabel(term)}
+                            </button>
+                            {/* Named after its own entity, not "View in
+                                source": forty identical names down a column
+                                tell a screen reader user nothing about which
+                                row they are on. The label is explicit rather
+                                than name-from-contents because the contents are
+                                a decorative glyph — see architecture.md v0.16. */}
+                            <button
+                              className="result-source"
+                              aria-label={`View ${chipLabel(term)} in source`}
+                              title={`View ${chipLabel(term)} in source`}
+                              onClick={() => onViewInSource(term.value, term.prefixed)}
+                            >
+                              <span aria-hidden="true">◧</span>
+                            </button>
+                          </span>
                         ) : (
                           <span className="result-literal" title={term.datatype ?? undefined}>
                             {term.value}
@@ -269,3 +306,5 @@ export default function ResultsTable({ results, onPickIri, onClear }: Props) {
     </div>
   );
 }
+
+export default memo(ResultsTable);

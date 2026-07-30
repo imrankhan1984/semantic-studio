@@ -38,8 +38,30 @@ import type {
 } from "./types";
 
 /**
+ * A failed request, carrying the status code alongside the backend's message.
+ *
+ * The code is here because one caller has to tell two failures apart. A 404
+ * from `/neighborhood` is not a fault: it is the endpoint saying the IRI is not
+ * a node in the visualization graph, which is true of every predicate and every
+ * blank node, and the interface answers that with a polite sentence rather than
+ * an error bar. Anything else really did go wrong. Matching on the message text
+ * would work until the message is reworded.
+ *
+ * It extends Error, so every existing `e instanceof Error` catch is unchanged.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+/**
  * Unwrap a fetch Response: return the parsed JSON on success, or throw an
- * Error carrying the backend's `detail` (falling back to the status text).
+ * ApiError carrying the backend's `detail` (falling back to the status text).
  */
 async function handle<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -51,7 +73,7 @@ async function handle<T>(response: Response): Promise<T> {
     } catch {
       /* keep statusText */
     }
-    throw new Error(detail);
+    throw new ApiError(detail, response.status);
   }
   return response.json() as Promise<T>;
 }

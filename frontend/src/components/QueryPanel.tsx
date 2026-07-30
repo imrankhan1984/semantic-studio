@@ -25,7 +25,9 @@ INPUTS / INPUT SOURCES (props)
     - ontologyId: the active ontology.
     - theme: colour theme (passed to child chips).
     - builder: the useQueryBuilder return value (state + actions).
-    - onPickIri: focus a node in the graph when a result chip is clicked.
+    - onPickIri: select a node in the graph when a result chip is clicked,
+      drawing it first if the node budget left it out.
+    - onViewInSource: follow a result into the raw source text.
     - ontologyTriples: size gate for the auto-preview.
 
 EXPECTED OUTPUT
@@ -55,6 +57,7 @@ interface Props {
   theme: Theme;
   builder: ReturnType<typeof useQueryBuilder>;
   onPickIri: (iri: string) => void;
+  onViewInSource: (iri: string, prefixed?: string) => void;
   /** Auto-preview is only worth running while it stays instant. */
   ontologyTriples: number;
 }
@@ -68,6 +71,7 @@ export default function QueryPanel({
   theme,
   builder,
   onPickIri,
+  onViewInSource,
   ontologyTriples,
 }: Props) {
   const {
@@ -122,6 +126,16 @@ export default function QueryPanel({
     },
     [schema],
   );
+
+  // Empties the results area only. The query, the path, the pins and the saved
+  // queries are untouched — that is the whole distinction from the path bar's
+  // Clear path.
+  //
+  // A useCallback rather than an inline arrow because ResultsTable is memoised:
+  // a fresh identity here would re-render the table on every App render, which
+  // is exactly what the memo is there to stop while a graph expansion is in
+  // flight underneath it.
+  const clearResults = useCallback(() => setResults(null), []);
 
   const refreshSaved = useCallback(() => {
     if (!ontologyId) return;
@@ -429,13 +443,11 @@ export default function QueryPanel({
               Live preview — first {PREVIEW_ROWS} rows. Press Execute for the full result.
             </p>
           )}
-          {/* Empties the results area only. The query, the path, the pins and
-              the saved queries are untouched — that is the whole distinction
-              from the path bar's Clear path. */}
           <ResultsTable
             results={results}
             onPickIri={onPickIri}
-            onClear={() => setResults(null)}
+            onViewInSource={onViewInSource}
+            onClear={clearResults}
           />
         </>
       )}

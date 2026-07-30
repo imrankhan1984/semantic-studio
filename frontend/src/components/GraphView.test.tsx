@@ -66,6 +66,9 @@ beforeAll(() => {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const sigmaCalls = vi.hoisted(() => ({ last: null as any }));
 
+/** Every camera.animate target, in order, so "the camera arrived" is testable. */
+const cameraMoves = vi.hoisted(() => ({ to: [] as { x: number; y: number }[] }));
+
 // A Sigma that draws nothing and remembers everything it was given. Only the
 // methods GraphView actually calls are implemented; anything else appearing
 // here later means GraphView started calling something new, which is worth
@@ -80,11 +83,24 @@ vi.mock("sigma", () => {
     kill() {}
     refresh() {}
     setSetting() {}
-    getNodeDisplayData() {
-      return null;
+    // The real one returns the node's screen position. Returning the graph's
+    // own coordinates is enough for the camera assertions and keeps the stub
+    // honest about which node it was asked for: a null here, as this returned
+    // before, makes centerOn a no-op and every camera test vacuous.
+    getNodeDisplayData(node: string) {
+      const graph = sigmaCalls.last?.graph;
+      if (!graph?.hasNode?.(node)) return null;
+      return { x: graph.getNodeAttribute(node, "x"), y: graph.getNodeAttribute(node, "y") };
     }
     getCamera() {
-      return { animate() {}, animatedReset() {}, animatedZoom() {}, animatedUnzoom() {} };
+      return {
+        animate(target: { x: number; y: number }) {
+          cameraMoves.to.push({ x: target.x, y: target.y });
+        },
+        animatedReset() {},
+        animatedZoom() {},
+        animatedUnzoom() {},
+      };
     }
   }
   return { default: FakeSigma };
@@ -342,7 +358,7 @@ interface Merged {
  * every node's position drifts between the assertions — and the claim being
  * tested is precisely that positions do not move.
  */
-async function mergeable(): Promise<Merged> {
+async function mergeable(selected: string | null = null): Promise<Merged> {
   const { default: GraphView } = await import("./GraphView");
   const results: MergeResult[] = [];
   let token = 0;
@@ -352,9 +368,12 @@ async function mergeable(): Promise<Merged> {
       data={DATA}
       theme="dark"
       hiddenKinds={new Set()}
-      selected={null}
+      selected={selected}
       onSelect={() => {}}
-      focusTick={0}
+      // 1, not 0: a caller passing `selected` is standing in for a search pick
+      // or a result chip, both of which ask for the camera. With 0 the focus
+      // effect returns before it looks at anything.
+      focusTick={selected ? 1 : 0}
       expansion={expansion}
       onExpanded={(r) => results.push(r)}
     />
@@ -386,6 +405,7 @@ function positionsOf(graph: any): Record<string, [number, number]> {
 
 describe("expanding the drawn graph", () => {
   beforeEach(() => {
+    cameraMoves.to = [];
     vi.useFakeTimers();
   });
 
@@ -458,6 +478,47 @@ describe("expanding the drawn graph", () => {
     // And with nothing new to place, the layout must not have run: a merge that
     // added nothing has no reason to move anything.
     expect(positionsOf(graph)).toEqual(afterFirst);
+    unmount();
+  });
+
+  it("the camera arrives at an entity this merge is what drew", async () => {
+    // AC-2 of result-navigation, and it is a gap this spec inherited rather
+    // than created: search picks had it too. Focus is requested at the moment
+    // of selection, when the node does not exist, so the camera effect bails on
+    // hasNode and the request is simply lost. Drawing an entity off screen and
+    // leaving the user looking at where it was not is most of the difference
+    // between "the result led somewhere" and "the result did nothing".
+    //
+    // Found in Chrome on 2026-07-31, against the built application: 5 of 34
+    // nodes became 8 of 34 and the view did not move.
+    const moon = "http://x/Moon";
+    const { graph, merge, unmount } = await mergeable(moon);
+    expect(cameraMoves.to, "nothing to centre on before the merge").toEqual([]);
+
+    await merge();
+
+    expect(graph.hasNode(moon)).toBe(true);
+    expect(cameraMoves.to).toHaveLength(1);
+    expect(cameraMoves.to[0]).toEqual({
+      x: graph.getNodeAttribute(moon, "x"),
+      y: graph.getNodeAttribute(moon, "y"),
+    });
+    unmount();
+  });
+
+  it("a merge around an already-drawn entity leaves the camera alone", async () => {
+    // The other half of the rule, and the reason it is keyed on what the merge
+    // ADDED rather than on what is drawn. "Show its connections" grows the view
+    // from an entity the user has already centred and settled; re-running the
+    // camera there would zoom a view they arranged.
+    const planet = "http://x/Planet";
+    const { graph, merge, unmount } = await mergeable(planet);
+    expect(graph.hasNode(planet)).toBe(true);
+    cameraMoves.to = []; // the focus request on mount is not what this is about
+
+    await merge();
+
+    expect(cameraMoves.to).toEqual([]);
     unmount();
   });
 

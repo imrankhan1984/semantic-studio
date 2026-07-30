@@ -36,6 +36,12 @@ BASIC IDEA
     the response's plus what expansions have contributed. Replacing the graph
     response instead would rebuild the canvas and lose every settled position.
 
+    Every route that names an entity from outside the canvas — the search box
+    and the results table — goes through one function, so a result row can draw
+    an entity the budget left out exactly as a search hit does. A result also
+    leads the other way: its second control switches to View mode with that
+    entity as the source pane's target.
+
     Removal is the one destructive action here, and it counts what it will
     destroy before it asks. Deleting an ontology has always deleted every query
     saved against it; onRemove now fetches that count first, puts it in the
@@ -54,6 +60,7 @@ EXPECTED OUTPUT
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ApiError,
   deleteOntology,
   getGraph,
   getNeighborhood,
@@ -82,6 +89,7 @@ import {
   IconView,
 } from "./components/icons";
 import { removalConfirmation, removalPrompt } from "./removalPrompt";
+import type { SourceTarget } from "./sourceTarget";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type {
   AppMode,
@@ -96,6 +104,19 @@ import type {
  *  it is the same reason on all three and it belongs in the title attribute
  *  rather than only in the disabled styling. */
 const NO_ONTOLOGY_TITLE = "Open an ontology first";
+
+/** What a 404 from /neighborhood means, said without calling it an error.
+ *
+ *  The endpoint refuses an IRI that is not a node in the visualization graph,
+ *  and predicates never are — nor are blank nodes. Reaching that from a result
+ *  row or a search hit is an ordinary thing to do, so it belongs in the polite
+ *  region beside the expansion counts rather than in the red bar that means
+ *  something went wrong. Before the crash fix on 2026-07-30 this route blanked
+ *  the whole application; a silent non-response replaced it, and this replaces
+ *  that. */
+const NOT_A_GRAPH_NODE =
+  "That entity is not drawn on the graph, so the view did not move: relationships " +
+  "and blank nodes are described but never shown as nodes.";
 
 /** The theme to start in: saved preference, else the OS setting, else dark. */
 function initialTheme(): Theme {
@@ -204,6 +225,11 @@ export default function App() {
   } | null>(null);
   const [expanded, setExpanded] = useState<Expanded>(NOTHING_EXPANDED);
   const [expandingIri, setExpandingIri] = useState<string | null>(null);
+  // Where the source pane should position itself. No token beside it, unlike
+  // `expansion` above: this is set from a click rather than from a response, so
+  // pressing the same control twice already hands over a new object and the
+  // effect that reads it re-runs on its own.
+  const [sourceTarget, setSourceTarget] = useState<SourceTarget | null>(null);
   // The shared query-builder state; the schema is only fetched in Query mode.
   const builder = useQueryBuilder(activeId, mode === "query");
 
@@ -259,6 +285,7 @@ export default function App() {
     setSelected(null);
     setFocusPanel(false);
     setHiddenKinds(new Set());
+    setSourceTarget(null);
   }
 
   // Fetch the graph whenever the ontology or the requested budget changes.
@@ -436,7 +463,11 @@ export default function App() {
       // expanding the same entity twice hands over an equal object.
       setExpansion((prev) => ({ data, token: (prev?.token ?? 0) + 1 }));
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      // 404 is the endpoint's answer for "that IRI is not a node here", which is
+      // a fact about the graph rather than a failure — see NOT_A_GRAPH_NODE.
+      // Everything else is a real error and keeps the error bar.
+      if (e instanceof ApiError && e.status === 404) setNotice(NOT_A_GRAPH_NODE);
+      else setError(e instanceof Error ? e.message : String(e));
     } finally {
       if (activeIdRef.current === id) setExpandingIri(null);
     }
@@ -460,21 +491,71 @@ export default function App() {
     );
   };
 
-  // Searching in Query mode adds the match to the path, so a query can be
-  // built by name without hunting for a node in a large graph.
+  // Selecting an entity from somewhere that is not the graph itself: the search
+  // box, or a row in the results table. Both can name an entity the node budget
+  // left out, so both have to be able to draw it before centring on it.
   //
   // A hit outside the budget is drawn rather than merely selected. That is the
   // whole of stage 2 from the user's side: before it, picking such a row opened
   // a panel about an entity the canvas could not show, and the row said "not
   // drawn" with nothing to be done about it.
-  const onSearchPick = useCallback(
+  //
+  // One function rather than two because they drifted apart once already —
+  // stage 2 taught search to draw, and the result chips, which had the same
+  // problem for the same reason, were never told.
+  const selectFromOutsideGraph = useCallback(
     (iri: string) => {
       selectAndFocus(iri);
-      if (mode === "query") void builder.addNode(iri);
       if (drawnIdsRef.current && !drawnIdsRef.current.has(iri)) void onExpand(iri);
     },
-    [mode, builder, selectAndFocus, onExpand],
+    [selectAndFocus, onExpand],
   );
+
+  // Searching in Query mode additionally adds the match to the path, so a query
+  // can be built by name without hunting for a node in a large graph. That half
+  // is search's alone: clicking a result is inspecting an answer, not building
+  // a query, and a chip that quietly extended the query would be a trap.
+  const onSearchPick = useCallback(
+    (iri: string) => {
+      selectFromOutsideGraph(iri);
+      if (mode === "query") void builder.addNode(iri);
+    },
+    [mode, builder, selectFromOutsideGraph],
+  );
+
+  // Follow a result into the file itself. The prefixed form travels with the
+  // IRI because the pane usually shows pretty-printed Turtle, in which the
+  // entity is written `ex:Thing` and the full IRI appears nowhere.
+  //
+  // The notice is cleared first: the sentence about to be announced is this
+  // action's answer, and leaving the previous one up would have the live region
+  // holding a stale reply to a different question.
+  const onViewInSource = useCallback((iri: string, prefixed?: string) => {
+    setNotice(null);
+    setSourceTarget({ iri, prefixed });
+    setMode("view");
+  }, []);
+
+  // What the source pane made of it. Only a miss is worth saying: a hit scrolls
+  // the line into view and highlights it, and focus is already on the heading.
+  //
+  // A hit still clears, rather than being ignored. The pane re-runs its lookup
+  // when the Original / Formatted toggle changes the document, and an entity
+  // absent from one form is regularly present in the other — so ignoring the
+  // null would leave "that entity does not appear" standing over a line that is
+  // now highlighted.
+  const onSourceTargetResolved = useCallback((missing: string | null) => {
+    setNotice(missing);
+  }, []);
+
+  // Switching mode from the tab bar drops any source target. Without this,
+  // leaving View and coming back re-runs the lookup, which moves focus to the
+  // source heading — stealing it from the tab the user has just pressed, which
+  // is the one thing the focus rule in SourceView exists to avoid.
+  const onPickMode = useCallback((next: AppMode) => {
+    setSourceTarget(null);
+    setMode(next);
+  }, []);
 
   // The distinct edge kinds present, for the legend's "relations" section.
   const edgeKinds = useMemo(() => {
@@ -512,7 +593,7 @@ export default function App() {
               role="tab"
               aria-selected={mode === "view"}
               className={mode === "view" ? "nav-item active" : "nav-item"}
-              onClick={() => setMode("view")}
+              onClick={() => onPickMode("view")}
               disabled={!activeId}
               title={activeId ? "Read the ontology file itself" : NO_ONTOLOGY_TITLE}
             >
@@ -523,7 +604,7 @@ export default function App() {
               role="tab"
               aria-selected={mode === "explore"}
               className={mode === "explore" ? "nav-item active" : "nav-item"}
-              onClick={() => setMode("explore")}
+              onClick={() => onPickMode("explore")}
               disabled={!activeId}
               title={activeId ? "Browse the ontology and inspect entities" : NO_ONTOLOGY_TITLE}
             >
@@ -534,7 +615,7 @@ export default function App() {
               role="tab"
               aria-selected={mode === "query"}
               className={mode === "query" ? "nav-item active" : "nav-item"}
-              onClick={() => setMode("query")}
+              onClick={() => onPickMode("query")}
               disabled={!activeId}
               title={activeId ? "Build a SPARQL query by clicking the graph" : NO_ONTOLOGY_TITLE}
             >
@@ -709,13 +790,20 @@ export default function App() {
           </div>
           {/* View sits over the graph rather than replacing it, so switching
               back to Explore does not throw away the settled layout. */}
-          {mode === "view" && <SourceView ontologyId={activeId} />}
+          {mode === "view" && (
+            <SourceView
+              ontologyId={activeId}
+              target={sourceTarget}
+              onTargetResolved={onSourceTargetResolved}
+            />
+          )}
           {mode === "query" ? (
             <QueryPanel
               ontologyId={activeId}
               theme={theme}
               builder={builder}
-              onPickIri={selectAndFocus}
+              onPickIri={selectFromOutsideGraph}
+              onViewInSource={onViewInSource}
               ontologyTriples={active?.triples ?? 0}
             />
           ) : mode === "explore" ? (

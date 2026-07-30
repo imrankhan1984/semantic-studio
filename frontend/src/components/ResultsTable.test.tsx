@@ -5,11 +5,13 @@ FILE: frontend/src/components/ResultsTable.test.tsx
 ================================================================================
 
 SUMMARY
-    The first test for ResultsTable. Covers paging: that one page and only one
-    page of rows reaches the document, that the sort runs over the whole result
-    set before the slice, that the pagination controls move and disable and
+    Tests for ResultsTable. Covers paging: that one page and only one page of
+    rows reaches the document, that the sort runs over the whole result set
+    before the slice, that the pagination controls move and disable and
     announce correctly, and that the truncation notice and the clear control
-    survive all of it.
+    survive all of it. Also covers the per-row "view in source" control: that
+    it names its own entity, that its glyph is hidden, and that it does not
+    displace the chip's meaning.
 
 BASIC IDEA
     The point of the change this file tests is that up to 1,000 rows used to be
@@ -30,7 +32,8 @@ INPUTS / INPUT SOURCES
     - Synthetic SparqlResults built in this file. No network, no mocks.
 
 EXPECTED OUTPUT
-    - Pass/fail per assertion, covering AC-1 to AC-7 and AC-9 to AC-12.
+    - Pass/fail per assertion, covering AC-1 to AC-7 and AC-9 to AC-12 of
+      query-results-area, and AC-2 and AC-11 of result-navigation.
 ================================================================================
 */
 
@@ -65,10 +68,16 @@ function resultsWith(count: number, truncated = false): SparqlResults {
 
 function renderTable(results: SparqlResults, onClear = vi.fn()) {
   const onPickIri = vi.fn();
+  const onViewInSource = vi.fn();
   const view = render(
-    <ResultsTable results={results} onPickIri={onPickIri} onClear={onClear} />,
+    <ResultsTable
+      results={results}
+      onPickIri={onPickIri}
+      onViewInSource={onViewInSource}
+      onClear={onClear}
+    />,
   );
-  return { ...view, onClear, onPickIri };
+  return { ...view, onClear, onPickIri, onViewInSource };
 }
 
 const bodyRows = () => document.querySelectorAll("table.results-table tbody tr");
@@ -285,6 +294,92 @@ describe("ResultsTable sorting", () => {
   });
 });
 
+describe("ResultsTable view in source", () => {
+  /** One row whose URI term carries a label and a prefixed form. */
+  const LABELLED: SparqlResults = {
+    vars: ["s"],
+    rows: [
+      [
+        {
+          type: "uri",
+          value: "http://example.org/FinancialInstrument",
+          label: "Financial Instrument",
+          prefixed: "ex:FinancialInstrument",
+        },
+      ],
+    ],
+    rowCount: 1,
+    durationMs: 9,
+    truncated: false,
+  };
+
+  it("each source control names its entity", () => {
+    // AC-11. "View in source" repeated down a column of forty rows tells a
+    // screen reader user nothing about which row they are on. Queried by
+    // computed accessible name, which is what such a user is choosing between.
+    renderTable(LABELLED);
+    expect(screen.getByRole("button", { name: "View Financial Instrument in source" })).toBeTruthy();
+  });
+
+  it("the source icon is hidden from assistive technology", () => {
+    // AC-11. The glyph is decoration. It is also why the name is an explicit
+    // aria-label rather than name-from-contents — hide the contents and there is
+    // no name left to compute. See architecture.md v0.16, where the same
+    // arrangement was measured on the disclosure control.
+    renderTable(LABELLED);
+    const control = screen.getByRole("button", { name: "View Financial Instrument in source" });
+    const glyph = control.querySelector("span")!;
+    expect(glyph.getAttribute("aria-hidden")).toBe("true");
+    expect(control.getAttribute("aria-label")).toBe("View Financial Instrument in source");
+  });
+
+  it("the source control follows its chip in the tab order", () => {
+    // AC-11 and section 6: it is a real button immediately after the chip it
+    // belongs to. Asserted as document order with no tabindex anywhere, for the
+    // reason CatalogueList.test.tsx gives — jsdom implements neither layout nor
+    // sequential focus navigation, so driving Tab would test the polyfill.
+    renderTable(LABELLED);
+    const cell = document.querySelector(".result-cell")!;
+    const buttons = [...cell.querySelectorAll("button")];
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0].classList.contains("result-chip")).toBe(true);
+    expect(buttons[1].classList.contains("result-source")).toBe(true);
+    for (const button of buttons) expect(button.hasAttribute("tabindex")).toBe(false);
+  });
+
+  it("the two controls do different things with the same row", () => {
+    // The primary click keeps the meaning it has today — that is the learner
+    // safeguard in section 7 — and the secondary one carries the prefixed form,
+    // without which the pretty-printed Turtle view could not be searched.
+    const { onPickIri, onViewInSource } = renderTable(LABELLED);
+
+    fireEvent.click(screen.getByRole("button", { name: "Financial Instrument" }));
+    expect(onPickIri).toHaveBeenCalledWith("http://example.org/FinancialInstrument");
+    expect(onViewInSource).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "View Financial Instrument in source" }));
+    expect(onViewInSource).toHaveBeenCalledWith(
+      "http://example.org/FinancialInstrument",
+      "ex:FinancialInstrument",
+    );
+    expect(onPickIri).toHaveBeenCalledTimes(1);
+  });
+
+  it("literal and unbound cells gain no control", () => {
+    // Out of scope by design, and worth an assertion because the temptation is
+    // to make every cell do something. Literals are not entities.
+    renderTable({
+      vars: ["s", "n"],
+      rows: [[{ type: "literal", value: "42" }, null]],
+      rowCount: 1,
+      durationMs: 4,
+      truncated: false,
+    });
+    expect(document.querySelectorAll(".result-source")).toHaveLength(0);
+    expect(document.querySelectorAll(".result-cell")).toHaveLength(0);
+  });
+});
+
 describe("ResultsTable results area", () => {
   it("a new result set returns to page one", () => {
     // AC-7. The row at position 170 of the old result set has no claim to be
@@ -294,7 +389,12 @@ describe("ResultsTable results area", () => {
     expect(document.querySelector(".results-page-status")!.textContent).toContain("Page 28 of 28");
 
     rerender(
-      <ResultsTable results={resultsWith(300)} onPickIri={vi.fn()} onClear={vi.fn()} />,
+      <ResultsTable
+        results={resultsWith(300)}
+        onPickIri={vi.fn()}
+        onViewInSource={vi.fn()}
+        onClear={vi.fn()}
+      />,
     );
     expect(document.querySelector(".results-page-status")!.textContent).toContain("Page 1 of 20");
   });
@@ -341,6 +441,47 @@ describe("ResultsTable results area", () => {
     next.focus();
     fireEvent.click(next);
     expect(document.activeElement).toBe(next);
+  });
+
+  it("expansion does not re-render the table", () => {
+    // Section 10 of result-navigation.md, row 4. Clicking a result chip that
+    // names an undrawn entity sets App state three times over — the
+    // neighbourhood, what the merge added, the live-region sentence — and every
+    // one of those renders QueryPanel again. Under the user's cursor is a table
+    // that has not changed.
+    //
+    // Nothing about a re-render shows in the DOM when the output is identical,
+    // so this counts reads of `term.value`, which the chip's title and the
+    // source control's handler both come from. Zero is the honest number here,
+    // not a bound: React.memo either bailed out or it did not.
+    //
+    // Mutation-tested 2026-07-31: removing `memo(...)` from the export gives 60
+    // reads and this fails.
+    let reads = 0;
+    const results = resultsWith(40);
+    results.rows = results.rows.map((row) =>
+      row.map((term) => {
+        const raw = term!.value;
+        return {
+          ...term!,
+          get value() {
+            reads += 1;
+            return raw;
+          },
+        } as SparqlTerm;
+      }),
+    );
+
+    // The props a memoised child needs: identities that survive a parent
+    // render. App and QueryPanel hand over useCallbacks for exactly this.
+    const props = { results, onPickIri: vi.fn(), onViewInSource: vi.fn(), onClear: vi.fn() };
+    const { rerender } = render(<ResultsTable {...props} />);
+    reads = 0;
+
+    rerender(<ResultsTable {...props} />);
+    rerender(<ResultsTable {...props} />);
+
+    expect(reads, `${reads} reads of term.value across two parent renders`).toBe(0);
   });
 
   it("focus moves off a control the page change disabled", () => {
