@@ -128,6 +128,14 @@ export interface SavedQuery {
   updatedAt: string;
 }
 
+// What DELETE /api/ontologies/{id} reports. `deletedQueries` is the count the
+// interface repeats back to the user, and it is what was actually removed
+// rather than what was listed for removal.
+export interface OntologyDeletion {
+  deleted: string;
+  deletedQueries: number;
+}
+
 // One node in the graph view.
 export interface VizNode {
   id: string;
