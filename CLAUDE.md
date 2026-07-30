@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 156 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 129 tests, vitest
+cd backend  && python -m pytest tests    # 161 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 147 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -60,7 +60,7 @@ performance budget. Unlike `network`, they **run by default** — a budget nobod
 enforces is a note in a document. Deselect them on a slow machine with
 `-m "not perf"`.
 
-**Know the gap.** 67 of the 129 frontend tests are in `src/sparql/`. The rest
+**Know the gap.** 67 of the 147 frontend tests are in `src/sparql/`. The rest
 were added from 2026-07-27 onward and are the project's component tests. Copy
 their pattern — a `// @vitest-environment jsdom` docblock per file and `vi.mock`
 over `api.ts`. For anything touching the graph, either stub `GraphView` (see
@@ -71,6 +71,15 @@ and the rest are still untested.** A change to one of those is adding the first
 test for that file, and should. `LoadDialog.tsx` is covered only through
 `CatalogueList.test.tsx`, which renders it to prove the catalogue matches the
 start screen's — its file, URL and drag-and-drop tabs have no test.
+
+**jsdom cannot see everything a browser can, and it fails silently when it
+cannot.** Two measured examples, both found by deleting the fix and watching the
+test stay green. jsdom does not blur a focused element when it becomes
+`disabled`, and will not let focus move off a disabled one either, so a
+`document.activeElement` assertion about the remove control passed with the
+focus fix removed — `App.test.tsx` asserts on the `focus()` call instead and
+says why. And `import css from "./index.css?raw"` yields `""` unless
+`test: { css: true }` is set. The habit that catches both is the same one:
 
 **If you write a test that reads a file and asserts something is absent, assert
 first that the file loaded.** vitest stubs CSS out of the module graph, so
@@ -234,6 +243,25 @@ prove a change works in the application rather than in the test suite.
   the active one — set `activeId` to `null` rather than falling back to another
   entry. `CatalogueList.tsx` is shared by the chooser and the Load dialog so
   backlog L-1's reordering lands on both; do not inline a second copy.
+- **Removing an ontology says how many saved queries go with it** (2026-07-30,
+  spec `saved-query-deletion-warning`). The cascade in `DELETE
+  /api/ontologies/{oid}` is unchanged and still deliberate — a re-loaded file
+  gets a fresh id, so a retained query would point at nothing — but the response
+  now carries `deletedQueries`, counting what was actually deleted rather than
+  what was listed. `App.tsx` fetches the count before opening the dialog and
+  reports the server's figure afterwards in a polite live region.
+  `removalPrompt.ts` owns the wording and is a separate module for one reason:
+  `null` means *unknown* and must not collapse into `0`, and that is testable
+  without rendering `App`. Do not rewrite its branch as a falsy check. **The
+  zero case must keep today's exact sentence** — a warning shown every time is a
+  warning nobody reads, and `removalPrompt.test.ts` asserts the string.
+
+  One browser-only finding from that build, worth knowing before adding any
+  other busy control: disabling a focused button blurs it to `document.body`,
+  and re-enabling does not give focus back. Measured in Chrome 2026-07-30 on the
+  built application. `App.tsx` restores it in an effect — not in a line after
+  `setRemoving(false)`, because React has not re-rendered at that point and
+  `focus()` on a still-disabled button does nothing.
 
 ## Pull requests
 

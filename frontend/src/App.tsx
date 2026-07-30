@@ -23,6 +23,11 @@ BASIC IDEA
     from selecting the most recently added ontology on mount, which rendered
     18,717 nodes on every page load for anyone with FIBO stored.
 
+    Removal is the one destructive action here, and it counts what it will
+    destroy before it asks. Deleting an ontology has always deleted every query
+    saved against it; onRemove now fetches that count first, puts it in the
+    confirmation, and reports afterwards what the server says it actually took.
+
 INPUTS / INPUT SOURCES
     - The backend API (via api.ts) for the ontology list and graph.
     - User interaction: header tabs, dropdown, graph clicks, search.
@@ -34,8 +39,8 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { deleteOntology, getGraph, listOntologies } from "./api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { deleteOntology, getGraph, listOntologies, listSavedQueries } from "./api";
 import DetailPanel from "./components/DetailPanel";
 import GraphNotice from "./components/GraphNotice";
 import GraphView from "./components/GraphView";
@@ -56,6 +61,7 @@ import {
   IconTrash,
   IconView,
 } from "./components/icons";
+import { removalConfirmation, removalPrompt } from "./removalPrompt";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type { AppMode, OntologySummary, Theme, VizGraph } from "./types";
 
@@ -104,6 +110,13 @@ export default function App() {
   // and the error bar would imply the whole screen was broken.
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
+  // The removal pair: `removing` covers the count request that runs before the
+  // confirmation dialog, and `notice` is what the removal is reported in
+  // afterwards. Kept apart from `error` because neither is a failure.
+  const [removing, setRemoving] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const removeRef = useRef<HTMLButtonElement>(null);
+  const wasRemoving = useRef(false);
   const [mode, setMode] = useState<AppMode>("explore");
   // How many nodes to ask for. null means "do not send a limit", so the server
   // applies its own configured default; it becomes a number only once the user
@@ -136,6 +149,23 @@ export default function App() {
   useEffect(() => {
     refreshList();
   }, [refreshList]);
+
+  // Give the remove control its focus back when the count finishes.
+  //
+  // Disabling a focused button blurs it to the document body, and re-enabling
+  // it does not undo that. Measured in Chrome on 2026-07-30 against the built
+  // application: after pressing Remove, `document.activeElement` was BODY, so a
+  // keyboard user who declined the dialog was returned to nowhere. The whole
+  // argument for keeping `window.confirm` (spec section 6) is that it returns
+  // focus on dismissal, and it can only return focus to something that had it.
+  //
+  // It has to be an effect rather than a line after `setRemoving(false)`,
+  // because at that point React has not re-rendered and `focus()` on a still
+  // disabled button does nothing.
+  useEffect(() => {
+    if (wasRemoving.current && !removing) removeRef.current?.focus();
+    wasRemoving.current = removing;
+  }, [removing]);
 
   // Reset the per-ontology view state the moment the ontology changes, during
   // render rather than in an effect. In an effect the fetch below would fire
@@ -180,21 +210,44 @@ export default function App() {
     setActiveId(summary.id);
     setDialogOpen(false);
     setError(null);
+    setNotice(null);
   };
 
   // Remove the active ontology after confirmation, then return to the chooser.
   // It used to fall back to the last remaining ontology, which reintroduced
   // exactly the unasked-for render this screen exists to stop.
+  //
+  // The saved queries are counted BEFORE the dialog opens, because the dialog
+  // is where the user decides and the number is the thing they are deciding
+  // about. The endpoint already deleted those queries; all that was missing was
+  // saying so. A failure to count is carried as null, never as zero — see
+  // removalPrompt.ts, which is where that distinction is enforced and tested.
   const onRemove = async () => {
     if (!activeId) return;
     const name = ontologies.find((o) => o.id === activeId)?.name ?? "this ontology";
-    if (!window.confirm(`Remove “${name}” and delete its stored copy? It will no longer appear after a restart.`)) {
-      return;
-    }
+    setRemoving(true);
+    let count: number | null = null;
+    let names: string[] = [];
     try {
-      await deleteOntology(activeId);
+      const saved = await listSavedQueries(activeId);
+      count = saved.length;
+      names = saved.map((q) => q.name);
+    } catch {
+      count = null; // unknown, not zero
+    } finally {
+      setRemoving(false);
+    }
+    if (!window.confirm(removalPrompt(name, count, names))) return;
+    try {
+      // The count comes back from the delete rather than being reused from
+      // above: another tab may have saved one in between, and what was actually
+      // destroyed is the only number worth repeating.
+      const result = await deleteOntology(activeId);
       setOntologies((prev) => prev.filter((o) => o.id !== activeId));
       setActiveId(null);
+      // `?? 0` guards a server that predates the field: without it the message
+      // would read "and undefined saved queries".
+      setNotice(removalConfirmation(name, result.deletedQueries ?? 0));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -361,10 +414,20 @@ export default function App() {
               >
                 <IconClose />
               </button>
+              {/* Disabled and aria-busy while the saved queries are counted,
+                  so no dialog can open over a stale number and a screen reader
+                  user is told why the control is briefly inert. */}
               <button
+                ref={removeRef}
                 className="ghost icon-btn danger"
                 onClick={() => void onRemove()}
-                title="Remove this ontology and delete its stored copy"
+                disabled={removing}
+                aria-busy={removing}
+                title={
+                  removing
+                    ? "Counting saved queries…"
+                    : "Remove this ontology and delete its stored copy"
+                }
                 aria-label="Remove ontology"
               >
                 <IconTrash />
@@ -392,6 +455,24 @@ export default function App() {
         </div>
       )}
 
+      {/* What a removal actually took. Polite rather than assertive, and a
+          status rather than an alert, because the action has already happened
+          and nothing needs a decision.
+
+          The region is rendered even when empty, for the reason StartScreen's
+          own live region records: a live region added to the DOM at the same
+          moment as its text is unreliably announced. That matters more here
+          than there, because the same render also swaps the whole main area
+          back to the chooser. The visible bar inside it is conditional, so an
+          idle region occupies no space and draws nothing. */}
+      <div className="notice-region" role="status" aria-live="polite">
+        {notice && (
+          <div className="notice-bar" onClick={() => setNotice(null)} title="Click to dismiss">
+            {notice}
+          </div>
+        )}
+      </div>
+
       {/* Above the canvas, below the search box, so it reads before the graph
           and sits where the tab order already is. */}
       {graphData && !noticeDismissed && (
@@ -412,7 +493,10 @@ export default function App() {
           loading={listLoading}
           error={listError}
           onRetry={refreshList}
-          onOpen={setActiveId}
+          onOpen={(id) => {
+            setNotice(null);
+            setActiveId(id);
+          }}
           onLoaded={onLoaded}
           onOpenDialog={openDialog}
         />

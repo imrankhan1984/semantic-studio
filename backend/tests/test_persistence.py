@@ -9,26 +9,41 @@ SUMMARY
     them lazily (without parsing until first use), that ordering is preserved,
     that remove() deletes the files, and that corrupt metadata is skipped.
 
+    It also covers the saved-query cascade: deleting an ontology deletes every
+    query saved against it, and the delete response says how many it took.
+
 BASIC IDEA
     Persistence is what lets a previously loaded ontology reappear in the
     dropdown. These tests use a throwaway tmp_path directory, add the example
     ontology, then construct a second store over the same directory to
     simulate an app restart and assert the state comes back correctly.
 
+    The cascade tests are different in shape and deliberately so: they run
+    through the HTTP layer with TestClient, because what is being asserted is
+    the *response body*. `deletedQueries` is what the interface repeats back to
+    the user, so a test against the store alone would prove the queries were
+    deleted without proving the user is told.
+
 INPUTS / INPUT SOURCES
     - examples/space-exploration.ttl.
     - pytest's tmp_path fixture (a fresh temp directory per test).
+    - The FastAPI app, via TestClient, for the cascade tests.
 
 EXPECTED OUTPUT
-    - Pass/fail per assertion; failures indicate a persistence/restore bug.
+    - Pass/fail per assertion; failures indicate a persistence/restore bug, or
+      a cascade that deletes work without reporting it.
 ================================================================================
 """
 
 from pathlib import Path
 
+from fastapi.testclient import TestClient
 from rdflib import Graph
 
+from app.main import app
 from app.store import OntologyStore
+
+client = TestClient(app)
 
 EXAMPLE = Path(__file__).parent.parent.parent / "examples" / "space-exploration.ttl"
 
@@ -110,3 +125,101 @@ def test_corrupt_metadata_is_skipped(tmp_path):
 
     second = OntologyStore(tmp_path)
     assert len(second.list()) == 1
+
+
+# ---------------------------------------------------------------------------
+# The saved-query cascade — backlog U-3, spec `saved-query-deletion-warning`.
+#
+# Removing an ontology has always deleted every query saved against it. That is
+# deliberate: a re-loaded file gets a fresh id, so a retained query would point
+# at nothing. What was missing is that the response said only which ontology
+# went, so the interface had no number to warn with and no number to confirm.
+# ---------------------------------------------------------------------------
+
+
+def _upload() -> str:
+    """Upload the example ontology through the API and return its id."""
+    with EXAMPLE.open("rb") as f:
+        response = client.post(
+            "/api/ontologies/upload",
+            files={"file": ("space-exploration.ttl", f, "text/turtle")},
+        )
+    assert response.status_code == 200
+    return response.json()["id"]
+
+
+def _save_query(oid: str, name: str) -> str:
+    """Save one query against `oid` and return its id."""
+    response = client.post(
+        "/api/queries",
+        json={
+            "name": name,
+            "ontologyId": oid,
+            "state": {"steps": []},
+            "sparql": "SELECT * WHERE { ?s ?p ?o }",
+        },
+    )
+    assert response.status_code == 200
+    return response.json()["id"]
+
+
+def test_delete_reports_removed_query_count():
+    """AC-1. Three saved queries, three reported."""
+    oid = _upload()
+    for name in ("Planets", "Missions", "Agencies"):
+        _save_query(oid, name)
+
+    body = client.delete(f"/api/ontologies/{oid}").json()
+
+    assert body["deleted"] == oid
+    assert body["deletedQueries"] == 3
+
+
+def test_delete_reports_zero_when_no_saved_queries():
+    """AC-2. The field is always present, so the client never has to guess
+    whether a missing key means none or means an older server."""
+    oid = _upload()
+
+    body = client.delete(f"/api/ontologies/{oid}").json()
+
+    assert body["deletedQueries"] == 0
+
+
+def test_delete_still_removes_every_saved_query():
+    """AC-3. The cascade itself, which the count must not be allowed to
+    outlive: a number reported by a delete that stopped deleting would be
+    worse than no number at all."""
+    oid = _upload()
+    qids = [_save_query(oid, name) for name in ("One", "Two")]
+
+    client.delete(f"/api/ontologies/{oid}")
+
+    # Gone from the store, not merely absent from a filtered listing.
+    for qid in qids:
+        assert client.delete(f"/api/queries/{qid}").status_code == 404
+
+
+def test_delete_unknown_ontology_still_404s():
+    """AC-4. The 404 comes before any query is touched, so a typo'd id cannot
+    delete anything."""
+    response = client.delete("/api/ontologies/ont-does-not-exist")
+
+    assert response.status_code == 404
+    assert "ont-does-not-exist" in response.json()["detail"]
+
+
+def test_queries_for_other_ontologies_survive():
+    """AC-5. The filter on the cascade is the whole reason this is safe to do
+    at all; without it, removing one file would empty the library."""
+    doomed = _upload()
+    kept = _upload()
+    _save_query(doomed, "Goes")
+    kept_qid = _save_query(kept, "Stays")
+
+    body = client.delete(f"/api/ontologies/{doomed}").json()
+
+    assert body["deletedQueries"] == 1
+    survivors = client.get("/api/queries", params={"ontology": kept}).json()
+    assert [q["id"] for q in survivors] == [kept_qid]
+
+    client.delete(f"/api/ontologies/{kept}")
