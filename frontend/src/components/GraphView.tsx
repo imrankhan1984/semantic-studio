@@ -7,7 +7,8 @@ SUMMARY
     The interactive graph canvas. Builds a graphology graph from the backend's
     nodes/edges, renders it with Sigma (WebGL), runs a ForceAtlas2 force layout,
     supports drag-to-reposition with live physics, highlights hover/selection,
-    dims/paints for Query mode, and exports the view as PNG.
+    dims/paints for Query mode, exports the view as PNG, and grows the drawn
+    graph by merging one entity's neighbourhood into it.
 
 BASIC IDEA
     Sigma draws the graph on a canvas; graphology holds the data and positions;
@@ -18,6 +19,14 @@ BASIC IDEA
     mode without rebuilding the graph. Everything that must survive re-renders
     (the Sigma instance, the layout, timers, current selection) is kept in refs.
 
+    An expansion is the one thing here that changes the graph without rebuilding
+    it. `data` arriving anew tears the scene down and starts over, which is right
+    when the ontology or the node budget changed and wrong when the user asked
+    for one more entity's connections — so a neighbourhood arrives on its own
+    prop, is added to the live graphology instance, and the layout then runs a
+    bounded number of iterations with everything that was already drawn pinned.
+    Nothing already on the canvas moves.
+
 INPUTS / INPUT SOURCES (props)
     - data: the VizGraph to draw (or null for the empty state).
     - theme: which colour palette to use.
@@ -27,12 +36,14 @@ INPUTS / INPUT SOURCES (props)
       this graph — see focusTarget.
     - onSelect: called with a clicked node's IRI (or null on empty click).
     - queryMode / queryPathIris / queryCandidates: Query-mode highlighting.
+    - expansion: a neighbourhood to merge in, with a token that changes per
+      expansion; onExpanded reports back what was actually added.
     - leftRail: the legend, docked beside the canvas (never an overlay, so it
       cannot swallow clicks meant for nodes beneath it).
 
 EXPECTED OUTPUT
     - The rendered graph with its docked toolbar and legend; onSelect callbacks;
-      a downloaded PNG on demand.
+      onExpanded after a merge; a downloaded PNG on demand.
 ================================================================================
 */
 
@@ -46,7 +57,7 @@ import Sigma from "sigma";                             // WebGL renderer
 import { drawDiscNodeLabel } from "sigma/rendering";   // Sigma's own label drawing
 import type { NodeHoverDrawingFunction } from "sigma/rendering";
 import { downloadAsPNG } from "@sigma/export-image";   // PNG export
-import type { Theme, VizGraph } from "../types";
+import type { MergeResult, Theme, VizGraph, VizNeighborhood } from "../types";
 import { PALETTES } from "../types";
 
 /**
@@ -139,6 +150,16 @@ interface Props {
   queryPathIris?: Set<string>;
   queryCandidates?: { classes: Set<string>; kinds: Set<string> };
   /**
+   * A neighbourhood to merge into the drawn graph, with a token that changes
+   * per expansion. It is a separate prop from `data` on purpose: `data` rebuilds
+   * the whole scene, which would throw away every settled position, and the one
+   * thing an expansion must not do is move what the user is already looking at.
+   * The token is what makes two expansions of the same entity two merges.
+   */
+  expansion?: { data: VizNeighborhood; token: number } | null;
+  /** What the merge actually added — see MergeResult for why only this knows. */
+  onExpanded?: (result: MergeResult) => void;
+  /**
    * Docked beside the canvas (the legend). Rendered as a sibling rather than
    * an overlay so it can never hide or swallow clicks on nodes beneath it.
    */
@@ -149,8 +170,30 @@ interface Props {
 // ForceAtlas2 loop (fluid, WebVOWL-like). Larger graphs use the web worker.
 const SYNC_LAYOUT_MAX_NODES = 3000;
 
+/**
+ * How long the layout runs after a merge, over the newly added nodes only.
+ *
+ * Three options were weighed and this is the middle one. Running ForceAtlas2
+ * over everything on every merge throws away the settled layout, which users
+ * experience as the graph jumping; placing new nodes on a ring and never moving
+ * them ignores the structure they just joined. Running over the new ones only
+ * is both cheap and likely to look right, and the risk it carries — a new node
+ * landing on top of an old one — is what these iterations resolve.
+ */
+const EXPAND_LAYOUT_ITERATIONS = 50;
+
+/** How far from the entity they were expanded from new nodes start. Graph units,
+ *  matching the scale `circular.assign` uses for the initial placement. */
+const EXPAND_RING_RADIUS = 30;
+
 function nodeSize(degree: number): number {
   return Math.min(16, 3 + Math.log2(degree + 1) * 2.2);
+}
+
+/** The key an edge is stored under. Shared by the initial build and the merge,
+ *  because the merge's whole duplicate check is that these agree. */
+function edgeKey(edge: { kind: string; label: string; source: string; target: string }) {
+  return `${edge.kind}|${edge.label}|${edge.source}|${edge.target}`;
 }
 
 const EMPTY_SET: Set<string> = new Set();
@@ -189,6 +232,8 @@ export default function GraphView({
   queryMode = false,
   queryPathIris,
   queryCandidates,
+  expansion = null,
+  onExpanded,
   leftRail,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -206,6 +251,10 @@ export default function GraphView({
   const queryModeRef = useRef(queryMode);
   const pathRef = useRef<Set<string>>(queryPathIris ?? EMPTY_SET);
   const candidateRef = useRef(queryCandidates);
+  // Held in a ref so the merge effect can depend on the token alone. As a
+  // dependency the callback's identity would re-run the merge on any App
+  // re-render, and a merge that runs twice reports its additions twice.
+  const expandedRef = useRef(onExpanded);
   const [layoutRunning, setLayoutRunning] = useState(false);
 
   selectedRef.current = selected;
@@ -214,6 +263,7 @@ export default function GraphView({
   queryModeRef.current = queryMode;
   pathRef.current = queryPathIris ?? EMPTY_SET;
   candidateRef.current = queryCandidates;
+  expandedRef.current = onExpanded;
 
   const stopLayout = () => {
     window.clearTimeout(layoutTimer.current);
@@ -282,7 +332,7 @@ export default function GraphView({
     }
     const labelLength = new Map(data.nodes.map((n) => [n.id, n.label.length]));
     for (const edge of data.edges) {
-      const key = `${edge.kind}|${edge.label}|${edge.source}|${edge.target}`;
+      const key = edgeKey(edge);
       if (graph.hasEdge(key)) continue;
       // Lower weight = weaker attraction in ForceAtlas2, so nodes with long
       // names sit further apart and their labels have room to render.
@@ -526,6 +576,105 @@ export default function GraphView({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
+
+  // Merge a neighbourhood into the graph already on screen.
+  //
+  // Additive and never removing, which is deliberate: an automatic eviction
+  // rule would take away nodes the user was looking at. Shrinking the view is
+  // done by reloading the ontology, which returns to the budgeted graph.
+  //
+  // Keyed on the token alone. `expansion.data` is not a dependency because a
+  // second expansion of the same entity is a second merge and must run again,
+  // while a re-render carrying the same object must not.
+  useEffect(() => {
+    const graph = graphRef.current;
+    if (!graph || !expansion) return;
+    const { nodes, edges, stats } = expansion.data;
+
+    // Stop first. The worker respawns itself on every nodeAdded, and the
+    // per-frame loop would otherwise be moving nodes while they are placed.
+    stopLayout();
+
+    // Where new nodes start: beside the entity they were expanded from, so the
+    // settled view is not thrown around by nodes arriving from the origin. If
+    // that entity is not itself drawn — expanding a search hit the budget
+    // dropped — the graph's own centre is the honest fallback.
+    let anchorX = 0;
+    let anchorY = 0;
+    if (graph.hasNode(stats.center)) {
+      anchorX = graph.getNodeAttribute(stats.center, "x") as number;
+      anchorY = graph.getNodeAttribute(stats.center, "y") as number;
+    } else if (graph.order > 0) {
+      let sumX = 0;
+      let sumY = 0;
+      graph.forEachNode((_id, attrs) => {
+        sumX += attrs.x as number;
+        sumY += attrs.y as number;
+      });
+      anchorX = sumX / graph.order;
+      anchorY = sumY / graph.order;
+    }
+
+    const addedNodes: string[] = [];
+    nodes.forEach((node, index) => {
+      // Already drawn: leave it exactly as it is. Re-adding would throw, and
+      // re-positioning would move something the user is looking at.
+      if (graph.hasNode(node.id)) return;
+      const angle = (2 * Math.PI * index) / Math.max(1, nodes.length);
+      graph.addNode(node.id, {
+        label: node.label,
+        kind: node.kind,
+        size: nodeSize(node.degree),
+        x: anchorX + Math.cos(angle) * EXPAND_RING_RADIUS,
+        y: anchorY + Math.sin(angle) * EXPAND_RING_RADIUS,
+      });
+      addedNodes.push(node.id);
+    });
+
+    let addedEdges = 0;
+    for (const edge of edges) {
+      const key = edgeKey(edge);
+      // The key check is the duplicate guard; the endpoint check is for an
+      // edge whose ends were not both in the response, which the endpoint does
+      // not produce but which would throw rather than be ignored.
+      if (graph.hasEdge(key)) continue;
+      if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) continue;
+      graph.addEdgeWithKey(key, edge.source, edge.target, {
+        kind: edge.kind,
+        label: edge.label || edge.kind,
+        size: 1,
+        type: "arrow",
+        weight: 1,
+      });
+      addedEdges += 1;
+    }
+
+    if (addedNodes.length > 0) {
+      // The layout runs over the new nodes ONLY, by pinning everything else:
+      // ForceAtlas2 skips a node carrying `fixed`. Which nodes were pinned here
+      // is recorded rather than cleared wholesale, because a node being dragged
+      // carries the same attribute for its own reasons.
+      const pinned: string[] = [];
+      const isNew = new Set(addedNodes);
+      graph.forEachNode((id, attrs) => {
+        if (isNew.has(id) || attrs.fixed) return;
+        graph.setNodeAttribute(id, "fixed", true);
+        pinned.push(id);
+      });
+      forceAtlas2.assign(graph, {
+        iterations: EXPAND_LAYOUT_ITERATIONS,
+        settings: fa2SettingsRef.current,
+        getEdgeWeight: "weight",
+      });
+      for (const id of pinned) graph.removeNodeAttribute(id, "fixed");
+    }
+
+    // Full indexation, not skipIndexation: the graph gained nodes and edges,
+    // and Sigma's index is what maps them to what is drawn.
+    sigmaRef.current?.refresh();
+    expandedRef.current?.({ addedNodes, addedEdges });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expansion?.token]);
 
   // Refresh rendering when filters, selection, theme or query state change.
   useEffect(() => {

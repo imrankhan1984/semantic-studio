@@ -174,6 +174,32 @@ export interface VizGraph {
   };
 }
 
+// The /neighborhood response: one entity, its highest-degree neighbours up to
+// the limit, and the edges among that set. The same shape as VizGraph with two
+// fields added, because the browser merges it into the graph it already holds.
+//
+// `truncated` here is about the NEIGHBOURS, not about the ontology: it is true
+// when this entity has more connections than were returned, and `neighborTotal`
+// is how many it really has. Those two are what let the interface say "showing
+// the 200 most connected of 640 connections" rather than implying it showed
+// everything.
+export interface VizNeighborhood {
+  nodes: VizNode[];
+  edges: VizEdge[];
+  stats: VizGraph["stats"] & {
+    neighborTotal: number;
+    center: string;
+  };
+}
+
+/** What GraphView actually merged, reported back by it. The caller cannot work
+ *  this out for itself: only the renderer knows which of the returned nodes and
+ *  edges were already on the canvas. */
+export interface MergeResult {
+  addedNodes: string[];
+  addedEdges: number;
+}
+
 // The lightweight per-ontology summary shown in the dropdown (the /list response).
 export interface OntologySummary {
   id: string;

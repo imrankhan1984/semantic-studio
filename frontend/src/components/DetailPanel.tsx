@@ -14,6 +14,11 @@ BASIC IDEA
     navigates to that node (onNavigate), so the user can walk the graph through
     the panel. A cancelled flag drops a stale response if the selection changes.
 
+    It also carries the one control that grows the graph. The canvas draws only
+    the highest-degree entities the server's budget allows, so the entity being
+    described is regularly not on it; "Show its connections" asks for that
+    entity's neighbourhood and hands it to the graph to merge.
+
     With no `iri` it renders nothing, and what fills the column instead is
     ExploreStart. That is why the heading can take focus: a selection made from
     that panel replaces the very control the user was standing on, so App sets
@@ -24,6 +29,8 @@ INPUTS / INPUT SOURCES (props)
     - onNavigate: select another entity when its IRI is clicked.
     - onClose: close the panel.
     - focusHeading: whether this selection should move focus to the heading.
+    - onExpand + expanding: draw this entity's connections on the graph, and
+      whether that request is in flight.
 
 EXPECTED OUTPUT
     - The rendered detail panel (or nothing when no node is selected).
@@ -43,6 +50,12 @@ interface Props {
    *  longer exists. False for a graph click, a search pick and a term link
    *  inside this panel: those leave the user's focus where they chose to be. */
   focusHeading?: boolean;
+  /** Draw this entity's connections on the canvas. Omitted, the control is not
+   *  rendered at all, which is what keeps this panel usable on its own. */
+  onExpand?: (iri: string) => void;
+  /** An expansion is in flight. The control says so and the graph is not
+   *  blocked, because the canvas stays interactive while the request runs. */
+  expanding?: boolean;
 }
 
 /** The heading id, so the panel can be named by it and focus can be sent to it. */
@@ -84,6 +97,8 @@ export default function DetailPanel({
   onNavigate,
   onClose,
   focusHeading = false,
+  onExpand,
+  expanding = false,
 }: Props) {
   const [details, setDetails] = useState<NodeDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -149,6 +164,30 @@ export default function DetailPanel({
           ⧉
         </button>
       </div>
+
+      {/* Expanding adds no concept to learn: clicking a node already selects
+          it, and this is one more button on a panel the user has opened. Hence
+          "Show its connections" rather than "Expand the subgraph".
+
+          It is rendered before the statements rather than after, because the
+          panel is arbitrarily long and a control below several hundred rows is
+          a control nobody finds. It is not disabled when the entity is off the
+          canvas — that is precisely the case it exists for. */}
+      {onExpand && (
+        <button
+          className="ghost expand-btn"
+          onClick={() => onExpand(iri)}
+          disabled={expanding}
+          aria-busy={expanding}
+          title={
+            expanding
+              ? "Fetching this entity's connections…"
+              : "Draw this entity and everything it connects to on the graph"
+          }
+        >
+          {expanding ? "Drawing…" : "Show its connections"}
+        </button>
+      )}
 
       {loading && <p className="detail-note">Loading…</p>}
       {error && <p className="detail-error">{error}</p>}

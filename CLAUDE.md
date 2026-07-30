@@ -49,18 +49,27 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 161 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 199 tests, vitest
+cd backend  && python -m pytest tests    # 169 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 213 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
 
-Three backend tests carry `@pytest.mark.perf` and hold the graph endpoint's
-performance budget. Unlike `network`, they **run by default** — a budget nobody
+Five backend tests carry `@pytest.mark.perf` and hold the graph and
+neighbourhood endpoints' performance budgets. Unlike `network`, they **run by default** — a budget nobody
 enforces is a note in a document. Deselect them on a slow machine with
 `-m "not perf"`.
 
-**Know the gap.** 67 of the 199 frontend tests are in `src/sparql/`. The rest
+**Both timed budgets take the median of five runs with `gc.disable()` around
+them, and that is load-bearing.** Adding `test_neighborhood.py`'s two
+40,000-node fixtures made `test_budget_cost_under_fifty_milliseconds` fail at
+55.3 ms against its 50 ms limit without a line of the code it measures having
+changed: five large ontologies resident is about a million GC-tracked objects,
+and a collection landing inside a single-shot timing costs tens of milliseconds.
+A single sample here measures how many other fixtures the suite holds. See
+D-024. Do not "simplify" either test back to one `perf_counter` pair.
+
+**Know the gap.** 67 of the 213 frontend tests are in `src/sparql/`. The rest
 were added from 2026-07-27 onward and are the project's component tests. Copy
 their pattern — a `// @vitest-environment jsdom` docblock per file and `vi.mock`
 over `api.ts`. For anything touching the graph, either stub `GraphView` (see
@@ -248,8 +257,35 @@ prove a change works in the application rather than in the test suite.
   beside the drawn counts. `kindCounts` deliberately still counts the **whole**
   ontology — see D-017; a test asserts the mismatch so nobody "fixes" it.
   Measured: a 40,000-node ontology at FIBO's density fell from 18.98 MB to 0.607
-  MB. **Stage 2, expand-on-demand, is not built.** An entity outside the budget
-  is findable by search and marked *not drawn*, but cannot yet be drawn.
+  MB.
+- **Stage 2, expand-on-demand, is built too** (2026-07-30, same spec).
+  `GET /{oid}/neighborhood?iri=&limit=` returns one entity, its highest-degree
+  neighbours (200 by default, 2,000 maximum, clamped and reported) and the edges
+  among that set, computed from the same cached viz. An entity outside the budget
+  is now **drawn** when picked from search, and *Show its connections* on the
+  detail panel grows the view from anywhere.
+
+  Four things there are load-bearing. **The neighbourhood reaches `GraphView` on
+  its own `expansion={data, token}` prop, never through `data`** — the effect
+  that builds the scene is keyed on `data`, so routing it there would tear down
+  every settled position, which is exactly what the merge exists to avoid. **The
+  token, not the data, marks a new merge**, because expanding the same entity
+  twice hands over an equal object. **The layout runs over the new nodes only**,
+  by setting `fixed` on everything already drawn, running 50 iterations, then
+  removing only the flags it set — a node mid-drag carries the same attribute for
+  its own reasons. And **`onExpanded` reports what was actually added**, because
+  only the renderer knows which returned nodes were already on the canvas; App's
+  drawn counts and its live-region sentence are both built from that.
+
+  One measurement worth not rediscovering: ForceAtlas2 copies every node's
+  coordinates through a `Float32Array` and writes them all back, pinned or not,
+  so an unmoved node returns quantised — `-49.99999999999998` came back as `-50`.
+  `GraphView.test.tsx` asserts positions to three decimal places for that reason,
+  and says so. Do not tighten it to `toEqual`.
+
+  The limit is a plain constant, **not** an environment variable, unlike the node
+  budget beside it. That asymmetry is deliberate and the reason is in
+  `ontologies.py`.
 - **Accessibility is weak, but focus is now visible** (2026-07-27, spec
   `visual-defects`). `index.css` carries a global `:focus-visible` rule —
   `outline: 2px solid var(--accent)` — and the `outline: none` that used to

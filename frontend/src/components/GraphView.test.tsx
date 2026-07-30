@@ -47,10 +47,10 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render } from "@testing-library/react";
 import { PALETTES } from "../types";
-import type { Theme, VizGraph } from "../types";
+import type { MergeResult, Theme, VizGraph, VizNeighborhood } from "../types";
 
 // Sigma touches WebGL2RenderingContext when its module is evaluated. Stubbing
 // it lets the module import.
@@ -283,6 +283,207 @@ describe("selecting something that is not in the drawn graph", () => {
     for (const key of graph.edges()) {
       const res = edge(key, graph.getEdgeAttributes(key));
       expect(res.size).toBe(2);
+    }
+    unmount();
+  });
+});
+
+/* --- merging a neighbourhood in ------------------------------------------ */
+
+/**
+ * Three nodes for the centre already drawn in DATA, two of which are new. The
+ * second edge repeats DATA's own Planet -> Celestial edge exactly, because the
+ * duplicate case is the one the merge has to survive: graphology throws on a
+ * repeated key rather than ignoring it, so an unguarded merge crashes the graph
+ * rather than drawing something twice.
+ */
+const NEIGHBORHOOD: VizNeighborhood = {
+  nodes: [
+    { id: "http://x/Celestial", label: "Celestial Body", kind: "class", degree: 2 },
+    { id: "http://x/Moon", label: "Moon", kind: "class", degree: 3 },
+    { id: "http://x/Comet", label: "Comet", kind: "class", degree: 1 },
+  ],
+  edges: [
+    { source: "http://x/Moon", target: "http://x/Celestial", kind: "subClassOf", label: "" },
+    {
+      source: "http://x/Planet",
+      target: "http://x/Celestial",
+      kind: "subClassOf",
+      label: "subclass of",
+    },
+    { source: "http://x/Comet", target: "http://x/Celestial", kind: "subClassOf", label: "" },
+  ],
+  stats: {
+    nodeCount: 3,
+    edgeCount: 3,
+    nodeTotal: 5,
+    edgeTotal: 4,
+    truncated: false,
+    budget: 200,
+    kindCounts: { class: 4, individual: 1 },
+    neighborTotal: 2,
+    center: "http://x/Celestial",
+  },
+};
+
+interface Merged {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  graph: any;
+  results: MergeResult[];
+  merge: (data?: VizNeighborhood) => Promise<void>;
+  unmount: () => void;
+}
+
+/**
+ * Render GraphView with no expansion, then hand back a way to push one in.
+ *
+ * Fake timers matter here and are not incidental. The initial layout runs on
+ * requestAnimationFrame, which jsdom drives from a timer, so with real timers
+ * every node's position drifts between the assertions — and the claim being
+ * tested is precisely that positions do not move.
+ */
+async function mergeable(): Promise<Merged> {
+  const { default: GraphView } = await import("./GraphView");
+  const results: MergeResult[] = [];
+  let token = 0;
+  let view!: ReturnType<typeof render>;
+  const props = (expansion: { data: VizNeighborhood; token: number } | null) => (
+    <GraphView
+      data={DATA}
+      theme="dark"
+      hiddenKinds={new Set()}
+      selected={null}
+      onSelect={() => {}}
+      focusTick={0}
+      expansion={expansion}
+      onExpanded={(r) => results.push(r)}
+    />
+  );
+  await act(async () => {
+    view = render(props(null));
+  });
+  return {
+    graph: sigmaCalls.last.graph,
+    results,
+    merge: async (data = NEIGHBORHOOD) => {
+      token += 1;
+      await act(async () => {
+        view.rerender(props({ data, token }));
+      });
+    },
+    unmount: () => view.unmount(),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function positionsOf(graph: any): Record<string, [number, number]> {
+  const out: Record<string, [number, number]> = {};
+  graph.forEachNode((id: string, attrs: { x: number; y: number }) => {
+    out[id] = [attrs.x, attrs.y];
+  });
+  return out;
+}
+
+describe("expanding the drawn graph", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("expanding merges without duplicating existing nodes", async () => {
+    // AC-25, both halves. An entity already drawn appears exactly once, and
+    // nothing that was already on the canvas moves — the merge exists to avoid
+    // the rebuild that would throw away the settled layout, so a merge that
+    // shifted positions would have given away the thing it was for.
+    const { graph, merge, unmount } = await mergeable();
+    expect(graph.order).toBe(3);
+    const before = positionsOf(graph);
+
+    await merge();
+
+    // Celestial was in both DATA and the neighbourhood: five nodes, not six.
+    expect(graph.order).toBe(5);
+    expect(graph.hasNode("http://x/Moon")).toBe(true);
+    expect(graph.hasNode("http://x/Comet")).toBe(true);
+
+    // Not bit-exact, and the reason is worth knowing before someone tightens
+    // this. ForceAtlas2 copies every node's coordinates into a Float32Array and
+    // writes them all back, pinned or not, so a node that never moved still
+    // returns quantised: -49.99999999999998 came back as -50. Measured
+    // 2026-07-30, the largest difference across the three nodes was 1.4e-5.
+    // Three decimal places is far below anything a layout step produces — FA2
+    // moves nodes by whole units — so this still fails if anything really moved.
+    const after = positionsOf(graph);
+    for (const id of Object.keys(before)) {
+      expect(after[id][0], `${id} x`).toBeCloseTo(before[id][0], 3);
+      expect(after[id][1], `${id} y`).toBeCloseTo(before[id][1], 3);
+    }
+    unmount();
+  });
+
+  it("expanding reports the entities and edges it actually added", async () => {
+    // What App turns into "Added 2 entities. 2,240 of 18,717 drawn." Only the
+    // renderer can produce this number, because only it knows what was already
+    // on the canvas — which is why it is reported back rather than counted from
+    // the response.
+    const { graph, results, merge, unmount } = await mergeable();
+
+    await merge();
+
+    expect(results).toHaveLength(1);
+    expect(results[0].addedNodes.sort()).toEqual(["http://x/Comet", "http://x/Moon"]);
+    // Three edges came back and one of them was already drawn.
+    expect(results[0].addedEdges).toBe(2);
+    expect(graph.size).toBe(3);
+    unmount();
+  });
+
+  it("merging the same neighbourhood twice adds nothing the second time", async () => {
+    // The duplicate guard under repetition. graphology throws on a repeated
+    // node or edge key rather than ignoring it, so this is the difference
+    // between a no-op and a crash — and pressing the control twice, or
+    // expanding a neighbour of something already expanded, is ordinary use.
+    const { graph, results, merge, unmount } = await mergeable();
+
+    await merge();
+    const afterFirst = positionsOf(graph);
+    await merge();
+
+    expect(graph.order).toBe(5);
+    expect(graph.size).toBe(3);
+    expect(results[1]).toEqual({ addedNodes: [], addedEdges: 0 });
+    // And with nothing new to place, the layout must not have run: a merge that
+    // added nothing has no reason to move anything.
+    expect(positionsOf(graph)).toEqual(afterFirst);
+    unmount();
+  });
+
+  it("merges a neighbourhood whose centre is not itself drawn", async () => {
+    // The route stage 2 exists for: a search hit outside the node budget. The
+    // centre is not on the canvas, so there is no position to grow outward
+    // from, and the merge must place the new nodes somewhere real rather than
+    // reading undefined coordinates off a node that is not there.
+    const off = "http://x/Quasar";
+    const { graph, results, merge, unmount } = await mergeable();
+
+    await merge({
+      ...NEIGHBORHOOD,
+      nodes: [
+        { id: off, label: "Quasar", kind: "class", degree: 1 },
+        { id: "http://x/Moon", label: "Moon", kind: "class", degree: 3 },
+      ],
+      edges: [{ source: off, target: "http://x/Moon", kind: "subClassOf", label: "" }],
+      stats: { ...NEIGHBORHOOD.stats, center: off },
+    });
+
+    expect(graph.hasNode(off)).toBe(true);
+    expect(results[0].addedNodes.sort()).toEqual([off, "http://x/Moon"].sort());
+    for (const id of [off, "http://x/Moon"]) {
+      expect(Number.isFinite(graph.getNodeAttribute(id, "x")), id).toBe(true);
+      expect(Number.isFinite(graph.getNodeAttribute(id, "y")), id).toBe(true);
     }
     unmount();
   });
