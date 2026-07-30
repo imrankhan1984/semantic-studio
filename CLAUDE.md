@@ -50,7 +50,7 @@ app writes into the real per-user ontology library.
 
 ```bash
 cd backend  && python -m pytest tests    # 161 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 147 tests, vitest
+cd frontend && npm run test              # 157 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -60,7 +60,7 @@ performance budget. Unlike `network`, they **run by default** — a budget nobod
 enforces is a note in a document. Deselect them on a slow machine with
 `-m "not perf"`.
 
-**Know the gap.** 67 of the 147 frontend tests are in `src/sparql/`. The rest
+**Know the gap.** 67 of the 157 frontend tests are in `src/sparql/`. The rest
 were added from 2026-07-27 onward and are the project's component tests. Copy
 their pattern — a `// @vitest-environment jsdom` docblock per file and `vi.mock`
 over `api.ts`. For anything touching the graph, either stub `GraphView` (see
@@ -73,13 +73,16 @@ test for that file, and should. `LoadDialog.tsx` is covered only through
 start screen's — its file, URL and drag-and-drop tabs have no test.
 
 **jsdom cannot see everything a browser can, and it fails silently when it
-cannot.** Two measured examples, both found by deleting the fix and watching the
-test stay green. jsdom does not blur a focused element when it becomes
-`disabled`, and will not let focus move off a disabled one either, so a
+cannot.** Three measured examples. jsdom does not blur a focused element when it
+becomes `disabled`, and will not let focus move off a disabled one either, so a
 `document.activeElement` assertion about the remove control passed with the
-focus fix removed — `App.test.tsx` asserts on the `focus()` call instead and
-says why. And `import css from "./index.css?raw"` yields `""` unless
-`test: { css: true }` is set. The habit that catches both is the same one:
+focus fix deleted — `App.test.tsx` asserts on the `focus()` call instead and
+says why. It implements neither layout nor sequential focus navigation, which is
+why `CatalogueList.test.tsx` asserts the absence of `tabindex` rather than
+driving Tab. And `import css from "./index.css?raw"` yields `""` unless
+`test: { css: true }` is set. The first and third were each found by deleting
+the fix and watching the test stay green, which is the habit to copy; the same
+habit in its other form is:
 
 **If you write a test that reads a file and asserts something is absent, assert
 first that the file loaded.** vitest stubs CSS out of the module graph, so
@@ -243,6 +246,33 @@ prove a change works in the application rather than in the test suite.
   the active one — set `activeId` to `null` rather than falling back to another
   entry. `CatalogueList.tsx` is shared by the chooser and the Load dialog so
   backlog L-1's reordering lands on both; do not inline a second copy.
+- **The catalogue leads with FOAF, on purpose, and the order is tested**
+  (2026-07-30, spec `catalogue-order`). `CATALOGUE` in `catalogue.ts` runs
+  `foaf`, `schemaorg`, `fibo`, `juho`, ascending by how much the user has to
+  cope with, and every entry carries a required `audience` string rendered under
+  its description. FIBO led this list until then for a real reason — it is the
+  richest OWL-restriction example and the primary validation target — which is a
+  developer's reason, and D-002 makes the learner's reason win.
+  `catalogue.test.ts` pins the id order and pins every `url` to its pre-reorder
+  value, so a well-meaning reorder fails the suite, and so does a mis-paired
+  name and URL. **The comment above the array is load-bearing; read it before
+  touching the order.**
+
+  Two of the four tests on `CatalogueList.test.tsx` look redundant and are not.
+  `renders the audience line for each entry` reads `textContent`; `audience line
+  is part of the row's accessible name` queries by *computed* accessible name.
+  Put `aria-hidden` on the audience span and the first still passes while the
+  second fails, which is exactly why both exist. And `tab order matches visual
+  order` asserts the absence of `tabindex` rather than driving Tab, because
+  jsdom implements neither layout nor sequential focus navigation; the visual
+  half was measured in Chrome against bounding rectangles. Do not "strengthen"
+  it into a `userEvent.tab()` loop — that would test the polyfill.
+
+  One phantom worth not chasing: each row carries `title={entry.url}`, and some
+  inspection tools display that URL as the row's label, which reads as though
+  the accessible name were only a URL. Chrome computes it from **contents** —
+  name-from-contents wins for a `button` — so the row announces its name,
+  description, size and audience line. Measured 2026-07-30 on the built app.
 - **Removing an ontology says how many saved queries go with it** (2026-07-30,
   spec `saved-query-deletion-warning`). The cascade in `DELETE
   /api/ontologies/{oid}` is unchanged and still deliberate — a re-loaded file
