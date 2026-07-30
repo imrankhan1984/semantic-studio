@@ -149,6 +149,11 @@ live preview that updates on every edit.
    earlier step it actually relates to, so paths **branch** — an `Order` can
    fan out to `Customer`, `Shipper` and `Employee` rather than forming one
    rigid chain. A branched hop is labelled `↳N` with the step it hangs off.
+   **Add a step** does the same without the graph: it lists every legal
+   continuation from where you are, showing them outright when there are three
+   or fewer and otherwise opening on demand with a count and a filter, so a
+   schema offering two hundred continuations does not push the query off the
+   screen.
 3. **Click a relationship chip** to change the hop: reverse its direction
    (`^`), tick several predicates to form an alternation (`|`), apply a path
    modifier (`*`, `+`, `?`), or make the hop **OPTIONAL** — which wraps that
@@ -164,8 +169,12 @@ live preview that updates on every edit.
    duplicate rows, and set `LIMIT`. `Auto` regenerates the preview on every
    edit; turn it off to freeze the query and refresh manually.
 6. **Execute** to run the query against the loaded ontology. Results appear in
-   a sortable table; IRI cells are clickable and centre that node in the
-   graph.
+   a sortable table, fifteen rows to a page; IRI cells are clickable and centre
+   that node in the graph. Sorting applies to the whole result set rather than
+   the page you happen to be on, so page one shows the true top rows. The query
+   text stays pinned above the results while you scroll them, and **Clear
+   results** empties the table without touching the query — unlike *Clear path*,
+   which resets the query itself.
 7. **Save** the query to reuse later. Saved queries are stored with the
    ontologies (see below) and keep the *visual* state, so reopening one
    restores the path, pins, modifiers and filters — not just the query text.

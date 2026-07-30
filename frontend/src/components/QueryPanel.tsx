@@ -16,6 +16,11 @@ BASIC IDEA
     small LIMITed query as you build (only on small ontologies, so it stays
     instant), the Auto/refresh toggle for the preview, and the save flow.
 
+    One piece of its markup is layout rather than orchestration: the toolbar,
+    the save prompt and the SPARQL preview are wrapped in a single
+    .query-pinned element so they can stick to the top of the panel while the
+    results scroll under them.
+
 INPUTS / INPUT SOURCES (props)
     - ontologyId: the active ontology.
     - theme: colour theme (passed to child chips).
@@ -300,113 +305,121 @@ export default function QueryPanel({
         </p>
       )}
 
-      <div className="query-toolbar">
-        <span className="query-toolbar-label">SPARQL</span>
-        <button
-          className={auto ? "toggle-pill active" : "toggle-pill"}
-          onClick={() => {
-            if (auto) setFrozen(sparql);
-            setAuto(!auto);
-          }}
-          title="Regenerate the query on every edit"
-        >
-          Auto
-        </button>
-        {!auto && (
-          <button className="ghost" onClick={() => setFrozen(sparql)} title="Regenerate now">
-            ↻ Refresh
-          </button>
-        )}
-        <button
-          className={state.pathsMode ? "toggle-pill active" : "toggle-pill"}
-          onClick={() => setState({ ...state, pathsMode: !state.pathsMode })}
-          title="Collapse plain hops into compact property paths"
-        >
-          Paths
-        </button>
-        <button
-          className={state.distinct ? "toggle-pill active" : "toggle-pill"}
-          onClick={() => setState({ ...state, distinct: !state.distinct })}
-          title="Remove duplicate rows"
-        >
-          Distinct
-        </button>
-        <button
-          className={state.aggregate === "count" ? "toggle-pill active" : "toggle-pill"}
-          onClick={() =>
-            setState({
-              ...state,
-              aggregate: state.aggregate === "count" ? "none" : "count",
-            })
-          }
-          title={
-            state.steps.length > 1
-              ? "Count the last step, grouped by the first"
-              : "Count how many there are"
-          }
-        >
-          Count
-        </button>
-        <label className="limit-field" title="Maximum rows to return">
-          LIMIT
-          <input
-            type="number"
-            min={1}
-            max={10000}
-            value={state.limit}
-            onChange={(e) =>
-              setState({ ...state, limit: Math.max(1, Number(e.target.value) || 1) })
-            }
-          />
-        </label>
-        <div className="spacer" />
-        <button
-          className="ghost"
-          disabled={!sparql}
-          onClick={() => {
-            void navigator.clipboard?.writeText(preview);
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1500);
-          }}
-          title="Copy the query to the clipboard"
-        >
-          {copied ? "✓ Copied" : "⧉ Copy"}
-        </button>
-        <button
-          className="ghost"
-          disabled={!sparql}
-          onClick={() => (openQuery ? void doSave(openQuery.name) : setSavePrompt(true))}
-          title={openQuery ? `Update “${openQuery.name}”` : "Save this query"}
-        >
-          ⌸ {openQuery ? "Update" : "Save"}
-        </button>
-        <button className="primary" disabled={!sparql || running} onClick={() => void execute()}>
-          {running ? "Running…" : "▶ Execute"}
-        </button>
-      </div>
-
-      {savePrompt && (
-        <div className="save-row">
-          <input
-            autoFocus
-            placeholder="Query name"
-            value={saveName}
-            onChange={(e) => setSaveName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void doSave(saveName);
-              if (e.key === "Escape") setSavePrompt(false);
+      {/* The toolbar, the save prompt and the query text are one sticky
+          block. Reading results used to mean scrolling the query out of
+          sight, which is exactly when it is needed — so this stays at the
+          top of the panel while everything below scrolls under it. The
+          opaque background in .query-pinned is load-bearing: without one,
+          the table shows through. */}
+      <div className="query-pinned">
+        <div className="query-toolbar">
+          <span className="query-toolbar-label">SPARQL</span>
+          <button
+            className={auto ? "toggle-pill active" : "toggle-pill"}
+            onClick={() => {
+              if (auto) setFrozen(sparql);
+              setAuto(!auto);
             }}
-          />
-          <button className="primary" onClick={() => void doSave(saveName)}>
-            Save
+            title="Regenerate the query on every edit"
+          >
+            Auto
           </button>
-          <button className="ghost" onClick={() => setSavePrompt(false)}>
-            Cancel
+          {!auto && (
+            <button className="ghost" onClick={() => setFrozen(sparql)} title="Regenerate now">
+              ↻ Refresh
+            </button>
+          )}
+          <button
+            className={state.pathsMode ? "toggle-pill active" : "toggle-pill"}
+            onClick={() => setState({ ...state, pathsMode: !state.pathsMode })}
+            title="Collapse plain hops into compact property paths"
+          >
+            Paths
+          </button>
+          <button
+            className={state.distinct ? "toggle-pill active" : "toggle-pill"}
+            onClick={() => setState({ ...state, distinct: !state.distinct })}
+            title="Remove duplicate rows"
+          >
+            Distinct
+          </button>
+          <button
+            className={state.aggregate === "count" ? "toggle-pill active" : "toggle-pill"}
+            onClick={() =>
+              setState({
+                ...state,
+                aggregate: state.aggregate === "count" ? "none" : "count",
+              })
+            }
+            title={
+              state.steps.length > 1
+                ? "Count the last step, grouped by the first"
+                : "Count how many there are"
+            }
+          >
+            Count
+          </button>
+          <label className="limit-field" title="Maximum rows to return">
+            LIMIT
+            <input
+              type="number"
+              min={1}
+              max={10000}
+              value={state.limit}
+              onChange={(e) =>
+                setState({ ...state, limit: Math.max(1, Number(e.target.value) || 1) })
+              }
+            />
+          </label>
+          <div className="spacer" />
+          <button
+            className="ghost"
+            disabled={!sparql}
+            onClick={() => {
+              void navigator.clipboard?.writeText(preview);
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1500);
+            }}
+            title="Copy the query to the clipboard"
+          >
+            {copied ? "✓ Copied" : "⧉ Copy"}
+          </button>
+          <button
+            className="ghost"
+            disabled={!sparql}
+            onClick={() => (openQuery ? void doSave(openQuery.name) : setSavePrompt(true))}
+            title={openQuery ? `Update “${openQuery.name}”` : "Save this query"}
+          >
+            ⌸ {openQuery ? "Update" : "Save"}
+          </button>
+          <button className="primary" disabled={!sparql || running} onClick={() => void execute()}>
+            {running ? "Running…" : "▶ Execute"}
           </button>
         </div>
-      )}
 
-      <SparqlPreview sparql={preview} />
+        {savePrompt && (
+          <div className="save-row">
+            <input
+              autoFocus
+              placeholder="Query name"
+              value={saveName}
+              onChange={(e) => setSaveName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void doSave(saveName);
+                if (e.key === "Escape") setSavePrompt(false);
+              }}
+            />
+            <button className="primary" onClick={() => void doSave(saveName)}>
+              Save
+            </button>
+            <button className="ghost" onClick={() => setSavePrompt(false)}>
+              Cancel
+            </button>
+          </div>
+        )}
+
+        <SparqlPreview sparql={preview} />
+      </div>
 
       {error && <p className="detail-error">{error}</p>}
       {results && (
@@ -416,7 +429,14 @@ export default function QueryPanel({
               Live preview — first {PREVIEW_ROWS} rows. Press Execute for the full result.
             </p>
           )}
-          <ResultsTable results={results} onPickIri={onPickIri} />
+          {/* Empties the results area only. The query, the path, the pins and
+              the saved queries are untouched — that is the whole distinction
+              from the path bar's Clear path. */}
+          <ResultsTable
+            results={results}
+            onPickIri={onPickIri}
+            onClear={() => setResults(null)}
+          />
         </>
       )}
 
