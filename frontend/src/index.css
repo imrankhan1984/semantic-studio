@@ -1712,11 +1712,50 @@ select:focus {
   flex: 1;
 }
 
+/* The toolbar, the save prompt and the query text, pinned to the top of the
+   query panel so the query stays readable while its results are scrolled.
+
+   Three of these declarations are load-bearing and each is easy to drop:
+
+   - `background` must be opaque. A sticky element over a scrolling table shows
+     the table straight through it otherwise.
+   - `top` is negative by exactly the panel's own padding, and the padding is
+     given back here, so the block covers the strip above it instead of
+     leaving a gap that rows scroll through.
+   - `max-height` with `overflow-y` stops a long query from squeezing the
+     results to nothing on a short window. */
+.query-pinned {
+  position: sticky;
+  top: -12px;
+  z-index: 1;
+  background: var(--bg-panel);
+  /* `flex: none` is not tidying. .query-panel is a flex column, and giving
+     this block `overflow-y` sets its automatic minimum size to zero, so the
+     flex algorithm is free to squash it — measured in Chrome 2026-07-31 at 22px
+     against a 109px content height, which pinned an empty strip and left the
+     query scrolling away exactly as before. */
+  flex: none;
+  max-height: 40%;
+  overflow-y: auto;
+  padding-top: 12px;
+  /* Cancels .query-panel's flex gap below the block, for the same reason as
+     the padding above it: a transparent 10px band is a band rows show in. */
+  padding-bottom: 10px;
+  margin-bottom: -10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .sparql-preview {
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow-x: auto;
+  /* A sixty-line query must not push the results off screen; it gets its own
+     scrollbar instead. */
+  max-height: 22vh;
+  overflow-y: auto;
   padding: 8px 0;
 }
 
@@ -1821,6 +1860,53 @@ select:focus {
 .results-truncated {
   color: var(--error);
   text-transform: none;
+}
+
+.results-page {
+  text-transform: none;
+}
+
+.results-clear {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.results-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.pager-btn {
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.pager-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+/* Dimming is not the only signal: every disabled control here also carries a
+   title saying why, and aria-disabled says so to assistive technology. */
+.pager-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.results-page-status {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: none;
+  letter-spacing: normal;
+  min-width: 0;
+  text-align: center;
 }
 
 .results-scroll {
@@ -1996,6 +2082,62 @@ select:focus {
   width: 130px;
   font-size: 11px;
   padding: 3px 8px;
+}
+
+/* The closed "Add a step" control. One row, whatever the option count. */
+.next-steps-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.next-steps-toggle:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-raised));
+}
+
+.next-steps-label {
+  font-weight: 600;
+}
+
+.next-steps-count {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.next-steps-arrow {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+/* Bounded and scrolling, so however many continuations the schema offers, the
+   open panel cannot push the SPARQL preview off the screen.
+
+   A viewport unit rather than the 40% the specification asks for, and the
+   reason is not a preference: .next-steps is an auto-height block, so a
+   percentage max-height on its child resolves to `none` and would bound
+   nothing at all. .query-panel fills the viewport below a 58px nav row and a
+   context row, which puts 40% of it at roughly 34vh. */
+.next-steps-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 34vh;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+
+.next-steps-panel[hidden] {
+  display: none;
 }
 
 .next-chip {

@@ -50,7 +50,7 @@ app writes into the real per-user ontology library.
 
 ```bash
 cd backend  && python -m pytest tests    # 169 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 213 tests, vitest
+cd frontend && npm run test              # 251 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -69,7 +69,7 @@ and a collection landing inside a single-shot timing costs tens of milliseconds.
 A single sample here measures how many other fixtures the suite holds. See
 D-024. Do not "simplify" either test back to one `perf_counter` pair.
 
-**Know the gap.** 67 of the 213 frontend tests are in `src/sparql/`. The rest
+**Know the gap.** 67 of the 251 frontend tests are in `src/sparql/`. The rest
 were added from 2026-07-27 onward and are the project's component tests. Copy
 their pattern — a `// @vitest-environment jsdom` docblock per file and `vi.mock`
 over `api.ts`. For anything touching the graph, either stub `GraphView` (see
@@ -79,9 +79,12 @@ jsdom does not define it. To reach anything *inside* GraphView, stub the `sigma`
 module itself and read the settings object the constructor was handed — that is
 how the node and edge reducers are tested without a WebGL context, and it tests
 the shipped closures rather than an extracted copy of them.
-**`QueryPanel.tsx`, `Legend.tsx`, `SourceView.tsx`
-and the rest are still untested.** A change to one of those is adding the first
-test for that file, and should. `LoadDialog.tsx` is covered only through
+**`Legend.tsx`, `SourceView.tsx` and the rest are still untested.** A change
+to one of those is adding the first test for that file, and should.
+`QueryPanel.tsx` now has a test file, but it covers one thing — that *Clear
+results* empties the results without touching the query — and renders the
+component with a hand-built `builder` rather than the real hook. Treat it as a
+foothold, not as coverage. `LoadDialog.tsx` is covered only through
 `CatalogueList.test.tsx`, which renders it to prove the catalogue matches the
 start screen's — its file, URL and drag-and-drop tabs have no test.
 
@@ -389,6 +392,46 @@ prove a change works in the application rather than in the test suite.
   built application. `App.tsx` restores it in an effect — not in a line after
   `setRemoving(false)`, because React has not re-rendered at that point and
   `focus()` on a still-disabled button does nothing.
+- **The query panel keeps the query on screen and pages its results**
+  (2026-07-31, specs `query-results-area` and `next-steps-dropdown`, built
+  together because either alone is a partial fix to the same complaint).
+  `ResultsTable.tsx` renders `PAGE_SIZE = 15` rows and no more; the sort still
+  runs over every row and the slice happens after it, which is the only ordering
+  that lets page one show the true top rows. Measured in Chrome on FIBO: a
+  1,000-row result set, the server cap, put **15** rows in the document instead
+  of 1,000. `NextSteps.tsx` is a disclosure above three options and a plain open
+  list at or below three — `ALWAYS_OPEN_MAX = 3`, and the old `COLLAPSED_COUNT`
+  and *Show all N* toggle are gone. FIBO offers 114 options at one step, 184 at
+  two and 240 at three, so the closed control is what a developer sees; the
+  learner concession is for short lists and it is real, not a formality.
+
+  **Three things here were found in a browser and cannot be found in jsdom, so
+  do not trust a green suite on any of them.**
+
+  `.query-pinned` needs `flex: none`. `.query-panel` is a flex column, and
+  giving the pinned block `overflow-y` sets its automatic minimum size to zero,
+  so the flex algorithm squashed it to **22px against a 109px content height** —
+  a sticky empty strip, with the query scrolling away exactly as before. It also
+  needs its opaque `background`; a sticky element over a scrolling table shows
+  the table straight through it otherwise.
+
+  `.next-steps-panel` is bounded in `vh`, not the `%` the spec asked for.
+  `.next-steps` is an auto-height block, so a percentage max-height on its child
+  resolves to `none` and bounds nothing. Measured open on FIBO: 245px against a
+  2,373px content height.
+
+  **The disclosure carries an explicit `aria-label`.** With a `title` on it, an
+  inspection tool announced the title instead of the contents; with the title
+  removed it announced nothing at all. The count is an acceptance criterion, so
+  it is stated outright and the test asserts the visible text and the spoken
+  name agree. This is the `CatalogueList` phantom in a form that actually bit:
+  do not assume name-from-contents survives every consumer.
+
+  One further thing worth copying rather than rediscovering. `ResultsTable`
+  moves focus off a pagination control that the press has just disabled — press
+  *Last* and focus lands on *Previous*. AC-12 asks for focus to stay on the
+  control pressed, which is impossible for the press that reaches the end of the
+  range, and the alternative is the documented blur-to-`<body>` above.
 
 ## Pull requests
 
