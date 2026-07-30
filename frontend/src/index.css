@@ -106,6 +106,16 @@ button.icon-btn:hover {
   color: var(--text);
 }
 
+/* Busy, not broken. The remove control is inert while it counts the saved
+   queries it is about to destroy; this is the visible half of that state, the
+   audible half being aria-busy. It is a static dimming rather than a spinner
+   because the project has no prefers-reduced-motion rule yet (backlog X-1) and
+   adding animation before that exists would add to the problem. */
+button.icon-btn[aria-busy="true"] {
+  opacity: 0.5;
+  cursor: progress;
+}
+
 input,
 select {
   font: inherit;
@@ -602,6 +612,31 @@ select:focus {
   border-bottom: 1px solid var(--error-border);
   cursor: pointer;
   white-space: pre-wrap;
+}
+
+/* The live region the removal message appears in. It is always in the DOM so a
+   screen reader is already watching it when the text arrives, which means it
+   must draw nothing while empty: `flex: none` keeps it from claiming a share of
+   the column, and with no content it is zero pixels tall.
+
+   Deliberately NOT `display: contents`, which would lay the bar out as though
+   the wrapper were absent but has a history of dropping role-bearing elements
+   out of the accessibility tree — the one property this element has. */
+.notice-region {
+  flex: none;
+}
+
+/* What a removal took, reported after the fact. It sits where the error bar
+   sits and dismisses the same way, but borrows the accent rather than the error
+   colours: a completed removal is not a failure, and colouring it red would
+   read as one. */
+.notice-bar {
+  background: var(--bg-panel);
+  color: var(--text);
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  cursor: pointer;
 }
 
 /* The partial-graph notice. Informational, so it deliberately does not borrow

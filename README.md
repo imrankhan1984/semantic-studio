@@ -238,7 +238,9 @@ Restoring is **lazy**: on startup the dropdown is populated instantly from
 the stored metadata (name, triple/node counts), and the RDF itself is only
 re-parsed the moment you select that ontology — so even very large saved
 files never slow down startup. **Remove** in the toolbar deletes the stored
-copy from disk as well (you are asked to confirm).
+copy from disk as well. You are asked to confirm, and the confirmation says
+how many saved queries will go with it — naming them when there are three or
+fewer — so nothing disappears without being mentioned first.
 
 ### Persistence with Docker and Docker Compose
 

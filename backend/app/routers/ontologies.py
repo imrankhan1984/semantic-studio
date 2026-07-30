@@ -385,9 +385,16 @@ def delete_ontology(oid: str) -> dict:
         raise HTTPException(status_code=404, detail=f"Unknown ontology id: {oid}")
     # Saved queries belong to an ontology; leaving them would orphan them
     # because a re-loaded file gets a fresh id.
+    #
+    # The count is of what was actually deleted, not of what was listed, so a
+    # query that had already gone is not reported as removed. The interface
+    # repeats this number back to the user, and a number that overstates the
+    # damage is as misleading as the silence this replaced.
+    removed = 0
     for entry in saved_queries.list(ontology_id=oid):
-        saved_queries.delete(entry["id"])
-    return {"deleted": oid}
+        if saved_queries.delete(entry["id"]):
+            removed += 1
+    return {"deleted": oid, "deletedQueries": removed}
 
 
 @router.get("/{oid}/graph")

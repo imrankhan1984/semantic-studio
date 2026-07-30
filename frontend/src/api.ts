@@ -25,6 +25,7 @@ EXPECTED OUTPUT
 import type { QueryState } from "./sparql/types";
 import type {
   NodeDetails,
+  OntologyDeletion,
   OntologySource,
   OntologySummary,
   QueryNodeInfo,
@@ -77,9 +78,14 @@ export function fetchOntology(url: string): Promise<OntologySummary> {
   }).then((r) => handle<OntologySummary>(r));
 }
 
-// Remove an ontology (and its saved queries) from the server.
-export function deleteOntology(id: string): Promise<void> {
-  return fetch(`/api/ontologies/${id}`, { method: "DELETE" }).then((r) => handle(r));
+// Remove an ontology (and its saved queries) from the server. The body is
+// returned rather than discarded because `deletedQueries` is the only place the
+// count of destroyed work exists — the client's own count was taken before the
+// delete and can be out of date by the time it lands.
+export function deleteOntology(id: string): Promise<OntologyDeletion> {
+  return fetch(`/api/ontologies/${id}`, { method: "DELETE" }).then((r) =>
+    handle<OntologyDeletion>(r),
+  );
 }
 
 /**
