@@ -8,8 +8,10 @@ SUMMARY
     Tests for App: the startup chooser (what is and is not requested on mount,
     what replaces it, and the two ways back to it), the status bar's node and
     edge counts under a node budget, the removal sequence that counts saved
-    queries before asking and reports what it took afterwards, and which panel
-    fills the Explore column.
+    queries before asking and reports what it took afterwards, which panel
+    fills the Explore column, and where a query result leads — into the graph,
+    drawing the entity first if the node budget left it out, or into the raw
+    source text.
 
 BASIC IDEA
     App is mocked down to the parts these assert on. GraphView is replaced with
@@ -43,14 +45,16 @@ INPUTS / INPUT SOURCES
 EXPECTED OUTPUT
     - Pass/fail per assertion, covering AC-1 to AC-5, AC-9 and AC-13 of
       startup-chooser-screen, AC-23 of partial-graph-rendering, AC-11 to
-      AC-16 of saved-query-deletion-warning, and AC-1, AC-15 and AC-16 of
-      explore-mode-starting-point.
+      AC-16 of saved-query-deletion-warning, AC-1, AC-15 and AC-16 of
+      explore-mode-starting-point, and AC-1 to AC-8 and AC-12 of
+      result-navigation.
 ================================================================================
 */
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { ApiError } from "./api";
 import type { MergeResult, OntologySummary, VizGraph, VizNeighborhood } from "./types";
 
 const {
@@ -90,7 +94,12 @@ const {
   deleteSavedQuery: vi.fn(),
 }));
 
-vi.mock("./api", () => ({
+// importOriginal rather than a bare factory, so ApiError stays the real class.
+// App tells a 404 from /neighborhood apart from a failure with `instanceof`, and
+// a second copy of that class declared here would satisfy the type checker while
+// never matching what App throws against.
+vi.mock("./api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./api")>()),
   listOntologies,
   getGraph,
   deleteOntology,
@@ -144,13 +153,18 @@ vi.mock("./components/GraphView", () => ({
     onSelect,
     expansion,
     onExpanded,
+    focusTick,
   }: {
     leftRail?: React.ReactNode;
     onSelect: (iri: string | null) => void;
     expansion?: { data: VizNeighborhood; token: number } | null;
     onExpanded?: (result: MergeResult) => void;
+    focusTick: number;
   }) => (
-    <div data-testid="graph">
+    // focusTick is surfaced because "the camera re-centres" is not otherwise
+    // observable from here: the real GraphView watches this prop and moves. Its
+    // guard against a target that is not on the canvas is GraphView.test.tsx's.
+    <div data-testid="graph" data-focus-tick={focusTick}>
       {leftRail}
       <button onClick={() => onSelect("http://x/issuedBy")}>fake node</button>
       {expansion && (
@@ -166,6 +180,47 @@ vi.mock("./components/GraphView", () => ({
         </button>
       )}
     </div>
+  ),
+}));
+
+/** Which entity the stubbed result row and search hit point at. Mutable so a
+ *  test can aim them at a drawn entity, an undrawn one, or a predicate. */
+const { pick } = vi.hoisted(() => ({
+  pick: { iri: "http://x/Bond", prefixed: "x:Bond" as string | undefined },
+}));
+
+// QueryPanel is stubbed for the same reason GraphView is: reaching a result row
+// through the real one means a schema, a built path and an executed query, none
+// of which this file is about. What App owns is which handler each control
+// gets, so the stub is two buttons over those two props.
+//
+// It keeps the .query-panel class, because an existing test uses that class to
+// prove the Explore starting panel is Explore-only.
+//
+// That QueryPanel actually passes both callbacks down to ResultsTable is not
+// covered from here — it is asserted in QueryPanel.test.tsx, against the real
+// component and the real table.
+vi.mock("./components/QueryPanel", () => ({
+  default: ({
+    onPickIri,
+    onViewInSource,
+  }: {
+    onPickIri: (iri: string) => void;
+    onViewInSource: (iri: string, prefixed?: string) => void;
+  }) => (
+    <div className="query-panel">
+      <button onClick={() => onPickIri(pick.iri)}>fake result chip</button>
+      <button onClick={() => onViewInSource(pick.iri, pick.prefixed)}>fake source control</button>
+    </div>
+  ),
+}));
+
+// SearchBox is stubbed only in service of one assertion: that a search pick and
+// a result pick take the same route. Driving the real box means typing, a
+// debounce and a mocked response, all of which is SearchBox.test.tsx's job.
+vi.mock("./components/SearchBox", () => ({
+  default: ({ onPick }: { onPick: (iri: string) => void }) => (
+    <button onClick={() => onPick(pick.iri)}>fake search hit</button>
   ),
 }));
 
@@ -198,6 +253,13 @@ const TRUNCATED: VizGraph = {
 
 beforeEach(() => {
   for (const fn of Object.values(ALL_API)) fn.mockReset();
+  pick.iri = "http://x/Bond";
+  pick.prefixed = "x:Bond";
+  // jsdom implements no scrolling and does not define this at all, so the
+  // source pane's deferred scroll throws into a timer nothing is awaiting.
+  // Stubbed rather than guarded in the component: the guard would be dead code
+  // in every browser, and the throw is jsdom's gap, not the pane's.
+  Element.prototype.scrollIntoView = vi.fn();
   listOntologies.mockResolvedValue([SUMMARY]);
   getGraph.mockResolvedValue(TRUNCATED);
   searchNodes.mockResolvedValue([]);
@@ -212,6 +274,11 @@ beforeEach(() => {
     outgoingTotal: 0,
     incomingTotal: 0,
   });
+  // A search hit in Query mode adds a step, which asks the server what the
+  // clicked node's type is. Every entity here answers "it is a class".
+  getQueryNode.mockImplementation((_id: string, iri: string) =>
+    Promise.resolve({ iri, isClass: true, label: iri, types: [] }),
+  );
   getQuerySchema.mockResolvedValue({
     classes: [],
     links: [],
@@ -682,6 +749,338 @@ describe("App explore column", () => {
       fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
     });
     expect(startPanel()).toBeTruthy();
+  });
+});
+
+describe("App result navigation", () => {
+  /** A graph carrying one entity, so a result can name a drawn one or not. */
+  const DRAWN: VizGraph = {
+    nodes: [{ id: "http://x/Bond", label: "Bond", kind: "class", degree: 12 }],
+    edges: [],
+    stats: {
+      nodeCount: 1,
+      edgeCount: 0,
+      nodeTotal: 18717,
+      edgeTotal: 51446,
+      truncated: true,
+      budget: 2000,
+      kindCounts: { class: 18717 },
+    },
+  };
+
+  /** What the expansion of an undrawn result returns. */
+  const NEIGHBORHOOD: VizNeighborhood = {
+    nodes: [
+      { id: "http://x/Issuer", label: "Issuer", kind: "class", degree: 4 },
+      { id: "http://x/Jurisdiction", label: "Jurisdiction", kind: "class", degree: 3 },
+    ],
+    edges: [{ source: "http://x/Issuer", target: "http://x/Jurisdiction", kind: "domain", label: "" }],
+    stats: {
+      nodeCount: 2,
+      edgeCount: 1,
+      nodeTotal: 18717,
+      edgeTotal: 51446,
+      truncated: false,
+      budget: 200,
+      kindCounts: { class: 18717 },
+      neighborTotal: 1,
+      center: "http://x/Issuer",
+    },
+  };
+
+  function liveRegion(): string {
+    return document.querySelector(".notice-region")!.textContent ?? "";
+  }
+
+  function focusTick(): string {
+    return screen.getByTestId("graph").getAttribute("data-focus-tick") ?? "";
+  }
+
+  /** Open FIBO and switch to Query mode, where a results table would be. */
+  async function renderInQueryMode() {
+    getGraph.mockResolvedValue(DRAWN);
+    await renderAppOpened();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Query" }));
+    });
+  }
+
+  async function clickResultChip() {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake result chip" }));
+    });
+  }
+
+  it("clicking a drawn result selects and centres it", async () => {
+    // AC-1. Unchanged behaviour, asserted because everything else in this block
+    // is about not changing it: the primary click keeps the meaning it has, and
+    // the camera is told to move.
+    await renderInQueryMode();
+    const before = focusTick();
+
+    await clickResultChip();
+
+    expect(focusTick()).not.toBe(before);
+    // And the selection is real: switching to Explore describes that entity.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
+    });
+    expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/Bond");
+  });
+
+  it("clicking a drawn result makes no request", async () => {
+    // Section 10, row 1. A count, not a timing. The entity is already on the
+    // canvas, so growing the graph would be a request that buys nothing.
+    await renderInQueryMode();
+    getNeighborhood.mockClear();
+
+    await clickResultChip();
+
+    expect(getNeighborhood).not.toHaveBeenCalled();
+    expect(getGraph).toHaveBeenCalledTimes(1);
+  });
+
+  it("clicking an undrawn result expands once", async () => {
+    // AC-2 and section 10 row 2, the mutation-tested one. This is the whole of
+    // gap 1: the node budget is 2,000 and a query can return any entity in the
+    // ontology, so a result row routinely names something the canvas cannot
+    // show. Before this it selected the entity and moved the camera nowhere.
+    pick.iri = "http://x/Issuer";
+    getNeighborhood.mockResolvedValue(NEIGHBORHOOD);
+    await renderInQueryMode();
+
+    await clickResultChip();
+
+    expect(getNeighborhood).toHaveBeenCalledTimes(1);
+    expect(getNeighborhood).toHaveBeenCalledWith("o1", "http://x/Issuer");
+  });
+
+  it("clicking an undrawn result announces what was added", async () => {
+    // AC-3. The same sentence stage 2 already produces for a search pick and
+    // for Show its connections — reused rather than reworded, because three
+    // wordings for one event is how they drift.
+    pick.iri = "http://x/Issuer";
+    getNeighborhood.mockResolvedValue(NEIGHBORHOOD);
+    await renderInQueryMode();
+    await clickResultChip();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake merge" }));
+    });
+
+    expect(liveRegion()).toContain("Added 2 entities");
+    expect(liveRegion()).toContain("3 of 18,717 drawn");
+    expect(statusBar()).toContain("3 of 18,717 nodes");
+  });
+
+  it("a failed expansion leaves the selection intact", async () => {
+    // AC-4. The failure is the graph's, not the entity's: the detail panel
+    // reads the ontology, not the canvas, so it can still describe what was
+    // selected. Asserted through the Explore column because that is where a
+    // detail panel is, and the selection survives the mode change.
+    pick.iri = "http://x/Issuer";
+    getNeighborhood.mockRejectedValue(new Error("network down"));
+    await renderInQueryMode();
+    await clickResultChip();
+
+    expect(document.querySelector(".error-bar")!.textContent).toContain("network down");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
+    });
+    expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/Issuer");
+    expect(document.querySelector(".detail-panel")).toBeTruthy();
+  });
+
+  it("a predicate result selects without claiming to move the camera", async () => {
+    // AC-5, and the route that used to blank the whole application before the
+    // crash fix on 2026-07-30. A predicate is never a node in the viz graph, so
+    // /neighborhood answers 404 — a fact rather than a fault, which is why it
+    // reaches the polite region and not the red bar.
+    //
+    // That the camera does not actually move is GraphView's focusTarget guard
+    // and is asserted in GraphView.test.tsx; what App owns is saying so.
+    pick.iri = "http://x/issuedBy";
+    getNeighborhood.mockRejectedValue(new ApiError("No entity with that IRI is drawn", 404));
+    await renderInQueryMode();
+    await clickResultChip();
+
+    expect(liveRegion()).toContain("not drawn on the graph");
+    expect(document.querySelector(".error-bar")).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
+    });
+    expect(document.querySelector(".detail-panel")).toBeTruthy();
+  });
+
+  it("search picks and result picks use the same handler", async () => {
+    // AC-6. Asserted as identical behaviour rather than as identical source,
+    // which is what "the same function" is actually worth: the same entity,
+    // undrawn, reached from either control, must produce the same one request.
+    // These two drifted apart once already — stage 2 taught search to draw an
+    // entity outside the budget and nobody told the results table.
+    pick.iri = "http://x/Issuer";
+    getNeighborhood.mockResolvedValue(NEIGHBORHOOD);
+    await renderInQueryMode();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake search hit" }));
+    });
+    const fromSearch = getNeighborhood.mock.calls.slice();
+    getNeighborhood.mockClear();
+
+    await clickResultChip();
+
+    expect(getNeighborhood.mock.calls).toEqual(fromSearch);
+    expect(fromSearch).toHaveLength(1);
+  });
+
+  it("result chips do not add a query step", async () => {
+    // AC-7. The one thing a result pick must NOT inherit from a search pick.
+    // Clicking a result is inspecting an answer; a chip that quietly extended
+    // the query being built would be a trap, and in Query mode the search box
+    // does exactly that two controls away.
+    pick.iri = "http://x/Issuer";
+    getNeighborhood.mockResolvedValue(NEIGHBORHOOD);
+    await renderInQueryMode();
+    getQueryNode.mockClear();
+
+    await clickResultChip();
+
+    expect(getQueryNode).not.toHaveBeenCalled();
+
+    // The contrast, from the same state: a search hit in Query mode does add one.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake search hit" }));
+    });
+    expect(getQueryNode).toHaveBeenCalledWith("o1", "http://x/Issuer");
+  });
+
+  it("view in source switches mode and passes the target", async () => {
+    // AC-8 and AC-9 end to end. The source pane had no concept of a current
+    // entity at all before this, so clicking a result while reading the file
+    // did nothing whatever.
+    getSource.mockResolvedValue({
+      text: ["@prefix x: <http://x/> .", "", "x:Bond a owl:Class ."].join("\n"),
+      format: "turtle",
+      pretty: true,
+      truncated: false,
+      bytes: 60,
+      lines: 3,
+      name: "FIBO",
+    });
+    await renderInQueryMode();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake source control" }));
+    });
+    // Two passes: the located line is scrolled to on a deferred callback that
+    // React only queues as the first act scope closes. See SourceView.test.tsx.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    });
+
+    expect(screen.getByRole("tab", { name: "View" }).getAttribute("aria-selected")).toBe("true");
+    const marked = document.querySelector(".source-line.target")!;
+    expect(marked.getAttribute("data-line")).toBe("2");
+    expect(marked.textContent).toContain("x:Bond");
+    // Found, so nothing is announced: the highlight and the focus move are the
+    // answer, and a sentence on every success is a sentence nobody reads.
+    expect(liveRegion()).toBe("");
+  });
+
+  it("says so when the target is not in the text shown", async () => {
+    // AC-10 at the App level. The pane's report has to reach the same polite
+    // region as everything else, or a non-response is ambiguous again.
+    await renderInQueryMode();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake source control" }));
+    });
+
+    expect(liveRegion()).toContain("does not appear in the source text");
+    expect(document.querySelector(".error-bar")).toBeNull();
+  });
+
+  it("switching mode from the tab bar drops the source target", async () => {
+    // Not an acceptance criterion; it is the defect the focus rule causes if
+    // the target outlives the action that set it. Leaving View and coming back
+    // re-runs the lookup, which moves focus to the source heading — stealing it
+    // from the View tab the user has just pressed, which is exactly what the
+    // rule in SourceView is written to avoid.
+    await renderInQueryMode();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake source control" }));
+    });
+    expect(document.activeElement).toBe(document.querySelector("#source-view-heading"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
+    });
+    const viewTab = screen.getByRole("tab", { name: "View" });
+    viewTab.focus();
+    await act(async () => {
+      fireEvent.click(viewTab);
+    });
+
+    expect(document.querySelector(".source-view")).toBeTruthy();
+    expect(document.activeElement).toBe(viewTab);
+    expect(document.querySelector(".source-line.target")).toBeNull();
+  });
+
+  it("a later hit clears the message an earlier miss left up", async () => {
+    // The Original / Formatted toggle re-runs the lookup against a different
+    // document, and an entity absent from one form is regularly present in the
+    // other. A resolution that only ever set the message would leave "that
+    // entity does not appear" standing over a line that is now highlighted.
+    getSource.mockResolvedValue({
+      text: "nothing here",
+      format: "turtle",
+      pretty: false,
+      truncated: false,
+      bytes: 12,
+      lines: 1,
+      name: "FIBO",
+    });
+    await renderInQueryMode();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake source control" }));
+    });
+    expect(liveRegion()).toContain("does not appear in the source text");
+
+    // The other tab, whose text does contain the entity.
+    getSource.mockResolvedValue({
+      text: ["@prefix x: <http://x/> .", "x:Bond a owl:Class ."].join("\n"),
+      format: "turtle",
+      pretty: true,
+      truncated: false,
+      bytes: 45,
+      lines: 2,
+      name: "FIBO",
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Formatted Turtle/ }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    });
+
+    expect(document.querySelector(".source-line.target")).toBeTruthy();
+    expect(liveRegion()).toBe("");
+  });
+
+  it("focus moves to the source heading after switching", async () => {
+    // AC-12. The control that was pressed is in the query panel, which the
+    // source pane now covers, so leaving focus where it was would leave it on
+    // nothing.
+    await renderInQueryMode();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake source control" }));
+    });
+
+    expect(document.activeElement).toBe(document.querySelector("#source-view-heading"));
   });
 });
 

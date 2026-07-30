@@ -95,12 +95,15 @@ function builderStub() {
 }
 
 async function renderPanelWithResults() {
+  const onPickIri = vi.fn();
+  const onViewInSource = vi.fn();
   render(
     <QueryPanel
       ontologyId="ont-1"
       theme="light"
       builder={builderStub()}
-      onPickIri={vi.fn()}
+      onPickIri={onPickIri}
+      onViewInSource={onViewInSource}
       ontologyTriples={0}
     />,
   );
@@ -108,6 +111,7 @@ async function renderPanelWithResults() {
     fireEvent.click(screen.getByRole("button", { name: /Execute/ }));
   });
   await waitFor(() => expect(document.querySelector(".results")).not.toBeNull());
+  return { onPickIri, onViewInSource };
 }
 
 beforeEach(() => {
@@ -149,5 +153,23 @@ describe("QueryPanel clear results", () => {
     const path = screen.getByRole("button", { name: /Clear path/ });
     expect(results).not.toBe(path);
     expect(path.textContent).not.toContain("Clear results");
+  });
+});
+
+describe("QueryPanel result navigation", () => {
+  it("both result controls reach the props App passed in", async () => {
+    // AC-8 of result-navigation, and the reason this test is here rather than
+    // only in App.test.tsx: that file stubs QueryPanel out, so nothing else
+    // would notice if the panel stopped handing either callback down. The chip
+    // and the source control are asserted together because a wiring mistake
+    // that swapped them would leave both props "called".
+    const { onPickIri, onViewInSource } = await renderPanelWithResults();
+
+    fireEvent.click(screen.getByRole("button", { name: "B1" }));
+    expect(onPickIri).toHaveBeenCalledWith("http://example.org/b1");
+    expect(onViewInSource).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "View B1 in source" }));
+    expect(onViewInSource).toHaveBeenCalledWith("http://example.org/b1", undefined);
   });
 });

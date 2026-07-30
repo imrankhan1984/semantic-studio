@@ -6,7 +6,9 @@ FILE: frontend/src/components/SourceView.tsx
 SUMMARY
     The View tab. Shows the ontology's source text with line numbers and syntax
     highlighting, an Original / Formatted-Turtle toggle, find-in-file with match
-    navigation, copy, and safe handling of very large files.
+    navigation, copy, safe handling of very large files, and a way in from a
+    query result: given a target entity it scrolls to and highlights the first
+    line that mentions it.
 
 BASIC IDEA
     Fetches /source (original or pretty). To keep an 8 MB file from freezing the
@@ -15,28 +17,48 @@ BASIC IDEA
     rendered window) and scrolls the active match into view. The correct
     highlighter (Turtle vs XML) is chosen from the format.
 
+    A `target` is the same idea driven from outside: "View in source" on a
+    result row hands over one entity, this locates it with findTargetLine and
+    reports back through onTargetResolved so App can announce a miss. It is
+    kept apart from the find-in-file state — a different highlight class and a
+    different line — because the two are answering different questions and a
+    user who then searches for something else should not lose the target.
+
 INPUTS / INPUT SOURCES (props)
     - ontologyId: which ontology's source to show (null = empty state).
+    - target: an entity to scroll to and highlight, or null.
+    - onTargetResolved: called with the outcome, so App can say what happened.
     Plus getSource (the API) and highlighterFor (the tokenizer picker).
 
 EXPECTED OUTPUT
-    - The rendered, searchable, highlighted source pane.
+    - The rendered, searchable, highlighted source pane, positioned at the
+      target when there is one.
 ================================================================================
 */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSource } from "../api";
+import { findTargetLine, targetMissingMessage } from "../sourceTarget";
+import type { SourceTarget } from "../sourceTarget";
 import { highlighterFor } from "../sparql/highlight";
 import type { OntologySource } from "../types";
 
 interface Props {
   ontologyId: string | null;
+  /** The entity to position on. A fresh object each time it is requested, so
+   *  asking for the same entity twice re-runs the lookup and re-scrolls. */
+  target?: SourceTarget | null;
+  /** null when the target was found, otherwise the sentence explaining why not. */
+  onTargetResolved?: (missing: string | null) => void;
 }
 
 /** Lines rendered at once; more are revealed on demand or by a search hit. */
 const WINDOW = 800;
 
-export default function SourceView({ ontologyId }: Props) {
+/** The heading focus lands on when the mode switches, and the pane's name. */
+const HEADING_ID = "source-view-heading";
+
+export default function SourceView({ ontologyId, target = null, onTargetResolved }: Props) {
   const [source, setSource] = useState<OntologySource | null>(null);
   const [pretty, setPretty] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -45,7 +67,14 @@ export default function SourceView({ ontologyId }: Props) {
   const [query, setQuery] = useState("");
   const [matchIndex, setMatchIndex] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [targetLine, setTargetLine] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  // Held in a ref rather than listed as a dependency: App re-renders on every
+  // hover, and a callback identity in the effect below would re-run the lookup
+  // and re-announce each time. GraphView holds onExpanded the same way.
+  const resolvedRef = useRef(onTargetResolved);
+  resolvedRef.current = onTargetResolved;
 
   useEffect(() => {
     setSource(null);
@@ -80,6 +109,50 @@ export default function SourceView({ ontologyId }: Props) {
 
   useEffect(() => setMatchIndex(0), [query]);
 
+  // Arriving from a result row: move focus to the heading before anything has
+  // loaded. The control that was pressed is in the query panel, which this pane
+  // now covers, so leaving focus on it would leave it on nothing — and waiting
+  // for the fetch would send any keystroke made in between wherever the browser
+  // fell back to. Keyed on `target`, so switching to View from the tab bar does
+  // not steal focus from the tab the user just pressed.
+  useEffect(() => {
+    if (target) headingRef.current?.focus();
+  }, [target]);
+
+  // Locate the target once there is a document to look in, then reveal enough
+  // of it to contain the line and scroll there.
+  //
+  // The `!source` guard is load-bearing rather than defensive: without it this
+  // runs against an empty `lines` while the fetch is still in flight, finds
+  // nothing, and announces that the entity is not in a file nobody has read yet.
+  useEffect(() => {
+    if (!target) {
+      setTargetLine(null);
+      return;
+    }
+    if (!source) return;
+    const line = findTargetLine(lines, target);
+    setTargetLine(line === -1 ? null : line);
+    if (line === -1) {
+      resolvedRef.current?.(targetMissingMessage(source.truncated));
+      return;
+    }
+    resolvedRef.current?.(null);
+    setVisible((current) => (line + 20 > current ? line + 200 : current));
+    // Smooth is motion, and this is the one motion this change introduces, so
+    // it asks. The stylesheet has no prefers-reduced-motion rule anywhere
+    // (backlog X-1) and a CSS rule could not reach a scroll option anyway.
+    // `matchMedia` is guarded because jsdom leaves it undefined.
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    // The same deferral goToMatch uses: the line may only have just been
+    // revealed, so the element it scrolls to does not exist until React commits.
+    window.setTimeout(() => {
+      scrollRef.current
+        ?.querySelector(`[data-line="${line}"]`)
+        ?.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+    }, 40);
+  }, [lines, source, target]);
+
   const goToMatch = (next: number) => {
     if (matches.length === 0) return;
     const wrapped = (next + matches.length) % matches.length;
@@ -107,8 +180,15 @@ export default function SourceView({ ontologyId }: Props) {
   const needle = query.trim().toLowerCase();
 
   return (
-    <div className="source-view">
+    <div className="source-view" aria-labelledby={HEADING_ID}>
       <div className="source-toolbar">
+        {/* tabIndex -1: script-focusable and not a tab stop, the same
+            arrangement DetailPanel's heading uses. Until now this pane had no
+            heading at all, so there was nothing for a mode change to land on
+            and nothing naming the region. */}
+        <h2 id={HEADING_ID} ref={headingRef} tabIndex={-1} className="source-title">
+          Source
+        </h2>
         <div className="mode-switch small">
           <button
             className={pretty ? "mode-tab" : "mode-tab active"}
@@ -196,8 +276,13 @@ export default function SourceView({ ontologyId }: Props) {
                 <span
                   key={index}
                   data-line={index}
+                  // Two independent highlights, not one: `active` is the current
+                  // find-in-file hit and `target` is where a result row sent us.
+                  // Searching afterwards must not throw the target away.
                   className={
-                    index === activeLine ? "sparql-line source-line active" : "sparql-line source-line"
+                    "sparql-line source-line" +
+                    (index === activeLine ? " active" : "") +
+                    (index === targetLine ? " target" : "")
                   }
                 >
                   <span className="sparql-gutter">{index + 1}</span>

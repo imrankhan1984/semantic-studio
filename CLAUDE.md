@@ -50,7 +50,7 @@ app writes into the real per-user ontology library.
 
 ```bash
 cd backend  && python -m pytest tests    # 169 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 251 tests, vitest
+cd frontend && npm run test              # 290 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -69,7 +69,7 @@ and a collection landing inside a single-shot timing costs tens of milliseconds.
 A single sample here measures how many other fixtures the suite holds. See
 D-024. Do not "simplify" either test back to one `perf_counter` pair.
 
-**Know the gap.** 67 of the 251 frontend tests are in `src/sparql/`. The rest
+**Know the gap.** 67 of the 290 frontend tests are in `src/sparql/`. The rest
 were added from 2026-07-27 onward and are the project's component tests. Copy
 their pattern — a `// @vitest-environment jsdom` docblock per file and `vi.mock`
 over `api.ts`. For anything touching the graph, either stub `GraphView` (see
@@ -79,8 +79,10 @@ jsdom does not define it. To reach anything *inside* GraphView, stub the `sigma`
 module itself and read the settings object the constructor was handed — that is
 how the node and edge reducers are tested without a WebGL context, and it tests
 the shipped closures rather than an extracted copy of them.
-**`Legend.tsx`, `SourceView.tsx` and the rest are still untested.** A change
-to one of those is adding the first test for that file, and should.
+**`Legend.tsx` and the rest are still untested.** A change to one of those is
+adding the first test for that file, and should. `SourceView.test.tsx` exists
+now but covers only the "view in source" target — the Original / Formatted
+toggle, find-in-file, the show-more window and copy have no test.
 `QueryPanel.tsx` now has a test file, but it covers one thing — that *Clear
 results* empties the results without touching the query — and renders the
 component with a hand-built `builder` rather than the real hook. Treat it as a
@@ -106,6 +108,16 @@ first that the file loaded.** vitest stubs CSS out of the module graph, so
 assertion in `focus-visible.test.ts` passed while proving nothing.
 `test: { css: true }` in `vite.config.ts` is what makes that import real — do
 not remove it.
+
+**A timer scheduled by an effect that runs inside an async `act` body does not
+fire before that body resolves**, however long it waits. React flushes the
+passive effect as the act scope closes, so the timer is only queued at that
+point. This is not a jsdom gap — it is an ordering property of `act`, and it
+applies to any component that defers work with `setTimeout`. `SourceView.tsx`
+does, to let a revealed line exist before scrolling to it, and
+`SourceView.test.tsx`'s `settle()` therefore runs **two** act passes. One pass
+leaves `scrollIntoView` at zero calls and the assertion looks like a bug in the
+component. Measured 2026-07-31 against a four-line probe.
 
 ## Conventions that are not negotiable
 
@@ -432,6 +444,65 @@ prove a change works in the application rather than in the test suite.
   *Last* and focus lands on *Previous*. AC-12 asks for focus to stay on the
   control pressed, which is impossible for the press that reaches the end of the
   range, and the alternative is the documented blur-to-`<body>` above.
+- **Every result row leads somewhere, in two directions** (2026-07-31, spec
+  `result-navigation`). Clicking a URI chip already selected the entity; what it
+  did not do was draw one the node budget had left out, so a query returning any
+  entity in the ontology could select something the canvas could not show and
+  move the camera nowhere. `selectFromOutsideGraph` in `App.tsx` is now the one
+  route for both the search box and the results table — they had drifted apart
+  once already, which is exactly why they share a function now. **Do not add
+  `builder.addNode` to it**: that half belongs to search alone, because clicking
+  a result is inspecting an answer and a chip that quietly extended the query
+  would be a trap. `App.test.tsx` asserts both halves.
+
+  **The camera fix in `GraphView.tsx` is `partial-graph-rendering` stage 2's,
+  not this spec's, and it is the thing most worth knowing here.** Focus is
+  requested at the moment of selection, when the entity is not yet in the graph,
+  so the camera effect bails on `hasNode` and the request is simply lost —
+  nothing honoured it afterwards. Measured in Chrome: 5 of 34 nodes became 8 of
+  34 and **the view did not move**. The merge now calls `centerOn` when the
+  selection is in `addedNodes`. Conditioned on what the merge *added*, never on
+  what is drawn: *Show its connections* grows the view around an entity the user
+  has already centred, and re-running the camera there would zoom a view they
+  arranged.
+
+  A 404 from `/neighborhood` is now a polite notice, not the red error bar. It
+  is what the endpoint says about every predicate and every blank node, which is
+  an ordinary thing to reach. Telling it from a real failure is why `api.ts`
+  throws `ApiError` with the HTTP status; **do not match on the message text**,
+  which works until the message is reworded.
+
+  **`sourceTarget.ts` is where the "view in source" rule lives**, out of the
+  component so a 2 MB scan can be timed without measuring jsdom — 1.9 ms median
+  over 30,394 lines against a 50 ms budget. Two things in it were found by
+  loading a real file and cannot be found any other way. A match must not be
+  followed by a character that continues an RDF name, or `:Mars` matches
+  `ns1:Mars2020`; and a prefixed form arriving **without** a colon gets one back,
+  because `namespace_manager.qname` shortens a term in the default namespace to
+  a bare local name, so the backend sends `Mars` and searching for that lands on
+  `rdfs:label "Mars 2020"`. It is `indexOf` throughout and must stay that way:
+  the needle is ontology-controlled text and a `RegExp` built from it would let
+  an uploaded file choose which line the reader is sent to.
+
+  `ResultsTable` is wrapped in `React.memo` and that is load-bearing rather than
+  decorative: an expansion sets App state three times over and every one of
+  those renders `QueryPanel` again, under the cursor of someone reading the
+  table. It only bites while all four props keep their identity, which is why
+  `QueryPanel` hands over a `useCallback` for `onClear` — measured at 60 reads
+  of `term.value` without the memo and 0 with it.
+
+  Two smaller things. `SourceView` has a heading now, `#source-view-heading`,
+  because focus has to land somewhere when the mode changes under the user and
+  the pane had nothing naming it. And `App.tsx` clears `sourceTarget` whenever
+  the mode is picked from the tab bar — without that, leaving View and coming
+  back re-runs the lookup and steals focus from the tab just pressed.
+
+  **AC-9 is honoured literally and there is a better answer available.** The
+  target is the *first* line mentioning the entity, which on pretty-printed
+  Turtle is often a reference to it from elsewhere (`:targets :Mars`) rather than
+  its own declaration (`:Mars a :Planet`). That is what the spec asks for and it
+  lands on a true occurrence. Preferring the subject position would be better and
+  belongs in a version row of its own, not in a quiet edit.
 
 ## Pull requests
 
