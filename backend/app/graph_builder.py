@@ -7,8 +7,10 @@ SUMMARY
     Turns an rdflib.Graph into the node/edge structure the frontend graph view
     draws, plus helpers for a single node's detail panel and for label/IRI
     search. Also provides the shared label-picking and prefix-shortening
-    helpers reused by other backend modules, and the node budget that keeps a
-    large ontology from being shipped to the browser in one piece.
+    helpers reused by other backend modules, the node budget that keeps a
+    large ontology from being shipped to the browser in one piece, and the
+    neighbourhood of one entity, which is how the browser gets back the part
+    of the graph that budget dropped.
 
 BASIC IDEA
     An ontology is a bag of RDF triples. The graph view needs named entities
@@ -22,15 +24,19 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES
     - An rdflib.Graph produced by store.parse_rdf (build_viz_graph, node_details).
-    - The pre-built viz dict for label/IRI search (search_nodes) and for the
-      node budget (budget_viz).
-    - A specific entity IRI for the detail panel (node_details).
+    - The pre-built viz dict for label/IRI search (search_nodes), for the node
+      budget (budget_viz) and for one entity's neighbourhood (neighborhood_viz).
+    - A specific entity IRI for the detail panel (node_details) and for the
+      centre of a neighbourhood (neighborhood_viz).
 
 EXPECTED OUTPUT
     - build_viz_graph -> {"nodes": [...], "edges": [...], "stats": {...}} as
       JSON-ready dicts consumed by frontend/src/components/GraphView.tsx.
     - budget_viz -> the same shape reduced to the highest-degree nodes, with
       the true totals and a truncation flag added to stats.
+    - neighborhood_viz -> the same shape again, holding one entity and its
+      highest-degree neighbours, so the browser can grow a budgeted graph
+      outwards without refetching all of it.
     - node_details -> every outgoing/incoming statement for one IRI (or None).
     - search_nodes -> ranked node matches for the search box.
     - pick_label / prefixed are imported by query_schema.py and sparql_exec.py.
@@ -364,6 +370,85 @@ def budget_viz(viz: dict, limit: int) -> dict:
             # counted only drawn nodes its numbers would change every time the
             # user expanded something, and a learner would never see the real
             # composition. This will read as a bug. It is not. See D-017.
+            "kindCounts": dict(viz["stats"]["kindCounts"]),
+        },
+    }
+
+
+# --- one entity's neighbourhood ---------------------------------------------
+
+
+def neighborhood_viz(viz: dict, iri: str, limit: int) -> Optional[dict]:
+    """One entity, its highest-degree neighbours up to `limit`, and the edges
+    among the returned set. None when `iri` is not a node in this viz graph.
+
+    This is the other half of the node budget. `budget_viz` decides what is
+    drawn on first load; this decides what can be drawn afterwards, so an
+    entity the budget dropped is reachable rather than merely findable.
+
+    Computed from the cached viz dict rather than from the rdflib graph, for
+    the same reason `budget_viz` is: one definition of what a node and an edge
+    are. Asking rdflib again would let the two drift, and a neighbour that
+    exists in the detail panel but not on the canvas is the confusion this
+    whole feature exists to remove.
+
+    Neighbours are ranked the way the budget ranks, descending degree with the
+    id breaking ties, so a partial expansion returns the connections most
+    likely to matter and returns the same ones twice.
+    """
+    by_id = {n["id"]: n for n in viz["nodes"]}
+    center = by_id.get(iri)
+    if center is None:
+        return None
+
+    edges = viz["edges"]
+    # Pass 1: who is directly connected. Both directions count — an entity's
+    # neighbourhood is not a statement about which way the arrows point.
+    neighbor_ids: set[str] = set()
+    for edge in edges:
+        if edge["source"] == iri:
+            neighbor_ids.add(edge["target"])
+        elif edge["target"] == iri:
+            neighbor_ids.add(edge["source"])
+    # A self-loop makes the centre its own neighbour, which would report one
+    # connection too many and hand the same node back twice.
+    neighbor_ids.discard(iri)
+
+    neighbor_total = len(neighbor_ids)
+    truncated = neighbor_total > limit
+    ranked = sorted(
+        (by_id[nid] for nid in neighbor_ids if nid in by_id),
+        key=lambda n: (-n["degree"], n["id"]),
+    )
+    kept_nodes = [center] + ranked[:limit]
+    kept_ids = {n["id"] for n in kept_nodes}
+
+    # Pass 2: every edge among the returned set, not only those touching the
+    # centre. Two neighbours joined to each other are part of what the user is
+    # being shown, and omitting that edge would draw a star where the ontology
+    # has a structure.
+    kept_edges = [
+        e for e in edges if e["source"] in kept_ids and e["target"] in kept_ids
+    ]
+
+    return {
+        "nodes": kept_nodes,
+        "edges": kept_edges,
+        "stats": {
+            "nodeCount": len(kept_nodes),
+            "edgeCount": len(kept_edges),
+            # The ontology's totals, so the interface can keep saying how much
+            # of it is drawn as the drawn part grows.
+            "nodeTotal": len(viz["nodes"]),
+            "edgeTotal": len(edges),
+            # About the neighbours, not about the ontology: true when this
+            # entity has more connections than were returned.
+            "truncated": truncated,
+            "budget": limit,
+            "neighborTotal": neighbor_total,
+            "center": iri,
+            # Whole-ontology, exactly as in budget_viz and for the same reason:
+            # the legend describes the ontology, not the canvas. See D-017.
             "kindCounts": dict(viz["stats"]["kindCounts"]),
         },
     }

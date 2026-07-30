@@ -31,6 +31,7 @@ EXPECTED OUTPUT
 ================================================================================
 """
 
+import gc
 import json
 import time
 
@@ -350,13 +351,28 @@ def test_budget_cost_under_fifty_milliseconds(client, dense_oid):
     timed after a warm-up call, because the first call through a cold
     allocator measured an order of magnitude high and is not representative
     of what the endpoint does under use.
+
+    The median of five with the collector paused arrived later, when
+    test_neighborhood.py added two more 40,000-node fixtures and this test
+    started failing at **55.3 ms** without a line of the code it measures having
+    changed. A generational GC pass over roughly a million resident dicts landed
+    inside a single-shot timing. The single sample was measuring the rest of the
+    suite. See D-024, and _median_ms in test_neighborhood.py, which carries the
+    same reasoning for the same reason.
     """
     from app.store import store
 
     viz = store.get(dense_oid).viz()  # warm the cache; the budget is what is timed
     for budget in (ontologies.DEFAULT_GRAPH_NODE_BUDGET, ontologies.MAX_GRAPH_NODE_BUDGET):
         budget_viz(viz, budget)  # warm-up, not measured
-        start = time.perf_counter()
-        budget_viz(viz, budget)
-        elapsed_ms = (time.perf_counter() - start) * 1000
+        samples = []
+        gc.disable()
+        try:
+            for _ in range(5):
+                start = time.perf_counter()
+                budget_viz(viz, budget)
+                samples.append((time.perf_counter() - start) * 1000)
+        finally:
+            gc.enable()
+        elapsed_ms = sorted(samples)[2]
         assert elapsed_ms <= 50, f"budget {budget} over 40,000 nodes took {elapsed_ms:.1f} ms"

@@ -33,8 +33,9 @@ INPUTS / INPUT SOURCES
       override the default caps.
 
 EXPECTED OUTPUT
-    - JSON responses (ontology summaries, graph, node details, search results,
-      query schema, source text, SPARQL results) and appropriate HTTP errors:
+    - JSON responses (ontology summaries, graph, one entity's neighbourhood,
+      node details, search results, query schema, source text, SPARQL results)
+      and appropriate HTTP errors:
       400 for a blocked address or refused query, 413 for a body over the cap,
       504 for a parse that ran out of time.
 ================================================================================
@@ -55,7 +56,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from pydantic import BaseModel  # declares/validates JSON request bodies
 
 # Delegate the real work to the domain modules.
-from ..graph_builder import budget_viz, node_details, search_nodes
+from ..graph_builder import budget_viz, neighborhood_viz, node_details, search_nodes
 from ..net_guard import MAX_REDIRECTS, BlockedAddress, assert_url_fetchable
 from ..query_schema import describe_query_node
 from ..sparql_exec import QueryError, QueryTimeout, execute_select
@@ -118,6 +119,14 @@ DEFAULT_GRAPH_NODE_BUDGET = _env_int("SEMANTIC_STUDIO_GRAPH_NODE_BUDGET", 2000)
 # clamped value is reported back, so the interface can say the maximum was
 # reached, rather than being refused as if the caller had made an error.
 MAX_GRAPH_NODE_BUDGET = 20000
+
+# How many neighbours one /neighborhood response may carry. Deliberately not an
+# environment variable: the node budget needed one because its default was
+# chosen without measuring the browser ceiling, and being wrong there had to
+# cost a configuration change. This number is per-click and an order of
+# magnitude smaller, so the same argument does not apply.
+DEFAULT_NEIGHBORHOOD_LIMIT = 200
+MAX_NEIGHBORHOOD_LIMIT = 2000
 
 # Matches a github.com "blob" (or "raw") web URL and captures owner/repo/rest,
 # so we can rewrite it to the raw.githubusercontent.com download URL.
@@ -413,6 +422,40 @@ def get_graph(oid: str, limit: Optional[int] = Query(default=None, ge=1)) -> dic
     """
     budget = min(DEFAULT_GRAPH_NODE_BUDGET if limit is None else limit, MAX_GRAPH_NODE_BUDGET)
     return budget_viz(_get_or_404(oid).viz(), budget)
+
+
+@router.get("/{oid}/neighborhood")
+def get_neighborhood(
+    oid: str,
+    iri: str = Query(...),
+    limit: Optional[int] = Query(default=None, ge=1),
+) -> dict:
+    """GET /{oid}/neighborhood?iri=... -> one entity and its top neighbours.
+
+    The other half of the node budget. /graph decides what is drawn on first
+    load; this is how the browser grows that outwards, so an entity the budget
+    dropped can be drawn rather than only found by search.
+
+    The default is resolved here rather than in the signature for the same
+    reason /graph resolves its own, and the clamp is a clamp rather than an
+    `le=` for the same reason too: a caller asking for more neighbours than the
+    view will draw has not made an error, and `budget` reports what was applied.
+    """
+    ontology = _get_or_404(oid)
+    budget = min(
+        DEFAULT_NEIGHBORHOOD_LIMIT if limit is None else limit,
+        MAX_NEIGHBORHOOD_LIMIT,
+    )
+    result = neighborhood_viz(ontology.viz(), iri, budget)
+    if result is None:
+        # Blank nodes are excluded from the viz graph by build_viz_graph, so
+        # this is also the expected answer for one, and for a predicate that
+        # was never drawn as an entity.
+        raise HTTPException(
+            status_code=404,
+            detail=f"No entity with that IRI is drawn in this ontology: {iri}",
+        )
+    return result
 
 
 @router.get("/{oid}/node")

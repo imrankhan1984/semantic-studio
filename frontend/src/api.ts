@@ -33,6 +33,7 @@ import type {
   SavedQuery,
   SparqlResults,
   VizGraph,
+  VizNeighborhood,
   VizNode,
 } from "./types";
 
@@ -100,6 +101,25 @@ export function deleteOntology(id: string): Promise<OntologyDeletion> {
 export function getGraph(id: string, limit?: number): Promise<VizGraph> {
   const query = limit === undefined ? "" : `?limit=${limit}`;
   return fetch(`/api/ontologies/${id}/graph${query}`).then((r) => handle<VizGraph>(r));
+}
+
+/**
+ * One entity plus its highest-degree neighbours, for growing the drawn graph.
+ *
+ * `limit` is omitted by default for the same reason getGraph omits it: the
+ * server owns the number, and writing it here would put it in two places. The
+ * response is merged into the graph the browser already holds rather than
+ * replacing it, so this never costs the settled layout.
+ */
+export function getNeighborhood(
+  id: string,
+  iri: string,
+  limit?: number,
+): Promise<VizNeighborhood> {
+  const extra = limit === undefined ? "" : `&limit=${limit}`;
+  return fetch(
+    `/api/ontologies/${id}/neighborhood?iri=${encodeURIComponent(iri)}${extra}`,
+  ).then((r) => handle<VizNeighborhood>(r));
 }
 
 // Every statement about one entity, for the detail panel.

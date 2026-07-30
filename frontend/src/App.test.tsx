@@ -51,7 +51,7 @@ EXPECTED OUTPUT
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import type { OntologySummary, VizGraph } from "./types";
+import type { MergeResult, OntologySummary, VizGraph, VizNeighborhood } from "./types";
 
 const {
   listOntologies,
@@ -61,6 +61,7 @@ const {
   fetchOntology,
   uploadOntology,
   listSavedQueries,
+  getNeighborhood,
   getNodeDetails,
   getQuerySchema,
   getQueryNode,
@@ -76,6 +77,7 @@ const {
   fetchOntology: vi.fn(),
   uploadOntology: vi.fn(),
   listSavedQueries: vi.fn(),
+  getNeighborhood: vi.fn(),
   // The four below arrived with the Explore starting panel and the mode
   // regression test: the detail panel, the query builder and the source view all
   // fetch, and none of them could be rendered from here until they were mocked.
@@ -96,6 +98,7 @@ vi.mock("./api", () => ({
   fetchOntology,
   uploadOntology,
   listSavedQueries,
+  getNeighborhood,
   getNodeDetails,
   getQuerySchema,
   getQueryNode,
@@ -114,6 +117,7 @@ const ALL_API = {
   fetchOntology,
   uploadOntology,
   listSavedQueries,
+  getNeighborhood,
   getNodeDetails,
   getQuerySchema,
   getQueryNode,
@@ -129,17 +133,38 @@ const ALL_API = {
 // The stub carries one button standing in for a node, because clicking a node is
 // a selection route with its own rules — it must not move focus the way a
 // suggestion does — and there is no other way to reach onSelect from here.
+//
+// The second button stands in for a merge. The real one happens inside
+// graphology and is asserted in GraphView.test.tsx; what App is responsible for
+// is what it does with the result, so the stub reports every node in the
+// expansion as newly added — the case where none of them were already drawn.
 vi.mock("./components/GraphView", () => ({
   default: ({
     leftRail,
     onSelect,
+    expansion,
+    onExpanded,
   }: {
     leftRail?: React.ReactNode;
     onSelect: (iri: string | null) => void;
+    expansion?: { data: VizNeighborhood; token: number } | null;
+    onExpanded?: (result: MergeResult) => void;
   }) => (
     <div data-testid="graph">
       {leftRail}
       <button onClick={() => onSelect("http://x/issuedBy")}>fake node</button>
+      {expansion && (
+        <button
+          onClick={() =>
+            onExpanded?.({
+              addedNodes: expansion.data.nodes.map((n) => n.id),
+              addedEdges: expansion.data.edges.length,
+            })
+          }
+        >
+          fake merge
+        </button>
+      )}
     </div>
   ),
 }));
@@ -419,6 +444,122 @@ describe("App status bar", () => {
     });
 
     expect(getGraph).toHaveBeenLastCalledWith("o1", 4000);
+  });
+});
+
+describe("App expand on demand", () => {
+  /** One entity and two neighbours, none of them in TRUNCATED's empty node list. */
+  const NEIGHBORHOOD: VizNeighborhood = {
+    nodes: [
+      { id: "http://x/issuedBy", label: "is issued by", kind: "objectProperty", degree: 9 },
+      { id: "http://x/Bond", label: "Bond", kind: "class", degree: 12 },
+      { id: "http://x/Issuer", label: "Issuer", kind: "class", degree: 4 },
+    ],
+    edges: [
+      { source: "http://x/issuedBy", target: "http://x/Bond", kind: "domain", label: "" },
+      { source: "http://x/issuedBy", target: "http://x/Issuer", kind: "range", label: "" },
+    ],
+    stats: {
+      nodeCount: 3,
+      edgeCount: 2,
+      nodeTotal: 18717,
+      edgeTotal: 51446,
+      truncated: false,
+      budget: 200,
+      kindCounts: { class: 18717 },
+      neighborTotal: 2,
+      center: "http://x/issuedBy",
+    },
+  };
+
+  function liveRegion(): string {
+    return document.querySelector(".notice-region")!.textContent ?? "";
+  }
+
+  /** Open FIBO, select a node, ask for its connections, and let the merge land. */
+  async function expandTheSelectedNode(response: VizNeighborhood = NEIGHBORHOOD) {
+    getNeighborhood.mockResolvedValue(response);
+    await renderAppOpened();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake node" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /show its connections/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake merge" }));
+    });
+  }
+
+  it("the detail panel asks for the selected entity's neighbourhood", async () => {
+    // AC-15 from the client's side. The IRI it sends is the selected one, not
+    // whatever the panel happens to have loaded: the two can differ while the
+    // detail request is still in flight.
+    await expandTheSelectedNode();
+    expect(getNeighborhood).toHaveBeenCalledWith("o1", "http://x/issuedBy");
+  });
+
+  it("expanding announces the new drawn count", async () => {
+    // AC-26. The announcement is App's, not the graph's, because the number it
+    // states — how much of the ontology is now drawn — is the budgeted count
+    // plus every merge, and only App holds both halves.
+    await expandTheSelectedNode();
+    expect(liveRegion()).toContain("Added 3 entities");
+    expect(liveRegion()).toContain("2,003 of 18,717 drawn");
+  });
+
+  it("the announcement is a polite live region", async () => {
+    // The same region the removal report uses. Polite and a status rather than
+    // an alert: the merge has already happened and nothing needs a decision.
+    await expandTheSelectedNode();
+    const region = document.querySelector(".notice-region")!;
+    expect(region.getAttribute("role")).toBe("status");
+    expect(region.getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("the status bar counts what the merge added", async () => {
+    // AC-23 under stage 2: the drawn figure grows, the total does not. Without
+    // this the status bar would keep reporting the budgeted count and the user
+    // would have no way to see the graph growing.
+    await expandTheSelectedNode();
+    expect(statusBar()).toContain("2,003 of 18,717 nodes");
+    expect(statusBar()).toContain("5,182 of 51,446 edges");
+  });
+
+  it("says so plainly when a truncated neighbourhood was returned", async () => {
+    // The house rule: when the server truncates something the interface says
+    // it did. A partial expansion that reported only what it added would let a
+    // user believe they had drawn everything this entity connects to.
+    await expandTheSelectedNode({
+      ...NEIGHBORHOOD,
+      stats: { ...NEIGHBORHOOD.stats, truncated: true, neighborTotal: 640, budget: 200 },
+    });
+    expect(liveRegion()).toContain("Showing the 200 most connected of 640 connections");
+  });
+
+  it("says nothing was added rather than reporting zero", async () => {
+    // "Added 0 entities" reads as a failure. What happened is that everything
+    // this entity connects to was already drawn, which is worth saying in words.
+    await expandTheSelectedNode({ ...NEIGHBORHOOD, nodes: [], edges: [] });
+    expect(liveRegion()).toContain("Nothing new to draw");
+    expect(liveRegion()).not.toContain("Added 0");
+    expect(statusBar()).toContain("2,000 of 18,717 nodes");
+  });
+
+  it("a new graph response discards what expansions added", async () => {
+    // Merging is additive and never removes, so the documented way back to the
+    // budgeted view is to reload — which Show more does. If the added count
+    // survived that, the status bar would over-report for the rest of the
+    // session and no reload would fix it.
+    await expandTheSelectedNode();
+    expect(statusBar()).toContain("2,003 of 18,717 nodes");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /show more/i }));
+    });
+
+    expect(statusBar()).toContain("2,000 of 18,717 nodes");
+    expect(screen.queryByRole("button", { name: "fake merge" })).toBeNull();
   });
 });
 

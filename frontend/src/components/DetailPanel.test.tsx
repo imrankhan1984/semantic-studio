@@ -68,11 +68,20 @@ function detailsWith(rows: number, predicate = LONG_PREDICATE): NodeDetails {
   };
 }
 
-async function renderPanel(details: NodeDetails) {
+async function renderPanel(
+  details: NodeDetails,
+  extra: { onExpand?: (iri: string) => void; expanding?: boolean } = {},
+) {
   getNodeDetails.mockResolvedValue(details);
   await act(async () => {
     render(
-      <DetailPanel ontologyId="o1" iri={SUBJECT} onNavigate={vi.fn()} onClose={vi.fn()} />,
+      <DetailPanel
+        ontologyId="o1"
+        iri={SUBJECT}
+        onNavigate={vi.fn()}
+        onClose={vi.fn()}
+        {...extra}
+      />,
     );
   });
 }
@@ -209,5 +218,48 @@ describe("DetailPanel", () => {
       `50 statements: ${small.toFixed(1)} ms, 500 statements: ${large.toFixed(1)} ms, ` +
         `ratio ${ratio.toFixed(1)}x for 10x the input`,
     ).toBeLessThanOrEqual(15);
+  });
+});
+
+describe("DetailPanel expand control", () => {
+  it("offers to draw the entity's connections, as a real button", async () => {
+    // The canvas draws only what the node budget allowed, so the entity being
+    // described is regularly not on it. This is the one control that fixes
+    // that, and it has to be a button rather than anything clickable: the graph
+    // itself is unreachable by keyboard (backlog X-1) and this must not add to
+    // that list.
+    const onExpand = vi.fn();
+    await renderPanel(detailsWith(1), { onExpand });
+
+    const button = screen.getByRole("button", { name: /show its connections/i });
+    expect(button.tagName).toBe("BUTTON");
+    expect(button.hasAttribute("disabled")).toBe(false);
+
+    // The phrase is deliberate. "Expand the subgraph" would be a new concept to
+    // learn; clicking a node already selects it, and this is one more button on
+    // a panel the user has opened.
+    expect(button.textContent).toBe("Show its connections");
+
+    button.click();
+    expect(onExpand).toHaveBeenCalledWith(SUBJECT);
+  });
+
+  it("renders no expand control when the panel is given no way to expand", async () => {
+    // Not cosmetic: the panel is used with and without a graph behind it, and a
+    // control that cannot do anything is worse than an absent one.
+    await renderPanel(detailsWith(1));
+    expect(screen.queryByRole("button", { name: /show its connections/i })).toBeNull();
+  });
+
+  it("says it is busy while the neighbourhood is being fetched", async () => {
+    // aria-busy as well as disabled, so a screen reader user is told why the
+    // control went inert rather than only finding that it did. The wording
+    // changes too, because a disabled button with unchanged text reads as
+    // broken.
+    await renderPanel(detailsWith(1), { onExpand: vi.fn(), expanding: true });
+
+    const button = screen.getByRole("button", { name: /drawing/i });
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    expect(button.hasAttribute("disabled")).toBe(true);
   });
 });

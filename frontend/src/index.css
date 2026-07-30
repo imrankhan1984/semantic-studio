@@ -1102,6 +1102,19 @@ select:focus {
   color: var(--accent);
 }
 
+/* "Show its connections". Full width because it is the panel's one action and
+   the panel is a narrow column; above the statements because a control below
+   several hundred rows is a control nobody finds. */
+.expand-btn {
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.expand-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .detail-panel section {
   margin-top: 14px;
 }

@@ -29,6 +29,13 @@ BASIC IDEA
     holds; DetailPanel takes over the moment something is selected, and closing
     it returns to the offer rather than to nothing.
 
+    The graph the server hands over is budgeted, so it is usually part of the
+    ontology. App can now grow it: a neighbourhood fetched for one entity is
+    passed to GraphView as its own prop, merged into the graph already drawn,
+    and what it added is reported back — which is why the drawn counts here are
+    the response's plus what expansions have contributed. Replacing the graph
+    response instead would rebuild the canvas and lose every settled position.
+
     Removal is the one destructive action here, and it counts what it will
     destroy before it asks. Deleting an ontology has always deleted every query
     saved against it; onRemove now fetches that count first, puts it in the
@@ -46,7 +53,13 @@ EXPECTED OUTPUT
 */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { deleteOntology, getGraph, listOntologies, listSavedQueries } from "./api";
+import {
+  deleteOntology,
+  getGraph,
+  getNeighborhood,
+  listOntologies,
+  listSavedQueries,
+} from "./api";
 import DetailPanel from "./components/DetailPanel";
 import ExploreStart from "./components/ExploreStart";
 import GraphNotice from "./components/GraphNotice";
@@ -70,7 +83,14 @@ import {
 } from "./components/icons";
 import { removalConfirmation, removalPrompt } from "./removalPrompt";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
-import type { AppMode, OntologySummary, Theme, VizGraph } from "./types";
+import type {
+  AppMode,
+  MergeResult,
+  OntologySummary,
+  Theme,
+  VizGraph,
+  VizNeighborhood,
+} from "./types";
 
 /** Why the three mode tabs are disabled with nothing open. One string, because
  *  it is the same reason on all three and it belongs in the title attribute
@@ -86,16 +106,57 @@ function initialTheme(): Theme {
   return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
+/** What expansions have added to the budgeted graph. The node ids rather than a
+ *  count, because the search box needs to know which entities became drawn. */
+interface Expanded {
+  nodes: Set<string>;
+  edges: number;
+}
+
+const NOTHING_EXPANDED: Expanded = { nodes: new Set(), edges: 0 };
+
 /**
  * The status-bar count for nodes or edges: "34" normally, "2,000 of 18,717"
  * when the budget dropped something, and "…" while the graph is loading.
+ *
+ * `extra` is what expansions have added since the graph was fetched. It is
+ * added here rather than folded into `graphData`, because replacing that object
+ * is what tears the canvas down and rebuilds it — the one thing an expansion
+ * must not do.
  */
-function countOf(graph: VizGraph | null, what: "node" | "edge"): string {
+function countOf(graph: VizGraph | null, what: "node" | "edge", extra: Expanded): string {
   if (!graph) return "…";
-  const drawn = what === "node" ? graph.stats.nodeCount : graph.stats.edgeCount;
+  const added = what === "node" ? extra.nodes.size : extra.edges;
+  const drawn = (what === "node" ? graph.stats.nodeCount : graph.stats.edgeCount) + added;
   const total = what === "node" ? graph.stats.nodeTotal : graph.stats.edgeTotal;
   if (!graph.stats.truncated) return drawn.toLocaleString();
   return `${drawn.toLocaleString()} of ${total.toLocaleString()}`;
+}
+
+/**
+ * What an expansion is reported to have done, in one sentence.
+ *
+ * Three things it has to get right. Zero is its own case: "Added 0 entities"
+ * reads like a failure when what happened is that everything this entity
+ * connects to was already on the canvas. A truncated neighbourhood says so,
+ * because the house rule is that when the server truncates something the
+ * interface says it did. And the drawn total is repeated every time, since it
+ * is the number the whole feature is about.
+ */
+function expansionAnnouncement(
+  added: number,
+  drawn: number,
+  stats: VizNeighborhood["stats"],
+): string {
+  const where = `${drawn.toLocaleString()} of ${stats.nodeTotal.toLocaleString()} drawn.`;
+  if (added === 0) {
+    return `Nothing new to draw: those connections are already on the graph. ${where}`;
+  }
+  const what = added === 1 ? "1 entity" : `${added.toLocaleString()} entities`;
+  const partial = stats.truncated
+    ? ` Showing the ${stats.budget.toLocaleString()} most connected of ${stats.neighborTotal.toLocaleString()} connections.`
+    : "";
+  return `Added ${what}.${partial} ${where}`;
 }
 
 export default function App() {
@@ -132,6 +193,17 @@ export default function App() {
   // are reset below when the active ontology changes.
   const [graphBudget, setGraphBudget] = useState<number | null>(null);
   const [noticeDismissed, setNoticeDismissed] = useState(false);
+  // The expansion trio. `expansion` is handed to GraphView to merge and carries
+  // a token, because two expansions of the same entity are two merges and a
+  // prop that compared equal would collapse them into one. `expanded` is what
+  // the merges actually added, which only GraphView can know. `expandingIri` is
+  // the request in flight, so the control that started it can say so.
+  const [expansion, setExpansion] = useState<{
+    data: VizNeighborhood;
+    token: number;
+  } | null>(null);
+  const [expanded, setExpanded] = useState<Expanded>(NOTHING_EXPANDED);
+  const [expandingIri, setExpandingIri] = useState<string | null>(null);
   // The shared query-builder state; the schema is only fetched in Query mode.
   const builder = useQueryBuilder(activeId, mode === "query");
 
@@ -194,6 +266,14 @@ export default function App() {
   // before it arrives.
   useEffect(() => {
     setGraphData(null);
+    // A new graph response replaces the canvas, so everything expansions added
+    // to the old one is gone with it. That is the documented way to shrink the
+    // view back: reloading returns to the budgeted graph. Reset here rather
+    // than beside the activeId reset above, because "Show more" refetches
+    // without changing the ontology and discards the merges just the same.
+    setExpansion(null);
+    setExpanded(NOTHING_EXPANDED);
+    setExpandingIri(null);
     if (!activeId) return;
     setLoadingGraph(true);
     let cancelled = false;
@@ -317,14 +397,83 @@ export default function App() {
     [mode, builder],
   );
 
+  // Which entities are actually on the canvas, so the search box can mark the
+  // results that are not. Search reads the whole ontology, so under a budget it
+  // routinely finds entities the graph cannot show — and what an expansion adds
+  // has to count here too, or a row would keep saying "not drawn" about
+  // something the user has just drawn.
+  const drawnIds = useMemo(() => {
+    if (!graphData) return null;
+    const ids = new Set(graphData.nodes.map((n) => n.id));
+    for (const id of expanded.nodes) ids.add(id);
+    return ids;
+  }, [graphData, expanded]);
+  // Read by onSearchPick, which must not be rebuilt every time the drawn set
+  // changes: SearchBox would then see a new onPick on each merge.
+  const drawnIdsRef = useRef(drawnIds);
+  drawnIdsRef.current = drawnIds;
+
+  // Draw one entity and everything it connects to, without refetching the
+  // graph. The response goes to GraphView as its own prop rather than into
+  // graphData, because replacing graphData rebuilds the scene from scratch and
+  // an expansion that threw away every settled position would be worse than no
+  // expansion at all.
+  //
+  // The active-ontology check is not theoretical: the request is in flight
+  // while the user can still switch ontologies, and merging a stale
+  // neighbourhood into a different ontology's graph would draw entities that
+  // are not in it.
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+  const onExpand = useCallback(async (iri: string) => {
+    const id = activeIdRef.current;
+    if (!id) return;
+    setExpandingIri(iri);
+    try {
+      const data = await getNeighborhood(id, iri);
+      if (activeIdRef.current !== id) return;
+      // The token, not the data, is what tells GraphView this is a new merge:
+      // expanding the same entity twice hands over an equal object.
+      setExpansion((prev) => ({ data, token: (prev?.token ?? 0) + 1 }));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (activeIdRef.current === id) setExpandingIri(null);
+    }
+  }, []);
+
+  // What the merge actually did. Deliberately not a useCallback: GraphView
+  // holds this in a ref, so a fresh identity per render costs nothing, and it
+  // is what keeps `graphData` and `expansion` current here without a dependency
+  // array that would have to list them.
+  const onExpanded = (result: MergeResult) => {
+    if (!graphData || !expansion) return;
+    const nodes = new Set(expanded.nodes);
+    for (const id of result.addedNodes) nodes.add(id);
+    setExpanded({ nodes, edges: expanded.edges + result.addedEdges });
+    setNotice(
+      expansionAnnouncement(
+        result.addedNodes.length,
+        graphData.stats.nodeCount + nodes.size,
+        expansion.data.stats,
+      ),
+    );
+  };
+
   // Searching in Query mode adds the match to the path, so a query can be
   // built by name without hunting for a node in a large graph.
+  //
+  // A hit outside the budget is drawn rather than merely selected. That is the
+  // whole of stage 2 from the user's side: before it, picking such a row opened
+  // a panel about an entity the canvas could not show, and the row said "not
+  // drawn" with nothing to be done about it.
   const onSearchPick = useCallback(
     (iri: string) => {
       selectAndFocus(iri);
       if (mode === "query") void builder.addNode(iri);
+      if (drawnIdsRef.current && !drawnIdsRef.current.has(iri)) void onExpand(iri);
     },
-    [mode, builder, selectAndFocus],
+    [mode, builder, selectAndFocus, onExpand],
   );
 
   // The distinct edge kinds present, for the legend's "relations" section.
@@ -333,14 +482,6 @@ export default function App() {
     const kinds = new Set(graphData.edges.map((e) => e.kind));
     return [...kinds].sort();
   }, [graphData]);
-
-  // Which entities are actually on the canvas, so the search box can mark the
-  // results that are not. Search reads the whole ontology, so under a budget it
-  // routinely finds entities the graph cannot show.
-  const drawnIds = useMemo(
-    () => (graphData ? new Set(graphData.nodes.map((n) => n.id)) : null),
-    [graphData],
-  );
 
   // The server clamps a budget above its maximum and reports what it clamped
   // to, so asking for more than we got is what "no more to draw" looks like.
@@ -543,6 +684,8 @@ export default function App() {
               queryMode={mode === "query"}
               queryPathIris={builder.pathIris}
               queryCandidates={builder.candidates}
+              expansion={expansion}
+              onExpanded={onExpanded}
               leftRail={
                 graphData ? (
                   <Legend
@@ -594,6 +737,8 @@ export default function App() {
                 onNavigate={selectAndFocus}
                 onClose={() => setSelected(null)}
                 focusHeading={focusPanel}
+                onExpand={(entity) => void onExpand(entity)}
+                expanding={expandingIri === selected}
               />
             )
           ) : null}
@@ -608,8 +753,8 @@ export default function App() {
             {/* Under a budget these read "2,000 of 18,717". The status bar
                 keeps saying so after the notice is dismissed, so the fact that
                 the view is partial is never fully hidden. */}
-            <span>{countOf(graphData, "node")} nodes</span>
-            <span>{countOf(graphData, "edge")} edges</span>
+            <span>{countOf(graphData, "node", expanded)} nodes</span>
+            <span>{countOf(graphData, "edge", expanded)} edges</span>
             <span className="dim">{active.format}</span>
             {active.source !== "upload" && <span className="dim src">{active.source}</span>}
           </>

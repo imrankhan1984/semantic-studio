@@ -209,7 +209,13 @@ you dismiss the notice. Nothing is hidden silently.
 
 - **Show more** draws twice as many, up to a ceiling of 20,000.
 - **Search still covers the whole ontology.** A result that is not on the canvas
-  is marked *not drawn*; selecting it opens its details.
+  is marked *not drawn* — and picking it draws it, together with everything it
+  connects to.
+- **Show its connections**, on any entity's detail panel, grows the graph
+  outward from that entity. The view only ever gets bigger; to go back to the
+  budgeted graph, reopen the ontology.
+- Each expansion says what it added and how much of the ontology is now drawn,
+  and the status bar keeps the running total.
 - The legend counts the **whole** ontology, not just what is drawn, so its
   numbers will be larger than what you can see. That is deliberate: it describes
   the file, not the canvas.
@@ -310,6 +316,7 @@ The image stores ontologies in the `/data` volume:
 | `POST /api/ontologies/fetch`        | `{url}` — fetch from URL/GitHub      |
 | `DELETE /api/ontologies/{id}`       | Remove an ontology                   |
 | `GET  /api/ontologies/{id}/graph`   | Visualization nodes/edges            |
+| `GET  /api/ontologies/{id}/neighborhood` | `?iri=` — one entity and its neighbours, to grow the drawn graph |
 | `GET  /api/ontologies/{id}/node`    | `?iri=` — all statements for an IRI  |
 | `GET  /api/ontologies/{id}/search`  | `?q=` — label/IRI search             |
 | `GET  /api/ontologies/{id}/query-schema` | Class-level schema for the builder |
