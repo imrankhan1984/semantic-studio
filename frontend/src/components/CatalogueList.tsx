@@ -10,10 +10,12 @@ SUMMARY
 
 BASIC IDEA
     Two screens offer the same four ontologies, and two separate renderings of
-    the same constant would drift: a change to the ordering (backlog L-1) or to
-    an entry's wording would land on one screen and not the other. So the
-    markup lives here once and both callers pass in their own busy state and
-    their own pick handler.
+    the same constant would drift: a change to the ordering (backlog L-1, built
+    2026-07-30) or to an entry's wording would land on one screen and not the
+    other. So the markup lives here once and both callers pass in their own
+    busy state and their own pick handler. L-1 was the anticipated case and it
+    behaved: reordering CATALOGUE and giving each entry an audience line reached
+    both screens through this one component.
 
     It is deliberately presentational. It does not fetch, does not hold the
     in-flight id, and does not know what happens after a pick — the caller owns
@@ -28,7 +30,7 @@ INPUTS / INPUT SOURCES (props)
 
 EXPECTED OUTPUT
     - One <button> per catalogue entry, in CATALOGUE order, each announcing its
-      name, description and size.
+      name, description, size and the line saying who it suits.
 ================================================================================
 */
 
@@ -61,6 +63,13 @@ export default function CatalogueList({ fetchingId, busy, onPick }: Props) {
           </span>
           <span className="catalogue-desc">{entry.description}</span>
           <span className="catalogue-size">{entry.size}</span>
+          {/*
+            Plain text inside the button, so it joins the accessible name rather
+            than needing aria-describedby. That makes the name long, and it is
+            the right trade: a screen reader user hears which entry suits them
+            instead of guessing from the vocabulary's initials.
+          */}
+          <span className="catalogue-audience">{entry.audience}</span>
         </button>
       ))}
     </div>

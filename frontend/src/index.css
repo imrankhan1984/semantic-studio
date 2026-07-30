@@ -1196,6 +1196,19 @@ select:focus {
   font-family: ui-monospace, Consolas, monospace;
 }
 
+/* Who the entry suits. Italic, and deliberately not a colour of its own: the
+   line is editorial guidance sitting among facts about the ontology, and italic
+   separates the two without adding a third colour to a row that already carries
+   two. Nothing here depends on that styling — the guidance is in the words, so
+   it survives a stylesheet that never loads. Same --text-dim as .hint.
+   Measured 2026-07-30 against the row background: 5.35:1 dark, 4.97:1 light. */
+.catalogue-audience {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-style: italic;
+  line-height: 1.45;
+}
+
 /* --- visual query builder --------------------------------------------- */
 
 .mode-switch {
