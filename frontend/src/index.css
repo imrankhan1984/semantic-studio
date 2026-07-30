@@ -949,6 +949,68 @@ select:focus {
   padding: 1px 5px;
 }
 
+/* --- explore starting panel -------------------------------------------- */
+/* The same 380px column as the detail panel, because it is the same column:
+   this shows when nothing is selected and the detail panel replaces it when
+   something is. The shell is deliberately identical so the column does not
+   change width or colour as the user selects and closes things.
+
+   The rows reuse .starter from the query panel rather than defining a second
+   two-line row: that block already renders a title and a detail line at this
+   width, and QueryStart is the component this panel is modelled on. */
+
+.explore-start {
+  width: 380px;
+  flex: none;
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel);
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.explore-start h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.explore-start section {
+  margin-top: 14px;
+}
+
+.explore-start h3 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.explore-summary {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* The title line carries the kind swatch, so it is a row inside a column. */
+.explore-start .starter-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow-wrap: anywhere;
+}
+
+.explore-start .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.explore-start .hint {
+  display: block;
+  margin: 14px 0 0;
+}
+
 /* --- detail panel ----------------------------------------------------- */
 
 .detail-panel {

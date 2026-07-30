@@ -43,6 +43,11 @@ them by clicking, without writing SPARQL by hand.
     follows; on release the graph settles.
   - Hover highlights a node's neighborhood; edge lengths adapt to label
     length so long names stay readable.
+- **A starting point in *Explore* mode**: with an ontology open and nothing
+  selected, the right-hand panel says what the ontology contains and offers up
+  to eight entities worth opening first — its most connected ones, spread across
+  kinds so classes, properties and individuals are all represented. Clicking one
+  opens it; closing it returns to the offer.
 - **Detail panel**: click any concept, class, property or individual to open a
   right-hand panel with every statement about it (annotations, relations,
   typed literals with language/datatype tags) and everything that references

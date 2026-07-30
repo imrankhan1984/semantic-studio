@@ -50,7 +50,7 @@ app writes into the real per-user ontology library.
 
 ```bash
 cd backend  && python -m pytest tests    # 161 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 157 tests, vitest
+cd frontend && npm run test              # 189 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -60,14 +60,15 @@ performance budget. Unlike `network`, they **run by default** — a budget nobod
 enforces is a note in a document. Deselect them on a slow machine with
 `-m "not perf"`.
 
-**Know the gap.** 67 of the 157 frontend tests are in `src/sparql/`. The rest
+**Know the gap.** 67 of the 189 frontend tests are in `src/sparql/`. The rest
 were added from 2026-07-27 onward and are the project's component tests. Copy
 their pattern — a `// @vitest-environment jsdom` docblock per file and `vi.mock`
 over `api.ts`. For anything touching the graph, either stub `GraphView` (see
 `App.test.tsx`) or stub the two WebGL globals so Sigma's module can load (see
 `GraphView.test.tsx`); Sigma reads `WebGL2RenderingContext` at import time and
 jsdom does not define it. **`QueryPanel.tsx`, `Legend.tsx`, `SourceView.tsx`
-and the rest are still untested.** A change to one of those is adding the first
+and the rest are still untested.** `GraphView.tsx` has a test file but not a
+test for the defect below. A change to one of those is adding the first
 test for that file, and should. `LoadDialog.tsx` is covered only through
 `CatalogueList.test.tsx`, which renders it to prove the catalogue matches the
 start screen's — its file, URL and drag-and-drop tabs have no test.
@@ -151,8 +152,15 @@ frontend/src/
   App.tsx            Top-level state: ontologies, mode, selection, theme
   api.ts             Every backend call, typed
   components/        One component per file
-  sparql/            Pure query-building logic, the only tested frontend code
+  sparql/            Pure query-building logic
+  explore/           Pure Explore-mode logic: the suggestion ranking and the
+                     ontology summary sentence
 ```
+
+`sparql/` and `explore/` are the same idea twice: logic a component needs, kept
+out of the component so it can be tested without rendering. `removalPrompt.ts`
+and `catalogue.ts` are the same idea for one function and one constant. Prefer
+this split for anything with a rule in it.
 
 Routers stay thin. If you are writing logic in `routers/`, it probably belongs
 in a module.
@@ -178,6 +186,19 @@ prove a change works in the application rather than in the test suite.
 
 ## Known state, so you do not rediscover it
 
+- **Open defect, and it is the worst one currently known. Selecting an IRI that
+  is not a node in the drawn graph blanks the whole application.**
+  `nodeReducer` in `GraphView.tsx` calls `graph.areNeighbors(selected, node)`
+  unconditionally, graphology throws `NotFoundGraphError` when `selected` is
+  absent, nothing catches it, and React unmounts the tree — `#root` is empty
+  until the page is reloaded. Two routes reach it: an `rdf:type` term link in
+  the detail panel, which is a predicate and never a graph node, and **any
+  search hit outside the node budget**, which stage 1 of
+  `partial-graph-rendering` deliberately allows and marks *not drawn*. Measured
+  on `main` at `9843dc0` in Chrome against the built app: open
+  `examples/space-exploration.ttl`, search *Celestial*, click the hit, click
+  *type*. The fix is a `graph.hasNode(selected)` guard plus an error boundary,
+  and it needs a test — do not "fix" it silently as part of something else.
 - **The three security defects S-1, S-2 and S-3 are fixed** (2026-07-27, spec
   `network-and-resource-limits`). `net_guard.py` refuses non-public addresses on
   every redirect hop, `prepare_select` refuses `SERVICE` at any algebra depth,
@@ -273,6 +294,30 @@ prove a change works in the application rather than in the test suite.
   the accessible name were only a URL. Chrome computes it from **contents** —
   name-from-contents wins for a `button` — so the row announces its name,
   description, size and audience line. Measured 2026-07-30 on the built app.
+- **Explore mode opens on a starting panel, not on nothing** (2026-07-30, spec
+  `explore-mode-starting-point`). With an ontology open and no selection,
+  `App.tsx` renders `ExploreStart.tsx` in the 380px column where `DetailPanel`
+  used to return `null` before its first line of markup. It costs **no request**:
+  the ranking and the summary sentence are computed from the `/graph` response
+  App already holds, by the two pure functions in `explore/suggestions.ts`.
+
+  Three things there are load-bearing. **Both functions must stay behind
+  `useMemo` keyed on the graph** — App re-renders on a hover and the ranking is a
+  pass over every node; `ExploreStart.test.tsx` counts the calls and fails
+  without it. **`suggestedEntities` keeps the best `limit` per kind in one pass
+  rather than sorting every node**, because a full sort of 40,000 nodes costs
+  more than the 20 ms budget allows; the comment above it proves the candidate
+  set is sufficient, so do not "simplify" it into a `sort`. And
+  **`describeContents` must interpolate nothing from the ontology** — an
+  unrecognised kind falls back to `KIND_LABELS.other` rather than being printed,
+  and a test gives it a hostile kind key to prove it.
+
+  Focus follows a selection made from this panel, and only from this panel. The
+  flag travels with the selection through `selectAndFocus(iri, panelTakesFocus)`
+  rather than living in its own state, and that is the fix for a defect the first
+  implementation had: written as a counter it never reset, so a node clicked with
+  the mouse after one suggestion had been used pulled focus into the panel
+  heading. `App.test.tsx` asserts the graph-click case.
 - **Removing an ontology says how many saved queries go with it** (2026-07-30,
   spec `saved-query-deletion-warning`). The cascade in `DELETE
   /api/ontologies/{oid}` is unchanged and still deliberate — a re-loaded file

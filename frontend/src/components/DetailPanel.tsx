@@ -14,17 +14,23 @@ BASIC IDEA
     navigates to that node (onNavigate), so the user can walk the graph through
     the panel. A cancelled flag drops a stale response if the selection changes.
 
+    With no `iri` it renders nothing, and what fills the column instead is
+    ExploreStart. That is why the heading can take focus: a selection made from
+    that panel replaces the very control the user was standing on, so App sets
+    focusHeading and focus follows the selection here.
+
 INPUTS / INPUT SOURCES (props)
     - ontologyId + iri: which entity to describe (null iri = panel hidden).
     - onNavigate: select another entity when its IRI is clicked.
     - onClose: close the panel.
+    - focusHeading: whether this selection should move focus to the heading.
 
 EXPECTED OUTPUT
     - The rendered detail panel (or nothing when no node is selected).
 ================================================================================
 */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getNodeDetails } from "../api";
 import type { NodeDetails, TermRef } from "../types";
 
@@ -33,7 +39,14 @@ interface Props {
   iri: string | null;
   onNavigate: (iri: string) => void;
   onClose: () => void;
+  /** True when the selection came from ExploreStart, whose row had focus and no
+   *  longer exists. False for a graph click, a search pick and a term link
+   *  inside this panel: those leave the user's focus where they chose to be. */
+  focusHeading?: boolean;
 }
+
+/** The heading id, so the panel can be named by it and focus can be sent to it. */
+const HEADING_ID = "detail-panel-heading";
 
 function Term({ term, onNavigate }: { term: TermRef; onNavigate: (iri: string) => void }) {
   if (term.type === "uri") {
@@ -65,10 +78,17 @@ function Term({ term, onNavigate }: { term: TermRef; onNavigate: (iri: string) =
   return <span className="term-bnode">{term.value}</span>;
 }
 
-export default function DetailPanel({ ontologyId, iri, onNavigate, onClose }: Props) {
+export default function DetailPanel({
+  ontologyId,
+  iri,
+  onNavigate,
+  onClose,
+  focusHeading = false,
+}: Props) {
   const [details, setDetails] = useState<NodeDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     setDetails(null);
@@ -85,13 +105,33 @@ export default function DetailPanel({ ontologyId, iri, onNavigate, onClose }: Pr
     };
   }, [ontologyId, iri]);
 
+  // Take focus when this selection asked for it, rather than when the details
+  // arrive, because the wait is a request: keystrokes made in between would go
+  // wherever the browser fell back to. The heading reads "…" for that moment,
+  // and it is the panel's accessible name either way.
+  //
+  // Keyed on `iri` as well, so walking the panel by clicking a term link — which
+  // changes `iri` with focusHeading false — cannot leave a stale true behind.
+  //
+  // No focus rule is needed for the heading. Activating a suggestion by keyboard
+  // leaves the modality keyboard, so the global :focus-visible ring is drawn;
+  // by mouse it is not, which is the case D-022 measured — and a heading is not
+  // an actionable control, so there is nothing a pointer user needs telling.
+  useEffect(() => {
+    if (focusHeading) headingRef.current?.focus();
+  }, [iri, focusHeading]);
+
   if (!iri) return null;
 
   return (
-    <aside className="detail-panel">
+    <aside className="detail-panel" aria-labelledby={HEADING_ID}>
       <div className="detail-header">
         <div>
-          <h2>{details?.label ?? "…"}</h2>
+          {/* tabIndex -1: script-focusable, and not in the tab order, so this
+              adds no stop for a keyboard user walking the panel. */}
+          <h2 id={HEADING_ID} ref={headingRef} tabIndex={-1}>
+            {details?.label ?? "…"}
+          </h2>
           <div className="detail-prefixed">{details?.prefixed}</div>
         </div>
         <button className="icon-btn" onClick={onClose} title="Close panel">✕</button>
