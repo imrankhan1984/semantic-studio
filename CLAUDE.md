@@ -50,7 +50,7 @@ app writes into the real per-user ontology library.
 
 ```bash
 cd backend  && python -m pytest tests    # 161 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 189 tests, vitest
+cd frontend && npm run test              # 199 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -60,15 +60,18 @@ performance budget. Unlike `network`, they **run by default** — a budget nobod
 enforces is a note in a document. Deselect them on a slow machine with
 `-m "not perf"`.
 
-**Know the gap.** 67 of the 189 frontend tests are in `src/sparql/`. The rest
+**Know the gap.** 67 of the 199 frontend tests are in `src/sparql/`. The rest
 were added from 2026-07-27 onward and are the project's component tests. Copy
 their pattern — a `// @vitest-environment jsdom` docblock per file and `vi.mock`
 over `api.ts`. For anything touching the graph, either stub `GraphView` (see
 `App.test.tsx`) or stub the two WebGL globals so Sigma's module can load (see
 `GraphView.test.tsx`); Sigma reads `WebGL2RenderingContext` at import time and
-jsdom does not define it. **`QueryPanel.tsx`, `Legend.tsx`, `SourceView.tsx`
-and the rest are still untested.** `GraphView.tsx` has a test file but not a
-test for the defect below. A change to one of those is adding the first
+jsdom does not define it. To reach anything *inside* GraphView, stub the `sigma`
+module itself and read the settings object the constructor was handed — that is
+how the node and edge reducers are tested without a WebGL context, and it tests
+the shipped closures rather than an extracted copy of them.
+**`QueryPanel.tsx`, `Legend.tsx`, `SourceView.tsx`
+and the rest are still untested.** A change to one of those is adding the first
 test for that file, and should. `LoadDialog.tsx` is covered only through
 `CatalogueList.test.tsx`, which renders it to prove the catalogue matches the
 start screen's — its file, URL and drag-and-drop tabs have no test.
@@ -186,19 +189,32 @@ prove a change works in the application rather than in the test suite.
 
 ## Known state, so you do not rediscover it
 
-- **Open defect, and it is the worst one currently known. Selecting an IRI that
-  is not a node in the drawn graph blanks the whole application.**
-  `nodeReducer` in `GraphView.tsx` calls `graph.areNeighbors(selected, node)`
-  unconditionally, graphology throws `NotFoundGraphError` when `selected` is
-  absent, nothing catches it, and React unmounts the tree — `#root` is empty
-  until the page is reloaded. Two routes reach it: an `rdf:type` term link in
-  the detail panel, which is a predicate and never a graph node, and **any
-  search hit outside the node budget**, which stage 1 of
-  `partial-graph-rendering` deliberately allows and marks *not drawn*. Measured
-  on `main` at `9843dc0` in Chrome against the built app: open
-  `examples/space-exploration.ttl`, search *Celestial*, click the hit, click
-  *type*. The fix is a `graph.hasNode(selected)` guard plus an error boundary,
-  and it needs a test — do not "fix" it silently as part of something else.
+- **Selecting an IRI that is not a node in the drawn graph used to blank the
+  whole application. Fixed 2026-07-30; both halves of the fix are load-bearing.**
+  `nodeReducer` in `GraphView.tsx` called `graph.areNeighbors(selected, node)`
+  unconditionally, graphology threw `NotFoundGraphError`, nothing caught it, and
+  React unmounted the tree — `#root` empty until a reload. Two ordinary routes
+  reached it: an `rdf:type` term link in the detail panel, which is a predicate
+  and never a graph node, and **any search hit outside the node budget**, which
+  stage 1 of `partial-graph-rendering` deliberately allows and marks *not drawn*.
+
+  `focusTarget` in `GraphView.tsx` now returns null unless the node is in the
+  graphology instance, and **both** reducers go through it. The edge reducer
+  never threw, which is why it would have been missed: it compares rather than
+  looks up, so unguarded it dimmed every edge while every node stayed lit.
+
+  `ErrorBoundary.tsx`, wrapped around `<App />` in `main.tsx`, is the second
+  half. It is the only class component in the codebase, because
+  `componentDidCatch` has no hook form. It renders a dead end on purpose — the
+  state that threw is still there — but it names the error and offers a reload
+  instead of a white page. Verified in Chrome by rebuilding with the guard
+  removed and confirming the crash screen appeared where the blank page used to
+  be.
+
+  `GraphView.test.tsx` reaches the real reducers by stubbing the `sigma` module
+  with a class that records its constructor settings, so the tests exercise the
+  shipped closures rather than an extracted copy. Three of them fail if the
+  guard goes.
 - **The three security defects S-1, S-2 and S-3 are fixed** (2026-07-27, spec
   `network-and-resource-limits`). `net_guard.py` refuses non-public addresses on
   every redirect hop, `prepare_select` refuses `SERVICE` at any algebra depth,

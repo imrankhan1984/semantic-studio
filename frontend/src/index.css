@@ -949,6 +949,49 @@ select:focus {
   padding: 1px 5px;
 }
 
+/* --- crash screen ------------------------------------------------------ */
+/* What ErrorBoundary renders when the tree throws while rendering. Written
+   with the same variables as everything else, so it is legible in both themes;
+   it is the one screen that must never itself look broken. */
+
+.crash-screen {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px;
+  text-align: center;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.crash-screen h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.crash-screen p {
+  margin: 0;
+  max-width: 520px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/* The thrown message. Monospace because it is machine text, and wrapped
+   anywhere because it usually contains an IRI with no spaces in it. */
+.crash-detail {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  color: var(--error-text);
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  overflow-wrap: anywhere;
+}
+
 /* --- explore starting panel -------------------------------------------- */
 /* The same 380px column as the detail panel, because it is the same column:
    this shows when nothing is selected and the detail panel replaces it when
