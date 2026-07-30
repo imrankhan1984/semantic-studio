@@ -7,8 +7,9 @@ FILE: frontend/src/App.test.tsx
 SUMMARY
     Tests for App: the startup chooser (what is and is not requested on mount,
     what replaces it, and the two ways back to it), the status bar's node and
-    edge counts under a node budget, and the removal sequence that counts saved
-    queries before asking and reports what it took afterwards.
+    edge counts under a node budget, the removal sequence that counts saved
+    queries before asking and reports what it took afterwards, and which panel
+    fills the Explore column.
 
 BASIC IDEA
     App is mocked down to the parts these assert on. GraphView is replaced with
@@ -41,8 +42,9 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - Pass/fail per assertion, covering AC-1 to AC-5, AC-9 and AC-13 of
-      startup-chooser-screen, AC-23 of partial-graph-rendering, and AC-11 to
-      AC-16 of saved-query-deletion-warning.
+      startup-chooser-screen, AC-23 of partial-graph-rendering, AC-11 to
+      AC-16 of saved-query-deletion-warning, and AC-1, AC-15 and AC-16 of
+      explore-mode-starting-point.
 ================================================================================
 */
 
@@ -59,6 +61,13 @@ const {
   fetchOntology,
   uploadOntology,
   listSavedQueries,
+  getNodeDetails,
+  getQuerySchema,
+  getQueryNode,
+  getSource,
+  saveQuery,
+  runSparql,
+  deleteSavedQuery,
 } = vi.hoisted(() => ({
   listOntologies: vi.fn(),
   getGraph: vi.fn(),
@@ -67,6 +76,16 @@ const {
   fetchOntology: vi.fn(),
   uploadOntology: vi.fn(),
   listSavedQueries: vi.fn(),
+  // The four below arrived with the Explore starting panel and the mode
+  // regression test: the detail panel, the query builder and the source view all
+  // fetch, and none of them could be rendered from here until they were mocked.
+  getNodeDetails: vi.fn(),
+  getQuerySchema: vi.fn(),
+  getQueryNode: vi.fn(),
+  getSource: vi.fn(),
+  saveQuery: vi.fn(),
+  runSparql: vi.fn(),
+  deleteSavedQuery: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
@@ -77,6 +96,13 @@ vi.mock("./api", () => ({
   fetchOntology,
   uploadOntology,
   listSavedQueries,
+  getNodeDetails,
+  getQuerySchema,
+  getQueryNode,
+  getSource,
+  saveQuery,
+  runSparql,
+  deleteSavedQuery,
 }));
 
 /** Every mocked client function, so a test can count what mount actually did. */
@@ -88,12 +114,34 @@ const ALL_API = {
   fetchOntology,
   uploadOntology,
   listSavedQueries,
+  getNodeDetails,
+  getQuerySchema,
+  getQueryNode,
+  getSource,
+  saveQuery,
+  runSparql,
+  deleteSavedQuery,
 };
 
 // Sigma needs a WebGL context; jsdom has none. Nothing here asserts on the
 // canvas, so a stub keeps the test about the status bar.
+//
+// The stub carries one button standing in for a node, because clicking a node is
+// a selection route with its own rules — it must not move focus the way a
+// suggestion does — and there is no other way to reach onSelect from here.
 vi.mock("./components/GraphView", () => ({
-  default: ({ leftRail }: { leftRail?: React.ReactNode }) => <div data-testid="graph">{leftRail}</div>,
+  default: ({
+    leftRail,
+    onSelect,
+  }: {
+    leftRail?: React.ReactNode;
+    onSelect: (iri: string | null) => void;
+  }) => (
+    <div data-testid="graph">
+      {leftRail}
+      <button onClick={() => onSelect("http://x/issuedBy")}>fake node</button>
+    </div>
+  ),
 }));
 
 const SUMMARY: OntologySummary = {
@@ -130,6 +178,32 @@ beforeEach(() => {
   searchNodes.mockResolvedValue([]);
   listSavedQueries.mockResolvedValue([]);
   deleteOntology.mockResolvedValue({ deleted: "o1", deletedQueries: 0 });
+  getNodeDetails.mockResolvedValue({
+    iri: "http://x/Bond",
+    prefixed: "x:Bond",
+    label: "Bond",
+    outgoing: [],
+    incoming: [],
+    outgoingTotal: 0,
+    incomingTotal: 0,
+  });
+  getQuerySchema.mockResolvedValue({
+    classes: [],
+    links: [],
+    superClasses: {},
+    dataProperties: {},
+    namespaces: {},
+    truncated: false,
+  });
+  getSource.mockResolvedValue({
+    text: "",
+    format: "turtle",
+    pretty: false,
+    truncated: false,
+    bytes: 0,
+    lines: 0,
+    name: "FIBO",
+  });
 });
 
 afterEach(() => {
@@ -345,6 +419,128 @@ describe("App status bar", () => {
     });
 
     expect(getGraph).toHaveBeenLastCalledWith("o1", 4000);
+  });
+});
+
+describe("App explore column", () => {
+  /** A graph with entities in it, so the starting panel has something to offer. */
+  const DRAWN: VizGraph = {
+    nodes: [
+      { id: "http://x/Bond", label: "Bond", kind: "class", degree: 12 },
+      { id: "http://x/issuedBy", label: "is issued by", kind: "objectProperty", degree: 7 },
+    ],
+    edges: [],
+    stats: {
+      nodeCount: 2,
+      edgeCount: 0,
+      nodeTotal: 2,
+      edgeTotal: 0,
+      truncated: false,
+      budget: 2000,
+      kindCounts: { class: 1, objectProperty: 1 },
+    },
+  };
+
+  function startPanel(): HTMLElement | null {
+    return document.querySelector(".explore-start");
+  }
+
+  it("explore mode shows the start panel when nothing is selected", async () => {
+    // AC-1 at the App level. Explore is the default mode, so this is what
+    // everyone sees on opening an ontology — where the column used to render
+    // nothing at all, DetailPanel returning null before its first line of markup.
+    getGraph.mockResolvedValue(DRAWN);
+    await renderAppOpened();
+
+    expect(screen.getByRole("tab", { name: "Explore" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    expect(startPanel()).toBeTruthy();
+    expect(document.querySelector(".detail-panel")).toBeNull();
+    expect(startPanel()!.textContent).toContain("This ontology describes");
+    // And it did not cost a request: the ranking comes out of the graph response
+    // App already holds.
+    expect(getGraph).toHaveBeenCalledTimes(1);
+    expect(getNodeDetails).not.toHaveBeenCalled();
+  });
+
+  it("closing the detail panel returns to the start panel", async () => {
+    // AC-15 and AC-10 end to end. Closing used to leave the user back where they
+    // started, with nothing; the close button now returns them to an offer.
+    getGraph.mockResolvedValue(DRAWN);
+    await renderAppOpened();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Bond.*Class/ }));
+    });
+    expect(document.querySelector(".detail-panel")).toBeTruthy();
+    expect(startPanel()).toBeNull();
+    expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/Bond");
+
+    // By title rather than by accessible name: that control's name is the glyph
+    // it contains, "✕", because name-from-contents wins over a title attribute.
+    // Pre-existing and out of scope here, but it is why this query is not
+    // getByRole.
+    await act(async () => {
+      fireEvent.click(document.querySelector<HTMLElement>('[title="Close panel"]')!);
+    });
+
+    expect(document.querySelector(".detail-panel")).toBeNull();
+    expect(startPanel()).toBeTruthy();
+  });
+
+  it("a graph click after a suggestion does not move focus", async () => {
+    // Not in the spec's test plan; the first implementation of AC-12 failed it.
+    // A counter that only ever incremented left the panel wanting focus forever,
+    // so a node clicked with the mouse — after a suggestion had been used once —
+    // pulled focus into the panel heading. The flag has to travel with the
+    // selection, and this is the assertion that says so from App, where the
+    // routes are.
+    getGraph.mockResolvedValue(DRAWN);
+    await renderAppOpened();
+
+    // Use a suggestion, which does take focus, then close.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Bond.*Class/ }));
+    });
+    expect(document.activeElement).toBe(document.querySelector("#detail-panel-heading"));
+    await act(async () => {
+      fireEvent.click(document.querySelector<HTMLElement>('[title="Close panel"]')!);
+    });
+
+    // Now select the same way a user clicking the canvas does.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake node" }));
+    });
+
+    expect(document.querySelector(".detail-panel")).toBeTruthy();
+    expect(document.activeElement).not.toBe(document.querySelector("#detail-panel-heading"));
+  });
+
+  it("query and view modes are unaffected", async () => {
+    // AC-16. This panel is Explore-only. Asserted from App because the mode
+    // conditional is here, and a misplaced branch would show it in all three.
+    getGraph.mockResolvedValue(DRAWN);
+    await renderAppOpened();
+    expect(startPanel()).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Query" }));
+    });
+    expect(startPanel()).toBeNull();
+    expect(document.querySelector(".query-panel")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "View" }));
+    });
+    expect(startPanel()).toBeNull();
+    expect(document.querySelector(".source-view")).toBeTruthy();
+
+    // Back to Explore, and the offer is there again.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
+    });
+    expect(startPanel()).toBeTruthy();
   });
 });
 

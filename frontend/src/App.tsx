@@ -23,6 +23,12 @@ BASIC IDEA
     from selecting the most recently added ontology on mount, which rendered
     18,717 nodes on every page load for anyone with FIBO stored.
 
+    Explore mode, the default, no longer shows nothing before the first click.
+    With an ontology open and no selection the right-hand column is ExploreStart,
+    which offers entities to open drawn from the graph response App already
+    holds; DetailPanel takes over the moment something is selected, and closing
+    it returns to the offer rather than to nothing.
+
     Removal is the one destructive action here, and it counts what it will
     destroy before it asks. Deleting an ontology has always deleted every query
     saved against it; onRemove now fetches that count first, puts it in the
@@ -42,6 +48,7 @@ EXPECTED OUTPUT
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { deleteOntology, getGraph, listOntologies, listSavedQueries } from "./api";
 import DetailPanel from "./components/DetailPanel";
+import ExploreStart from "./components/ExploreStart";
 import GraphNotice from "./components/GraphNotice";
 import GraphView from "./components/GraphView";
 import Legend from "./components/Legend";
@@ -99,6 +106,7 @@ export default function App() {
   const [graphData, setGraphData] = useState<VizGraph | null>(null);      // its graph
   const [selected, setSelected] = useState<string | null>(null);          // clicked node (Explore)
   const [focusTick, setFocusTick] = useState(0);                          // bump to re-centre camera
+  const [focusPanel, setFocusPanel] = useState(false);                    // panel takes focus?
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set()); // legend filters
   const [dialogOpen, setDialogOpen] = useState(false);                    // Load dialog open?
   const [dialogTab, setDialogTab] = useState<"file" | "url" | "suggested">("suggested");
@@ -177,6 +185,7 @@ export default function App() {
     setGraphBudget(null);
     setNoticeDismissed(false);
     setSelected(null);
+    setFocusPanel(false);
     setHiddenKinds(new Set());
   }
 
@@ -269,10 +278,27 @@ export default function App() {
 
   // Select a node AND re-centre the camera on it (focusTick is the trigger the
   // graph watches). Used by search picks and detail-panel navigation.
-  const selectAndFocus = useCallback((iri: string | null) => {
+  //
+  // `panelTakesFocus` travels with the selection rather than being separate
+  // state, because it is a property of *this* selection and of no other. Every
+  // route that selects therefore states it, and the default is no: a search pick
+  // leaves the user in the search box, and a term link inside the panel leaves
+  // them where they were reading.
+  const selectAndFocus = useCallback((iri: string | null, panelTakesFocus = false) => {
     setSelected(iri);
+    setFocusPanel(panelTakesFocus);
     if (iri) setFocusTick((t) => t + 1);
   }, []);
+
+  // Picking one of Explore mode's suggestions. It selects and re-centres like a
+  // search pick, and additionally hands focus to the detail panel's heading:
+  // this is the one selection route where the control the user was standing on
+  // is the thing being replaced, so leaving focus where it was would leave it
+  // nowhere.
+  const onSuggestionSelect = useCallback(
+    (iri: string) => selectAndFocus(iri, true),
+    [selectAndFocus],
+  );
 
   // In Explore mode a click opens the detail panel; in Query mode it
   // appends a step to the query being built.
@@ -283,6 +309,10 @@ export default function App() {
         return;
       }
       setSelected(iri);
+      // A graph click is not a suggestion, and it has to say so: without this
+      // the flag left behind by an earlier suggestion would send focus to the
+      // panel heading on a click the user made with the mouse, somewhere else.
+      setFocusPanel(false);
     },
     [mode, builder],
   );
@@ -546,12 +576,26 @@ export default function App() {
               ontologyTriples={active?.triples ?? 0}
             />
           ) : mode === "explore" ? (
-            <DetailPanel
-              ontologyId={activeId}
-              iri={selected}
-              onNavigate={selectAndFocus}
-              onClose={() => setSelected(null)}
-            />
+            // The two halves of the Explore column. Which one shows is decided
+            // here rather than inside DetailPanel: that component describes one
+            // entity and fetches on mount, and giving it a second job needing no
+            // fetch would make the least-tested component harder to test.
+            selected === null ? (
+              <ExploreStart
+                graph={graphData}
+                loading={loadingGraph}
+                theme={theme}
+                onSelect={onSuggestionSelect}
+              />
+            ) : (
+              <DetailPanel
+                ontologyId={activeId}
+                iri={selected}
+                onNavigate={selectAndFocus}
+                onClose={() => setSelected(null)}
+                focusHeading={focusPanel}
+              />
+            )
           ) : null}
         </main>
       )}

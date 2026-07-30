@@ -23,7 +23,8 @@ INPUTS / INPUT SOURCES (props)
     - theme: which colour palette to use.
     - hiddenKinds: kinds toggled off in the legend (hidden).
     - selected + focusTick: the selected node and a counter that, when bumped,
-      re-centres the camera on it.
+      re-centres the camera on it. `selected` is NOT guaranteed to be a node in
+      this graph — see focusTarget.
     - onSelect: called with a clicked node's IRI (or null on empty click).
     - queryMode / queryPathIris / queryCandidates: Query-mode highlighting.
     - leftRail: the legend, docked beside the canvas (never an overlay, so it
@@ -153,6 +154,30 @@ function nodeSize(degree: number): number {
 }
 
 const EMPTY_SET: Set<string> = new Set();
+
+/**
+ * Which node the view dims around, or null when there is nothing to dim around.
+ *
+ * The selection is not always in the drawn graph, and that is not an error
+ * state. Two ordinary routes produce one that is not: a term link in the detail
+ * panel can select a *predicate*, which is never a graph node, and a search hit
+ * outside the node budget selects an entity the budget dropped —
+ * `partial-graph-rendering` stage 1 allows exactly that and marks the result
+ * *not drawn*.
+ *
+ * Both used to reach `graph.areNeighbors(selected, node)` in the node reducer,
+ * which throws `NotFoundGraphError`. Nothing caught it, so the whole
+ * application went blank until the page was reloaded. Returning null instead
+ * means an off-graph selection dims nothing — the graph stays as it was, which
+ * is the honest picture of "the thing you selected is not on this canvas".
+ *
+ * The camera effect at the bottom of this file has always had the same
+ * `hasNode` check. The two reducers did not, and one of them threw.
+ */
+function focusTarget(graph: Graph | null, node: string | null): string | null {
+  if (!node || !graph || !graph.hasNode(node)) return null;
+  return node;
+}
 
 export default function GraphView({
   data,
@@ -331,7 +356,10 @@ export default function GraphView({
         }
         const sel = selectedRef.current;
         const hov = hoveredRef.current;
-        const focusNode = hov ?? sel;
+        // Only a node that is actually drawn can be dimmed around; see
+        // focusTarget. The equality test below stays on the raw selection,
+        // because an off-graph selection simply matches nothing.
+        const focusNode = focusTarget(graphRef.current, hov ?? sel);
         if (node === sel || node === hov) {
           res.highlighted = true;
           res.zIndex = 3;
@@ -380,9 +408,14 @@ export default function GraphView({
             res.zIndex = 0;
           }
         }
-        const focusNode = queryModeRef.current
-          ? hoveredRef.current
-          : hoveredRef.current ?? selectedRef.current;
+        // Guarded for the same reason as the node reducer, and it matters even
+        // though nothing here throws: without it an off-graph selection matched
+        // no edge, so every edge in the graph dimmed while every node stayed
+        // lit. Half a highlight is a worse picture than none.
+        const focusNode = focusTarget(
+          g,
+          queryModeRef.current ? hoveredRef.current : hoveredRef.current ?? selectedRef.current,
+        );
         if (focusNode) {
           if (src === focusNode || dst === focusNode) {
             res.size = 2;
