@@ -90,10 +90,14 @@ def _env_float(name: str, default: float) -> float:
     return value if value > 0 else default
 
 
-# Both caps default to 50 MB, chosen against the catalogue the application
-# itself suggests: the largest entry, the JUHO thesaurus, is about 26 MB. A
-# default that refused content the interface recommends would be a bug rather
-# than a control. An administrator with a known-good larger file raises them.
+# Both caps default to 50 MB. The number was chosen against the catalogue the
+# application itself suggests, whose largest entry was then the JUHO thesaurus
+# at about 26 MB: a default that refused content the interface recommends would
+# be a bug rather than a control. That entry was replaced on 2026-07-31 and the
+# catalogue's largest is now FIBO at about 5 MB, so the headroom is wider than
+# the argument requires — deliberately left alone, because the cap protects the
+# arbitrary public URL a user types, which the catalogue never bounded. An
+# administrator with a known-good larger file raises them.
 MAX_UPLOAD_BYTES = _env_int("SEMANTIC_STUDIO_MAX_UPLOAD_BYTES", 50 * 1024 * 1024)
 MAX_FETCH_BYTES = _env_int("SEMANTIC_STUDIO_MAX_FETCH_BYTES", 50 * 1024 * 1024)
 # Roughly ten times the 5.4 seconds measured for 400,000 triples, which leaves

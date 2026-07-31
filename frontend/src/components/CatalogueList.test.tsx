@@ -160,7 +160,7 @@ describe("CatalogueList", () => {
       "FOAF",
       "schema.org",
       "FIBO",
-      "JUHO",
+      "UNESCO Thesaurus",
     ]);
   });
 
