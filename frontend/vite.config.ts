@@ -7,6 +7,16 @@ export default defineConfig({
     proxy: {
       "/api": "http://localhost:8000",
     },
+    // The repository root, one level above this Vite root. AboutPanel.test.tsx
+    // reads LICENSE with `?raw` to prove the panel's copyright line still
+    // matches the file, and without this Vite refuses the id outright —
+    // "Denied ID .../LICENSE?raw", which at least fails loudly rather than
+    // resolving to the empty string the CSS import used to.
+    // Nothing outside the repository becomes readable, and this affects the
+    // dev server and the test runner only: `vite build` never consults it.
+    fs: {
+      allow: [".."],
+    },
   },
   test: {
     // Without this, vitest stubs CSS out of the module graph and

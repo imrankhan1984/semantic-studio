@@ -60,6 +60,10 @@ them by clicking, without writing SPARQL by hand.
 - **Visual SPARQL query builder** (*Query* mode): build queries by clicking
   the graph — no SPARQL typing required. See
   [Building queries visually](#building-queries-visually).
+- **About panel** (header, after *Query*): what the application is, who made
+  it, a link to this repository for source and issues, the MIT licence and its
+  no-warranty notice, and the promise that ontologies you load stay on your
+  machine. It opens with nothing loaded and makes no network request.
 - **Dark & light mode** with adapted graph palettes.
 - **PNG export** of the current graph view.
 - Multiple ontologies can be loaded side by side and switched via a dropdown.
