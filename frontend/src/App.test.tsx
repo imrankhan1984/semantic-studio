@@ -514,6 +514,162 @@ describe("App status bar", () => {
   });
 });
 
+describe("App graph budget range", () => {
+  /**
+   * Make getGraph answer the way the server does, so a budget can be walked up
+   * and back down across several presses. The fixed TRUNCATED response cannot
+   * do this: App computes each step from stats.budget, so a mock that always
+   * reports 2,000 makes every press ask for 4,000 and every assertion after the
+   * first one meaningless.
+   *
+   * Mirrors ontologies.py: the granted budget is the requested one clamped at
+   * MAX_GRAPH_NODE_BUDGET, the drawn count never exceeds the ontology's total,
+   * and truncated is whether anything was left out.
+   */
+  function serverLike({ nodeTotal = 18717, serverDefault = 2000 } = {}) {
+    getGraph.mockImplementation((_id: string, limit?: number) => {
+      const budget = Math.min(limit ?? serverDefault, 20000);
+      const nodeCount = Math.min(budget, nodeTotal);
+      return Promise.resolve({
+        nodes: [],
+        edges: [],
+        stats: {
+          nodeCount,
+          edgeCount: 0,
+          nodeTotal,
+          edgeTotal: 0,
+          truncated: nodeCount < nodeTotal,
+          budget,
+          kindCounts: { class: nodeTotal },
+        },
+      } satisfies VizGraph);
+    });
+  }
+
+  const showLess = () =>
+    screen.getByRole("button", { name: /show less/i }) as HTMLButtonElement;
+  const showMore = () =>
+    screen.getByRole("button", { name: /show more/i }) as HTMLButtonElement;
+
+  async function press(button: () => HTMLButtonElement) {
+    await act(async () => {
+      fireEvent.click(button());
+    });
+  }
+
+  it("show less halves the budget", async () => {
+    // AC-6. Halving is the exact inverse of the doubling Show more has always
+    // done, so the sequence up is the sequence back down.
+    serverLike();
+    await renderAppOpened();
+    await press(showMore);
+    await press(showMore);
+    expect(getGraph).toHaveBeenLastCalledWith("o1", 8000);
+
+    await press(showLess);
+    expect(getGraph).toHaveBeenLastCalledWith("o1", 4000);
+  });
+
+  it("show less clamps to the floor rather than going below", async () => {
+    // AC-6, and the only route that reaches the clamp with real numbers: the
+    // server's ceiling. With a configured default of 15,000, Show more asks for
+    // 30,000 and is granted 20,000, so halving lands on 10,000 — below the
+    // floor. It must come back to 15,000, not refuse and not go under.
+    serverLike({ nodeTotal: 40000, serverDefault: 15000 });
+    await renderAppOpened();
+    await press(showMore);
+    expect(getGraph).toHaveBeenLastCalledWith("o1", 30000);
+
+    await press(showLess);
+    expect(getGraph).toHaveBeenLastCalledWith("o1", 15000);
+  });
+
+  it("show more and show less are inverses", async () => {
+    // AC-6 and the third performance budget: the values reachable walking up
+    // are exactly the values walking back down, ending on the starting one.
+    // Mutation tested — replacing the halving with a fixed subtraction of the
+    // default turns the descent into 14,000 / 12,000 / 10,000 and fails here.
+    serverLike();
+    await renderAppOpened();
+    for (let i = 0; i < 3; i++) await press(showMore);
+    for (let i = 0; i < 3; i++) await press(showLess);
+
+    expect(getGraph.mock.calls.map((c: unknown[]) => c[1])).toEqual([
+      undefined, 4000, 8000, 16000, 8000, 4000, 2000,
+    ]);
+  });
+
+  it("show less refetches once", async () => {
+    // AC-7 and the first performance budget: one request per press, to /graph.
+    serverLike();
+    await renderAppOpened();
+    await press(showMore);
+    getGraph.mockClear();
+
+    await press(showLess);
+    expect(getGraph).toHaveBeenCalledTimes(1);
+  });
+
+  it("disabled controls make no request", async () => {
+    // AC-7 and the second performance budget. At the floor Show less is
+    // disabled, and a disabled button fires no click handler — so this asserts
+    // the disabling is real rather than a class that only looks disabled.
+    serverLike();
+    await renderAppOpened();
+    expect(showLess().disabled).toBe(true);
+    getGraph.mockClear();
+
+    await press(showLess);
+    expect(getGraph).not.toHaveBeenCalled();
+  });
+
+  it("the floor follows the server default, not a hard-coded 2000", async () => {
+    // AC-8. With SEMANTIC_STUDIO_GRAPH_NODE_BUDGET set to 500 the floor is 500,
+    // and App learns that from the first response rather than declaring it.
+    // A hard-coded 2,000 fails loudly here rather than quietly: halving 1,000
+    // against a floor of 2,000 asks for 2,000, which is more than is drawn.
+    serverLike({ serverDefault: 500 });
+    await renderAppOpened();
+    await press(showMore);
+    expect(getGraph).toHaveBeenLastCalledWith("o1", 1000);
+
+    await press(showLess);
+    expect(getGraph).toHaveBeenLastCalledWith("o1", 500);
+    expect(showLess().disabled).toBe(true);
+  });
+
+  it("focus moves to show more when show less becomes disabled", async () => {
+    // AC-9. The press that reaches the floor disables the control that made it,
+    // and a browser drops focus from a disabled element to <body> rather than
+    // anywhere useful — the defect measured in Chrome on 2026-07-30 against the
+    // remove control. Here it is worse than a blur: App blanks graphData while
+    // the new graph is in flight, so the whole bar unmounts and remounts, and
+    // nothing inside it could remember what had been pressed.
+    serverLike();
+    await renderAppOpened();
+    await press(showMore);
+    await press(showLess);
+
+    expect(showLess().disabled).toBe(true);
+    expect(document.activeElement).toBe(showMore());
+  });
+
+  it("a budget change is announced politely", async () => {
+    // AC-9, the second half. The bar is already a polite live region, so the
+    // new counts are announced without moving focus; this asserts the counts
+    // that reach it are the new ones and the region survived the refetch.
+    serverLike();
+    await renderAppOpened();
+    await press(showMore);
+
+    const notice = document.querySelector(".graph-notice")!;
+    expect(notice.getAttribute("role")).toBe("status");
+    expect(notice.getAttribute("aria-live")).toBe("polite");
+    expect(notice.textContent).toContain("4,000");
+    expect(notice.textContent).toContain("18,717");
+  });
+});
+
 describe("App expand on demand", () => {
   /** One entity and two neighbours, none of them in TRUNCATED's empty node list. */
   const NEIGHBORHOOD: VizNeighborhood = {

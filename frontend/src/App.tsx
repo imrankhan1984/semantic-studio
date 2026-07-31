@@ -30,11 +30,17 @@ BASIC IDEA
     it returns to the offer rather than to nothing.
 
     The graph the server hands over is budgeted, so it is usually part of the
-    ontology. App can now grow it: a neighbourhood fetched for one entity is
-    passed to GraphView as its own prop, merged into the graph already drawn,
-    and what it added is reported back — which is why the drawn counts here are
-    the response's plus what expansions have contributed. Replacing the graph
-    response instead would rebuild the canvas and lose every settled position.
+    ontology, and App moves that budget in both directions. Show more doubles
+    it and Show less halves it, down to a floor App learns rather than declares:
+    the budget the first response for an ontology carried, which is the server's
+    own default including any environment override.
+
+    App can also grow the graph without changing the budget: a neighbourhood
+    fetched for one entity is passed to GraphView as its own prop, merged into
+    the graph already drawn, and what it added is reported back — which is why
+    the drawn counts here are the response's plus what expansions have
+    contributed. Replacing the graph response instead would rebuild the canvas
+    and lose every settled position.
 
     Every route that names an entity from outside the canvas — the search box
     and the results table — goes through one function, so a result row can draw
@@ -214,6 +220,18 @@ export default function App() {
   // are reset below when the active ontology changes.
   const [graphBudget, setGraphBudget] = useState<number | null>(null);
   const [noticeDismissed, setNoticeDismissed] = useState(false);
+  // The budget the server applied before the user changed anything, which is
+  // the floor Show less stops at. Read from the first response for an ontology
+  // rather than written here as 2,000: SEMANTIC_STUDIO_GRAPH_NODE_BUDGET moves
+  // the server's default, and a second copy of the number in the client would
+  // silently ignore it.
+  const [defaultBudget, setDefaultBudget] = useState<number | null>(null);
+  // Which budget control was pressed, handed to the notice once the new graph
+  // arrives so focus can go back to the pair. Two halves, because the press and
+  // the arrival are far apart: the ref carries the intent across the request,
+  // and the state is what the remounted notice actually reads.
+  const pendingBudgetPress = useRef<"more" | "less" | null>(null);
+  const [budgetPress, setBudgetPress] = useState<"more" | "less" | null>(null);
   // The expansion trio. `expansion` is handed to GraphView to merge and carries
   // a token, because two expansions of the same entity are two merges and a
   // prop that compared equal would collapse them into one. `expanded` is what
@@ -281,6 +299,8 @@ export default function App() {
   if (budgetFor !== activeId) {
     setBudgetFor(activeId);
     setGraphBudget(null);
+    setDefaultBudget(null);
+    pendingBudgetPress.current = null;
     setNoticeDismissed(false);
     setSelected(null);
     setFocusPanel(false);
@@ -305,8 +325,26 @@ export default function App() {
     setLoadingGraph(true);
     let cancelled = false;
     getGraph(activeId, graphBudget ?? undefined)
-      .then((g) => !cancelled && setGraphData(g))
-      .catch((e) => !cancelled && setError(String(e.message ?? e)))
+      .then((g) => {
+        if (cancelled) return;
+        setGraphData(g);
+        // No limit was sent, so what came back is the server's own default,
+        // environment override included. That is the floor for this ontology.
+        if (graphBudget === null) setDefaultBudget(g.stats.budget);
+        // Hand the press over only now. Set at click time it would reach a
+        // notice still showing the old counts, which would send focus by the
+        // old enabled states and then clear itself before the real bar mounted.
+        setBudgetPress(pendingBudgetPress.current);
+        pendingBudgetPress.current = null;
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError(String(e.message ?? e));
+        // Drop the press with the response that never came. Left set, it would
+        // be consumed by whatever graph arrived next and move focus for a
+        // button nobody had just pressed.
+        pendingBudgetPress.current = null;
+      })
       .finally(() => !cancelled && setLoadingGraph(false));
     return () => {
       cancelled = true;
@@ -571,6 +609,27 @@ export default function App() {
   const atMaximum =
     graphData !== null && graphBudget !== null && graphBudget > graphData.stats.budget;
 
+  // Both budget controls step from stats.budget, what the server actually
+  // granted, rather than from what was asked for: above the ceiling those two
+  // differ, and stepping from the request would make the first press after a
+  // clamp do nothing visible. Halving is the exact inverse of the doubling
+  // Show more has always done, so the sequence up is the sequence back down.
+  // Math.floor guards a configured odd default; the limit reaches the server as
+  // an integer query parameter.
+  const showMore = () => {
+    if (!graphData) return;
+    pendingBudgetPress.current = "more";
+    setGraphBudget(graphData.stats.budget * 2);
+  };
+  const showLess = () => {
+    if (!graphData || defaultBudget === null) return;
+    pendingBudgetPress.current = "less";
+    setGraphBudget(Math.max(defaultBudget, Math.floor(graphData.stats.budget / 2)));
+  };
+  // Stable, so the notice's focus effect runs on a new instruction and not on
+  // every render of this component.
+  const clearBudgetPress = useCallback(() => setBudgetPress(null), []);
+
   // Layout: a header (brand + nav rows), a main area (graph + right panel that
   // depends on the mode), a status bar, and the Load dialog when open.
   return (
@@ -727,12 +786,19 @@ export default function App() {
 
       {/* Above the canvas, below the search box, so it reads before the graph
           and sits where the tab order already is. */}
-      {graphData && !noticeDismissed && (
+      {/* defaultBudget is set from the same response as graphData, so waiting
+          for it costs no frame; it is in the condition because the floor is not
+          knowable before the first graph arrives. */}
+      {graphData && defaultBudget !== null && !noticeDismissed && (
         <GraphNotice
           stats={graphData.stats}
+          defaultBudget={defaultBudget}
           atMaximum={atMaximum}
-          onShowMore={() => setGraphBudget(graphData.stats.budget * 2)}
+          restoreFocus={budgetPress}
+          onShowMore={showMore}
+          onShowLess={showLess}
           onDismiss={() => setNoticeDismissed(true)}
+          onFocusRestored={clearBudgetPress}
         />
       )}
 
