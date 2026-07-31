@@ -50,7 +50,7 @@ app writes into the real per-user ontology library.
 
 ```bash
 cd backend  && python -m pytest tests    # 169 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 290 tests, vitest
+cd frontend && npm run test              # 306 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -69,7 +69,7 @@ and a collection landing inside a single-shot timing costs tens of milliseconds.
 A single sample here measures how many other fixtures the suite holds. See
 D-024. Do not "simplify" either test back to one `perf_counter` pair.
 
-**Know the gap.** 67 of the 290 frontend tests are in `src/sparql/`. The rest
+**Know the gap.** 67 of the 306 frontend tests are in `src/sparql/`. The rest
 were added from 2026-07-27 onward and are the project's component tests. Copy
 their pattern — a `// @vitest-environment jsdom` docblock per file and `vi.mock`
 over `api.ts`. For anything touching the graph, either stub `GraphView` (see
@@ -503,6 +503,55 @@ prove a change works in the application rather than in the test suite.
   its own declaration (`:Mars a :Planet`). That is what the spec asks for and it
   lands on a true occurrence. Preferring the subject position would be better and
   belongs in a version row of its own, not in a quiet edit.
+- **The node budget moves in both directions, and the bar survives a fully
+  drawn graph** (2026-07-31, spec `show-less`). `GraphNotice.tsx` used to open
+  with `if (!stats.truncated) return null`, so pressing *Show more* until the
+  whole ontology was drawn **deleted the entire bar** — counts, dismiss control
+  and all — at the moment the user most wanted to reduce. The condition is now
+  `if (!stats.truncated && !canReduce) return null`. That is the load-bearing
+  edit; three tests fail without it.
+
+  *Show less* halves what *Show more* doubles, so the sequence up is the
+  sequence back down, and both step from `stats.budget` — what the server
+  **granted** — rather than from what was asked for, because above the ceiling
+  those differ. **The floor is learned, never declared.** App captures the
+  `stats.budget` of the first response for an ontology, which is by definition
+  the server's default including `SEMANTIC_STUDIO_GRAPH_NODE_BUDGET`. Writing
+  2,000 into the client would silently ignore that variable. Verified in Chrome
+  with the budget set to 5: the disabled title read *5 entities is the smallest
+  view*, and the round trip 5 → 10 → 20 → 40 → 20 → 10 → 5 made exactly one
+  request per press.
+
+  **Two things here cannot be found in jsdom.**
+
+  `allDrawn` and `atMaximum` can be true at once — ask for 32,000 of FIBO's
+  18,717 and the server clamps to 20,000 *and* returns everything. `allDrawn` is
+  checked first because the reason *Show more* is dead is the ontology, not the
+  ceiling.
+
+  And **pressing either control unmounts the notice**, because App sets
+  `graphData` to null while the refetch is in flight. So focus is on `<body>`
+  before anything is disabled, and nothing inside the component survives to put
+  it back — which is why the instruction is a `restoreFocus` prop from App,
+  handed over only when the new graph arrives. Set at click time it reaches a
+  bar still showing the old counts and clears itself before the real one mounts.
+  This is *not* the `saved-query-deletion-warning` defect, though that one is
+  real too and the partner-focus rule handles it. *Show more* has had the same
+  unremarked focus loss since `partial-graph-rendering` stage 1.
+
+  One measured non-defect, so it is not chased twice: the moved focus draws the
+  global `:focus-visible` ring after a keyboard activation and **not** after a
+  real pointer press — D-022's divergence again. No scoped focus rule was added.
+  Focus moves one button to the right, beside the control just pressed, on a bar
+  whose text visibly changed; that is not D-022's "focus landed on a row showing
+  nothing".
+
+  **The spec's Section 5 is wrong about expansions** and Section 16 of that file
+  records it. It promises that reducing the budget leaves entities added by
+  *Show its connections* in place. Every budget refetch has always discarded
+  them — the comment above `setExpansion(null)` in `App.tsx` says so — and
+  preserving them would need one request per expansion, contradicting the same
+  spec's one-request budget.
 
 ## Pull requests
 

@@ -684,6 +684,13 @@ select:focus {
   min-width: 0;
 }
 
+/* flex: none because the sentence beside them is flex: 1 and the bar now holds
+   three controls rather than two: without it a narrow window shrinks "Show
+   less" and "Show more" into each other rather than wrapping the text. */
+.graph-notice button {
+  flex: none;
+}
+
 .graph-notice button:disabled {
   opacity: 0.5;
   cursor: default;

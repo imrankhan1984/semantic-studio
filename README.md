@@ -218,7 +218,12 @@ When that happens the app says so above the graph — *Showing the 2,000 most
 connected of 18,717 entities* — and the status bar keeps both numbers even if
 you dismiss the notice. Nothing is hidden silently.
 
-- **Show more** draws twice as many, up to a ceiling of 20,000.
+- **Show more** draws twice as many, up to a ceiling of 20,000. **Show less**
+  halves it again, down to the default. Each is disabled at its own end of the
+  range and says why when you hover it, so you can always tell which direction
+  is still available. Once the whole ontology is drawn the notice stays put and
+  reads *Showing all 18,717 entities* — it is not a message that only appears
+  when something is missing.
 - **Search still covers the whole ontology.** A result that is not on the canvas
   is marked *not drawn* — and picking it draws it, together with everything it
   connects to.
