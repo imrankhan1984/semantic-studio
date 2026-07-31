@@ -336,15 +336,27 @@ prove a change works in the application rather than in the test suite.
   backlog L-1's reordering lands on both; do not inline a second copy.
 - **The catalogue leads with FOAF, on purpose, and the order is tested**
   (2026-07-30, spec `catalogue-order`). `CATALOGUE` in `catalogue.ts` runs
-  `foaf`, `schemaorg`, `fibo`, `juho`, ascending by how much the user has to
+  `foaf`, `schemaorg`, `fibo`, `unesco`, ascending by how much the user has to
   cope with, and every entry carries a required `audience` string rendered under
   its description. FIBO led this list until then for a real reason — it is the
   richest OWL-restriction example and the primary validation target — which is a
   developer's reason, and D-002 makes the learner's reason win.
-  `catalogue.test.ts` pins the id order and pins every `url` to its pre-reorder
-  value, so a well-meaning reorder fails the suite, and so does a mis-paired
-  name and URL. **The comment above the array is load-bearing; read it before
-  touching the order.**
+  `catalogue.test.ts` pins the id order and pins every `url`, so a well-meaning
+  reorder fails the suite, and so does a mis-paired name and URL. **The comment
+  above the array is load-bearing; read it before touching the order.**
+
+  **The fourth entry is the UNESCO Thesaurus and it was JUHO until 2026-07-31**
+  (spec `catalogue-skos-replacement`). JUHO was 26 MB of Finnish public
+  administration terms offered to a newcomer as the catalogue's only SKOS
+  example, with a size string ending in the word *slow*; its stated purpose was
+  stress-testing, which `test_graph_budget.py` and `test_neighborhood.py` do
+  reproducibly and offline. Measured on the swap: 3.8 MB, 99,685 triples, 4,595
+  nodes and 26,102 edges, fetched and parsed in **3.5 seconds** against the
+  spec's 15-second budget. **The order is no longer ascending by file size and
+  that is deliberate** — UNESCO is smaller than FIBO on both bytes and triples
+  and still sits after it, because it is the only entry whose labels are in five
+  scripts. The reason is in the comment above the array; do not "fix" the order
+  to match the numbers.
 
   Two of the four tests on `CatalogueList.test.tsx` look redundant and are not.
   `renders the audience line for each entry` reads `textContent`; `audience line

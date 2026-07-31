@@ -124,7 +124,9 @@ load it via file upload. Real-world files that load well, pasted into
 
 - `https://github.com/schemaorg/schemaorg/blob/main/data/releases/28.1/schemaorg-current-https.ttl`
 - `http://xmlns.com/foaf/spec/index.rdf`
-- `https://api.finto.fi/rest/v1/juho/data?format=text/turtle` (large SKOS)
+- `https://vocabularies.unesco.org/exports/thesaurus/latest/unesco-thesaurus.ttl`
+  — the UNESCO Thesaurus, 4,499 concepts in five languages, and the SKOS
+  example: concept schemes, `skos:broader`/`skos:narrower` and `skos:related`
 - `https://spec.edmcouncil.org/fibo/ontology/master/latest/prod.fibo-quickstart.ttl`
   — the official FIBO production release (132k triples, 2,415 classes),
   which the query builder is validated against: relationships there are
@@ -204,9 +206,10 @@ variable if you have a known-good file that needs it.
 | Parse time | 60 seconds | `SEMANTIC_STUDIO_PARSE_TIMEOUT` |
 | Entities drawn at once | 2,000 | `SEMANTIC_STUDIO_GRAPH_NODE_BUDGET` |
 
-50 MB comfortably covers the largest ontology in the suggested list, the JUHO
-thesaurus at about 26 MB. Both size limits are applied *while* the file is being
-read, so an oversized file is refused without ever being held in memory.
+50 MB leaves ample room for the suggested list, whose largest entry is FIBO at
+about 5 MB; the limit is sized for the arbitrary public URL you can type, not
+for the catalogue. Both size limits are applied *while* the file is being read,
+so an oversized file is refused without ever being held in memory.
 
 ## Large ontologies
 
