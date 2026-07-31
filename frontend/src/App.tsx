@@ -48,6 +48,11 @@ BASIC IDEA
     leads the other way: its second control switches to View mode with that
     entity as the source pane's target.
 
+    The header carries one control that is about the application rather than
+    about an ontology: About, which opens a static dialog naming the project,
+    its author, its repository and its licence. It is held in the same shape as
+    the Load dialog — one boolean, and the panel rendered only while open.
+
     Removal is the one destructive action here, and it counts what it will
     destroy before it asks. Deleting an ontology has always deleted every query
     saved against it; onRemove now fetches that count first, puts it in the
@@ -73,6 +78,7 @@ import {
   listOntologies,
   listSavedQueries,
 } from "./api";
+import AboutPanel from "./components/AboutPanel";
 import DetailPanel from "./components/DetailPanel";
 import ExploreStart from "./components/ExploreStart";
 import GraphNotice from "./components/GraphNotice";
@@ -85,6 +91,7 @@ import SearchBox from "./components/SearchBox";
 import SourceView from "./components/SourceView";
 import StartScreen from "./components/StartScreen";
 import {
+  IconAbout,
   IconClose,
   IconExplore,
   IconLoad,
@@ -198,6 +205,11 @@ export default function App() {
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set()); // legend filters
   const [dialogOpen, setDialogOpen] = useState(false);                    // Load dialog open?
   const [dialogTab, setDialogTab] = useState<"file" | "url" | "suggested">("suggested");
+  // The About dialog, in the same shape as the Load dialog above: one boolean,
+  // and the panel rendered only while it is true rather than rendered hidden.
+  // The ref is what closing focuses back to — only App holds that element.
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const aboutRef = useRef<HTMLButtonElement>(null);
   const [loadingGraph, setLoadingGraph] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The ontology list's own loading and failure state, kept apart from `error`
@@ -420,6 +432,19 @@ export default function App() {
     setDialogTab(tab);
     setDialogOpen(true);
   };
+
+  // Close About and give the control that opened it its focus back, on all
+  // three dismissal routes — the close button, Escape, and the backdrop.
+  //
+  // A plain call rather than the effect the remove button needs: that control
+  // is disabled while it works, and focus() on a disabled button does nothing.
+  // This one is never disabled and never unmounts, so it can take focus the
+  // moment the panel is asked to go. Stable, so the panel's key handler is not
+  // rebound on every render of App.
+  const closeAbout = useCallback(() => {
+    setAboutOpen(false);
+    aboutRef.current?.focus();
+  }, []);
 
   // Select a node AND re-centre the camera on it (focusTick is the trigger the
   // graph watches). Used by search picks and detail-panel navigation.
@@ -682,6 +707,21 @@ export default function App() {
               <span>Query</span>
             </button>
           </nav>
+          {/* Outside the tablist on purpose. View, Explore and Query select
+              between views of an ontology; About opens a dialog, and joining
+              them would tell a screen reader user there are four views, one of
+              which is a dead end. It stays enabled with nothing open — that is
+              the moment a newcomer most wants to know what this is. */}
+          <button
+            ref={aboutRef}
+            className="nav-item about-item"
+            onClick={() => setAboutOpen(true)}
+            aria-haspopup="dialog"
+            title="What this is, who made it, and its licence"
+          >
+            <IconAbout />
+            <span>About</span>
+          </button>
           <div className="spacer" />
           <button
             className="header-icon-btn"
@@ -916,6 +956,8 @@ export default function App() {
           <span className="dim">Load an ontology to begin — RDF, RDFS, OWL & SKOS supported.</span>
         )}
       </footer>
+
+      {aboutOpen && <AboutPanel onClose={closeAbout} />}
 
       {dialogOpen && (
         <LoadDialog

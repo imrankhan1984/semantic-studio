@@ -5,7 +5,7 @@ FILE: frontend/src/components/icons.tsx
 
 SUMMARY
     A set of small inline SVG icons used in the header nav and toolbar (Load,
-    View, Explore, Query, sun/moon theme toggle, close, trash).
+    View, Explore, Query, About, sun/moon theme toggle, close, trash).
 
 BASIC IDEA
     Inlining a handful of stroked icons avoids an icon-font/library dependency.
@@ -72,6 +72,19 @@ export function IconQuery() {
     <svg {...base}>
       <path d="M9 8l-4 4 4 4" />
       <path d="M15 8l4 4-4 4" />
+    </svg>
+  );
+}
+
+/* About opens a dialog rather than selecting a view, so it does not want one of
+   the mode icons' shapes. The circled "i" is what applications put there and is
+   the one glyph a newcomer does not have to learn. */
+export function IconAbout() {
+  return (
+    <svg {...base}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5" />
+      <path d="M12 8h.01" />
     </svg>
   );
 }

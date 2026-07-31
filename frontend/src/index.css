@@ -260,6 +260,14 @@ select:focus {
   text-transform: uppercase;
 }
 
+/* About opens a dialog, so it is not in the tablist and does not get
+   .main-nav's 2px gap — it gets .nav-row's 4px. Pulled back by the difference,
+   or the header reads as a tablist with a stray button after it rather than as
+   one row of controls. */
+.nav-item.about-item {
+  margin-left: -2px;
+}
+
 .nav-item:hover {
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
@@ -1301,6 +1309,97 @@ select:focus {
 .tab.active {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* --- about panel ------------------------------------------------------ */
+
+/* 420px is a measure, not a preference: at the 14px body size it puts roughly
+   52 characters on a line, inside the 45-70 that reads comfortably. The
+   max-width is what keeps that from becoming a horizontal scrollbar in a narrow
+   window. The backdrop beside it is .modal-backdrop, unchanged, so the panel is
+   positioned itself rather than being centred by a flex parent — see the
+   component for why the backdrop cannot be its parent. */
+.about-panel {
+  position: fixed;
+  top: 12vh;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 51;
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  padding: 28px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px var(--shadow);
+}
+
+.about-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+/* Grouping is done with space and three hairlines rather than with four nested
+   boxes: the panel is meant to be scanned, and a border around each block would
+   make four things to read the edges of before reading any of the text. */
+.about-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.about-rule {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 16px 0;
+}
+
+.about-panel p {
+  margin: 0;
+}
+
+.about-name {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.about-purpose {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.about-description {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.about-author {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.about-link {
+  color: var(--accent);
+  font-size: 14px;
+  text-decoration: none;
+  align-self: flex-start;
+}
+
+.about-link:hover {
+  text-decoration: underline;
+}
+
+/* Present and readable, but not competing with the description above it. */
+.about-licence {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.about-privacy {
+  font-size: 13px;
+  color: var(--text);
 }
 
 .dropzone {

@@ -9,9 +9,11 @@ SUMMARY
     what replaces it, and the two ways back to it), the status bar's node and
     edge counts under a node budget, the removal sequence that counts saved
     queries before asking and reports what it took afterwards, which panel
-    fills the Explore column, and where a query result leads — into the graph,
+    fills the Explore column, where a query result leads — into the graph,
     drawing the entity first if the node budget left it out, or into the raw
-    source text.
+    source text — and the About control: where it sits, that it is not a mode
+    tab, that the panel exists only while open, and that closing it hands focus
+    back to the control that opened it.
 
 BASIC IDEA
     App is mocked down to the parts these assert on. GraphView is replaced with
@@ -46,8 +48,8 @@ EXPECTED OUTPUT
     - Pass/fail per assertion, covering AC-1 to AC-5, AC-9 and AC-13 of
       startup-chooser-screen, AC-23 of partial-graph-rendering, AC-11 to
       AC-16 of saved-query-deletion-warning, AC-1, AC-15 and AC-16 of
-      explore-mode-starting-point, and AC-1 to AC-8 and AC-12 of
-      result-navigation.
+      explore-mode-starting-point, AC-1 to AC-8 and AC-12 of
+      result-navigation, and AC-1 to AC-4, AC-11 and AC-13 of about-panel.
 ================================================================================
 */
 
@@ -1449,5 +1451,118 @@ describe("App removal warning", () => {
     expect(region.textContent).toContain("Removed FIBO");
     expect(region.querySelector("[role='alert']")).toBeNull();
     confirm.mockRestore();
+  });
+});
+
+describe("App About control", () => {
+  /** The About control in the header. */
+  function aboutControl(): HTMLButtonElement {
+    return screen.getByRole("button", { name: "About" }) as HTMLButtonElement;
+  }
+
+  it("the about control is in the header after the query tab", async () => {
+    // AC-1. Position, not just presence: it is at the end of the navigation,
+    // where applications put it, so a user looking for it finds it and a user
+    // who is not looking passes over it.
+    await renderApp();
+
+    const query = screen.getByRole("tab", { name: "Query" });
+    const about = aboutControl();
+    expect(document.querySelector(".nav-row")!.contains(about)).toBe(true);
+    // DOCUMENT_POSITION_FOLLOWING: About comes after Query in the document.
+    expect(query.compareDocumentPosition(about) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("the about control is not part of the tablist", async () => {
+    // AC-2. View, Explore and Query select between views of an ontology;
+    // About opens a dialog. Inside the tablist a screen reader user would be
+    // told there are four views and one of them is a dead end.
+    await renderApp();
+
+    const tablist = screen.getByRole("tablist");
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    expect(tablist.contains(aboutControl())).toBe(false);
+    expect(aboutControl().getAttribute("role")).toBeNull();
+    expect(aboutControl().getAttribute("aria-haspopup")).toBe("dialog");
+  });
+
+  it("the panel is absent from the DOM while closed", async () => {
+    // AC-3, and the whole of the spec's performance note. The header renders
+    // on every application state change, so the panel is rendered only when
+    // open rather than rendered hidden — the same shape as the Load dialog.
+    await renderApp();
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.querySelector(".about-panel")).toBeNull();
+  });
+
+  it("activating the control opens the panel", async () => {
+    // AC-3, the other half.
+    await renderApp();
+
+    await act(async () => {
+      fireEvent.click(aboutControl());
+    });
+
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByRole("dialog").textContent).toContain("Semantic Studio");
+  });
+
+  it("the panel opens with no ontology loaded", async () => {
+    // AC-4. It depends on nothing, and this is the state a newcomer is in when
+    // they most want to know what they are looking at: the chooser, before any
+    // ontology exists. The control is enabled where the three mode tabs are not.
+    listOntologies.mockResolvedValue([]);
+    await renderApp();
+
+    expect(chooserShown()).toBe(true);
+    expect(aboutControl().disabled).toBe(false);
+
+    await act(async () => {
+      fireEvent.click(aboutControl());
+    });
+
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    // Nothing was fetched to show it. The list request on mount is the only
+    // call this application has made at this point and it stays that way.
+    expect(getGraph).not.toHaveBeenCalled();
+    expect(listOntologies).toHaveBeenCalledTimes(1);
+  });
+
+  it("closing returns focus to the about control", async () => {
+    // AC-11, the half that lives here rather than in AboutPanel.test.tsx: only
+    // App holds the control that opened the panel, so only App can give it its
+    // focus back. Asserted for the close button; Escape and the backdrop reach
+    // the same callback, which AboutPanel.test.tsx proves separately.
+    await renderApp();
+
+    await act(async () => {
+      fireEvent.click(aboutControl());
+    });
+    // Focus went into the panel, off the control.
+    expect(document.activeElement).not.toBe(aboutControl());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /close about/i }));
+    });
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(aboutControl());
+  });
+
+  it("opening the panel makes no request", async () => {
+    // AC-13. Every client function is a spy here, so "no request" is a claim
+    // about call counts rather than about traffic nobody can observe. An About
+    // panel that phoned home would contradict the promise printed inside it.
+    await renderApp();
+    for (const fn of Object.values(ALL_API)) fn.mockClear();
+
+    await act(async () => {
+      fireEvent.click(aboutControl());
+    });
+
+    for (const [name, fn] of Object.entries(ALL_API)) {
+      expect(fn, `${name} was called by About`).not.toHaveBeenCalled();
+    }
   });
 });

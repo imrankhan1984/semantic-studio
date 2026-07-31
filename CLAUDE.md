@@ -50,7 +50,7 @@ app writes into the real per-user ontology library.
 
 ```bash
 cd backend  && python -m pytest tests    # 169 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 306 tests, vitest
+cd frontend && npm run test              # 334 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -69,7 +69,7 @@ and a collection landing inside a single-shot timing costs tens of milliseconds.
 A single sample here measures how many other fixtures the suite holds. See
 D-024. Do not "simplify" either test back to one `perf_counter` pair.
 
-**Know the gap.** 67 of the 306 frontend tests are in `src/sparql/`. The rest
+**Know the gap.** 67 of the 334 frontend tests are in `src/sparql/`. The rest
 were added from 2026-07-27 onward and are the project's component tests. Copy
 their pattern — a `// @vitest-environment jsdom` docblock per file and `vi.mock`
 over `api.ts`. For anything touching the graph, either stub `GraphView` (see
@@ -564,6 +564,42 @@ prove a change works in the application rather than in the test suite.
   them — the comment above `setExpansion(null)` in `App.tsx` says so — and
   preserving them would need one request per expansion, contradicting the same
   spec's one-request budget.
+
+- **The About panel is the application's only modal dialog with a focus trap,
+  and three things in it are load-bearing** (2026-07-31, spec `about-panel`).
+
+  **The backdrop is a sibling of the dialog, not its parent.** `LoadDialog`
+  wraps its content in `.modal-backdrop`; `AboutPanel` cannot, because the spec
+  requires the decorative backdrop to be `aria-hidden` and `aria-hidden` on an
+  ancestor removes the dialog from the accessibility tree entirely. The backdrop
+  is a bare `.modal-backdrop` div and the panel positions itself. A test asserts
+  the backdrop does **not** contain the dialog.
+
+  **The key handler is on `document`, not on the panel.** Pressing on the
+  panel's own prose blurs focus to `<body>` in a real browser, and a
+  panel-scoped handler would then see neither Escape nor Tab. Because it is on
+  the document, Tab from outside the panel is pulled back to its first control,
+  which is what makes it a trap rather than a pair of wrapping edges. Confirmed
+  in Chrome: heading → link → close → link, never leaving the panel.
+
+  **Focus is restored by `App`, not by the panel**, because only App holds the
+  control that opened it. `closeAbout` calls `focus()` directly rather than
+  through an effect — that control is never disabled, so this is not the
+  `saved-query-deletion-warning` case. `App.test.tsx` fails if the line goes.
+
+  Two smaller things. `vite.config.ts` sets `server.fs.allow: [".."]` so
+  `AboutPanel.test.tsx` can read the repository's `LICENSE` with `?raw` and fail
+  when the panel's copyright line stops matching it; without it Vite refuses the
+  id outright, which at least fails loudly where the CSS `?raw` trap returned
+  `""`. And **the 45-to-70-character rule is asserted as a measure derived from
+  the stylesheet, never per string** — *Created by Imran Khan* is 21 characters
+  and is a label, not a paragraph. Measured in Chrome at 55 characters a line.
+
+  **The panel's last two sentences are a promise, not decoration.** *Your
+  ontologies stay on this machine. Semantic Studio does not upload them.* is the
+  first place a security property from the specifications' `CLAUDE.md` Section 7
+  is stated to the user, and a test asserts it. Any feature that sends ontology
+  content anywhere has to change those words in the same commit.
 
 ## Pull requests
 
