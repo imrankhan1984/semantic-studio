@@ -268,7 +268,11 @@ export default function QueryPanel({
   })();
 
   return (
-    <aside className="query-panel">
+    // Named and script-focusable, so the main area's skip link has somewhere to
+    // land in Query mode: this is the only one of the four panels beside the
+    // graph with no heading of its own. tabIndex -1 adds no stop to the tab
+    // order. Backlog X-1.
+    <aside className="query-panel" id="query-panel-region" aria-label="Query builder" tabIndex={-1}>
       {loadingSchema && <div className="detail-note">Analysing the ontology…</div>}
       {schemaError && <p className="detail-error">{schemaError}</p>}
 

@@ -30,7 +30,7 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - Pass/fail per assertion, covering AC-3, AC-10, AC-20, AC-21 and AC-22 of
-      partial-graph-rendering, and AC-1 to AC-5 of show-less.
+      partial-graph-rendering, AC-1 to AC-5 of show-less, and defect D-2.
 ================================================================================
 */
 
@@ -67,7 +67,6 @@ function renderNotice(
 ) {
   const onShowMore = vi.fn();
   const onShowLess = vi.fn();
-  const onDismiss = vi.fn();
   const onFocusRestored = vi.fn();
   render(
     <GraphNotice
@@ -77,11 +76,10 @@ function renderNotice(
       restoreFocus={restoreFocus}
       onShowMore={onShowMore}
       onShowLess={onShowLess}
-      onDismiss={onDismiss}
       onFocusRestored={onFocusRestored}
     />,
   );
-  return { onShowMore, onShowLess, onDismiss, onFocusRestored };
+  return { onShowMore, onShowLess, onFocusRestored };
 }
 
 const showLess = () =>
@@ -147,14 +145,14 @@ describe("GraphNotice", () => {
     expect(notice.getAttribute("aria-live")).toBe("polite");
   });
 
-  it("show more and dismiss are reachable by keyboard", () => {
+  it("both budget controls are reachable by keyboard", () => {
     // AC-22: real <button> elements, in the tab order, with accessible names.
     // A div with an onClick would satisfy the visual design and fail this.
-    const { onDismiss } = renderNotice(truncatedStats());
-    const showMore = screen.getByRole("button", { name: /show more/i });
-    const dismiss = screen.getByRole("button", { name: /dismiss/i });
+    const { onShowMore } = renderNotice(truncatedStats({ budget: 4000 }));
+    const more = screen.getByRole("button", { name: /show more/i });
+    const less = screen.getByRole("button", { name: /show less/i });
 
-    for (const button of [showMore, dismiss]) {
+    for (const button of [less, more]) {
       expect(button.tagName).toBe("BUTTON");
       // Nothing has removed them from the tab order.
       expect(button.getAttribute("tabindex")).not.toBe("-1");
@@ -163,8 +161,30 @@ describe("GraphNotice", () => {
     }
 
     // A focused button responds to activation, which is what a keyboard does.
-    fireEvent.click(dismiss);
-    expect(onDismiss).toHaveBeenCalledTimes(1);
+    fireEvent.click(more);
+    expect(onShowMore).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers no way to dismiss the bar", () => {
+    // Defect D-2. The ✕ set `noticeDismissed` in App, which reset only when the
+    // active ontology changed — so one press took Show more AND Show less away
+    // for the rest of the session with no way back. It was specified when this
+    // bar was a sentence and one button; show-less gave it something worth
+    // losing. The bar and its summary are permanent now.
+    //
+    // Asserted over every button in the bar rather than by querying for the one
+    // that used to be here, so any future control that hides the notice fails
+    // this too.
+    renderNotice(truncatedStats({ budget: 4000 }));
+    const buttons = [...screen.getByRole("status").querySelectorAll("button")];
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons) {
+      expect(button.textContent, "an extra control appeared on the notice").toMatch(
+        /^Show (more|less)$/,
+      );
+    }
+    expect(screen.queryByRole("button", { name: /dismiss/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /close/i })).toBeNull();
   });
 
   it("renders show less beside show more", () => {
@@ -175,7 +195,7 @@ describe("GraphNotice", () => {
     // CatalogueList.test.tsx, and the visual half is verified in a browser.
     renderNotice(truncatedStats({ budget: 8000 }));
     const buttons = [...screen.getByRole("status").querySelectorAll("button")];
-    expect(buttons.map((b) => b.textContent)).toEqual(["Show less", "Show more", "✕"]);
+    expect(buttons.map((b) => b.textContent)).toEqual(["Show less", "Show more"]);
     for (const button of buttons) expect(button.getAttribute("tabindex")).toBeNull();
   });
 

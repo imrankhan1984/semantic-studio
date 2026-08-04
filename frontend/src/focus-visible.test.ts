@@ -4,8 +4,10 @@ FILE: frontend/src/focus-visible.test.ts
 ================================================================================
 
 SUMMARY
-    Asserts that the application has one global focus ring and that nothing
-    suppresses focus indication. Defect 3 of visual-defects.md.
+    Asserts two properties of the stylesheet that nothing else can: that the
+    application has one global focus ring and that nothing suppresses focus
+    indication (defect 3 of visual-defects.md), and that it stops animating for
+    anyone who has asked it to (keyboard-and-motion.md).
 
 BASIC IDEA
     jsdom does not do layout or cascade resolution, so there is no way to focus
@@ -26,7 +28,8 @@ INPUTS / INPUT SOURCES
     - frontend/src/index.css, imported as raw text by Vite.
 
 EXPECTED OUTPUT
-    - Pass/fail per assertion, covering AC-14 to AC-17.
+    - Pass/fail per assertion, covering AC-14 to AC-17 of visual-defects and
+      AC-12 of keyboard-and-motion.
 ================================================================================
 */
 
@@ -98,5 +101,45 @@ describe("focus indication", () => {
     // The scoped rule itself is gone, superseded by the global one rather than
     // left as a duplicate that could drift away from it.
     expect(RULES).not.toMatch(/\.graph-notice\s+button:focus-visible/);
+  });
+});
+
+describe("reduced motion", () => {
+  it("index.css carries a prefers-reduced-motion rule", () => {
+    // AC-12 of keyboard-and-motion. The same argument as the focus ring above:
+    // jsdom has no layout and no media-query evaluation, so the stylesheet is
+    // the only thing there is to assert on, and the effect is confirmed in a
+    // browser.
+    const block = RULES.match(
+      /@media\s*\(\s*prefers-reduced-motion\s*:\s*reduce\s*\)\s*\{([\s\S]*?\})\s*\}/,
+    );
+    expect(block, "no prefers-reduced-motion media query in index.css").not.toBeNull();
+
+    const body = block![1];
+    // It has to reach everything. A rule scoped to one component is the shape
+    // this codebase already rejected once, for the focus ring.
+    expect(body).toMatch(/\*\s*,/);
+    // And it has to actually stop things, not merely mention them.
+    // `!important` is what beats the durations declared elsewhere in this file.
+    for (const property of ["animation-duration", "transition-duration"]) {
+      expect(body, property).toMatch(new RegExp(`${property}\\s*:[^;]*!important`));
+    }
+    expect(body).toMatch(/animation-iteration-count\s*:\s*1\s*!important/);
+    expect(body).toMatch(/scroll-behavior\s*:\s*auto\s*!important/);
+  });
+
+  it("the two comments deferring to X-1 are gone", () => {
+    // AC-12's second half. Two comments in this file said the project had no
+    // reduced-motion rule and deferred to the backlog item that has now landed.
+    // Left as they were, they are how the next reader concludes there still is
+    // none — which is exactly what the focus-ring comment above already caused
+    // once, and why AC-17 exists three tests up.
+    //
+    // The claims are matched rather than the string "X-1", because the rule
+    // itself may legitimately cite where it came from, and a bare id search
+    // would forbid saying so.
+    expect(CSS).not.toMatch(/no prefers-reduced-motion rule/i);
+    expect(CSS).not.toMatch(/are all backlog X-1/i);
+    expect(CSS).not.toMatch(/are not touched here/i);
   });
 });

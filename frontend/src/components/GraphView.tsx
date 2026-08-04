@@ -27,6 +27,16 @@ BASIC IDEA
     bounded number of iterations with everything that was already drawn pinned.
     Nothing already on the canvas moves.
 
+    Two things here are for people who are not using a mouse or who have asked
+    the machine to stop moving. The container carries role="img" and a label
+    saying how much of the ontology is drawn and where the keyboard route is,
+    because a WebGL canvas has nothing in the accessibility tree to navigate —
+    that is the accessible equivalent D-025 chose over arrow-key stepping. And
+    `prefers-reduced-motion` is read once per mount and honoured in both places
+    a CSS rule cannot reach: the layout is applied in one blocking pass before
+    the first frame instead of animating, and every camera move takes zero
+    milliseconds.
+
 INPUTS / INPUT SOURCES (props)
     - data: the VizGraph to draw (or null for the empty state).
     - theme: which colour palette to use.
@@ -171,6 +181,70 @@ interface Props {
 // ForceAtlas2 loop (fluid, WebVOWL-like). Larger graphs use the web worker.
 const SYNC_LAYOUT_MAX_NODES = 3000;
 
+/** The media query every motion decision in this file keys off. */
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+/** How long a camera move takes normally. Zero under reduced motion, which is
+ *  the whole of that half: a jump rather than a tween. */
+const CAMERA_DURATION_MS = 500;
+const ZOOM_DURATION_MS = 200;
+const FIT_DURATION_MS = 400;
+
+/**
+ * The reduced-motion settle: how much layout is applied in one blocking pass,
+ * instead of animating it, before the graph is first drawn.
+ *
+ * Bounded by time rather than by iterations because the cost per iteration is a
+ * function of graph size and spans three orders of magnitude. Measured
+ * 2026-07-31 on this machine with graphology-layout-forceatlas2, at roughly
+ * FIBO's edge density:
+ *
+ *     100 nodes    600 iterations     24 ms
+ *     500 nodes    600 iterations    528 ms
+ *   2,000 nodes    100 iterations  1,343 ms
+ *
+ * So the budget buys a fully settled graph for anything a newcomer opens, and a
+ * partial arrangement at the default node budget. **It is deliberately NOT the
+ * total the animated path runs**: that path runs about 560 iterations over its
+ * 8.5 second window, which at 2,000 nodes is eight seconds of frozen tab. The
+ * specification's Section 10 asks for "the same total" and the same total is
+ * not affordable on the main thread; the property that matters — the graph
+ * appears arranged rather than moving — is met either way.
+ */
+const REDUCED_MOTION_SETTLE_MS = 1000;
+const REDUCED_MOTION_MAX_ITERATIONS = 600;
+/** Iterations per deadline check. Small enough that the overshoot is invisible,
+ *  large enough that the clock is not read once per iteration. */
+const SETTLE_CHUNK_ITERATIONS = 25;
+
+/**
+ * Whether the user has asked for reduced motion, kept current without a reload.
+ *
+ * One `matchMedia` call per mount, and that is a performance budget rather than
+ * tidiness: the obvious shape — a `matchMedia` in the `useState` initialiser and
+ * a second one in the effect — reads it twice on every graph mount. The
+ * MediaQueryList is held in a ref and both the initial value and the
+ * subscription come off it.
+ *
+ * `?.` throughout because jsdom leaves `matchMedia` undefined, which is the same
+ * guard SourceView.tsx already carries for the same reason.
+ */
+function useReducedMotion(): boolean {
+  const queryRef = useRef<MediaQueryList | null | undefined>(undefined);
+  if (queryRef.current === undefined) {
+    queryRef.current = window.matchMedia?.(REDUCED_MOTION_QUERY) ?? null;
+  }
+  const [reduced, setReduced] = useState(() => queryRef.current?.matches ?? false);
+  useEffect(() => {
+    const query = queryRef.current;
+    if (!query?.addEventListener) return;
+    const onChange = (e: MediaQueryListEvent) => setReduced(e.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  return reduced;
+}
+
 /**
  * How long the layout runs after a merge, over the newly added nodes only.
  *
@@ -257,6 +331,18 @@ export default function GraphView({
   // re-render, and a merge that runs twice reports its additions twice.
   const expandedRef = useRef(onExpanded);
   const [layoutRunning, setLayoutRunning] = useState(false);
+  // How many entities are on the canvas, for the container's accessible label.
+  // Held here rather than read off `data.stats`, because a merge adds nodes
+  // without replacing `data` and a label that ignored expansions would tell a
+  // screen reader user the opposite of what the status bar says.
+  const [drawnCount, setDrawnCount] = useState(0);
+
+  const reduceMotion = useReducedMotion();
+  // In a ref as well as in a variable: the layout and camera helpers below are
+  // rebuilt every render, but the ones the Sigma event handlers closed over on
+  // mount are not, and a drag started next year must still read today's answer.
+  const reduceMotionRef = useRef(reduceMotion);
+  reduceMotionRef.current = reduceMotion;
 
   selectedRef.current = selected;
   hiddenRef.current = hiddenKinds;
@@ -274,11 +360,42 @@ export default function GraphView({
    * were one line each and drifted immediately: the second case exists because
    * the first cannot see a node that does not yet exist.
    */
+  /** A camera duration, or zero when the user has asked for reduced motion.
+   *  Every camera call in this file goes through it, so there is one place to
+   *  read rather than five literals to keep in step. */
+  const moveDuration = (ms: number) => (reduceMotionRef.current ? 0 : ms);
+
   const centerOn = (node: string) => {
     const renderer = sigmaRef.current;
     const display = renderer?.getNodeDisplayData(node);
     if (!renderer || !display) return;
-    renderer.getCamera().animate({ x: display.x, y: display.y, ratio: 0.25 }, { duration: 500 });
+    renderer.getCamera().animate(
+      { x: display.x, y: display.y, ratio: 0.25 },
+      { duration: moveDuration(CAMERA_DURATION_MS) },
+    );
+  };
+
+  /**
+   * Apply the layout in one blocking pass, rather than animating it.
+   *
+   * Chunked against a deadline instead of running a fixed count: see
+   * REDUCED_MOTION_SETTLE_MS for the measurements that shape it. The first chunk
+   * always runs, so even the largest graph is arranged rather than left on the
+   * ring `circular.assign` placed it on.
+   */
+  const settleLayout = () => {
+    const graph = graphRef.current;
+    if (!graph) return;
+    const deadline = performance.now() + REDUCED_MOTION_SETTLE_MS;
+    let done = 0;
+    do {
+      forceAtlas2.assign(graph, {
+        iterations: SETTLE_CHUNK_ITERATIONS,
+        settings: fa2SettingsRef.current,
+        getEdgeWeight: "weight",
+      });
+      done += SETTLE_CHUNK_ITERATIONS;
+    } while (done < REDUCED_MOTION_MAX_ITERATIONS && performance.now() < deadline);
   };
 
   const stopLayout = () => {
@@ -295,6 +412,16 @@ export default function GraphView({
     const graph = graphRef.current;
     if (!graph) return;
     window.clearTimeout(layoutTimer.current);
+    // Reduced motion never animates, wherever the request came from. The one
+    // route that reaches here deliberately is the toolbar's "Re-run the layout",
+    // and applying it in a single pass is the right answer for that too: the
+    // user asked for the graph to be untangled, not for it to be seen moving.
+    if (reduceMotionRef.current) {
+      settleLayout();
+      sigmaRef.current?.refresh({ skipIndexation: true });
+      setLayoutRunning(false);
+      return;
+    }
     if (syncModeRef.current) {
       if (rafRef.current === undefined) {
         const iterations = graph.order < 500 ? 3 : 1;
@@ -336,7 +463,10 @@ export default function GraphView({
     sigmaRef.current?.kill();
     sigmaRef.current = null;
     graphRef.current = null;
-    if (!data) return;
+    if (!data) {
+      setDrawnCount(0);
+      return;
+    }
 
     const graph = new Graph({ multi: true, type: "directed" });
     for (const node of data.nodes) {
@@ -370,6 +500,13 @@ export default function GraphView({
       adjustSizes: false,
       edgeWeightInfluence: 1,
     };
+    setDrawnCount(graph.order);
+
+    // Before Sigma exists, so the first frame it draws is the arranged graph
+    // rather than the ring circular.assign left behind. Settling after the
+    // construction would show that ring and then replace it, which is one
+    // motion event more than a reduced-motion user asked for.
+    if (reduceMotionRef.current) settleLayout();
 
     const renderer = new Sigma(graph, container, {
       renderEdgeLabels: graph.size <= 3000,
@@ -536,6 +673,11 @@ export default function GraphView({
       suppressClick = false;
       graph.setNodeAttribute(e.node, "fixed", true);
       window.clearTimeout(layoutTimer.current);
+      // Under reduced motion the drag moves the dragged node and nothing else.
+      // The elastic neighbourhood that follows the cursor is the most motion in
+      // this application, and re-settling on every mousedown would be a freeze
+      // per drag rather than a fluid one — see REDUCED_MOTION_SETTLE_MS.
+      if (reduceMotionRef.current) return;
       startLayout(); // run until the drag ends
       if (!syncModeRef.current) {
         reseedWorkerLayout();
@@ -560,6 +702,12 @@ export default function GraphView({
       suppressClick = dragMoved;
       window.clearInterval(reheatInterval);
       reheatInterval = undefined;
+      if (reduceMotionRef.current) {
+        // Nothing was running, so there is nothing to settle: the node is where
+        // the user put it and the rest of the graph never moved.
+        sigmaRef.current?.refresh({ skipIndexation: true });
+        return;
+      }
       if (!syncModeRef.current) reseedWorkerLayout();
       // Let the graph settle, then freeze it.
       startLayout(2500);
@@ -569,14 +717,16 @@ export default function GraphView({
 
     sigmaRef.current = renderer;
 
-    if (!syncModeRef.current) {
+    // No worker under reduced motion: nothing would ever start it, and the
+    // layout it exists to animate has already been applied above.
+    if (!syncModeRef.current && !reduceMotionRef.current) {
       workerLayoutRef.current = new FA2Layout(graph, {
         settings: fa2SettingsRef.current,
         getEdgeWeight: "weight",
       });
     }
     // Run the force layout for a duration proportional to graph size.
-    startLayout(Math.min(20000, 2500 + graph.order * 3));
+    if (!reduceMotionRef.current) startLayout(Math.min(20000, 2500 + graph.order * 3));
 
     return () => {
       window.clearTimeout(layoutTimer.current);
@@ -704,6 +854,9 @@ export default function GraphView({
     const sel = selectedRef.current;
     if (sel && addedNodes.includes(sel)) centerOn(sel);
 
+    // The label states what is on the canvas, and a merge is the one thing that
+    // changes that without replacing `data`.
+    setDrawnCount(graph.order);
     expandedRef.current?.({ addedNodes, addedEdges });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expansion?.token]);
@@ -721,6 +874,27 @@ export default function GraphView({
     renderer.refresh({ skipIndexation: true });
   }, [hiddenKinds, selected, theme, queryMode, queryPathIris, queryCandidates]);
 
+  // Honour a change to the motion preference without a reload (AC-11).
+  //
+  // Only the ON direction does anything, and that asymmetry is deliberate:
+  // switching reduced motion on has to stop what is currently animating, while
+  // switching it off has nobody asking for movement — the load layout is long
+  // finished and re-running it would be motion the user never requested.
+  //
+  // The first run is skipped by comparing against the previous value rather than
+  // by a boolean flag: on mount the build effect has already settled, and a
+  // second settle would double the one blocking pass this feature is allowed.
+  const wasReduced = useRef(reduceMotion);
+  useEffect(() => {
+    if (wasReduced.current === reduceMotion) return;
+    wasReduced.current = reduceMotion;
+    if (!reduceMotion || !graphRef.current) return;
+    stopLayout();
+    settleLayout();
+    sigmaRef.current?.refresh({ skipIndexation: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reduceMotion]);
+
   // Center the camera on the selected node — but only for explicit focus
   // requests (search picks, detail-panel navigation), not plain graph clicks.
   useEffect(() => {
@@ -737,7 +911,11 @@ export default function GraphView({
           <>
             <button
               className="tool-btn"
-              onClick={() => sigmaRef.current?.getCamera().animatedReset({ duration: 400 })}
+              onClick={() =>
+                sigmaRef.current
+                  ?.getCamera()
+                  .animatedReset({ duration: moveDuration(FIT_DURATION_MS) })
+              }
               title="Zoom out to fit the whole graph"
             >
               ⤢ <span>Fit</span>
@@ -746,8 +924,12 @@ export default function GraphView({
               className="tool-btn"
               onClick={() => {
                 const camera = sigmaRef.current?.getCamera();
-                if (camera) camera.animatedZoom({ duration: 200 });
+                if (camera) camera.animatedZoom({ duration: moveDuration(ZOOM_DURATION_MS) });
               }}
+              // The only content is a "＋" glyph, so name-from-contents gives
+              // this button the accessible name "＋". Fit and PNG carry words
+              // and need no help; these two do.
+              aria-label="Zoom in"
               title="Zoom in"
             >
               ＋
@@ -756,8 +938,9 @@ export default function GraphView({
               className="tool-btn"
               onClick={() => {
                 const camera = sigmaRef.current?.getCamera();
-                if (camera) camera.animatedUnzoom({ duration: 200 });
+                if (camera) camera.animatedUnzoom({ duration: moveDuration(ZOOM_DURATION_MS) });
               }}
+              aria-label="Zoom out"
               title="Zoom out"
             >
               －
@@ -800,7 +983,27 @@ export default function GraphView({
       <div className="graph-body">
         {data ? leftRail : null}
         <div className="graph-canvas-wrap">
-          <div ref={containerRef} className="graph-container" />
+          {/* role="img" with a label describing what is drawn, because WebGL
+              draws pixels and there is nothing in the accessibility tree to
+              move between. This is the accessible EQUIVALENT the graph gets
+              instead of arrow-key navigation — see D-025 — so the label ends by
+              naming the route that does work. The counts are interpolated and
+              nothing from the ontology is: no label, no IRI, no literal.
+
+              Both attributes are omitted with no graph, so an unlabelled empty
+              div is exposed as nothing rather than as an image of nothing. */}
+          <div
+            ref={containerRef}
+            className="graph-container"
+            role={data ? "img" : undefined}
+            aria-label={
+              data
+                ? `Ontology graph, ${drawnCount.toLocaleString()} of ` +
+                  `${data.stats.nodeTotal.toLocaleString()} entities drawn. ` +
+                  `Use the entity list to browse.`
+                : undefined
+            }
+          />
           {!data && (
             <div className="graph-empty">
               <p>No ontology loaded yet.</p>

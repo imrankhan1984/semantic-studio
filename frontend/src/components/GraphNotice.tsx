@@ -24,6 +24,14 @@ BASIC IDEA
     never be reduced, so it looks exactly as it did before the budget existed.
     Truncation alone is not the test — see the early return.
 
+    **There is no way to dismiss it, and that is the fix for defect D-2.** A ✕
+    used to hide the whole bar for the rest of the session, taking Show more and
+    Show less with it and leaving no way back: `noticeDismissed` in App reset
+    only when the active ontology changed. The control was specified in
+    partial-graph-rendering stage 1, when the bar carried a sentence and one
+    button, and was kept through show-less without noticing that show-less had
+    given it something worth losing. The bar stays.
+
 INPUTS / INPUT SOURCES (props)
     - stats: the drawn/total counts, the applied budget and the truncation flag
       from GET /graph.
@@ -35,7 +43,7 @@ INPUTS / INPUT SOURCES (props)
       view will not draw more however often the button is pressed.
     - restoreFocus: which control was pressed to produce this graph, so focus
       can be put back after App's refetch remounts the bar.
-    - onShowMore / onShowLess / onDismiss / onFocusRestored.
+    - onShowMore / onShowLess / onFocusRestored.
 
 EXPECTED OUTPUT
     - A polite live region announcing the counts whenever the budget produces a
@@ -53,7 +61,6 @@ interface Props {
   restoreFocus: "more" | "less" | null;
   onShowMore: () => void;
   onShowLess: () => void;
-  onDismiss: () => void;
   onFocusRestored: () => void;
 }
 
@@ -64,7 +71,6 @@ export default function GraphNotice({
   restoreFocus,
   onShowMore,
   onShowLess,
-  onDismiss,
   onFocusRestored,
 }: Props) {
   const moreRef = useRef<HTMLButtonElement>(null);
@@ -105,8 +111,8 @@ export default function GraphNotice({
   // Render whenever the budget is doing something the user can act on: the
   // graph is truncated, OR everything is drawn but only because the budget was
   // raised. The old condition was `if (!stats.truncated) return null`, which
-  // removed the whole bar — counts, dismiss control and all — at exactly the
-  // moment the user most wanted Show less.
+  // removed the whole bar — counts, controls and all — at exactly the moment
+  // the user most wanted Show less.
   if (!stats.truncated && !canReduce) return null;
 
   const drawn = stats.nodeCount.toLocaleString();
@@ -165,14 +171,6 @@ export default function GraphNotice({
         }
       >
         Show more
-      </button>
-      <button
-        className="ghost icon-btn"
-        onClick={onDismiss}
-        title="Dismiss this notice"
-        aria-label="Dismiss this notice"
-      >
-        ✕
       </button>
     </div>
   );

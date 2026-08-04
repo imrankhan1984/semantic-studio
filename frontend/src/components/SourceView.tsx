@@ -139,9 +139,10 @@ export default function SourceView({ ontologyId, target = null, onTargetResolved
     }
     resolvedRef.current?.(null);
     setVisible((current) => (line + 20 > current ? line + 200 : current));
-    // Smooth is motion, and this is the one motion this change introduces, so
-    // it asks. The stylesheet has no prefers-reduced-motion rule anywhere
-    // (backlog X-1) and a CSS rule could not reach a scroll option anyway.
+    // Smooth is motion, so it asks. index.css does carry a global
+    // prefers-reduced-motion rule now, and it cannot help here: that rule
+    // reaches `scroll-behavior` and this is the `behavior` option of a
+    // scrollIntoView call, which no stylesheet can override.
     // `matchMedia` is guarded because jsdom leaves it undefined.
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     // The same deferral goToMatch uses: the line may only have just been

@@ -108,9 +108,10 @@ button.icon-btn:hover {
 
 /* Busy, not broken. The remove control is inert while it counts the saved
    queries it is about to destroy; this is the visible half of that state, the
-   audible half being aria-busy. It is a static dimming rather than a spinner
-   because the project has no prefers-reduced-motion rule yet (backlog X-1) and
-   adding animation before that exists would add to the problem. */
+   audible half being aria-busy. A static dimming rather than a spinner, which
+   is now a preference rather than a constraint: the reduced-motion rule at the
+   foot of this section would flatten a spinner anyway, and a control that looks
+   the same to everybody is one less thing to reason about. */
 button.icon-btn[aria-busy="true"] {
   opacity: 0.5;
   cursor: progress;
@@ -144,14 +145,84 @@ select:focus {
    navigation and not for mouse clicks, which is the real annoyance the deleted
    declaration was reaching for. It solved a fair problem with the wrong tool.
 
-   Scope is deliberately this and nothing else. Keyboard reach for the graph,
-   the legend rows and the search results, screen reader support for all three,
-   and `prefers-reduced-motion` are all backlog X-1 and are not touched here.
    A focus ring is not keyboard reach: an element that cannot be tabbed to has
-   nothing to show a ring on. */
+   nothing to show a ring on. When this rule was written the legend rows, the
+   search results and the graph had nothing to show one on; the first two are
+   real controls now and the third has an accessible equivalent instead. */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Motion, off, everywhere one declaration can reach.
+   The two places it cannot are in JavaScript and are handled there:
+   GraphView.tsx applies the force layout in a single pass instead of animating
+   it and gives every camera move a zero duration, and SourceView.tsx asks for
+   an instant scroll rather than a smooth one. A stylesheet can reach neither a
+   physics simulation nor a scroll option. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Hidden from the screen, present for a screen reader. Used by the search
+   box's result-count announcement, which has to be spoken and must not take
+   space in the header row. `clip-path` plus a 1px box rather than
+   `display: none`, which removes an element from the accessibility tree along
+   with the screen. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The skip link: the first focusable element in the main area, invisible until
+   it takes focus and then a real control at the top left of it.
+
+   Clipped rather than moved off screen with a transform, which would slide it
+   up over the header instead of out of the page; and clipped rather than
+   `display: none`, because a hidden element cannot be tabbed to at all, which
+   would defeat the entire purpose.
+
+   `:focus`, not `:focus-visible`. The only way to reach it is the keyboard, and
+   a control that is invisible while focused is the defect this exists to avoid. */
+.skip-link {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 30;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 600;
+}
+
+.skip-link:focus {
+  width: auto;
+  height: auto;
+  padding: 8px 14px;
+  overflow: visible;
+  clip-path: none;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
 }
 
 /* --- layout ---------------------------------------------------------- */
@@ -692,9 +763,9 @@ select:focus {
   min-width: 0;
 }
 
-/* flex: none because the sentence beside them is flex: 1 and the bar now holds
-   three controls rather than two: without it a narrow window shrinks "Show
-   less" and "Show more" into each other rather than wrapping the text. */
+/* flex: none because the sentence beside them is flex: 1: without it a narrow
+   window shrinks "Show less" and "Show more" into each other rather than
+   wrapping the text. */
 .graph-notice button {
   flex: none;
 }
@@ -858,14 +929,40 @@ select:focus {
   font-weight: 600;
 }
 
+/* The header and the filter rows are <button> now, so both need the browser's
+   default button chrome taken back off: a centred, boxed, mid-grey control
+   would look nothing like the rail it sits in. Everything here is a reset —
+   the appearance is unchanged from when they were <div onClick>, which is the
+   point. Only `width: 100%` is new in effect, and only because a button shrinks
+   to its contents where a div filled the rail. */
 .legend-header {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   cursor: pointer;
   user-select: none;
-  padding-bottom: 6px;
+  padding: 0 0 6px;
+  border: none;
   border-bottom: 1px solid var(--border-soft);
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+}
+
+.legend-header:hover {
+  border-color: var(--border-soft);
+  color: var(--accent);
+}
+
+/* The relations section is a list of facts, not of controls, so it is a real
+   <ul> and needs its list chrome removed. */
+.legend-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .legend-section {
@@ -883,6 +980,19 @@ select:focus {
   padding: 2px 0;
   cursor: pointer;
   user-select: none;
+  /* The same reset as .legend-header, for the same reason. */
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+}
+
+button.legend-row:hover {
+  border-color: transparent;
+  color: var(--accent);
 }
 
 .legend-row.static {
@@ -953,6 +1063,17 @@ select:focus {
 
 .search-results li:hover {
   background: var(--bg-panel);
+}
+
+/* The keyboard's active option. It is NOT focused — focus stays in the input so
+   typing keeps working, which is what aria-activedescendant is for — so the
+   global :focus-visible ring can never reach it and this rule is what a sighted
+   keyboard user has instead. Two channels, because the row already changes
+   background on hover and the two states have to be tellable apart. */
+.search-results li[aria-selected="true"] {
+  background: var(--bg-panel);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .search-results .dot {
