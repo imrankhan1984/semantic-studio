@@ -18,10 +18,22 @@ BASIC IDEA
     shows the builder panel.
 
     Nothing is fetched or parsed until the user picks an ontology. With no
-    active id the main area is the StartScreen chooser and the mode tabs are
-    disabled; App requests the ontology list and nothing else. That is a change
-    from selecting the most recently added ontology on mount, which rendered
-    18,717 nodes on every page load for anyone with FIBO stored.
+    active id the main area is the HomeScreen library; App requests the ontology
+    list and nothing else. That is a change from selecting the most recently
+    added ontology on mount, which rendered 18,717 nodes on every page load for
+    anyone with FIBO stored, and the home screen inherits the budget: it draws a
+    thumbnail per ontology from metadata the server wrote at ingest, so it costs
+    no request of its own.
+
+    Home is a fourth view rather than a state of having nothing open, and it is
+    a VIEW rather than a reset: pressing it keeps the loaded ontology, the
+    selection and the query being built, so it is safe to press and does not
+    duplicate "Close this ontology". See D-026. Because Home exists, the three
+    mode tabs are no longer disabled with nothing open — pressing one is
+    remembered as a pendingMode and the library heading asks which ontology to
+    act on, which teaches that modes act on an ontology where a disabled control
+    taught nothing. A card's three verbs answer the same question in one press
+    and are the ordinary route.
 
     Explore mode, the default, no longer shows nothing before the first click.
     With an ontology open and no selection the right-hand column is ExploreStart,
@@ -93,17 +105,18 @@ import DetailPanel from "./components/DetailPanel";
 import ExploreStart from "./components/ExploreStart";
 import GraphNotice from "./components/GraphNotice";
 import GraphView from "./components/GraphView";
+import HomeScreen from "./components/HomeScreen";
 import Legend from "./components/Legend";
 import LoadDialog from "./components/LoadDialog";
 import Logo from "./components/Logo";
 import QueryPanel from "./components/QueryPanel";
 import SearchBox from "./components/SearchBox";
 import SourceView from "./components/SourceView";
-import StartScreen from "./components/StartScreen";
 import {
   IconAbout,
   IconClose,
   IconExplore,
+  IconHome,
   IconLoad,
   IconMoon,
   IconQuery,
@@ -123,10 +136,11 @@ import type {
   VizNeighborhood,
 } from "./types";
 
-/** Why the three mode tabs are disabled with nothing open. One string, because
- *  it is the same reason on all three and it belongs in the title attribute
- *  rather than only in the disabled styling. */
-const NO_ONTOLOGY_TITLE = "Open an ontology first";
+/** What a mode tab says when there is nothing for it to act on yet. The tabs
+ *  used to be disabled here, which prevented the empty canvas by removing the
+ *  choice rather than by answering it; now they route through Home and the
+ *  library heading asks which ontology. */
+const NO_ONTOLOGY_TITLE = "Pick an ontology on the home screen first";
 
 /** What a 404 from /neighborhood means, said without calling it an error.
  *
@@ -254,7 +268,16 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const removeRef = useRef<HTMLButtonElement>(null);
   const wasRemoving = useRef(false);
+  // Which ontology the removal count is running against. It exists because
+  // removal can now be started from a card as well as from the header, and the
+  // card that started it is the one that has to say it is busy.
+  const [removingId, setRemovingId] = useState<string | null>(null);
   const [mode, setMode] = useState<AppMode>("explore");
+  // A mode picked from the header with nothing open. It is remembered rather
+  // than refused, so the library heading can ask which ontology it should act
+  // on and the pick lands straight in that mode. Cleared by anything that
+  // answers the question, and by pressing Home, which withdraws it.
+  const [pendingMode, setPendingMode] = useState<AppMode | null>(null);
   // How many nodes to ask for. null means "do not send a limit", so the server
   // applies its own configured default; it becomes a number only once the user
   // presses Show more. Per-ontology state, reset below when the active ontology
@@ -393,6 +416,55 @@ export default function App() {
   // The currently active ontology's summary (or null).
   const active = ontologies.find((o) => o.id === activeId) ?? null;
 
+  // The home screen stands in for the whole main area, and there are two ways
+  // to be on it: nothing is open, or the user pressed Home with something open.
+  // The second is a view rather than a reset — see D-026.
+  const showHome = activeId === null || mode === "home";
+
+  // Which mode a pick from Home should land in. The mode the user asked for
+  // while nothing was open wins; otherwise whatever they were last in, and
+  // Explore if that was Home itself, because "home" is not a mode a pick can
+  // enter.
+  const modeAfterPick = (): AppMode =>
+    pendingMode ?? (mode === "home" ? "explore" : mode);
+
+  // Open an ontology and enter a mode in one action, which is what a card's
+  // three verbs do. "What to do with what" is one decision, so there is no
+  // intermediate "choose an ontology" screen and no pending-mode state to
+  // resolve — pressing Query on the FIBO card queries FIBO.
+  //
+  // Setting the same activeId again is deliberately cheap: the graph effect is
+  // keyed on it, so a verb pressed on the ontology already open changes the
+  // mode and makes no request.
+  const enterMode = useCallback((id: string, next: AppMode) => {
+    setPendingMode(null);
+    setSourceTarget(null);
+    setNotice(null);
+    setError(null);
+    setActiveId(id);
+    setMode(next);
+  }, []);
+
+  // Which tab reads as chosen. On Home that is the mode the user asked for and
+  // has not yet answered, if any — never the mode they happened to leave, which
+  // would show Explore as selected on a screen that is not Explore.
+  //
+  // Home itself is chosen only while no such question is outstanding. Written
+  // as `aria-selected={showHome}` it was not, and Home and Query both reported
+  // themselves selected at once — measured in Chrome, where two selected tabs
+  // in one tablist is a contradiction a screen reader has no way to resolve.
+  const tabSelected = (m: AppMode) =>
+    m === "home" ? showHome && pendingMode === null : showHome ? pendingMode === m : mode === m;
+
+  // Home is a view, not a reset. The loaded ontology, the selection and the
+  // query being built all survive, because the alternative — treating Home as
+  // "close everything" — would make it dangerous to press and would duplicate
+  // "Close this ontology", which already exists and says what it does. D-026.
+  const goHome = useCallback(() => {
+    setPendingMode(null);
+    setMode("home");
+  }, []);
+
   // Called by the Load dialog and the chooser's catalogue once an ontology is
   // loaded: add it and select it. Someone who deliberately loaded a file
   // expects to see it, so this one path does open a graph without a second
@@ -400,10 +472,11 @@ export default function App() {
   // twice in a session and the backend returns the existing summary.
   const onLoaded = (summary: OntologySummary) => {
     setOntologies((prev) => [...prev.filter((o) => o.id !== summary.id), summary]);
-    setActiveId(summary.id);
     setDialogOpen(false);
-    setError(null);
-    setNotice(null);
+    // Through the same route a card verb takes, so a file loaded after pressing
+    // Query on an empty library opens in Query rather than dropping the mode
+    // the user had already asked for.
+    enterMode(summary.id, modeAfterPick());
   };
 
   // Remove the active ontology after confirmation, then return to the chooser.
@@ -415,29 +488,36 @@ export default function App() {
   // about. The endpoint already deleted those queries; all that was missing was
   // saying so. A failure to count is carried as null, never as zero — see
   // removalPrompt.ts, which is where that distinction is enforced and tested.
-  const onRemove = async () => {
-    if (!activeId) return;
-    const name = ontologies.find((o) => o.id === activeId)?.name ?? "this ontology";
+  //
+  // It takes an id rather than reading activeId, because removal can now be
+  // started from a card's menu on the home screen as well as from the header,
+  // and on that screen the ontology being removed is usually not the active one.
+  const onRemove = async (id: string) => {
+    const name = ontologies.find((o) => o.id === id)?.name ?? "this ontology";
     setRemoving(true);
+    setRemovingId(id);
     let count: number | null = null;
     let names: string[] = [];
     try {
-      const saved = await listSavedQueries(activeId);
+      const saved = await listSavedQueries(id);
       count = saved.length;
       names = saved.map((q) => q.name);
     } catch {
       count = null; // unknown, not zero
     } finally {
       setRemoving(false);
+      setRemovingId(null);
     }
     if (!window.confirm(removalPrompt(name, count, names))) return;
     try {
       // The count comes back from the delete rather than being reused from
       // above: another tab may have saved one in between, and what was actually
       // destroyed is the only number worth repeating.
-      const result = await deleteOntology(activeId);
-      setOntologies((prev) => prev.filter((o) => o.id !== activeId));
-      setActiveId(null);
+      const result = await deleteOntology(id);
+      setOntologies((prev) => prev.filter((o) => o.id !== id));
+      // Only if it was the one open. Removing an ontology from a card on the
+      // home screen must not close a different one the user still has loaded.
+      if (id === activeId) setActiveId(null);
       // `?? 0` guards a server that predates the field: without it the message
       // would read "and undefined saved queries".
       setNotice(removalConfirmation(name, result.deletedQueries ?? 0));
@@ -642,10 +722,24 @@ export default function App() {
   // leaving View and coming back re-runs the lookup, which moves focus to the
   // source heading — stealing it from the tab the user has just pressed, which
   // is the one thing the focus rule in SourceView exists to avoid.
-  const onPickMode = useCallback((next: AppMode) => {
-    setSourceTarget(null);
-    setMode(next);
-  }, []);
+  //
+  // With nothing open it becomes a question rather than a dead end: the mode is
+  // remembered, Home stays up, and its library heading asks which ontology to
+  // act on. The tabs used to be disabled here, which prevented the empty canvas
+  // by removing the choice instead of answering it.
+  const onPickMode = useCallback(
+    (next: AppMode) => {
+      setSourceTarget(null);
+      if (!activeId) {
+        setPendingMode(next);
+        setMode("home");
+        return;
+      }
+      setPendingMode(null);
+      setMode(next);
+    },
+    [activeId],
+  );
 
   // The distinct edge kinds present, for the legend's "relations" section.
   const edgeKinds = useMemo(() => {
@@ -709,6 +803,20 @@ export default function App() {
         <div className="nav-row">
           <Logo />
           <nav className="main-nav" role="tablist" aria-label="Workspace">
+            {/* Home is a real fourth view of the workspace, so it is a tab
+                rather than a plain button: it swaps the main region exactly as
+                the other three do. It is first because it is where the
+                application starts and where every route back leads. */}
+            <button
+              role="tab"
+              aria-selected={tabSelected("home")}
+              className={showHome ? "nav-item active" : "nav-item"}
+              onClick={goHome}
+              title="Your library, the catalogue and the file routes"
+            >
+              <IconHome />
+              <span>Home</span>
+            </button>
             {/* Load stays enabled with no ontology open: it is the way out of
                 an empty library, so disabling it would be a dead end. */}
             <button
@@ -719,12 +827,16 @@ export default function App() {
               <IconLoad />
               <span>Load</span>
             </button>
+            {/* No longer disabled with nothing open. Pressing one is now a
+                question the home screen answers — "choose an ontology to
+                query" — which teaches that modes act on an ontology, where a
+                disabled control taught nothing. The tab still reads as chosen
+                while the question is outstanding, because it is. */}
             <button
               role="tab"
-              aria-selected={mode === "view"}
-              className={mode === "view" ? "nav-item active" : "nav-item"}
+              aria-selected={tabSelected("view")}
+              className={tabSelected("view") ? "nav-item active" : "nav-item"}
               onClick={() => onPickMode("view")}
-              disabled={!activeId}
               title={activeId ? "Read the ontology file itself" : NO_ONTOLOGY_TITLE}
             >
               <IconView />
@@ -732,10 +844,9 @@ export default function App() {
             </button>
             <button
               role="tab"
-              aria-selected={mode === "explore"}
-              className={mode === "explore" ? "nav-item active" : "nav-item"}
+              aria-selected={tabSelected("explore")}
+              className={tabSelected("explore") ? "nav-item active" : "nav-item"}
               onClick={() => onPickMode("explore")}
-              disabled={!activeId}
               title={activeId ? "Browse the ontology and inspect entities" : NO_ONTOLOGY_TITLE}
             >
               <IconExplore />
@@ -743,10 +854,9 @@ export default function App() {
             </button>
             <button
               role="tab"
-              aria-selected={mode === "query"}
-              className={mode === "query" ? "nav-item active" : "nav-item"}
+              aria-selected={tabSelected("query")}
+              className={tabSelected("query") ? "nav-item active" : "nav-item"}
               onClick={() => onPickMode("query")}
-              disabled={!activeId}
               title={activeId ? "Build a SPARQL query by clicking the graph" : NO_ONTOLOGY_TITLE}
             >
               <IconQuery />
@@ -806,7 +916,7 @@ export default function App() {
               <button
                 className="ghost icon-btn"
                 onClick={onCloseOntology}
-                title="Close this ontology and return to the start screen"
+                title="Close this ontology and return to the home screen"
                 aria-label="Close this ontology"
               >
                 <IconClose />
@@ -817,7 +927,7 @@ export default function App() {
               <button
                 ref={removeRef}
                 className="ghost icon-btn danger"
-                onClick={() => void onRemove()}
+                onClick={() => void onRemove(activeId!)}
                 disabled={removing}
                 aria-busy={removing}
                 title={
@@ -834,15 +944,22 @@ export default function App() {
             <span className="context-label">NO ONTOLOGY OPEN</span>
           )}
           <div className="spacer" />
-          <SearchBox
-            ontologyId={activeId}
-            theme={theme}
-            onPick={onSearchPick}
-            drawnIds={drawnIds}
-            placeholder={
-              mode === "query" ? "Search to add a step…" : "Search concepts, properties…"
-            }
-          />
+          {/* Absent on Home, where it would search inside an ontology the user
+              is not currently looking at and put its results nowhere. The home
+              screen has its own search, over the library rather than into one
+              ontology, and two search boxes on one screen meaning different
+              things is worse than one. */}
+          {!showHome && (
+            <SearchBox
+              ontologyId={activeId}
+              theme={theme}
+              onPick={onSearchPick}
+              drawnIds={drawnIds}
+              placeholder={
+                mode === "query" ? "Search to add a step…" : "Search concepts, properties…"
+              }
+            />
+          )}
         </div>
       </header>
 
@@ -856,7 +973,7 @@ export default function App() {
           status rather than an alert, because the action has already happened
           and nothing needs a decision.
 
-          The region is rendered even when empty, for the reason StartScreen's
+          The region is rendered even when empty, for the reason HomeScreen's
           own live region records: a live region added to the DOM at the same
           moment as its text is unreliably announced. That matters more here
           than there, because the same render also swaps the whole main area
@@ -875,7 +992,10 @@ export default function App() {
       {/* defaultBudget is set from the same response as graphData, so waiting
           for it costs no frame; it is in the condition because the floor is not
           knowable before the first graph arrives. */}
-      {graphData && defaultBudget !== null && (
+      {/* Not on Home: the bar is about the canvas, and pressing Home does not
+          throw the canvas away — so without this guard it would sit above the
+          library saying how much of an ontology nobody is looking at is drawn. */}
+      {!showHome && graphData && defaultBudget !== null && (
         <GraphNotice
           stats={graphData.stats}
           defaultBudget={defaultBudget}
@@ -887,19 +1007,24 @@ export default function App() {
         />
       )}
 
-      {/* With nothing open the chooser IS the main region, rather than sitting
-          inside one: it carries its own <main> and its own heading, so the
-          document never has two. */}
-      {activeId === null ? (
-        <StartScreen
+      {/* The home screen IS the main region, rather than sitting inside one: it
+          carries its own <main> and its own heading, so the document never has
+          two. Note it is rendered rather than hidden, so pressing Home really
+          does unmount the graph — but App keeps activeId, the selection and the
+          query builder's state, which is what makes Home a view. D-026. */}
+      {showHome ? (
+        <HomeScreen
           ontologies={ontologies}
           loading={listLoading}
           error={listError}
+          theme={theme}
+          workingId={removingId}
+          pendingMode={pendingMode}
           onRetry={refreshList}
-          onOpen={(id) => {
-            setNotice(null);
-            setActiveId(id);
-          }}
+          onOpen={(id) => enterMode(id, modeAfterPick())}
+          onEnterMode={enterMode}
+          onViewSource={(id) => enterMode(id, "view")}
+          onRemove={(id) => void onRemove(id)}
           onLoaded={onLoaded}
           onOpenDialog={openDialog}
         />

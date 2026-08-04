@@ -18,6 +18,13 @@ BASIC IDEA
     ontology is actually used. Expensive derived products are cached on the
     Ontology object so they are computed once.
 
+    The metadata file also carries a `card`: the twenty-entity sketch the home
+    screen draws as a thumbnail, computed during the parse that already happens
+    at ingest. It is there so that listing the library never needs a parse — a
+    home screen that parsed six ontologies to draw six thumbnails would undo the
+    lazy loading above. Anything stored before it existed simply has no `card`,
+    and nothing backfills one.
+
     A parse can be given a wall-clock timeout by the caller. It runs on a
     worker thread so the request can be released; the work itself cannot be
     killed, which is why the upload size cap matters (see D-013).
@@ -69,7 +76,7 @@ from rdflib import Graph
 from rdflib.util import guess_format
 
 # Derived-view builders and the saved-query store live in sibling modules.
-from .graph_builder import build_viz_graph
+from .graph_builder import build_card_sketch, build_viz_graph
 from .net_guard import BlockedAddress, install_rdflib_guard
 from .queries_store import SavedQueryStore
 from .query_schema import build_query_schema
@@ -296,12 +303,22 @@ class Ontology:
             "source": self.source,
             "format": self.format,
             "triples": self.meta["triples"],
+            # Whole-ontology counts, not budgeted ones: `stats` here is
+            # build_viz_graph's, taken before any budget is applied. A card is a
+            # statement about the file, not about the current canvas — the same
+            # distinction D-017 drew for kindCounts.
             "nodes": stats["nodeCount"],
             "edges": stats["edgeCount"],
             "kindCounts": stats["kindCounts"],
             "namespaces": self.meta["namespaces"],
             "addedAt": self.meta["addedAt"],
             "loaded": self.graph is not None,
+            # The home screen's thumbnail, absent for anything stored before it
+            # existed. `.get` rather than `[...]` is the whole migration: an
+            # older ontology serves None, its card renders without a miniature,
+            # and nothing parses to backfill one — backfilling here would put a
+            # parse per stored ontology back on the startup path.
+            "card": self.meta.get("card"),
         }
 
 
@@ -390,6 +407,11 @@ class OntologyStore:
             "addedAt": datetime.now(timezone.utc).isoformat(),
             "triples": len(graph),
             "stats": viz["stats"],
+            # Computed inside the parse that has already happened, which is the
+            # only reason the home screen can draw a thumbnail per ontology
+            # without costing a request. Measured over the whole viz dict, so
+            # it is a pass over an in-memory list rather than over the triples.
+            "card": {"sketch": build_card_sketch(viz)},
             # Only named prefixes are stored (the empty prefix is filtered here;
             # the query schema keeps it because SPARQL needs it — see query_schema).
             "namespaces": {

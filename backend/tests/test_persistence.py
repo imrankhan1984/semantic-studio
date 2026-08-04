@@ -10,7 +10,10 @@ SUMMARY
     that remove() deletes the files, and that corrupt metadata is skipped.
 
     It also covers the saved-query cascade: deleting an ontology deletes every
-    query saved against it, and the delete response says how many it took.
+    query saved against it, and the delete response says how many it took, and
+    the home screen's card metadata: the twenty-entity sketch written during the
+    ingest parse, its cap, that listing a restored library still parses nothing,
+    and that an ontology stored before the field existed lists without one.
 
 BASIC IDEA
     Persistence is what lets a previously loaded ontology reappear in the
@@ -35,11 +38,13 @@ EXPECTED OUTPUT
 ================================================================================
 """
 
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 from rdflib import Graph
 
+from app.graph_builder import SKETCH_NODE_LIMIT
 from app.main import app
 from app.store import OntologyStore
 
@@ -125,6 +130,123 @@ def test_corrupt_metadata_is_skipped(tmp_path):
 
     second = OntologyStore(tmp_path)
     assert len(second.list()) == 1
+
+
+# ---------------------------------------------------------------------------
+# The home screen's card metadata — backlog U-8, spec `home-screen`.
+#
+# The home screen draws a thumbnail per stored ontology. Building one needs the
+# viz graph, which needs a parse, and parsing every stored ontology to draw the
+# home screen would undo `startup-chooser-screen`. So the sketch is computed
+# during the parse that already happens at ingest and stored beside the file.
+# What these three tests hold is that it IS written, that it stays small, and —
+# the one that matters most — that listing still parses nothing.
+# ---------------------------------------------------------------------------
+
+
+def test_card_metadata_written_at_ingest(tmp_path):
+    """AC-14. The metadata carries the composition and a sketch, both computed
+    during the ingest parse, and both readable without one."""
+    store = OntologyStore(tmp_path)
+    ontology = _add_example(store)
+
+    meta = json.loads((tmp_path / "ontologies" / f"{ontology.id}.meta.json").read_text("utf-8"))
+
+    # The composition half of AC-14 predates this spec: kindCounts has been in
+    # `stats` since the metadata file existed, and it is whole-ontology, which
+    # is what a card needs. Asserted here rather than duplicated into `card`,
+    # because a second copy of the same numbers is a second thing to keep in
+    # step — see the build report.
+    assert meta["stats"]["kindCounts"]
+    assert sum(meta["stats"]["kindCounts"].values()) == meta["stats"]["nodeCount"]
+
+    sketch = meta["card"]["sketch"]
+    assert sketch["nodes"], "the sketch has no entities to draw"
+    # Only what a 120x70 picture uses. No labels: nothing renders text at that
+    # size, and ontology-controlled strings in a file read at every startup buy
+    # nothing.
+    assert set(sketch["nodes"][0]) == {"id", "kind", "degree"}
+    assert set(sketch["edges"][0]) == {"source", "target"}
+
+    # Both ends of every drawn edge are drawn, or the miniature would have a
+    # line going nowhere.
+    drawn = {n["id"] for n in sketch["nodes"]}
+    for edge in sketch["edges"]:
+        assert edge["source"] in drawn and edge["target"] in drawn
+
+    # And it reaches the client, which is the only thing the frontend can see.
+    assert ontology.summary()["card"] == meta["card"]
+
+
+def test_sketch_is_capped_at_twenty_entities(tmp_path):
+    """AC-14. A large ontology's sketch is still twenty entities, ranked the way
+    the canvas ranks them, so the thumbnail is a preview rather than a sample."""
+    store = OntologyStore(tmp_path)
+    # 200 classes in one chain, so degrees differ and the ranking has work to do.
+    lines = ["@prefix ex: <http://example.org/> .", "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> ."]
+    for i in range(200):
+        lines.append(f"ex:C{i} a rdfs:Class ; rdfs:subClassOf ex:C0 .")
+    ontology = store.add(
+        name="wide.ttl", source="upload", data="\n".join(lines).encode(), fmt="turtle"
+    )
+
+    sketch = ontology.meta["card"]["sketch"]
+    assert len(sketch["nodes"]) == SKETCH_NODE_LIMIT
+    assert ontology.summary()["nodes"] > SKETCH_NODE_LIMIT
+
+    # ex:C0 is every other class's superclass, so it is the highest-degree node
+    # in the ontology and has to be the first thing the thumbnail draws.
+    assert sketch["nodes"][0]["id"] == "http://example.org/C0"
+    degrees = [n["degree"] for n in sketch["nodes"]]
+    assert degrees == sorted(degrees, reverse=True)
+
+
+def test_listing_never_parses(tmp_path):
+    """AC-15. The budget `startup-chooser-screen` set, restated against the card
+    data: a restored library lists with everything a card needs and not one
+    ontology parsed.
+
+    Written as a restart rather than as a fresh add, because that is the only
+    state in which a parse could sneak back in — after `add` the graph is in
+    memory anyway and the assertion would prove nothing."""
+    first = OntologyStore(tmp_path)
+    _add_example(first)
+    _add_example(first)
+
+    second = OntologyStore(tmp_path)
+    summaries = [o.summary() for o in second.list()]
+
+    assert len(summaries) == 2
+    for ontology, summary in zip(second.list(), summaries):
+        assert ontology.graph is None, "listing parsed an ontology"
+        assert summary["loaded"] is False
+        # Everything a card renders, present without a parse.
+        assert summary["kindCounts"]
+        assert summary["card"]["sketch"]["nodes"]
+
+
+def test_ontology_stored_before_this_change_lists_without_a_card(tmp_path):
+    """AC-15's other half. A metadata file written before `card` existed still
+    lists, serves None, and does not trigger a parse to backfill one."""
+    first = OntologyStore(tmp_path)
+    oid = _add_example(first).id
+
+    # Rewrite the metadata as an older version of the application left it.
+    meta_path = tmp_path / "ontologies" / f"{oid}.meta.json"
+    meta = json.loads(meta_path.read_text("utf-8"))
+    del meta["card"]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    second = OntologyStore(tmp_path)
+    restored = second.get(oid)
+    summary = restored.summary()
+
+    assert summary["card"] is None
+    assert restored.graph is None, "a missing card triggered a parse"
+    # The rest of the card still renders: counts and composition are older than
+    # this spec and are what the row falls back to.
+    assert summary["kindCounts"]
+    assert summary["nodes"] > 0
 
 
 # ---------------------------------------------------------------------------

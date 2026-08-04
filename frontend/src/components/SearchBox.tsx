@@ -185,7 +185,7 @@ export default function SearchBox({
       />
       {/* Rendered whether or not it has anything to say. A live region added to
           the DOM in the same commit as its text is unreliably announced — the
-          same finding StartScreen and App's notice region both record. */}
+          same finding HomeScreen and App's notice region both record. */}
       <div className="visually-hidden" role="status" aria-live="polite">
         {announcement}
       </div>

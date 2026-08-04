@@ -30,8 +30,11 @@ import type { QueryState } from "./sparql/types";
 // Which colour theme is active.
 export type Theme = "dark" | "light";
 
-// The three top-level modes selected by the header tabs.
-export type AppMode = "view" | "explore" | "query";
+// The top-level modes. The first three are selected by the header tabs and act
+// on an ontology; `home` is the library screen, which acts on none of them and
+// is why it is not a tab. Home is a VIEW rather than a reset — switching to it
+// keeps the loaded ontology, the selection and any query in progress. See D-026.
+export type AppMode = "view" | "explore" | "query" | "home";
 
 // Response of GET /source: the file text plus render/truncation metadata.
 export interface OntologySource {
@@ -200,7 +203,24 @@ export interface MergeResult {
   addedEdges: number;
 }
 
+/**
+ * The twenty-entity thumbnail a home-screen card draws, computed by the server
+ * during the parse that already happens at ingest and served from metadata.
+ *
+ * It carries no labels, because nothing at 120x70 pixels renders text, and no
+ * edge kinds, because at that size an edge is a hairline. Node ids are here to
+ * join the edges to their ends and are never displayed.
+ */
+export interface CardSketch {
+  nodes: { id: string; kind: string; degree: number }[];
+  edges: { source: string; target: string }[];
+}
+
 // The lightweight per-ontology summary shown in the dropdown (the /list response).
+//
+// `nodes`, `edges` and `kindCounts` describe the WHOLE ontology: they are
+// build_viz_graph's stats, taken before any budget is applied. A card is a
+// statement about the file, not about the current canvas.
 export interface OntologySummary {
   id: string;
   name: string;
@@ -215,6 +235,10 @@ export interface OntologySummary {
   addedAt?: string;
   /** Whether the RDF graph is currently parsed in server memory. */
   loaded?: boolean;
+  /** The home screen's thumbnail. Absent — null, not undefined — for anything
+   *  stored before this field existed; such a card renders without a miniature
+   *  rather than triggering a parse to backfill one. */
+  card?: { sketch: CardSketch } | null;
 }
 
 // One RDF term as shown in the detail panel (a URI, literal, or blank node).

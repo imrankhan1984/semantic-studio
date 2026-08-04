@@ -318,20 +318,29 @@ async function renderApp() {
 }
 
 /**
- * A saved-library row by ontology name. Anchored on the comma because a
- * library row's accessible name is "FIBO, 132,001 triples, …" while the
- * catalogue below it offers "FIBO — Financial Industry Business Ontology";
- * a bare /FIBO/ matches both.
+ * A saved-library card by ontology name. Its heading rather than the card
+ * itself: a card is an <article> and is deliberately NOT one large button, so
+ * the thing that carries the name and nothing else is the heading inside it.
  */
-function libraryRow(name: string): HTMLElement {
-  return screen.getByRole("button", { name: new RegExp(`^${name},`) });
+function libraryCard(name: string): HTMLElement {
+  return screen.getByRole("heading", { level: 3, name });
 }
 
-/** Render App and open the first saved ontology, as a user would. */
+/**
+ * A card's verb by name. They are named "Explore FIBO" rather than "Explore"
+ * because a library of six would otherwise offer six identical controls, and
+ * that spelling is what makes them addressable from here at all.
+ */
+function cardVerb(verb: string, name: string): HTMLElement {
+  return screen.getByRole("button", { name: `${verb} ${name}` });
+}
+
+/** Render App and open the first saved ontology, as a user would: by pressing
+ *  a verb on its card, which loads it and enters that mode in one action. */
 async function renderAppOpened() {
   await renderApp();
   await act(async () => {
-    fireEvent.click(libraryRow("FIBO"));
+    fireEvent.click(cardVerb("Explore", "FIBO"));
   });
 }
 
@@ -339,8 +348,8 @@ function statusBar(): string {
   return document.querySelector(".status-bar")!.textContent ?? "";
 }
 
-function chooserShown(): boolean {
-  return document.querySelector(".start-screen") !== null;
+function homeShown(): boolean {
+  return document.querySelector(".home-screen") !== null;
 }
 
 describe("App startup chooser", () => {
@@ -367,28 +376,100 @@ describe("App startup chooser", () => {
     // lists the saved library it was handed.
     await renderApp();
 
-    expect(chooserShown()).toBe(true);
+    expect(homeShown()).toBe(true);
     expect(screen.queryByTestId("graph")).toBeNull();
-    expect(libraryRow("FIBO")).toBeTruthy();
+    expect(libraryCard("FIBO")).toBeTruthy();
     // The context row admits there is nothing open rather than showing an
     // ontology dropdown with no selection in it.
     expect(screen.getByText("NO ONTOLOGY OPEN")).toBeTruthy();
   });
 
-  it("mode tabs are disabled while the chooser is shown", async () => {
-    // AC-9. Disabled AND titled: a control that does nothing without saying
-    // why is worse than one that is absent.
+  it("mode tabs are enabled with nothing open and ask which ontology", async () => {
+    // This replaces `startup-chooser-screen`'s AC-9, which asked for the three
+    // tabs to be DISABLED here. `home-screen` supersedes that deliberately: a
+    // disabled control prevented the empty canvas by removing the choice rather
+    // than answering it, and it taught the user nothing. Pressing one now is a
+    // question the home screen answers.
     await renderApp();
 
     for (const name of ["View", "Explore", "Query"]) {
       const tab = screen.getByRole("tab", { name }) as HTMLButtonElement;
-      expect(tab.disabled, `${name} tab`).toBe(true);
-      expect(tab.getAttribute("title")).toBe("Open an ontology first");
+      expect(tab.disabled, `${name} tab`).toBe(false);
+      expect(tab.getAttribute("title")).toBe("Pick an ontology on the home screen first");
     }
     // Load is the way out of an empty library, so it stays available.
     expect((screen.getByRole("button", { name: "Load" }) as HTMLButtonElement).disabled).toBe(
       false,
     );
+  });
+
+  it("choosing a mode with nothing open asks which ontology", async () => {
+    // The pending-mode route. The screen does not change, the heading does, and
+    // the tab reads as chosen because the question it asked is outstanding.
+    await renderApp();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Query" }));
+    });
+
+    expect(homeShown()).toBe(true);
+    expect(screen.getByRole("heading", { name: /choose an ontology to query/i })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Query" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    // Still nothing fetched: asking which ontology is not opening one.
+    expect(getGraph).not.toHaveBeenCalled();
+  });
+
+  it("exactly one tab is selected at a time", async () => {
+    // Found in Chrome, not here: Home was written `aria-selected={showHome}`,
+    // so with a mode question outstanding both Home and Query reported
+    // themselves selected. Two selected tabs in one tablist is a contradiction
+    // a screen reader has no way to resolve, and it is invisible on screen
+    // because the styling happens to agree with the sensible reading.
+    await renderApp();
+    const selected = () =>
+      screen
+        .getAllByRole("tab")
+        .filter((t) => t.getAttribute("aria-selected") === "true")
+        .map((t) => t.textContent);
+
+    // On Home with nothing asked for: Home alone.
+    expect(selected()).toEqual(["Home"]);
+
+    // With a mode question outstanding: the mode asked for, alone. Home is
+    // still the screen, but it is not what the user chose.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Query" }));
+    });
+    expect(selected()).toEqual(["Query"]);
+
+    // And in a mode: that mode alone.
+    await act(async () => {
+      fireEvent.click(cardVerb("Explore", "FIBO"));
+    });
+    expect(selected()).toEqual(["Explore"]);
+  });
+
+  it("answering the question lands in the mode that was asked for", async () => {
+    // Open, from the card menu rather than from a verb, so the answer carries
+    // no mode of its own and the remembered one is the only thing that can
+    // decide where it lands.
+    await renderApp();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Query" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /more actions for FIBO/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    });
+
+    expect(homeShown()).toBe(false);
+    expect(document.querySelector(".query-panel")).toBeTruthy();
+    expect(getGraph).toHaveBeenCalledWith("o1", undefined);
   });
 
   it("opening a library entry hides the chooser and loads it", async () => {
@@ -397,7 +478,7 @@ describe("App startup chooser", () => {
 
     expect(getGraph).toHaveBeenCalledTimes(1);
     expect(getGraph).toHaveBeenCalledWith("o1", undefined);
-    expect(chooserShown()).toBe(false);
+    expect(homeShown()).toBe(false);
     expect(screen.getByTestId("graph")).toBeTruthy();
     expect(statusBar()).toContain("FIBO");
   });
@@ -405,15 +486,15 @@ describe("App startup chooser", () => {
   it("closing an ontology returns to the chooser without deleting", async () => {
     // AC-4. Nothing is removed: the entry is still in the library behind it.
     await renderAppOpened();
-    expect(chooserShown()).toBe(false);
+    expect(homeShown()).toBe(false);
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /close this ontology/i }));
     });
 
-    expect(chooserShown()).toBe(true);
+    expect(homeShown()).toBe(true);
     expect(deleteOntology).not.toHaveBeenCalled();
-    expect(libraryRow("FIBO")).toBeTruthy();
+    expect(libraryCard("FIBO")).toBeTruthy();
     // And the list is not refetched to get it back: closing is browser state.
     expect(listOntologies).toHaveBeenCalledTimes(1);
   });
@@ -442,7 +523,7 @@ describe("App startup chooser", () => {
 
     await renderApp();
     await act(async () => {
-      fireEvent.click(libraryRow("FIBO"));
+      fireEvent.click(cardVerb("Explore", "FIBO"));
     });
     getGraph.mockClear();
 
@@ -451,10 +532,10 @@ describe("App startup chooser", () => {
     });
 
     expect(deleteOntology).toHaveBeenCalledWith("o1");
-    expect(chooserShown()).toBe(true);
+    expect(homeShown()).toBe(true);
     // FOAF is still saved and is NOT opened in FIBO's place.
     expect(getGraph).not.toHaveBeenCalled();
-    expect(libraryRow("FOAF")).toBeTruthy();
+    expect(libraryCard("FOAF")).toBeTruthy();
     confirm.mockRestore();
   });
 });
@@ -1411,7 +1492,7 @@ describe("App removal warning", () => {
     await clickRemove();
 
     expect(deleteOntology).not.toHaveBeenCalled();
-    expect(chooserShown()).toBe(false);
+    expect(homeShown()).toBe(false);
     expect(document.querySelector(".notice-bar")).toBeNull();
     confirm.mockRestore();
   });
@@ -1442,7 +1523,7 @@ describe("App removal warning", () => {
     await renderAppOpened();
     await clickRemove();
 
-    expect(chooserShown()).toBe(true);
+    expect(homeShown()).toBe(true);
     expect(document.querySelector(".notice-bar")).toBeNull();
     // The region itself stays, and stays empty: it is what a screen reader is
     // already watching, so removing it would be the announcement bug it exists
@@ -1502,7 +1583,10 @@ describe("App About control", () => {
     await renderApp();
 
     const tablist = screen.getByRole("tablist");
-    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    // Four now, not three: `home-screen` made Home a real fourth view of the
+    // workspace, and it swaps the main region exactly as the other three do.
+    // About still does not, which is the distinction this test is about.
+    expect(screen.getAllByRole("tab")).toHaveLength(4);
     expect(tablist.contains(aboutControl())).toBe(false);
     expect(aboutControl().getAttribute("role")).toBeNull();
     expect(aboutControl().getAttribute("aria-haspopup")).toBe("dialog");
@@ -1537,7 +1621,7 @@ describe("App About control", () => {
     listOntologies.mockResolvedValue([]);
     await renderApp();
 
-    expect(chooserShown()).toBe(true);
+    expect(homeShown()).toBe(true);
     expect(aboutControl().disabled).toBe(false);
 
     await act(async () => {
@@ -1586,6 +1670,151 @@ describe("App About control", () => {
     for (const [name, fn] of Object.entries(ALL_API)) {
       expect(fn, `${name} was called by About`).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe("App home screen", () => {
+  it("the Home control appears before Load", async () => {
+    // AC-1. Position, not merely presence: Home is where the application starts
+    // and where every route back leads, so it is the first thing in the nav.
+    await renderApp();
+
+    const nav = screen.getByRole("tablist");
+    const items = [...nav.querySelectorAll("button")] as HTMLElement[];
+    const home = screen.getByRole("tab", { name: "Home" });
+    const load = screen.getByRole("button", { name: "Load" });
+
+    expect(items.indexOf(home)).toBe(0);
+    expect(items.indexOf(home)).toBeLessThan(items.indexOf(load));
+  });
+
+  it("Home from any mode returns without discarding state", async () => {
+    // AC-2, and D-026 in one assertion. Home is a view, not a reset: pressing
+    // it must not close the ontology, drop the selection, or refetch anything.
+    // Written through Query mode because that is where a user has the most to
+    // lose — the builder's schema request is the thing a reset would repeat.
+    await renderAppOpened();
+    await act(async () => {
+      fireEvent.click(screen.getByText("fake node"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Query" }));
+    });
+    getGraph.mockClear();
+    getQuerySchema.mockClear();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Home" }));
+    });
+    expect(homeShown()).toBe(true);
+    // Still open, and still saying so: the status bar names the ontology Home
+    // did not close.
+    expect(statusBar()).toContain("FIBO");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Query" }));
+    });
+
+    expect(homeShown()).toBe(false);
+    expect(document.querySelector(".query-panel")).toBeTruthy();
+    // Nothing was reloaded to get back, which is the difference between a view
+    // and a reset.
+    expect(getGraph).not.toHaveBeenCalled();
+    expect(getQuerySchema).not.toHaveBeenCalled();
+  });
+
+  it("a card verb loads the ontology and enters that mode", async () => {
+    // AC-6. One action, no intermediate "choose an ontology" step: the request
+    // and the mode change happen on the same press.
+    await renderApp();
+
+    await act(async () => {
+      fireEvent.click(cardVerb("Query", "FIBO"));
+    });
+
+    expect(getGraph).toHaveBeenCalledTimes(1);
+    expect(getGraph).toHaveBeenCalledWith("o1", undefined);
+    expect(homeShown()).toBe(false);
+    expect(document.querySelector(".query-panel")).toBeTruthy();
+  });
+
+  it("a card verb on an already-loaded ontology makes no load request", async () => {
+    // AC-6's performance half. Going Home and pressing a different verb on the
+    // ontology already open changes the mode and nothing else — the graph
+    // effect is keyed on the id, so setting the same one again is free.
+    await renderAppOpened();
+    getGraph.mockClear();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Home" }));
+    });
+    await act(async () => {
+      fireEvent.click(cardVerb("View", "FIBO"));
+    });
+
+    expect(getGraph).not.toHaveBeenCalled();
+    expect(homeShown()).toBe(false);
+    expect(document.querySelector(".source-view")).toBeTruthy();
+  });
+
+  it("Remove on a card uses the existing confirmation with its query count", async () => {
+    // AC-12. The card menu reaches the same sequence the header's trash control
+    // does — count first, then the dialog carrying the number — rather than a
+    // second, quieter delete path. `saved-query-deletion-warning` is the spec
+    // that argued for that number and this is where it could most easily have
+    // been lost.
+    listSavedQueries.mockResolvedValue([
+      { id: "q1", name: "Planets" },
+      { id: "q2", name: "Missions" },
+    ]);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    await renderApp();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /more actions for FIBO/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    });
+
+    expect(listSavedQueries).toHaveBeenCalledWith("o1");
+    expect(confirm.mock.calls[0][0]).toContain("2 saved queries");
+    expect(deleteOntology).toHaveBeenCalledWith("o1");
+    // Still on Home afterwards, and the card is gone from it.
+    expect(homeShown()).toBe(true);
+    expect(screen.queryByRole("heading", { level: 3, name: "FIBO" })).toBeNull();
+    confirm.mockRestore();
+  });
+
+  it("removing a card that is not the open ontology leaves the open one alone", async () => {
+    // Not an acceptance criterion, and it is the defect generalising onRemove
+    // from `activeId` to an id would otherwise have introduced. Home can now be
+    // reached with something loaded, so the ontology being removed is routinely
+    // not the one open — and closing that one would be a reset nobody asked for.
+    listOntologies.mockResolvedValue([SUMMARY, { ...SUMMARY, id: "o2", name: "FOAF" }]);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    deleteOntology.mockResolvedValue({ deleted: "o2", deletedQueries: 0 });
+
+    await renderAppOpened();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Home" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /more actions for FOAF/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    });
+
+    expect(deleteOntology).toHaveBeenCalledWith("o2");
+    // FIBO is still the open ontology: the status bar names it, and pressing a
+    // mode tab goes back to it rather than to the library.
+    expect(statusBar()).toContain("FIBO");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
+    });
+    expect(homeShown()).toBe(false);
+    confirm.mockRestore();
   });
 });
 

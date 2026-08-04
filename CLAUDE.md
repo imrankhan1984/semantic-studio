@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 169 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 365 tests, vitest
+cd backend  && python -m pytest tests    # 173 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 421 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -69,7 +69,7 @@ and a collection landing inside a single-shot timing costs tens of milliseconds.
 A single sample here measures how many other fixtures the suite holds. See
 D-024. Do not "simplify" either test back to one `perf_counter` pair.
 
-**Know the gap.** 67 of the 365 frontend tests are in `src/sparql/`. The rest
+**Know the gap.** 67 of the 421 frontend tests are in `src/sparql/`. The rest
 were added from 2026-07-27 onward and are the project's component tests. Copy
 their pattern — a `// @vitest-environment jsdom` docblock per file and `vi.mock`
 over `api.ts`. For anything touching the graph, either stub `GraphView` (see
@@ -92,7 +92,7 @@ results* empties the results without touching the query — and renders the
 component with a hand-built `builder` rather than the real hook. Treat it as a
 foothold, not as coverage. `LoadDialog.tsx` is covered only through
 `CatalogueList.test.tsx`, which renders it to prove the catalogue matches the
-start screen's — its file, URL and drag-and-drop tabs have no test.
+home screen's — its file, URL and drag-and-drop tabs have no test.
 
 **jsdom cannot see everything a browser can, and it fails silently when it
 cannot.** Three measured examples. jsdom does not blur a focused element when it
@@ -186,12 +186,15 @@ frontend/src/
   sparql/            Pure query-building logic
   explore/           Pure Explore-mode logic: the suggestion ranking and the
                      ontology summary sentence
+  home/              Pure home-screen logic: the card thumbnail's layout and
+                     the composition bar's bands
 ```
 
-`sparql/` and `explore/` are the same idea twice: logic a component needs, kept
-out of the component so it can be tested without rendering. `removalPrompt.ts`
-and `catalogue.ts` are the same idea for one function and one constant. Prefer
-this split for anything with a rule in it.
+`sparql/`, `explore/` and `home/` are the same idea three times: logic a
+component needs, kept out of the component so it can be tested without
+rendering. `removalPrompt.ts`, `sourceTarget.ts` and `catalogue.ts` are the same
+idea for one function and one constant. Prefer this split for anything with a
+rule in it.
 
 Routers stay thin. If you are writing logic in `routers/`, it probably belongs
 in a module.
@@ -319,20 +322,28 @@ prove a change works in the application rather than in the test suite.
   **does not** once the last interaction was a pointer — so pressing *Close this
   ontology* with the mouse landed focus on a row showing nothing.
   `:focus-visible` excludes that case by design and no global rule can reach it.
-  `StartScreen.tsx` sets the marker when it takes focus and drops it on blur.
+  `HomeScreen.tsx` sets the marker when it takes focus and drops it on blur; the
+  selector still says `.start-screen` because that class is still on the home
+  screen's root, which is deliberate rather than leftover — the page frame and
+  this one rule did not change when the chooser became a card grid.
   See D-022. If you need a focus rule anywhere else, you almost certainly do not.
 
   Keyboard **reach** followed on 2026-07-31; see the `keyboard-and-motion` entry
   at the foot of this list.
 - **The application opens on a chooser and renders nothing until asked**
   (2026-07-29, spec `startup-chooser-screen`). `App.tsx` no longer selects the
-  most recent ontology on mount: `activeId` stays `null`, `StartScreen.tsx`
-  fills the main area, and the mode tabs are disabled. Mount makes **exactly
-  one** request, `GET /api/ontologies`, and `App.test.tsx` fails if a second
-  appears. Both ways back to the chooser — *Close this ontology* and removing
-  the active one — set `activeId` to `null` rather than falling back to another
-  entry. `CatalogueList.tsx` is shared by the chooser and the Load dialog so
-  backlog L-1's reordering lands on both; do not inline a second copy.
+  most recent ontology on mount: `activeId` stays `null`, the home screen fills
+  the main area. Mount makes **exactly one** request, `GET /api/ontologies`, and
+  `App.test.tsx` fails if a second appears. Both ways back — *Close this
+  ontology* and removing the active one — set `activeId` to `null` rather than
+  falling back to another entry. `CatalogueList.tsx` is shared by the home
+  screen and the Load dialog so backlog L-1's reordering lands on both; do not
+  inline a second copy.
+
+  **Two halves of this item are superseded by `home-screen`, below.**
+  `StartScreen.tsx` is gone, and the mode tabs are no longer disabled — that
+  spec's Section 7 argues, and this codebase now agrees, that a disabled control
+  prevented the empty canvas by removing the choice rather than answering it.
 - **The catalogue leads with FOAF, on purpose, and the order is tested**
   (2026-07-30, spec `catalogue-order`). `CATALOGUE` in `catalogue.ts` runs
   `foaf`, `schemaorg`, `fibo`, `unesco`, ascending by how much the user has to
@@ -677,6 +688,94 @@ prove a change works in the application rather than in the test suite.
   `GraphNotice.test.tsx` asserts over **every** button in the bar rather than
   querying for the one that used to be there, so any future control that hides
   the notice fails it too.
+
+- **The application opens on a card grid, and `StartScreen.tsx` is gone**
+  (2026-08-04, spec `home-screen`, backlog U-8, absorbing the retired L-9).
+  `HomeScreen.tsx` is its successor and `OntologyCard.tsx` is one entry in it:
+  a miniature of that ontology's own graph, L-5's generated sentence, a
+  composition bar in the legend's colours, chips, three verbs and a `⋮` menu.
+  Home is also a header control now, so the library is reachable from every mode
+  rather than only through *Close this ontology*.
+
+  **Everything on this screen still costs zero requests, and that is the
+  property to defend.** It is `startup-chooser-screen`'s budget inherited whole:
+  mount makes exactly one request and none to `/graph`, and `App.test.tsx` fails
+  if either changes. Cards are drawn from the list response alone.
+
+  **The one backend change is the sketch, and the spec was wrong about needing
+  more.** `home-screen.md` Section 8 says the list response does not carry
+  `kindCounts`. It does, and has since the metadata file existed — `store.add`
+  writes `viz["stats"]` whole — so the composition bar and the sentence needed
+  no server change at all. What was added is `meta["card"]["sketch"]`:
+  `build_card_sketch` in `graph_builder.py`, the twenty highest-degree entities
+  and the edges among them, computed inside the parse that already happens at
+  ingest. **`summary()` reads it with `meta.get("card")` and that single `.get`
+  is the whole migration** — an ontology stored before this exists serves
+  `null`, its card renders without a thumbnail, and nothing parses to backfill
+  one. Backfilling on first render would put a parse per stored ontology back on
+  the startup path and hit the largest library hardest.
+
+  **Five things here are load-bearing.**
+
+  **`home/miniature.ts` draws with SVG and must never mount Sigma.** A browser
+  caps live WebGL contexts at around sixteen and a library of twenty would ask
+  for twenty. It is Fruchterman-Reingold over at most twenty points, and it is
+  **deterministic** — a golden-angle spiral, never `Math.random`, because App
+  re-renders this screen on every keystroke in the search box and a thumbnail
+  that reshuffled per character would be noise.
+
+  **The miniature's box is per layout and its aspect ratio is the reason.**
+  `preserveAspectRatio` letterboxes, so one 120×70 viewBox in a card's 320×76
+  strip put the whole drawing in a 130px column with 60% of the card empty. And
+  **the fit-to-box step scales both axes by one factor** — normalising them
+  independently stretched a roughly round layout into a flat smear. Both
+  measured in Chrome; neither is visible from jsdom.
+
+  **The automatic layout reads the whole library, never the filtered subset.**
+  Nine or fewer is cards, ten or more is rows, `CARD_LAYOUT_MAX`, overridable by
+  a toggle that persists. Switching on the *filtered* count would flip the
+  screen between layouts while the user types. A mutation test on that line is
+  in `HomeScreen.test.tsx`.
+
+  **The `memo` around the catalogue lives in `HomeScreen.tsx`, at the import
+  site, not on `CatalogueList` itself** — so the Load dialog renders the
+  identical unwrapped component and the two callers cannot drift, which is the
+  whole reason `CatalogueList` exists. The test mocks `./CatalogueList` with a
+  spy and lets the production `memo` wrap it, which is the only arrangement that
+  tests the shipped line rather than a copy declared in the test.
+
+  **`.onto-menu[hidden] { display: none }` is a real fix, not tidiness.**
+  `display: flex` beats the browser's own `[hidden]` rule, so without it the
+  closed menu drew as an empty bordered strip beside every card's name. jsdom
+  asserts the attribute and cannot see it being overridden.
+
+  **Two further things worth not rediscovering.** `startup-chooser-screen`'s
+  AC-9 is deliberately superseded: the mode tabs are **enabled** with nothing
+  open, and pressing one is remembered as `pendingMode` while the library
+  heading asks which ontology. And **Home is a view, not a reset** — D-026 — so
+  it keeps the ontology, the selection and the query being built; what it does
+  not keep is the graph's settled layout, because GraphView unmounts. Measured:
+  the round trip Home → Query costs one request, the saved-query list.
+
+  **The security review of this build found nothing to fix and one thing worth
+  knowing**, now backlog X-6. `kindColor` in `types.ts`, and
+  `KIND_LABELS[kind] ?? KIND_LABELS.other` in `explore/suggestions.ts` and
+  `home/miniature.ts`, index plain objects with a string that comes from the
+  graph — so a kind of `constructor` or `valueOf` returns an inherited function
+  rather than falling through to `other`. It is not exploitable: `_best_kind`
+  emits one of eleven fixed constants, so an uploaded file cannot reach it, and
+  React escapes the result into an attribute either way. It was left alone
+  because it is the same wart in four places, and fixing only the newest would
+  leave them inconsistent. **If you touch one of those lookups, touch all
+  four.**
+
+  **One defect here was found in the accessibility tree rather than on screen.**
+  Home was written `aria-selected={showHome}`, so with a mode question
+  outstanding both Home and that mode reported themselves selected. Two selected
+  tabs in one tablist is a contradiction a screen reader cannot resolve, and it
+  is invisible visually because the styling agrees with the sensible reading
+  either way. The lesson generalises past this build: the accessibility tree is
+  worth reading for more than whether controls have names.
 
 ## Pull requests
 
