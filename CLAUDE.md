@@ -50,7 +50,7 @@ app writes into the real per-user ontology library.
 
 ```bash
 cd backend  && python -m pytest tests    # 169 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 334 tests, vitest
+cd frontend && npm run test              # 365 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -69,7 +69,7 @@ and a collection landing inside a single-shot timing costs tens of milliseconds.
 A single sample here measures how many other fixtures the suite holds. See
 D-024. Do not "simplify" either test back to one `perf_counter` pair.
 
-**Know the gap.** 67 of the 334 frontend tests are in `src/sparql/`. The rest
+**Know the gap.** 67 of the 365 frontend tests are in `src/sparql/`. The rest
 were added from 2026-07-27 onward and are the project's component tests. Copy
 their pattern — a `// @vitest-environment jsdom` docblock per file and `vi.mock`
 over `api.ts`. For anything touching the graph, either stub `GraphView` (see
@@ -79,8 +79,12 @@ jsdom does not define it. To reach anything *inside* GraphView, stub the `sigma`
 module itself and read the settings object the constructor was handed — that is
 how the node and edge reducers are tested without a WebGL context, and it tests
 the shipped closures rather than an extracted copy of them.
-**`Legend.tsx` and the rest are still untested.** A change to one of those is
-adding the first test for that file, and should. `SourceView.test.tsx` exists
+`Legend.test.tsx` arrived with `keyboard-and-motion` and covers what that spec
+needed: the rows as controls, their pressed state, the collapse header, and one
+render-count budget. It does not cover the swatch colours or the edge-label map.
+**`Logo.tsx`, `PathBar.tsx`, `icons.tsx` and the rest are still untested.** A
+change to one of those is adding the first test for that file, and should.
+`SourceView.test.tsx` exists
 now but covers only the "view in source" target — the Original / Formatted
 toggle, find-in-file, the show-more window and copy have no test.
 `QueryPanel.tsx` now has a test file, but it covers one thing — that *Clear
@@ -318,13 +322,8 @@ prove a change works in the application rather than in the test suite.
   `StartScreen.tsx` sets the marker when it takes focus and drops it on blur.
   See D-022. If you need a focus rule anywhere else, you almost certainly do not.
 
-  What is still missing is keyboard **reach**, which a focus ring is not. Around
-  twenty interactive elements are exposed to assistive technology for the whole
-  application — the chooser added several, but the graph, the legend rows and
-  the search results are still not among them, so the *not drawn* marker on a
-  search result sits in a row a keyboard user cannot get to, and it has nothing
-  to show a ring on. There is still no `prefers-reduced-motion` rule. All of
-  that is backlog X-1. Do not add to it.
+  Keyboard **reach** followed on 2026-07-31; see the `keyboard-and-motion` entry
+  at the foot of this list.
 - **The application opens on a chooser and renders nothing until asked**
   (2026-07-29, spec `startup-chooser-screen`). `App.tsx` no longer selects the
   most recent ontology on mount: `activeId` stays `null`, `StartScreen.tsx`
@@ -600,6 +599,84 @@ prove a change works in the application rather than in the test suite.
   first place a security property from the specifications' `CLAUDE.md` Section 7
   is stated to the user, and a test asserts it. Any feature that sends ontology
   content anywhere has to change those words in the same commit.
+
+- **Keyboard reach, screen reader support and reduced motion landed together**
+  (2026-07-31, spec `keyboard-and-motion`, backlog X-1), with defect **D-2** in
+  the same branch. Measured on the built application: **13 interactive elements
+  exposed to assistive technology on 2026-07-26, 33 on 2026-07-31, every one of
+  them named**, read from Chrome's accessibility tree rather than from the DOM.
+
+  `Legend.tsx`'s filter rows are `<button aria-pressed>` and its collapse header
+  is `<button aria-expanded aria-controls>`; the *Relations* rows stay a plain
+  `<ul>`, because a control that does nothing is worse than text. `SearchBox.tsx`
+  is a real combobox with a roving `aria-activedescendant` — **the one place in
+  this codebase that uses one instead of real focus**, because focus has to stay
+  in the text field or typing stops working. `GraphView.tsx`'s container is
+  `role="img"` with a label naming the drawn and total counts and the keyboard
+  route out. `App.tsx` opens the main area with a skip link.
+
+  **The graph is not navigable node by node and that is a decision, not a gap.**
+  D-025. A force-directed WebGL canvas has no stable reading order and nothing in
+  the accessibility tree to move between; what it gets is an accessible
+  equivalent — described canvas, skip link, and the path through suggestions,
+  search and the detail panel that already existed. Confirmed dropped by Imran
+  before the build. Do not reopen it, and do not call any of this WCAG
+  conformance.
+
+  **Four things here are load-bearing.**
+
+  **The reduced-motion settle is bounded by time, not by iterations, and it is
+  deliberately not "the same total" the spec asked for.** Measured with
+  `graphology-layout-forceatlas2` at roughly FIBO's edge density: 100 nodes reach
+  600 iterations in 24 ms, 500 nodes in 528 ms, and 2,000 nodes cost 1,343 ms for
+  100 iterations. The animated path runs about 560 iterations over its 8.5 second
+  window, so matching it at the default node budget is eight seconds of frozen
+  tab. `REDUCED_MOTION_SETTLE_MS` is 1,000 and the comment above it carries the
+  numbers. Anything a newcomer opens settles fully; the largest graphs are
+  partially arranged, which is still the arranged-in-one-paint that AC-10 asks
+  for.
+
+  **The settle runs before `new Sigma(...)`, not after it.** Settling afterwards
+  shows the ring `circular.assign` left behind and then replaces it, which is one
+  motion event more than a reduced-motion user asked for. `GraphView.test.tsx`
+  asserts this by snapshotting node positions **inside the stubbed Sigma
+  constructor** — the graph is a live object, so reading it afterwards reports
+  wherever the layout has since got to, and the claim is about that instant.
+
+  **`matchMedia` is read exactly once per graph mount**, and that is a budget
+  rather than tidiness. The obvious shape — one `matchMedia` in the `useState`
+  initialiser and a second in the effect that subscribes — reads it twice on
+  every ontology switch and every budget change. The MediaQueryList lives in a
+  ref and both the initial value and the subscription come off it. Deleting the
+  read makes four tests fail; that mutation was run.
+
+  **The specification's Section 6 tab order is wrong about the graph toolbar.**
+  It lists the legend first. The toolbar is a full-width strip *above* the
+  legend, so matching the spec would put the tab order out of step with the
+  visual order — the defect this item exists to fix, not a form of fixing it.
+  Document order is left alone and asserted in `GraphView.test.tsx`, which is the
+  only place that can see it: `App.test.tsx` stubs `GraphView`. The real order
+  was walked with Tab in Chrome: skip link, Fit, Zoom in, Zoom out, Re-run the
+  layout, PNG, legend header, seven filter rows, then the Explore panel.
+
+  Two smaller things. **Two toolbar buttons had no accessible name at all**,
+  being a "＋" and a "－" glyph each, and now carry `aria-label`; the same shape
+  survives on the detail panel's ✕ and ⧉ and was deliberately left alone, that
+  component being named nowhere in the spec. And `QueryPanel.tsx` gained an id,
+  an `aria-label` and `tabIndex={-1}` — it is the only one of the four panels
+  beside the graph with no heading of its own, so the skip link had nowhere to
+  land in Query mode. That file is not in the spec's Section 8 list.
+
+- **The graph notice cannot be dismissed, and `noticeDismissed` is gone**
+  (2026-07-31, defect D-2, built with X-1). The ✕ set a flag in `App.tsx` that
+  reset only when `activeId` changed, so one press removed *Show more* **and**
+  *Show less* for the rest of the session with no way back. It was specified in
+  `partial-graph-rendering` stage 1, when the bar was a sentence and one button,
+  and kept through `show-less` without anyone noticing that `show-less` had given
+  it something worth losing. The bar and its summary are permanent now.
+  `GraphNotice.test.tsx` asserts over **every** button in the bar rather than
+  querying for the one that used to be there, so any future control that hides
+  the notice fails it too.
 
 ## Pull requests
 

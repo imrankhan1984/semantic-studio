@@ -48,7 +48,7 @@ EXPECTED OUTPUT
 */
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { PALETTES } from "../types";
 import type { MergeResult, Theme, VizGraph, VizNeighborhood } from "../types";
 
@@ -66,8 +66,12 @@ beforeAll(() => {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const sigmaCalls = vi.hoisted(() => ({ last: null as any }));
 
-/** Every camera.animate target, in order, so "the camera arrived" is testable. */
-const cameraMoves = vi.hoisted(() => ({ to: [] as { x: number; y: number }[] }));
+/** Every camera.animate target, in order, so "the camera arrived" is testable.
+ *  The duration rides along because reduced motion is asserted on it. */
+const cameraMoves = vi.hoisted(() => ({
+  to: [] as { x: number; y: number }[],
+  durations: [] as number[],
+}));
 
 // A Sigma that draws nothing and remembers everything it was given. Only the
 // methods GraphView actually calls are implemented; anything else appearing
@@ -77,7 +81,16 @@ vi.mock("sigma", () => {
   class FakeSigma {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     constructor(graph: any, container: any, settings: any) {
-      sigmaCalls.last = { graph, container, settings };
+      // A snapshot of where every node was at the moment the renderer was
+      // built, i.e. at the first paint. Taken here because the graph is a live
+      // object: read afterwards it reports wherever the layout has since put
+      // things, and "the layout was applied BEFORE painting" is precisely a
+      // claim about this instant.
+      const positionsAtFirstPaint: Record<string, [number, number]> = {};
+      graph?.forEachNode?.((id: string, attrs: { x: number; y: number }) => {
+        positionsAtFirstPaint[id] = [attrs.x, attrs.y];
+      });
+      sigmaCalls.last = { graph, container, settings, positionsAtFirstPaint };
     }
     on() {}
     kill() {}
@@ -94,12 +107,19 @@ vi.mock("sigma", () => {
     }
     getCamera() {
       return {
-        animate(target: { x: number; y: number }) {
+        animate(target: { x: number; y: number }, opts?: { duration?: number }) {
           cameraMoves.to.push({ x: target.x, y: target.y });
+          cameraMoves.durations.push(opts?.duration ?? -1);
         },
-        animatedReset() {},
-        animatedZoom() {},
-        animatedUnzoom() {},
+        animatedReset(opts?: { duration?: number }) {
+          cameraMoves.durations.push(opts?.duration ?? -1);
+        },
+        animatedZoom(opts?: { duration?: number }) {
+          cameraMoves.durations.push(opts?.duration ?? -1);
+        },
+        animatedUnzoom(opts?: { duration?: number }) {
+          cameraMoves.durations.push(opts?.duration ?? -1);
+        },
       };
     }
   }
@@ -406,6 +426,7 @@ function positionsOf(graph: any): Record<string, [number, number]> {
 describe("expanding the drawn graph", () => {
   beforeEach(() => {
     cameraMoves.to = [];
+    cameraMoves.durations = [];
     vi.useFakeTimers();
   });
 
@@ -547,6 +568,285 @@ describe("expanding the drawn graph", () => {
       expect(Number.isFinite(graph.getNodeAttribute(id, "y")), id).toBe(true);
     }
     unmount();
+  });
+});
+
+/* --- the accessible equivalent, and reduced motion ------------------------ */
+
+/**
+ * A controllable `prefers-reduced-motion`.
+ *
+ * jsdom defines no matchMedia at all, which is why GraphView guards it with
+ * `?.` — so every test above this point runs with the preference unset, which
+ * is the normal path. This installs one, records every query string it is
+ * asked for, and can flip the answer and notify listeners the way a real
+ * browser does when the OS setting changes under a running page.
+ */
+function stubMatchMedia(matches: boolean) {
+  const listeners = new Set<(e: MediaQueryListEvent) => void>();
+  const queries: string[] = [];
+  const list = {
+    get matches() {
+      return state.matches;
+    },
+    media: "",
+    addEventListener: (_type: string, fn: (e: MediaQueryListEvent) => void) => {
+      listeners.add(fn);
+    },
+    removeEventListener: (_type: string, fn: (e: MediaQueryListEvent) => void) => {
+      listeners.delete(fn);
+    },
+  };
+  const state = { matches };
+  const matchMedia = vi.fn((query: string) => {
+    queries.push(query);
+    return list as unknown as MediaQueryList;
+  });
+  vi.stubGlobal("matchMedia", matchMedia);
+  return {
+    queries,
+    /** Change the preference the way the operating system would. */
+    set(next: boolean) {
+      state.matches = next;
+      for (const fn of listeners) fn({ matches: next } as MediaQueryListEvent);
+    },
+  };
+}
+
+/** Render GraphView and hand back the view, for tests that drive props. */
+async function renderView(props: Partial<Record<string, unknown>> = {}) {
+  const { default: GraphView } = await import("./GraphView");
+  const all = {
+    data: DATA,
+    theme: "dark" as const,
+    hiddenKinds: new Set<string>(),
+    selected: null as string | null,
+    onSelect: () => {},
+    focusTick: 0,
+    ...props,
+  };
+  let view!: ReturnType<typeof render>;
+  await act(async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    view = render(<GraphView {...(all as any)} />);
+  });
+  return {
+    view,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rerender: async (next: Record<string, any>) => {
+      await act(async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        view.rerender(<GraphView {...({ ...all, ...next } as any)} />);
+      });
+    },
+  };
+}
+
+describe("the graph's accessible equivalent", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("the graph container is role img with a describing label", async () => {
+    // AC-8. A WebGL canvas draws pixels: there is nothing in the accessibility
+    // tree to navigate, so what it gets is a description and a route out. The
+    // label ends by naming the route, which is the honest half of D-025 — the
+    // keyboard user gets a path through the ontology, not the spatial view.
+    const { view } = await renderView();
+    const container = screen.getByRole("img");
+
+    expect(container.className).toContain("graph-container");
+    expect(container.getAttribute("aria-label")).toMatch(/^Ontology graph, /);
+    expect(container.getAttribute("aria-label")).toMatch(/entity list/i);
+    view.unmount();
+  });
+
+  it("the label reports drawn and total counts", async () => {
+    // AC-8. Both numbers, with separators, as everything else in this
+    // application states them — and NOTHING from the ontology. Requirement 5 of
+    // the security rules in one line: counts are interpolated, labels are not.
+    const { view } = await renderView({
+      data: {
+        ...DATA,
+        stats: { ...DATA.stats, nodeCount: 3, nodeTotal: 18717, truncated: true },
+      },
+    });
+
+    const label = screen.getByRole("img").getAttribute("aria-label")!;
+    expect(label).toContain("3 of 18,717 entities drawn");
+    // Not a single entity label from the graph. The three in DATA are named
+    // here so this fails loudly rather than by a regex nobody re-reads.
+    for (const node of DATA.nodes) expect(label).not.toContain(node.label);
+    view.unmount();
+  });
+
+  it("the toolbar comes before the docked rail in the tab order", async () => {
+    // AC-13, the half App.test.tsx cannot see because it stubs this component.
+    //
+    // **The specification's Section 6 has this the other way round**, listing
+    // the legend before the graph toolbar. It is wrong about the layout: the
+    // toolbar is a full-width strip across the top of the graph area and the
+    // legend is a rail beneath it, so the toolbar is what a sighted user reads
+    // first. Matching the specification would put the tab order out of step
+    // with the visual order, which is the defect this item exists to fix rather
+    // than a form of fixing it. Document order is left as it is and asserted.
+    const rail = <div data-testid="rail" />;
+    const { default: GraphView } = await import("./GraphView");
+    let view!: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(
+        <GraphView
+          data={DATA}
+          theme="dark"
+          hiddenKinds={new Set()}
+          selected={null}
+          onSelect={() => {}}
+          focusTick={0}
+          leftRail={rail}
+        />,
+      );
+    });
+
+    const toolbar = document.querySelector(".graph-toolbar")!;
+    const docked = screen.getByTestId("rail");
+    expect(
+      toolbar.compareDocumentPosition(docked) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // And nothing in the toolbar has been given a tabindex to reorder it.
+    for (const button of toolbar.querySelectorAll("button")) {
+      expect(button.getAttribute("tabindex")).toBeNull();
+    }
+    view.unmount();
+  });
+
+  it("labels nothing when there is no graph", async () => {
+    // The edge case the specification names: with no ontology open there is
+    // nothing to describe, so an unlabelled div is exposed as nothing at all
+    // rather than as an image of nothing.
+    const { view } = await renderView({ data: null });
+    expect(screen.queryByRole("img")).toBeNull();
+    expect(document.querySelector(".graph-container")!.getAttribute("aria-label")).toBeNull();
+    view.unmount();
+  });
+});
+
+describe("reduced motion", () => {
+  beforeEach(() => {
+    cameraMoves.to = [];
+    cameraMoves.durations = [];
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    // The two Sigma globals are stubbed once for the whole file and
+    // unstubAllGlobals has just removed them; put them back for the next test.
+    vi.stubGlobal("WebGL2RenderingContext", class {});
+    vi.stubGlobal("WebGLRenderingContext", class {});
+    document.body.innerHTML = "";
+  });
+
+  it("reads the motion preference once", async () => {
+    // AC-14, row 2 of the performance budget. The obvious shape — a matchMedia
+    // in the useState initialiser and a second one in the effect that
+    // subscribes — reads it twice per graph mount, and a graph mounts on every
+    // ontology switch and every budget change.
+    const media = stubMatchMedia(false);
+    const { view } = await renderView();
+
+    const reads = media.queries.filter((q) => q.includes("prefers-reduced-motion"));
+    expect(reads).toHaveLength(1);
+    expect(reads[0]).toBe("(prefers-reduced-motion: reduce)");
+    view.unmount();
+  });
+
+  it("reduced motion settles the layout before painting", async () => {
+    // AC-10, and row 3 of the performance budget. The claim is an ordering one:
+    // by the time Sigma exists — the first paint — the nodes are no longer on
+    // the ring circular.assign put them on. Settling afterwards would show that
+    // ring and then replace it, which is one motion event more than a
+    // reduced-motion user asked for.
+    //
+    // Asserted against the ring rather than against a settled shape, because
+    // ForceAtlas2's output is not something to pin: what matters is that it ran
+    // before the renderer was constructed, not where it landed.
+    const rings: Record<string, [number, number]> = {};
+    {
+      // The ring itself: the same graph rendered with the preference unset,
+      // where the layout is animated and has not run at construction time.
+      stubMatchMedia(false);
+      const plain = await renderView();
+      Object.assign(rings, sigmaCalls.last.positionsAtFirstPaint);
+      plain.view.unmount();
+    }
+
+    vi.unstubAllGlobals();
+    vi.stubGlobal("WebGL2RenderingContext", class {});
+    vi.stubGlobal("WebGLRenderingContext", class {});
+    stubMatchMedia(true);
+    const rafs = vi.spyOn(window, "requestAnimationFrame");
+    const { view } = await renderView();
+
+    const settled = sigmaCalls.last.positionsAtFirstPaint as Record<string, [number, number]>;
+    expect(Object.keys(settled).sort()).toEqual(Object.keys(rings).sort());
+    const moved = Object.keys(settled).filter(
+      (id) => settled[id][0] !== rings[id][0] || settled[id][1] !== rings[id][1],
+    );
+    expect(moved.length, "the layout had not run by the first paint").toBe(
+      Object.keys(rings).length,
+    );
+
+    // And nothing was scheduled to keep moving them. This is the half that
+    // fails if the media-query read is removed: the animated path requests a
+    // frame immediately.
+    expect(rafs).not.toHaveBeenCalled();
+    rafs.mockRestore();
+    view.unmount();
+  });
+
+  it("reduced motion passes zero duration to the camera", async () => {
+    // AC-10's second half. The camera tween is 500 ms on every selection made
+    // from search, a result row or the detail panel, which is the motion a user
+    // of this application meets most often.
+    stubMatchMedia(false);
+    const normal = await renderView({ selected: "http://x/Planet", focusTick: 1 });
+    expect(cameraMoves.durations).toEqual([500]);
+    normal.view.unmount();
+
+    vi.unstubAllGlobals();
+    vi.stubGlobal("WebGL2RenderingContext", class {});
+    vi.stubGlobal("WebGLRenderingContext", class {});
+    cameraMoves.durations = [];
+    stubMatchMedia(true);
+    const reduced = await renderView({ selected: "http://x/Planet", focusTick: 1 });
+
+    expect(cameraMoves.durations).toEqual([0]);
+    // The toolbar's own camera controls take the same route, so there is one
+    // place to change rather than four literals to keep in step.
+    fireEvent.click(screen.getByRole("button", { name: /zoom in/i }));
+    fireEvent.click(screen.getByRole("button", { name: /fit/i }));
+    expect(cameraMoves.durations).toEqual([0, 0, 0]);
+    reduced.view.unmount();
+  });
+
+  it("a motion preference change is honoured without reload", async () => {
+    // AC-11. matchMedia change events are subscribed to, so turning the OS
+    // setting on mid-session takes effect on the next camera move rather than
+    // on the next page load.
+    //
+    // Only the ON direction does anything, and the test says so: turning it off
+    // has nobody asking for movement, and re-running the load layout at that
+    // point would be motion nobody requested.
+    const media = stubMatchMedia(false);
+    const { view, rerender } = await renderView({ selected: "http://x/Planet", focusTick: 1 });
+    expect(cameraMoves.durations).toEqual([500]);
+
+    await act(async () => {
+      media.set(true);
+    });
+    await rerender({ selected: "http://x/Planet", focusTick: 2 });
+
+    expect(cameraMoves.durations).toEqual([500, 0]);
+    view.unmount();
   });
 });
 

@@ -222,8 +222,9 @@ A big ontology is loaded in full but **drawn in part**. The graph shows the
 once makes the browser tab unresponsive rather than informative.
 
 When that happens the app says so above the graph — *Showing the 2,000 most
-connected of 18,717 entities* — and the status bar keeps both numbers even if
-you dismiss the notice. Nothing is hidden silently.
+connected of 18,717 entities* — and the status bar carries both numbers as well.
+The notice cannot be dismissed, because dismissing it used to take the two
+controls below with it. Nothing is hidden silently.
 
 - **Show more** draws twice as many, up to a ceiling of 20,000. **Show less**
   halves it again, down to the default. Each is disabled at its own end of the

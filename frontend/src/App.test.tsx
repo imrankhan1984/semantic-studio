@@ -57,6 +57,11 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { ApiError } from "./api";
+// The stylesheet as text, for the one assertion jsdom cannot make: that the
+// skip link is clipped until it takes focus. `test: { css: true }` in
+// vite.config.ts is what makes this import real rather than "" — see the trap
+// recorded in focus-visible.test.ts.
+import CSS from "./index.css?raw";
 import type { MergeResult, OntologySummary, VizGraph, VizNeighborhood } from "./types";
 
 const {
@@ -463,17 +468,34 @@ describe("App status bar", () => {
     expect(statusBar()).toContain("5,180 of 51,446 edges");
   });
 
-  it("keeps saying n of total after the notice is dismissed", async () => {
-    // AC-23's second half. Dismissing the notice hides the notice, not the
-    // fact: this is what stops the truncation from becoming invisible.
-    await renderAppOpened();
+  it("the notice cannot be dismissed", async () => {
+    // Defect D-2, at the level where it lived. `noticeDismissed` in App reset
+    // only when `activeId` changed, so one press of the ✕ removed Show more and
+    // Show less for the rest of the session with no way to bring them back.
+    // The state is gone, not merely the control: this asserts the bar survives
+    // everything that used to be able to hide it.
+    //
     // Selected by class rather than by role: the removal message is a second
     // polite live region, so `role="status"` no longer identifies this one.
+    await renderAppOpened();
     expect(document.querySelector(".graph-notice")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /dismiss/i })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    // A budget change re-renders the bar and it comes back with both controls.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /show more/i }));
+    });
 
-    expect(document.querySelector(".graph-notice")).toBeNull();
+    expect(document.querySelector(".graph-notice")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /show more/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /show less/i })).toBeTruthy();
+  });
+
+  it("keeps saying n of total in the status bar", async () => {
+    // AC-23's second half of partial-graph-rendering, which outlived the
+    // control it was written about: the status bar states the ontology's real
+    // size independently of the notice, so the truncation is reported twice.
+    await renderAppOpened();
     expect(statusBar()).toContain("2,000 of 18,717 nodes");
     expect(statusBar()).toContain("5,180 of 51,446 edges");
   });
@@ -1564,5 +1586,128 @@ describe("App About control", () => {
     for (const [name, fn] of Object.entries(ALL_API)) {
       expect(fn, `${name} was called by About`).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe("App keyboard route past the graph", () => {
+  /** Everything in the main area a keyboard can land on, in document order. */
+  function focusablesInMain(): HTMLElement[] {
+    const main = document.querySelector("main.main")!;
+    return [
+      ...main.querySelectorAll<HTMLElement>("button, a[href], input, select, textarea"),
+    ].filter((el) => !(el as HTMLButtonElement).disabled);
+  }
+
+  const skipLink = () => screen.getByRole("button", { name: /skip to the entity list/i });
+
+  it("the skip link is the first focusable element in main", async () => {
+    // AC-9. First, because a skip link that is not first is a control the user
+    // reaches after the thing it exists to skip.
+    await renderAppOpened();
+
+    const focusables = focusablesInMain();
+    expect(focusables.length).toBeGreaterThan(1);
+    expect(focusables[0]).toBe(skipLink());
+    // And it is a real control in the natural tab order, not something given a
+    // positive tabindex to jump the queue — which would reorder everything
+    // after it and is the classic way this is got wrong.
+    expect(skipLink().getAttribute("tabindex")).toBeNull();
+  });
+
+  it("the skip link moves focus to the entity list", async () => {
+    // AC-9. The Explore panel is the keyboard route through the ontology —
+    // suggestions, then the detail panel's links — and D-025 is the decision
+    // that this is what the graph gets instead of arrow keys. So the link has
+    // to land somewhere real, and it has to keep landing somewhere real as the
+    // column changes underneath it.
+    await renderAppOpened();
+
+    fireEvent.click(skipLink());
+    const start = document.getElementById("explore-start-heading")!;
+    expect(document.activeElement).toBe(start);
+    // Focusable from script and not a stop in the tab order.
+    expect(start.getAttribute("tabindex")).toBe("-1");
+
+    // Select something: the column becomes the detail panel, and the link
+    // follows it rather than pointing at a heading that no longer exists.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake node" }));
+    });
+    fireEvent.click(skipLink());
+    expect(document.activeElement).toBe(document.getElementById("detail-panel-heading"));
+  });
+
+  it("the skip link is hidden until focused", async () => {
+    // AC-9. A skip link nobody can see is a skip link nobody uses, including
+    // sighted keyboard users — so it appears on focus rather than never.
+    //
+    // jsdom loads no stylesheet and computes no layout, so the two halves are
+    // asserted where each can be: the element carries the class here, and the
+    // rule that clips it and the rule that restores it are read out of the
+    // stylesheet. Confirmed visually in a browser, as Section 11 requires.
+    await renderAppOpened();
+    expect(skipLink().className).toContain("skip-link");
+
+    const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+    const base = rules.match(/(^|\})\s*\.skip-link\s*\{([^}]*)\}/);
+    expect(base, "no .skip-link rule in index.css").not.toBeNull();
+    // Clipped, not display:none — a hidden element cannot be tabbed to at all,
+    // which would defeat the whole control.
+    expect(base![2]).toMatch(/clip-path\s*:\s*inset/);
+    expect(base![2]).not.toMatch(/display\s*:\s*none/);
+
+    const focused = rules.match(/(^|\})\s*\.skip-link:focus\s*\{([^}]*)\}/);
+    expect(focused, "nothing reveals the skip link on focus").not.toBeNull();
+    expect(focused![2]).toMatch(/clip-path\s*:\s*none/);
+  });
+
+  it("tab order in the main area matches the specified order", async () => {
+    // AC-13. Asserted as document order with no tabindex anywhere, rather than
+    // by driving Tab: jsdom implements neither layout nor sequential focus
+    // navigation, so a userEvent.tab() loop here would be testing the polyfill.
+    // Same argument as CatalogueList.test.tsx and GraphNotice.test.tsx; the
+    // visual half is measured in a browser.
+    //
+    // GraphView is stubbed in this file, so its toolbar is not here and the
+    // toolbar's position relative to the legend is asserted in
+    // GraphView.test.tsx instead. What this covers is the order App itself
+    // owns: the skip link, then the graph area, then the right-hand column.
+    await renderAppOpened();
+
+    const focusables = focusablesInMain();
+    expect(focusables[0]).toBe(skipLink());
+
+    // Nothing anywhere in the main area carries a tabindex, so the tab order IS
+    // the document order and reading one tells you the other.
+    for (const el of focusables) {
+      expect(el.getAttribute("tabindex"), el.textContent ?? el.tagName).toBeNull();
+    }
+
+    // The legend's controls come before the right-hand column's. Something has
+    // to be selected for the column to hold a control at all: the graph
+    // response here carries no nodes, so the starting panel offers nothing.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake node" }));
+    });
+    const withPanel = focusablesInMain();
+    const legendHeader = screen.getByRole("button", { name: "Legend and filters" });
+    const panelControl = document.querySelector(".detail-panel button") as HTMLElement;
+    expect(panelControl, "the detail panel offered nothing to focus").toBeTruthy();
+    expect(withPanel.indexOf(legendHeader)).toBeGreaterThan(0);
+    expect(withPanel.indexOf(legendHeader)).toBeLessThan(withPanel.indexOf(panelControl));
+  });
+
+  it("the graph area is announced and the notice reads before it", async () => {
+    // The other half of the accessible equivalent, from App's side: the notice
+    // saying how much of the ontology is drawn sits above the main area, so it
+    // is read before the graph rather than after it. GraphView owns the label
+    // itself and GraphView.test.tsx asserts its contents.
+    await renderAppOpened();
+
+    const notice = document.querySelector(".graph-notice")!;
+    const main = document.querySelector("main.main")!;
+    expect(
+      notice.compareDocumentPosition(main) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });

@@ -33,7 +33,17 @@ BASIC IDEA
     ontology, and App moves that budget in both directions. Show more doubles
     it and Show less halves it, down to a floor App learns rather than declares:
     the budget the first response for an ontology carried, which is the server's
-    own default including any environment override.
+    own default including any environment override. The bar carrying those two
+    controls cannot be dismissed and there is no state here for having done so:
+    a ✕ used to hide it for the rest of the session and take both controls with
+    it, which is defect D-2.
+
+    The main area opens with a skip link, hidden until it takes focus. The graph
+    itself is a WebGL canvas with nothing in the accessibility tree to navigate,
+    so the keyboard route through an ontology is the panel beside it — the
+    suggestions, the search box and the detail panel's links — and the skip link
+    is what makes that route reachable rather than something to tab past a
+    canvas to find. See D-025.
 
     App can also grow the graph without changing the budget: a neighbourhood
     fetched for one entity is passed to GraphView as its own prop, merged into
@@ -127,6 +137,25 @@ const NO_ONTOLOGY_TITLE = "Open an ontology first";
  *  something went wrong. Before the crash fix on 2026-07-30 this route blanked
  *  the whole application; a silent non-response replaced it, and this replaces
  *  that. */
+/**
+ * What the skip link aims at, most specific first.
+ *
+ * The column beside the graph holds a different component per mode, and each
+ * already has a heading it names itself by. In Explore that is the starting
+ * panel or, once something is selected, the detail panel; View overlays the
+ * source pane; Query has no heading of its own, so the panel itself is the
+ * target and carries an aria-label instead.
+ *
+ * Order matters only where two could exist at once, which is View over Explore:
+ * the source pane is on top and is what the user is reading, so it wins.
+ */
+const PANEL_HEADING_IDS = [
+  "source-view-heading",
+  "explore-start-heading",
+  "detail-panel-heading",
+  "query-panel-region",
+];
+
 const NOT_A_GRAPH_NODE =
   "That entity is not drawn on the graph, so the view did not move: relationships " +
   "and blank nodes are described but never shown as nodes.";
@@ -228,10 +257,9 @@ export default function App() {
   const [mode, setMode] = useState<AppMode>("explore");
   // How many nodes to ask for. null means "do not send a limit", so the server
   // applies its own configured default; it becomes a number only once the user
-  // presses Show more. Both this and the dismissal are per-ontology state and
-  // are reset below when the active ontology changes.
+  // presses Show more. Per-ontology state, reset below when the active ontology
+  // changes.
   const [graphBudget, setGraphBudget] = useState<number | null>(null);
-  const [noticeDismissed, setNoticeDismissed] = useState(false);
   // The budget the server applied before the user changed anything, which is
   // the floor Show less stops at. Read from the first response for an ontology
   // rather than written here as 2,000: SEMANTIC_STUDIO_GRAPH_NODE_BUDGET moves
@@ -313,7 +341,6 @@ export default function App() {
     setGraphBudget(null);
     setDefaultBudget(null);
     pendingBudgetPress.current = null;
-    setNoticeDismissed(false);
     setSelected(null);
     setFocusPanel(false);
     setHiddenKinds(new Set());
@@ -655,6 +682,25 @@ export default function App() {
   // every render of this component.
   const clearBudgetPress = useCallback(() => setBudgetPress(null), []);
 
+  // Where the skip link sends focus: whichever panel currently fills the column
+  // beside the graph, tried in the order the modes put them there. A button and
+  // a lookup rather than an <a href="#…">, because this application has no
+  // routing and a hash in the address bar would be a URL that means nothing;
+  // and by id rather than by ref because four different components can be the
+  // target and each already names its own heading for aria-labelledby.
+  //
+  // Every heading in the list carries tabIndex -1, so it can take focus from
+  // script without adding a stop to the tab order.
+  const skipToPanel = useCallback(() => {
+    for (const id of PANEL_HEADING_IDS) {
+      const heading = document.getElementById(id);
+      if (heading) {
+        heading.focus();
+        return;
+      }
+    }
+  }, []);
+
   // Layout: a header (brand + nav rows), a main area (graph + right panel that
   // depends on the mode), a status bar, and the Load dialog when open.
   return (
@@ -829,7 +875,7 @@ export default function App() {
       {/* defaultBudget is set from the same response as graphData, so waiting
           for it costs no frame; it is in the condition because the floor is not
           knowable before the first graph arrives. */}
-      {graphData && defaultBudget !== null && !noticeDismissed && (
+      {graphData && defaultBudget !== null && (
         <GraphNotice
           stats={graphData.stats}
           defaultBudget={defaultBudget}
@@ -837,7 +883,6 @@ export default function App() {
           restoreFocus={budgetPress}
           onShowMore={showMore}
           onShowLess={showLess}
-          onDismiss={() => setNoticeDismissed(true)}
           onFocusRestored={clearBudgetPress}
         />
       )}
@@ -860,6 +905,14 @@ export default function App() {
         />
       ) : (
         <main className="main">
+          {/* The keyboard route past the graph. It is the first focusable thing
+              in the main area and it is visually hidden until it takes focus,
+              which is the standard treatment and deliberate: a skip link nobody
+              can see is a skip link nobody uses, including sighted keyboard
+              users. */}
+          <button className="skip-link" onClick={skipToPanel}>
+            Skip to the entity list
+          </button>
           <div className="graph-area">
             <GraphView
               data={graphData}

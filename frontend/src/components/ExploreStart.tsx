@@ -60,7 +60,12 @@ export default function ExploreStart({ graph, loading, theme, onSelect }: Props)
   if (loading) {
     return (
       <aside className="explore-start" aria-labelledby={HEADING_ID}>
-        <h2 id={HEADING_ID}>Explore</h2>
+        {/* tabIndex -1 for the same reason DetailPanel's heading carries it:
+            script-focusable, and not a stop in the tab order. This is where the
+            main area's skip link lands. */}
+        <h2 id={HEADING_ID} tabIndex={-1}>
+          Explore
+        </h2>
         <p className="hint">Loading…</p>
       </aside>
     );
@@ -73,7 +78,9 @@ export default function ExploreStart({ graph, loading, theme, onSelect }: Props)
 
   return (
     <aside className="explore-start" aria-labelledby={HEADING_ID}>
-      <h2 id={HEADING_ID}>Explore</h2>
+      <h2 id={HEADING_ID} tabIndex={-1}>
+        Explore
+      </h2>
       <p className="explore-summary">{summary}</p>
 
       {suggestions.length > 0 && (
