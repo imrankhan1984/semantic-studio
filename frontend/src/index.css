@@ -615,55 +615,345 @@ select:focus {
   margin-top: 0;
 }
 
-.start-rows {
+/* --- home screen: the library, its controls, and one card ---------------- */
+/* The home screen is the start screen's successor and keeps its page-frame
+   classes, so D-022's one scoped focus rule and the sizing above are unchanged.
+   Everything below is this screen's own. */
+
+/* Wider than the 720px the chooser used: three cards abreast is the layout the
+   nine-entry threshold was chosen against, and 720px fits two. */
+.home-screen .start-screen-inner {
+  max-width: 1040px;
+}
+
+.home-library-head {
   display: flex;
-  flex-direction: column;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.home-library-head h2 {
+  margin: 0;
+}
+
+.home-controls {
+  display: flex;
+  align-items: center;
   gap: 8px;
 }
 
-.start-row {
+.home-search {
+  width: 220px;
+  max-width: 46vw;
+}
+
+/* Two buttons reading as one control. The pressed one is filled rather than
+   only outlined, because aria-pressed is the state and the fill has to agree
+   with it for anyone not hearing it. */
+.home-view-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.home-view-toggle button {
+  border: 0;
+  border-radius: 0;
+  padding: 5px 11px;
+  font-size: 12px;
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.home-view-toggle button + button {
+  border-left: 1px solid var(--border);
+}
+
+.home-view-toggle button.active {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-raised));
+  color: var(--text);
+}
+
+/* auto-fill rather than auto-fit: with two ontologies saved the cards stay card
+   sized instead of stretching to half the screen each, which would make a small
+   library look like a mistake. */
+.onto-grid {
   display: grid;
-  /* Name and counts share the first line; the format line spans both. A grid
-     rather than a flex row so a long ontology name cannot push the counts off
-     the end of the card. */
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 2px 16px;
-  text-align: left;
-  padding: 10px 12px;
-  border-radius: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+/* The dense layout. One column of full-width rows; the card's own internal
+   arrangement changes with it rather than being a second component. */
+.onto-grid-rows {
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.onto-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 10px;
   background: var(--bg-raised);
+  overflow: hidden;
 }
 
-.start-row:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-raised));
+.onto-mini {
+  height: 76px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
 }
 
-.start-row:disabled {
-  opacity: 0.6;
-  cursor: default;
+.onto-mini svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-.start-row-name {
-  font-weight: 600;
+/* An ontology stored before the server wrote a sketch. A quiet placeholder
+   rather than a gap, so a mixed library does not look broken. */
+.onto-mini-absent {
+  height: 100%;
+  margin: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+
+.onto-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px 12px;
+  min-width: 0;
+}
+
+.onto-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.onto-name {
+  margin: 0;
   font-size: 13.5px;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
-.start-row-counts {
+.onto-summary {
+  margin: 0;
   font-size: 12px;
+  line-height: 1.45;
   color: var(--text-dim);
-  font-family: ui-monospace, Consolas, monospace;
+}
+
+/* The composition bar. Fixed height and rounded ends, so a single-kind ontology
+   still reads as a bar rather than as a rule. */
+.onto-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.onto-bar-band {
+  height: 100%;
+}
+
+.onto-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+}
+
+.onto-chips li {
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
   white-space: nowrap;
 }
 
-.start-row-meta {
-  grid-column: 1 / -1;
-  font-size: 11px;
-  color: var(--text-dim);
+.onto-chips .chip-metric {
+  font-family: ui-monospace, Consolas, monospace;
 }
+
+/* Loaded is the one chip that is not neutral. It still carries its own word, so
+   the colour is a second channel rather than the only one — G-2's principle
+   applied before G-2 exists. */
+.onto-chips .chip-on {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--accent);
+}
+
+.onto-verbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.onto-verb {
+  flex: 1;
+  padding: 5px 4px;
+  font-size: 12px;
+}
+
+.onto-loading {
+  font-size: 11px;
+  color: var(--accent);
+}
+
+/* The card's menu. Positioned rather than in the flow, so opening it does not
+   push the cards below it down the page. */
+.onto-menu-wrap {
+  position: relative;
+  flex: none;
+}
+
+.onto-menu-btn {
+  line-height: 1;
+}
+
+/* `display: flex` below beats the browser's own `[hidden] { display: none }`,
+   which is a specificity fact rather than an oversight — and without this rule
+   the closed menu drew as an empty bordered strip beside every card's name.
+   Found in Chrome; jsdom asserts the `hidden` attribute and cannot see that it
+   was being overridden. */
+.onto-menu[hidden] {
+  display: none;
+}
+
+.onto-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
+}
+
+.onto-menu button {
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  text-align: left;
+  padding: 6px 9px;
+  font-size: 12px;
+}
+
+.onto-menu button:hover {
+  background: var(--bg-raised);
+}
+
+/* Remove is the one destructive item, and it is coloured only on top of its own
+   word — the label says "Remove" whatever the colour does. */
+.onto-menu button.danger {
+  color: var(--error);
+}
+
+/* The catalogue as cards, in the same grid language as the library above it.
+   Scoped to this screen rather than applied to `.catalogue` itself, so the Load
+   dialog's narrow column list is untouched and CatalogueList stays one
+   component with one rendering — the whole reason it exists. */
+.home-screen .catalogue {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  max-height: none;
+  overflow: visible;
+}
+
+/* --- home screen: the dense row layout ---------------------------------- */
+/* The same markup rearranged: the miniature becomes a 44px glyph on the left,
+   the sentence is dropped, and the composition strip becomes a fixed 80px
+   beside the chips. */
+
+.onto-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px 6px 6px;
+}
+
+.onto-row .onto-mini {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 8px;
+}
+
+.onto-row .onto-mini-absent {
+  margin: 4px;
+}
+
+.onto-row .onto-body {
+  flex: 1;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+}
+
+.onto-row .onto-head {
+  flex: 1 1 180px;
+  min-width: 0;
+  align-items: center;
+}
+
+/* Two lines of prose per row would make ten rows longer than ten cards, which
+   is the opposite of what this layout is for. The sentence stays in the card
+   layout, where there is room to read it. */
+.onto-row .onto-summary {
+  display: none;
+}
+
+.onto-row .onto-bar {
+  flex: none;
+  width: 80px;
+}
+
+.onto-row .onto-chips {
+  flex: 2 1 260px;
+  min-width: 0;
+}
+
+.onto-row .onto-verbs {
+  flex: none;
+  margin-top: 0;
+}
+
+.onto-row .onto-verb {
+  flex: none;
+}
+
+/* The menu stays beside the name in both layouts. An earlier version tried to
+   move it to the end of the row with `order`, which did nothing: the button is
+   inside `.onto-head`, and `order` only reorders siblings within one flex
+   container. Beside the name is where it belongs anyway — it is that entry's
+   menu — and it means the visual order matches the DOM order in both layouts
+   rather than only in one. */
 
 .start-empty {
   margin: 0;

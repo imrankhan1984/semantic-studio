@@ -34,6 +34,9 @@ EXPECTED OUTPUT
       JSON-ready dicts consumed by frontend/src/components/GraphView.tsx.
     - budget_viz -> the same shape reduced to the highest-degree nodes, with
       the true totals and a truncation flag added to stats.
+    - build_card_sketch -> a twenty-node thumbnail of the same ranking, small
+      enough to live in the metadata file so the home screen can draw an
+      ontology without parsing it.
     - neighborhood_viz -> the same shape again, holding one entity and its
       highest-degree neighbours, so the browser can grow a budgeted graph
       outwards without refetching all of it.
@@ -372,6 +375,48 @@ def budget_viz(viz: dict, limit: int) -> dict:
             # composition. This will read as a bug. It is not. See D-017.
             "kindCounts": dict(viz["stats"]["kindCounts"]),
         },
+    }
+
+
+# --- the home screen's thumbnail --------------------------------------------
+
+# How many entities a card's miniature draws. Twenty is what fits legibly in
+# 120x70 pixels: past that the dots merge and the picture stops distinguishing
+# one ontology from another, which is the only thing it is for. It also bounds
+# the metadata file, which is read on every startup for every stored ontology.
+SKETCH_NODE_LIMIT = 20
+
+
+def build_card_sketch(viz: dict, limit: int = SKETCH_NODE_LIMIT) -> dict:
+    """A tiny thumbnail of an ontology: its `limit` highest-degree entities and
+    the edges among them, carrying only what a miniature draws.
+
+    **Why this is computed at ingest and stored, rather than derived on
+    request.** The home screen shows one of these per saved ontology, and
+    building it needs the viz graph, which needs a parse. Parsing every stored
+    ontology to draw the home screen would undo `startup-chooser-screen`, whose
+    whole point is that startup costs nothing. So it rides along with the parse
+    that already happens when a file is added, and is served afterwards from
+    metadata with no parse at all.
+
+    The ranking is `budget_viz`'s at a much smaller limit, deliberately: the
+    twenty entities on the card are the twenty the canvas would draw first, so
+    the thumbnail is a true preview rather than a decoration.
+
+    Labels are excluded. Nothing in the miniature renders text, and leaving
+    ontology-controlled strings out of a file read at every startup is free.
+    """
+    small = budget_viz(viz, limit)
+    return {
+        "nodes": [
+            {"id": n["id"], "kind": n["kind"], "degree": n["degree"]}
+            for n in small["nodes"]
+        ],
+        # Kind and label dropped as well: at this size an edge is a hairline,
+        # and the miniature colours it by neither.
+        "edges": [
+            {"source": e["source"], "target": e["target"]} for e in small["edges"]
+        ],
     }
 
 

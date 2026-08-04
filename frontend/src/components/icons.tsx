@@ -4,8 +4,8 @@ FILE: frontend/src/components/icons.tsx
 ================================================================================
 
 SUMMARY
-    A set of small inline SVG icons used in the header nav and toolbar (Load,
-    View, Explore, Query, About, sun/moon theme toggle, close, trash).
+    A set of small inline SVG icons used in the header nav and toolbar (Home,
+    Load, View, Explore, Query, About, sun/moon theme toggle, close, trash).
 
 BASIC IDEA
     Inlining a handful of stroked icons avoids an icon-font/library dependency.
@@ -33,6 +33,16 @@ const base = {
   "aria-hidden": true,
   focusable: false,
 };
+
+export function IconHome() {
+  return (
+    <svg {...base}>
+      <path d="M4 10.5L12 4l8 6.5" />
+      <path d="M6 9.8V19a1 1 0 001 1h10a1 1 0 001-1V9.8" />
+      <path d="M10 20v-5h4v5" />
+    </svg>
+  );
+}
 
 export function IconLoad() {
   return (

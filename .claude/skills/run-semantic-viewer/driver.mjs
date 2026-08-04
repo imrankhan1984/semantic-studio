@@ -60,7 +60,11 @@ const DATA_DIR = process.env.DATA_DIR || join(tmpdir(), 'semantic-studio-driver-
 // that break when a component is restyled, and a driver that fails here is
 // telling you a class name moved, not that the app is broken.
 const SEL = {
-  startRow: '.start-screen .start-row',
+  // The home screen's library. `home-screen` replaced `start-row` when the
+  // chooser became a card grid: a card is an <article> and is deliberately NOT
+  // one big button, so what the driver clicks is a card's Explore verb.
+  homeCard: '.home-screen .onto-card',
+  homeVerb: '.home-screen .onto-card .onto-verb',
   search: '.search-box input',
   results: '.search-results li',
   detail: '.detail-panel',
@@ -475,16 +479,26 @@ async function cmdSmoke() {
     // behaviour that feature removed. A driver that skipped this would sit
     // here waiting for canvases that are correctly absent.
     await browser.waitFor(
-      `document.querySelectorAll("${SEL.startRow}").length > 0`,
-      30_000, 'start screen library rows',
+      `document.querySelectorAll("${SEL.homeCard}").length > 0`,
+      30_000, 'home screen library cards',
     );
-    log('ui-chooser', `chooser shown -> ${await browser.shot('00-chooser')}`);
+    log('ui-home', `home screen shown -> ${await browser.shot('00-home')}`);
     // Nothing may have been drawn yet: the whole point is that the graph costs
     // nothing until this click.
     if (await browser.eval('document.querySelectorAll("canvas").length > 0')) {
-      fail('ui-chooser', 'a canvas was mounted before any ontology was picked');
+      fail('ui-home', 'a canvas was mounted before any ontology was picked');
     }
-    await browser.click(`${SEL.startRow}:first-child`);
+    // Every card draws a miniature of its own graph, and it must be SVG: a
+    // browser caps live WebGL contexts, so a renderer per card would fail on a
+    // library long before it failed here. The check above already proves no
+    // canvas exists; this one proves the picture is nonetheless drawn.
+    if (!(await browser.eval(`document.querySelector("${SEL.homeCard} .onto-mini svg") !== null`))) {
+      fail('ui-home', 'a library card drew no miniature');
+    }
+    // A verb rather than the card: pressing Explore loads the ontology and
+    // enters that mode in one action, which is the route the home-screen spec
+    // exists to provide.
+    await browser.click(`${SEL.homeVerb}`);
 
     await browser.waitFor(
       'document.querySelector("canvas") && document.querySelectorAll("canvas").length >= 2',

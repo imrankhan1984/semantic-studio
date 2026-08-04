@@ -16,7 +16,7 @@ BASIC IDEA
 INPUTS / INPUT SOURCES (props)
     - onLoaded: called with the new ontology's summary on success.
     - onClose: dismiss the dialog.
-    - initialTab: which tab to open on, so the start screen's "Open a file"
+    - initialTab: which tab to open on, so the home screen's "Open a file"
       and "Load from a URL" land on the right one. Defaults to "suggested",
       which is how the Load button in the header still opens it.
     Plus CatalogueList and the api upload/fetch functions.
@@ -116,7 +116,7 @@ export default function LoadDialog({ onLoaded, onClose, initialTab = "suggested"
             <p className="hint">
               Well-known public ontologies — nothing is downloaded until you pick one.
             </p>
-            {/* The same component the start screen renders. Two copies of this
+            {/* The same component the home screen renders. Two copies of this
                 markup would drift the moment either screen's wording or the
                 catalogue's order changed. */}
             <CatalogueList

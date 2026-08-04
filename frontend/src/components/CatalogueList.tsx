@@ -6,7 +6,7 @@ FILE: frontend/src/components/CatalogueList.tsx
 SUMMARY
     The list of suggested public ontologies, rendered as one button per
     CATALOGUE entry. Used by both the Load dialog's "Suggested" tab and the
-    start screen's "Try one" section.
+    home screen's "Try one" section.
 
 BASIC IDEA
     Two screens offer the same four ontologies, and two separate renderings of
@@ -19,7 +19,7 @@ BASIC IDEA
 
     It is deliberately presentational. It does not fetch, does not hold the
     in-flight id, and does not know what happens after a pick — the caller owns
-    all of that, because the dialog closes on success and the start screen is
+    all of that, because the dialog closes on success and the home screen is
     replaced by the graph.
 
 INPUTS / INPUT SOURCES (props)

@@ -36,6 +36,8 @@ EXPECTED OUTPUT
     - describeContents -> "This ontology describes 412 classes, 58 object
       properties and 1,104 individuals.", built only from counts and the
       KIND_LABELS constant.
+    - describeKindCounts -> the same sentence from a kindCounts map alone, for
+      the home screen's cards, which describe ontologies nothing has loaded.
 ================================================================================
 */
 
@@ -157,8 +159,21 @@ function joinWithAnd(parts: string[]): string {
  * whole ontology rather than what is drawn, because kindCounts does — D-017.
  */
 export function describeContents(graph: VizGraph | null): string {
-  if (!graph) return NO_ENTITIES;
-  const present = Object.entries(graph.stats.kindCounts)
+  return describeKindCounts(graph?.stats.kindCounts ?? null);
+}
+
+/**
+ * The same sentence from the counts alone.
+ *
+ * It exists because the home screen says this about an ontology it has NOT
+ * loaded: a card holds an OntologySummary, whose `kindCounts` is the same
+ * whole-ontology tally the graph response carries, and there is no VizGraph to
+ * hand over. Two copies of the wording would drift, and the wording is the
+ * thing a learner reads on both screens.
+ */
+export function describeKindCounts(counts: Record<string, number> | null): string {
+  if (!counts) return NO_ENTITIES;
+  const present = Object.entries(counts)
     .filter(([, count]) => count > 0)
     // By count, then by kind name: the object's own key order comes from JSON
     // and is not something to rely on for a sentence that must not change

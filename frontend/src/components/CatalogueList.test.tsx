@@ -5,7 +5,7 @@ FILE: frontend/src/components/CatalogueList.test.tsx
 ================================================================================
 
 SUMMARY
-    Proves the catalogue renders identically wherever it appears: the start
+    Proves the catalogue renders identically wherever it appears: the home
     screen's "Try one" section and the Load dialog's "Suggested" tab must show
     the same entries in the same order, because they are the same component.
 
@@ -42,7 +42,7 @@ import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import CatalogueList from "./CatalogueList";
 import LoadDialog from "./LoadDialog";
-import StartScreen from "./StartScreen";
+import HomeScreen from "./HomeScreen";
 import { CATALOGUE } from "../catalogue";
 
 const { fetchOntology, uploadOntology } = vi.hoisted(() => ({
@@ -65,12 +65,18 @@ function entryNames(container: HTMLElement): string[] {
 
 function renderChooser() {
   return render(
-    <StartScreen
+    <HomeScreen
       ontologies={[]}
       loading={false}
       error={null}
+      theme="dark"
+      workingId={null}
+      pendingMode={null}
       onRetry={vi.fn()}
       onOpen={vi.fn()}
+      onEnterMode={vi.fn()}
+      onViewSource={vi.fn()}
+      onRemove={vi.fn()}
       onLoaded={vi.fn()}
       onOpenDialog={vi.fn()}
     />,
