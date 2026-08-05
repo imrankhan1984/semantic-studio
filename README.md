@@ -81,10 +81,18 @@ or without compose:
 
 ```bash
 docker build -t semantic-studio .
-docker run -p 8000:8000 semantic-studio
+docker run -p 127.0.0.1:8000:8000 semantic-studio
 ```
 
 Open <http://localhost:8000>.
+
+> **Network exposure.** Semantic Studio binds to localhost only. It is
+> single-user and has no authentication; do not expose the port to a network
+> without adding authentication and per-user isolation first. `docker compose`
+> publishes on `127.0.0.1`, and the `-p 127.0.0.1:8000:8000` above does the
+> same. Dropping the `127.0.0.1:` prefix (or overriding it, e.g. with a
+> `docker-compose.override.yml`) publishes on every interface and serves your
+> whole ontology library — deletable — to anyone who can reach the host.
 
 ## Quick start (local development)
 
