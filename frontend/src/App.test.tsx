@@ -773,6 +773,113 @@ describe("App graph budget range", () => {
     expect(notice.textContent).toContain("4,000");
     expect(notice.textContent).toContain("18,717");
   });
+
+  /* --- G-8: reporting what a budget change discards --------------------- */
+
+  /** A neighbourhood of three entities, so an expansion adds a count worth
+   *  clearing. None of them is in the (empty) budgeted node list. */
+  const NEIGHBORHOOD: VizNeighborhood = {
+    nodes: [
+      { id: "http://x/issuedBy", label: "is issued by", kind: "objectProperty", degree: 9 },
+      { id: "http://x/Bond", label: "Bond", kind: "class", degree: 12 },
+      { id: "http://x/Issuer", label: "Issuer", kind: "class", degree: 4 },
+    ],
+    edges: [],
+    stats: {
+      nodeCount: 3,
+      edgeCount: 0,
+      nodeTotal: 18717,
+      edgeTotal: 51446,
+      truncated: false,
+      budget: 200,
+      kindCounts: { class: 18717 },
+      neighborTotal: 2,
+      center: "http://x/issuedBy",
+    },
+  };
+
+  /** Open FIBO above the floor, then expand the selected node so three entities
+   *  are on the canvas — the state a subsequent budget change discards. */
+  async function openAndExpand() {
+    serverLike();
+    getNeighborhood.mockResolvedValue(NEIGHBORHOOD);
+    await renderAppOpened();
+    await press(showMore); // budget 4,000, so Show less is now enabled
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake node" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /show its connections/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake merge" }));
+    });
+  }
+
+  it("a budget change with expansions reports the cleared count", async () => {
+    // AC-8. Show less throws away every expansion — that is the documented way
+    // back to the budgeted view — and now says how many it took, beside the
+    // counts, so the graph shrinking is not a mystery.
+    await openAndExpand();
+    await press(showLess);
+
+    const notice = document.querySelector(".graph-notice")!;
+    expect(notice.textContent).toContain("3 expanded entities were cleared");
+    // Alongside the counts the bar already gives, in the same region.
+    expect(notice.textContent).toContain("2,000");
+    expect(notice.textContent).toContain("18,717");
+  });
+
+  it("a budget change with no expansions reports counts only", async () => {
+    // AC-8. The cleared sentence appears only when something was cleared: a
+    // message shown every time is a message nobody reads.
+    serverLike();
+    await renderAppOpened();
+    await press(showMore);
+
+    const notice = document.querySelector(".graph-notice")!;
+    expect(notice.textContent).toContain("4,000");
+    expect(notice.textContent).not.toMatch(/cleared/i);
+    expect(notice.textContent).not.toMatch(/expanded/i);
+  });
+
+  it("switching ontology reports nothing about expansions", async () => {
+    // AC-8, the edge case. An ontology switch discards expansions too, but the
+    // whole view changed — a note about them there would be noise about a view
+    // the user just left. Gated on a budget press, which a switch is not.
+    listOntologies.mockResolvedValue([
+      SUMMARY,
+      { ...SUMMARY, id: "o2", name: "FOAF" },
+    ]);
+    await openAndExpand();
+
+    // Go Home and open the other ontology, which is an activeId change.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Home" }));
+    });
+    await act(async () => {
+      fireEvent.click(cardVerb("Explore", "FOAF"));
+    });
+
+    const notice = document.querySelector(".graph-notice")!;
+    expect(notice.textContent).not.toMatch(/cleared/i);
+  });
+
+  it("a budget change announces once", async () => {
+    // AC-9, the fourth performance budget: exactly one live region carries the
+    // budget change, counts and cleared sentence together, rather than a second
+    // region being added for the discard. Two regions would be two
+    // announcements.
+    await openAndExpand();
+    await press(showLess);
+
+    expect(document.querySelectorAll(".graph-notice")).toHaveLength(1);
+    expect(document.querySelector(".graph-notice")!.textContent).toContain(
+      "expanded entities were cleared",
+    );
+    // Not smuggled into App's own notice region as a second announcement.
+    expect(document.querySelector(".notice-region")!.textContent).not.toMatch(/cleared/i);
+  });
 });
 
 describe("App expand on demand", () => {

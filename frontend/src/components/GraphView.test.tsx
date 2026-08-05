@@ -79,6 +79,11 @@ const cameraMoves = vi.hoisted(() => ({
 // noticing rather than stubbing away with a Proxy.
 vi.mock("sigma", () => {
   class FakeSigma {
+    // Event handlers GraphView registers, so a test can drive one — the only way
+    // to reach hoveredRef from here, since hover is set inside the enterNode
+    // handler and there is no WebGL to hover a node in.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    handlers: Record<string, (payload: any) => void> = {};
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     constructor(graph: any, container: any, settings: any) {
       // A snapshot of where every node was at the moment the renderer was
@@ -90,9 +95,12 @@ vi.mock("sigma", () => {
       graph?.forEachNode?.((id: string, attrs: { x: number; y: number }) => {
         positionsAtFirstPaint[id] = [attrs.x, attrs.y];
       });
-      sigmaCalls.last = { graph, container, settings, positionsAtFirstPaint };
+      sigmaCalls.last = { graph, container, settings, positionsAtFirstPaint, handlers: this.handlers };
     }
-    on() {}
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    on(event: string, fn: (payload: any) => void) {
+      this.handlers[event] = fn;
+    }
     kill() {}
     refresh() {}
     setSetting() {}
@@ -126,10 +134,14 @@ vi.mock("sigma", () => {
   return { default: FakeSigma };
 });
 
-/** Records every fillStyle assigned, in order, plus the calls that were made. */
+/** Records every fillStyle assigned, in order, plus the calls that were made.
+ *  `strokes` records the strokeStyle in effect at each stroke(), which is how the
+ *  selection ring (a stroked circle, not a fill) is read back. */
 function recordingContext() {
   const fills: string[] = [];
+  const strokes: string[] = [];
   const calls: string[] = [];
+  let strokeStyle = "";
   const ctx = {
     set fillStyle(value: string) {
       fills.push(value);
@@ -137,6 +149,13 @@ function recordingContext() {
     get fillStyle() {
       return fills[fills.length - 1] ?? "";
     },
+    set strokeStyle(value: string) {
+      strokeStyle = value;
+    },
+    get strokeStyle() {
+      return strokeStyle;
+    },
+    lineWidth: 0,
     font: "",
     shadowOffsetX: 0,
     shadowOffsetY: 0,
@@ -150,8 +169,12 @@ function recordingContext() {
     arc: () => calls.push("arc"),
     fill: () => calls.push("fill"),
     fillText: () => calls.push("fillText"),
+    stroke: () => {
+      calls.push("stroke");
+      strokes.push(strokeStyle);
+    },
   };
-  return { ctx, fills, calls };
+  return { ctx, fills, strokes, calls };
 }
 
 /** The subset of Sigma settings the two drawing functions actually read. */
@@ -922,5 +945,186 @@ describe("hovered node label background", () => {
     // One pill fill plus one label draw per invocation, not a loop of them.
     expect(first.calls.filter((c) => c === "fill")).toHaveLength(1);
     expect(first.calls.filter((c) => c === "fillText")).toHaveLength(1);
+  });
+});
+
+/* --- the selection ring (G-8) -------------------------------------------- */
+
+/** Draw one theme's hover drawer against a recording context, for any data.
+ *  Wider than `draw` above, which builds its own node — here the caller passes
+ *  the exact display data, including the `selected` flag the ring keys on. */
+async function drawData(theme: Theme, data: Record<string, unknown>) {
+  const { NODE_HOVER_DRAWERS } = await import("./GraphView");
+  const rec = recordingContext();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  NODE_HOVER_DRAWERS[theme](rec.ctx as any, data as any, settingsFor(theme) as any);
+  return rec;
+}
+
+describe("the selected node's ring", () => {
+  afterEach(() => {
+    // The layout runs on requestAnimationFrame until the component unmounts.
+    vi.clearAllTimers();
+    document.body.innerHTML = "";
+  });
+
+  it("the selected node carries a ring", async () => {
+    // AC-1. Two halves, run through the real pipeline: the reducer marks the
+    // selected node and grows it more than a hover would (+4, not +2), and the
+    // hover drawer turns that mark into a stroked ring in the theme's accent.
+    // The reducer's own output is fed to the drawer rather than a hand-built
+    // flag, so nothing here can pass while the two disagree.
+    const { node, graph, unmount } = await reducersFor("http://x/Celestial");
+    const base = attrsOf(graph, "http://x/Celestial");
+    const res = node("http://x/Celestial", base);
+    expect(res.selected).toBe(true);
+    expect(res.highlighted).toBe(true);
+    expect(res.zIndex).toBe(3);
+    expect(res.size).toBe((base.size as number) + 4);
+
+    const rec = await drawData("dark", { ...res, x: 1, y: 2, key: "http://x/Celestial" });
+    expect(rec.calls).toContain("stroke");
+    expect(rec.strokes).toContain(PALETTES.dark.selectedRing);
+    unmount();
+  });
+
+  it("a hovered node carries no ring", async () => {
+    // AC-2. Hover and selection both set `highlighted` and draw through the same
+    // function, so the ring is the only thing that tells them apart: a hovered
+    // node reaches the drawer without `selected` and is not stroked, and its
+    // size bump is the smaller +2. Hover is set the one way it can be from here —
+    // by driving the enterNode handler GraphView registered.
+    const { node, graph, unmount } = await reducersFor(null);
+    sigmaCalls.last.handlers.enterNode({ node: "http://x/Planet" });
+    const base = attrsOf(graph, "http://x/Planet");
+    const res = node("http://x/Planet", base);
+    expect(res.highlighted).toBe(true);
+    expect(res.selected).toBeUndefined();
+    expect(res.size).toBe((base.size as number) + 2);
+
+    const rec = await drawData("dark", { ...res, x: 0, y: 0, key: "http://x/Planet" });
+    expect(rec.calls).not.toContain("stroke");
+    expect(rec.strokes).toHaveLength(0);
+    unmount();
+  });
+
+  it("selected and hovered carries the ring", async () => {
+    // AC-2's tie-break. A node that is both keeps the ring, because the reducer
+    // checks selection before hover and so never falls to the hover branch — the
+    // size stays the selection's +4 and `selected` stays set. The drawer then
+    // draws the ring alongside the shared highlight pill: selection adds to the
+    // hover treatment rather than replacing it.
+    const { node, graph, unmount } = await reducersFor("http://x/Celestial");
+    sigmaCalls.last.handlers.enterNode({ node: "http://x/Celestial" });
+    const base = attrsOf(graph, "http://x/Celestial");
+    const res = node("http://x/Celestial", base);
+    expect(res.selected).toBe(true);
+    expect(res.size).toBe((base.size as number) + 4);
+
+    const rec = await drawData("dark", {
+      ...res,
+      x: 0,
+      y: 0,
+      key: "http://x/Celestial",
+    });
+    expect(rec.strokes).toContain(PALETTES.dark.selectedRing);
+    expect(rec.fills).toContain(PALETTES.dark.labelBackground);
+    unmount();
+  });
+
+  it("the selected node keeps its kind colour", async () => {
+    // AC-3. Selection is a ring, not a fill swap, so the node still shows which
+    // kind it is. The colour is set from the kind before any selection branch,
+    // and the sel branch does not touch it — Celestial is a class and stays the
+    // class colour, which is emphatically not the ring colour.
+    const { node, graph, unmount } = await reducersFor("http://x/Celestial");
+    const res = node("http://x/Celestial", attrsOf(graph, "http://x/Celestial"));
+    expect(res.color).toBe(PALETTES.dark.kind.class);
+    expect(res.color).not.toBe(PALETTES.dark.selectedRing);
+    unmount();
+  });
+
+  it("the ring follows the theme", async () => {
+    // AC-4. Each theme's drawer is a distinct function closed over its own
+    // selectedRing, so App's theme effect swapping defaultDrawNodeHover repaints
+    // the ring in the new accent without the user reselecting. The same selected
+    // node strokes the dark accent under the dark drawer and the light accent
+    // under the light one, and the two accents differ.
+    const selected = { x: 0, y: 0, size: 10, label: "X", key: "x", selected: true, color: "#123456" };
+    const dark = await drawData("dark", { ...selected });
+    const light = await drawData("light", { ...selected });
+    expect(dark.strokes).toContain(PALETTES.dark.selectedRing);
+    expect(light.strokes).toContain(PALETTES.light.selectedRing);
+    expect(PALETTES.dark.selectedRing).not.toBe(PALETTES.light.selectedRing);
+  });
+
+  it("the node reducer allocates nothing per frame", async () => {
+    // AC-9, the allocation budget. The one result object per call is the
+    // reducer's contract with Sigma; what this guards is that nothing is
+    // allocated BEYOND it, and in particular that the ring rides on a boolean
+    // rather than a fresh structure. Every value on the result is a primitive,
+    // so a ring drawn as a nested `{color,width}` object — or any per-node array
+    // or object — fails here. jsdom cannot measure a heap, so this is the
+    // structural stand-in, per D-021's principle that a budget is a machine-
+    // independent count. The selection is present, so the branch under test runs.
+    const { node, graph, unmount } = await reducersFor("http://x/Celestial");
+    for (const id of DATA.nodes.map((n) => n.id)) {
+      const res = node(id, attrsOf(graph, id));
+      for (const [key, value] of Object.entries(res)) {
+        expect(typeof value, `${id}.${key} must be a primitive`).not.toBe("object");
+      }
+    }
+    unmount();
+  });
+
+  it("selection does not slow the reducer", async () => {
+    // AC-9, the cost budget, realized as an operation count rather than a
+    // wall-clock ratio: jsdom timing is noise and this project times budgets as
+    // counts for that reason (D-024, D-021). The spec's "≤1.1× against none" is
+    // not literally measurable — a selection inherently adds the neighbour-
+    // dimming traversal that predates G-8, so any selection is dearer than none
+    // regardless of this spec. What is asserted instead is this spec's actual
+    // addition: the ring costs no graph work. The selected node takes the sel
+    // branch, which returns before areNeighbors, so it adds ZERO traversals —
+    // the two non-selected nodes get one each, the selected one none. A sel
+    // branch that fell through to the dimming would count three and fail.
+    const { node, graph, unmount } = await reducersFor("http://x/Celestial");
+    let neighborCalls = 0;
+    const orig = graph.areNeighbors.bind(graph);
+    graph.areNeighbors = (a: string, b: string) => {
+      neighborCalls += 1;
+      return orig(a, b);
+    };
+    for (const id of DATA.nodes.map((n) => n.id)) node(id, attrsOf(graph, id));
+    expect(neighborCalls).toBe(DATA.nodes.length - 1);
+    unmount();
+  });
+
+  it("palette is read once per node", async () => {
+    // AC-9. The reducer binds `const palette = paletteRef.current` once and reads
+    // `.kind` a single time per node — the colour line, before any branch. A
+    // proxy over the theme palette counts `.kind` accesses: one per node, not one
+    // per lookup. A reducer that stopped caching and wrote `paletteRef.current.kind`
+    // in several places would count more and fail. Restored in finally so no
+    // other test sees the instrumented palette.
+    const realDark = PALETTES.dark;
+    let kindReads = 0;
+    const proxy = new Proxy(realDark, {
+      get(target, prop, recv) {
+        if (prop === "kind") kindReads += 1;
+        return Reflect.get(target, prop, recv);
+      },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (PALETTES as any).dark = proxy;
+    try {
+      const { node, graph, unmount } = await reducersFor(null);
+      for (const id of DATA.nodes.map((n) => n.id)) node(id, attrsOf(graph, id));
+      expect(kindReads).toBe(DATA.nodes.length);
+      unmount();
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (PALETTES as any).dark = realDark;
+    }
   });
 });

@@ -306,6 +306,16 @@ export default function App() {
   } | null>(null);
   const [expanded, setExpanded] = useState<Expanded>(NOTHING_EXPANDED);
   const [expandingIri, setExpandingIri] = useState<string | null>(null);
+  // How many expanded entities the last budget change discarded, reported in the
+  // notice beside the counts so the graph shrinking is not a mystery (G-8). Zero
+  // when a budget change cleared nothing, and zero on an ontology switch — which
+  // clears expansions too, but a note about them there is noise about a view the
+  // user just left (see the spec's edge-case table). Read from a ref in the
+  // refetch effect, because that effect is keyed on the budget and must not gain
+  // `expanded` as a dependency.
+  const [clearedExpansions, setClearedExpansions] = useState(0);
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
   // Where the source pane should position itself. No token beside it, unlike
   // `expansion` above: this is set from a click rather than from a response, so
   // pressing the same control twice already hands over a new object and the
@@ -380,6 +390,13 @@ export default function App() {
     // view back: reloading returns to the budgeted graph. Reset here rather
     // than beside the activeId reset above, because "Show more" refetches
     // without changing the ontology and discards the merges just the same.
+    //
+    // Report the discard, but only when a budget press is what triggered this
+    // refetch (G-8). pendingBudgetPress is set by Show more / Show less and null
+    // on an ontology switch, which is the one clearing that must stay silent.
+    // Read from a ref so this effect keeps its [activeId, graphBudget] keys and
+    // still sees the current count. GraphNotice appends the sentence.
+    setClearedExpansions(pendingBudgetPress.current ? expandedRef.current.nodes.size : 0);
     setExpansion(null);
     setExpanded(NOTHING_EXPANDED);
     setExpandingIri(null);
@@ -1001,6 +1018,7 @@ export default function App() {
           defaultBudget={defaultBudget}
           atMaximum={atMaximum}
           restoreFocus={budgetPress}
+          clearedExpansions={clearedExpansions}
           onShowMore={showMore}
           onShowLess={showLess}
           onFocusRestored={clearBudgetPress}

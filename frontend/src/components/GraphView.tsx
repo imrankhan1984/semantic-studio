@@ -72,6 +72,16 @@ import type { MergeResult, Theme, VizGraph, VizNeighborhood } from "../types";
 import { PALETTES } from "../types";
 
 /**
+ * How far outside the node the selection ring sits, and how thick it is, in the
+ * same coordinate space as `data.size`. The gap is what makes it a ring around
+ * the node rather than a fatter outline on it, and it is drawn outside the
+ * already-enlarged selected node (the reducer adds +4 to its size), so it clears
+ * a cluster of same-kind neighbours — the whole point of G-8's first half.
+ */
+const SELECTION_RING_GAP = 4;
+const SELECTION_RING_WIDTH = 2;
+
+/**
  * Sigma's own `drawDiscNodeHover` hard-codes the label pill to `#FFF`, while
  * the label text colour comes from `settings.labelColor`. In the dark theme
  * that is `#f2f5fa`, so the selected node's label rendered as white on white —
@@ -81,14 +91,48 @@ import { PALETTES } from "../types";
  * copy rather than a wrapper because the fill happens in the middle of the
  * path-building, with no seam to hook into.
  *
+ * It also draws G-8's selection ring, and this is the right place for it because
+ * Sigma has no per-node border in 3.0.3 — neither node program (circle, point)
+ * exposes a `borderColor`, and there is no `@sigma/node-border` in the
+ * dependency tree. The alternatives the spec named were a custom WebGL node
+ * program (a much larger change it told us to stop and report rather than build)
+ * or this: the hover overlay, a 2D-canvas pass Sigma already runs for every
+ * highlighted node, which is the same mechanism the label pill above uses. So
+ * the ring costs no new dependency and no shader.
+ *
+ * The ring is drawn only for the SELECTED node, told apart from the merely
+ * hovered one by `data.selected`. The node reducer sets that flag, and it rides
+ * here through Sigma's display data: the reducer's return is stored whole in
+ * `nodeDataCache` and spread into the object handed to this function, so a
+ * boolean set there arrives here without a second channel. Hover and query-path
+ * nodes are `highlighted` too and draw through this same function, so keying the
+ * ring on `highlighted` would ring all three — the flag is what separates
+ * selection from hover, which AC-2 requires.
+ *
  * Version risk, stated rather than hidden: this will not track changes to
  * Sigma's own hover drawing. `defaultDrawNodeHover` is a documented setting and
  * `drawDiscNodeLabel` a public export, so the worst case is that the pill
  * geometry drifts from Sigma's — not that anything silently breaks. No test can
  * catch that.
  */
-function makeDrawNodeHover(labelBackground: string): NodeHoverDrawingFunction {
+function makeDrawNodeHover(
+  labelBackground: string,
+  selectedRing: string,
+): NodeHoverDrawingFunction {
   return function drawNodeHover(context, data, settings) {
+    // The selection ring, before the pill so the pill's shadow settings below
+    // cannot bleed into the stroke. Guarded on the flag the reducer sets: a
+    // hovered-but-unselected node reaches here with it undefined and gets no
+    // ring, which is the mark that tells the two states apart.
+    if ((data as { selected?: boolean }).selected) {
+      context.beginPath();
+      context.arc(data.x, data.y, data.size + SELECTION_RING_GAP, 0, Math.PI * 2);
+      context.closePath();
+      context.lineWidth = SELECTION_RING_WIDTH;
+      context.strokeStyle = selectedRing;
+      context.stroke();
+    }
+
     const size = settings.labelSize;
     const font = settings.labelFont;
     const weight = settings.labelWeight;
@@ -143,8 +187,8 @@ function makeDrawNodeHover(labelBackground: string): NodeHoverDrawingFunction {
  * whole cost, and the per-frame path allocates nothing.
  */
 export const NODE_HOVER_DRAWERS: Record<Theme, NodeHoverDrawingFunction> = {
-  dark: makeDrawNodeHover(PALETTES.dark.labelBackground),
-  light: makeDrawNodeHover(PALETTES.light.labelBackground),
+  dark: makeDrawNodeHover(PALETTES.dark.labelBackground, PALETTES.dark.selectedRing),
+  light: makeDrawNodeHover(PALETTES.light.labelBackground, PALETTES.light.selectedRing),
 };
 
 // Props — see the file header for the meaning of each.
@@ -513,7 +557,9 @@ export default function GraphView({
       labelColor: { color: paletteRef.current.label },
       edgeLabelColor: { color: paletteRef.current.edgeLabel },
       // Every node the reducer marks `highlighted` draws through this, so the
-      // selected, the hovered and the query-path nodes all get the same pill.
+      // selected, the hovered and the query-path nodes all get the same pill —
+      // and the selected one additionally its ring, which the drawer keys on the
+      // `selected` flag the reducer sets.
       defaultDrawNodeHover: NODE_HOVER_DRAWERS[theme],
       labelFont: "Inter, system-ui, sans-serif",
       edgeLabelFont: "Inter, system-ui, sans-serif",
@@ -563,7 +609,18 @@ export default function GraphView({
         // focusTarget. The equality test below stays on the raw selection,
         // because an off-graph selection simply matches nothing.
         const focusNode = focusTarget(graphRef.current, hov ?? sel);
-        if (node === sel || node === hov) {
+        // Selection and hover are separated here, where they used to share one
+        // branch (G-8). The selected node grows more (+4 vs +2) and carries
+        // `selected`, which is what drawNodeHover reads to draw the ring — a
+        // property set on the object already being returned, so no allocation.
+        // Checked before hover so a node that is both keeps the ring, which is
+        // AC-2's tie-break: the ring is the distinguishing mark.
+        if (node === sel) {
+          res.highlighted = true;
+          res.zIndex = 3;
+          res.size = (attrs.size as number) + 4;
+          res.selected = true;
+        } else if (node === hov) {
           res.highlighted = true;
           res.zIndex = 3;
           res.size = (attrs.size as number) + 2;
