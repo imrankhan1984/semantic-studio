@@ -66,6 +66,11 @@ them by clicking, without writing SPARQL by hand.
   machine. It opens with nothing loaded and makes no network request.
 - **Dark & light mode** with adapted graph palettes.
 - **PNG export** of the current graph view.
+- **Publish documentation** — from any ontology card's `⋮` menu on the home
+  screen, *Download documentation* produces a self-contained website as a zip:
+  prose and a term index, a live movable graph, and the source file. Drop it in
+  a repository, turn on GitHub Pages, and it is live — no dependencies, no build
+  step. See [Publishing documentation](#publishing-documentation).
 - Multiple ontologies can be loaded side by side and switched via a dropdown.
 - **Persistent library**: every loaded ontology is saved on your machine and
   reappears in the dropdown the next time you start the app — see
@@ -204,6 +209,29 @@ queries using `SERVICE` are refused. Remote SPARQL
 endpoints are not supported yet. Execution is SELECT-only, capped at 1,000
 rows and 30 seconds, and unbounded `*` / `+` modifiers on very large graphs
 can be slow.
+
+## Publishing documentation
+
+On the home screen, open any ontology card's `⋮` menu and choose **Download
+documentation**. You get `<name>-docs.zip`, a complete static website:
+
+- `index.html` — prose, a metadata header and a term index (the OWL or SKOS
+  profile is chosen automatically), plus a **live, movable graph** you can drag,
+  zoom and click; clicking a node jumps to that term's section.
+- `ontology.ttl` — the source, so the documentation describes something checkable.
+- `.nojekyll` and relative-only paths, so it deploys to **GitHub Pages** without
+  losing its assets.
+
+To publish: unzip it into a repository, commit, and turn on GitHub Pages
+(Settings → Pages). Nothing else is needed, and the page works offline too —
+open `index.html` in a browser. The whole site is self-contained: it makes **no**
+network request, loads no CDN, and embeds nothing external.
+
+Generation is entirely local — your ontologies stay on your machine. Two notes:
+an ontology **fetched from a URL** asks for confirmation first, because its
+publisher may already document it; and a vocabulary whose graph is very large
+(over 5 MB of graph data) is refused rather than documented with a silently
+partial graph — those are usually already published with their own docs.
 
 ## Size and time limits
 

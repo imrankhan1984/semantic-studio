@@ -1759,6 +1759,20 @@ button.legend-row:hover {
   font-size: 16px;
 }
 
+/* DOC-1's fetch-source confirmation: a narrower modal with a right-aligned
+   action row. Cancel sits before the primary action so the reader reads the
+   safe choice first. */
+.modal-confirm {
+  width: min(460px, 92vw);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
 .tabs {
   display: flex;
   gap: 6px;

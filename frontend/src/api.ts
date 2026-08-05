@@ -214,3 +214,41 @@ export function saveQuery(payload: {
 export function deleteSavedQuery(qid: string): Promise<void> {
   return fetch(`/api/queries/${qid}`, { method: "DELETE" }).then((r) => handle(r));
 }
+
+/** Pull the filename out of a Content-Disposition header, or null. The backend
+ *  sends `attachment; filename="<name>-docs.zip"`; anything unexpected falls
+ *  back to null so the caller can name the file itself. */
+function filenameFromDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const match = /filename="?([^"]+)"?/.exec(header);
+  return match ? match[1] : null;
+}
+
+/**
+ * Fetch an ontology's documentation as a zip blob, with the server's filename.
+ *
+ * This is the one client call that returns bytes rather than JSON, so it does
+ * not go through `handle`. It still unwraps a failure the same way — the error
+ * body is JSON `{ detail }` (for instance, the graph is over the 5 MB embed
+ * guard) — and throws an ApiError carrying the status, so the caller can tell a
+ * refusal from a real fault exactly as elsewhere.
+ */
+export async function downloadDocumentation(
+  id: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetch(`/api/ontologies/${id}/documentation`);
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const body = await response.json();
+      if (body.detail) detail = String(body.detail);
+    } catch {
+      /* keep statusText */
+    }
+    throw new ApiError(detail, response.status);
+  }
+  const blob = await response.blob();
+  const filename =
+    filenameFromDisposition(response.headers.get("content-disposition")) ?? `${id}-docs.zip`;
+  return { blob, filename };
+}
