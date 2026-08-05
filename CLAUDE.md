@@ -50,7 +50,7 @@ app writes into the real per-user ontology library.
 
 ```bash
 cd backend  && python -m pytest tests    # 173 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 421 tests, vitest
+cd frontend && npm run test              # 437 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -776,6 +776,51 @@ prove a change works in the application rather than in the test suite.
   is invisible visually because the styling agrees with the sensible reading
   either way. The lesson generalises past this build: the accessibility tree is
   worth reading for more than whether controls have names.
+
+- **The node palette is pastel-with-alpha, the selected node wears a ring, and a
+  budget change says what it discarded** (2026-08-05, spec `graph-legibility`,
+  backlog G-8). `KIND_COLORS_DARK` / `KIND_COLORS_LIGHT` in `types.ts` are
+  lower-saturation and carry an alpha (8-digit hex — Sigma parses
+  `#RRGGBBAA`); the light theme is kept more opaque (`0xE6` vs dark's `0xD9`)
+  because compositing over white lightens and washes a pale cluster out.
+  `GraphPalette` gains `selectedRing`, the theme's accent.
+
+  **Four things are load-bearing.**
+
+  **Sigma 3.0.3 has no per-node border**, so the ring is drawn in the existing
+  custom hover overlay `makeDrawNodeHover`, not a WebGL node program. Neither
+  shipped node program (circle, point) exposes `borderColor` and no
+  `@sigma/node-border` is installed; the hover overlay is the 2D-canvas pass
+  Sigma already runs for every highlighted node, the same seam the label pill
+  uses, so the ring costs no dependency and no shader. This is *not* the custom
+  program the spec's open question 1 said to stop and report.
+
+  **The selected node is told from the merely hovered one by a `selected` flag
+  the node reducer sets**, which reaches the drawer through Sigma's display data:
+  the reducer's return is stored whole in `nodeDataCache` and spread into the
+  drawer's argument, so a boolean set there arrives without a second channel.
+  Keying the ring on `highlighted` instead would ring hover and query-path nodes
+  too — the flag is what separates selection from hover. The reducer checks
+  `node === sel` **before** `node === hov`, so a node that is both keeps the ring
+  and the larger +4 size; that ordering is AC-2's tie-break.
+
+  **The node reducer's performance is guarded by three tests that are counts, not
+  timings.** `GraphView.test.tsx` asserts every reducer result value is a
+  primitive (the ring allocates nothing beyond the mandatory result object), the
+  selected node makes zero `areNeighbors` calls (it returns before the dimming
+  branch, so the ring costs no graph work), and a proxy palette sees one `.kind`
+  read per node. The spec's "≤1.1× against none" is not literally meaningful — a
+  selection always adds the dimming traversal that predates this spec — so these
+  measure the ring's *actual* cost. Do not rewrite them as wall-clock ratios.
+
+  **The discarded-expansion count is reported in `GraphNotice`, not a new live
+  region.** `GraphNotice` already announces the counts on a budget change, so the
+  cleared sentence is appended there — one announcement, not two (D-027). App
+  captures the count in the refetch effect, from `expandedRef` and gated on
+  `pendingBudgetPress`, so an ontology switch — which clears expansions too —
+  stays silent, and the sentence appears only when something was cleared. There
+  is deliberately no reset control: *Show less* already discards expansions and
+  now says so, which is the whole of D-027.
 
 ## Pull requests
 

@@ -43,6 +43,10 @@ INPUTS / INPUT SOURCES (props)
       view will not draw more however often the button is pressed.
     - restoreFocus: which control was pressed to produce this graph, so focus
       can be put back after App's refetch remounts the bar.
+    - clearedExpansions: how many entities the budget change that produced this
+      graph discarded from expansions. Reported beside the counts, in the same
+      live region, only when it is above zero — a message shown every time is a
+      message nobody reads. Zero on an ontology switch, which App handles.
     - onShowMore / onShowLess / onFocusRestored.
 
 EXPECTED OUTPUT
@@ -59,6 +63,10 @@ interface Props {
   defaultBudget: number;
   atMaximum: boolean;
   restoreFocus: "more" | "less" | null;
+  /** How many expanded entities the budget change discarded. Optional and
+   *  defaulting to zero so the many callers in tests need not pass it; the one
+   *  that matters, App, always does. */
+  clearedExpansions?: number;
   onShowMore: () => void;
   onShowLess: () => void;
   onFocusRestored: () => void;
@@ -69,6 +77,7 @@ export default function GraphNotice({
   defaultBudget,
   atMaximum,
   restoreFocus,
+  clearedExpansions = 0,
   onShowMore,
   onShowLess,
   onFocusRestored,
@@ -144,6 +153,18 @@ export default function GraphNotice({
           <>
             Showing the {drawn} most connected of {total} entities. Search for anything
             that is not drawn.
+          </>
+        )}
+        {/* Beside the counts, in the same live region, so a budget change that
+            threw expansions away says so rather than shrinking silently (G-8).
+            Only when it happened: the zero case is not spoken. Singular is
+            spelled out because "1 expanded entities were" is the kind of grammar
+            slip a learner-facing string cannot afford. */}
+        {clearedExpansions > 0 && (
+          <>
+            {" "}
+            {clearedExpansions.toLocaleString()} expanded{" "}
+            {clearedExpansions === 1 ? "entity was" : "entities were"} cleared.
           </>
         )}
       </span>

@@ -266,33 +266,57 @@ export interface NodeDetails {
 /* --- theme-aware palettes ------------------------------------------------ */
 // Node colours per kind, one map per theme. Keys match the backend's node
 // "kind" strings so a new kind only needs a colour added here.
-
+//
+// These are the calmer, lower-saturation palettes of G-8 (spec
+// graph-legibility). The previous set was fully saturated, and at FIBO density
+// hundreds of overlapping circles read as noise — Imran's words were "the colour
+// used today is hardly distinguishable". Two constraints shaped every value and
+// they pull against each other, so the numbers were chosen by loading FIBO in
+// both themes rather than by arithmetic:
+//
+//   - Each colour must stay distinguishable from --bg-canvas in its own theme.
+//     Pastels are lowest-contrast against a dark canvas, so the dark set is
+//     lightened rather than merely desaturated, and the light set is kept
+//     medium-depth rather than pale, because a pale colour under alpha washes
+//     into white.
+//   - Eleven kinds is near the limit of what colour alone can carry, and
+//     lowering saturation shrinks the distance between them. The SKOS purples
+//     (concept / collection / conceptScheme) are the tightest cluster and were
+//     the ones checked hardest; they remain tellable apart but this is exactly
+//     G-2's argument arriving a band early. See the build report.
+//
+// The alpha (the last two hex digits) is the transparency G-8 asked for, and it
+// is chosen against the DENSE case: two translucent circles blend to a third
+// colour belonging to no kind, so too little alpha is invisible and too much
+// washes a light-theme cluster toward white (normal compositing over white
+// lightens). The dark theme carries more transparency than the light one for
+// that reason — see the risk note in the spec's Section 8.
 const KIND_COLORS_DARK: Record<string, string> = {
-  class: "#4c9aff",
-  objectProperty: "#f5a623",
-  datatypeProperty: "#e8d44d",
-  annotationProperty: "#c98f5e",
-  property: "#e07b53",
-  concept: "#b06ef7",
-  conceptScheme: "#ef6ab8",
-  collection: "#d38ce8",
-  individual: "#57cc7c",
-  ontology: "#38c5b4",
-  other: "#8a93a6",
+  class: "#7db4f2d9",
+  objectProperty: "#f2b866d9",
+  datatypeProperty: "#e6d879d9",
+  annotationProperty: "#cba07dd9",
+  property: "#ef9d76d9",
+  concept: "#b79bf0d9",
+  conceptScheme: "#ef9bc9d9",
+  collection: "#d3a9e8d9",
+  individual: "#86d6a0d9",
+  ontology: "#6fd0c2d9",
+  other: "#9aa3b5d9",
 };
 
 const KIND_COLORS_LIGHT: Record<string, string> = {
-  class: "#1f6fe0",
-  objectProperty: "#d97706",
-  datatypeProperty: "#a16207",
-  annotationProperty: "#92642f",
-  property: "#c2410c",
-  concept: "#7c3aed",
-  conceptScheme: "#db2777",
-  collection: "#a855f7",
-  individual: "#15803d",
-  ontology: "#0d9488",
-  other: "#64748b",
+  class: "#3f82cfe6",
+  objectProperty: "#c9822ee6",
+  datatypeProperty: "#9a8420e6",
+  annotationProperty: "#9c6b45e6",
+  property: "#cc6a45e6",
+  concept: "#7d54c4e6",
+  conceptScheme: "#c25a92e6",
+  collection: "#a06fc0e6",
+  individual: "#3f955fe6",
+  ontology: "#2f938ae6",
+  other: "#667284e6",
 };
 
 // Edge colours per relation kind, one map per theme.
@@ -348,6 +372,13 @@ export interface GraphPalette {
   labelBackground: string;
   edgeLabel: string;              // edge label colour
   background: string;             // canvas background (also PNG export bg)
+  /** The ring drawn around the selected node, in the theme's accent. G-8's
+   *  selection treatment is a ring rather than a colour swap, so the selected
+   *  node stands out in a cluster without hiding which kind it is — swapping the
+   *  fill would tell the user WHAT is selected while hiding WHAT KIND it is, and
+   *  both matter. Kept opaque (no alpha): the ring is the one mark that must not
+   *  blend into whatever it overlaps. Drawn by makeDrawNodeHover in GraphView. */
+  selectedRing: string;
 }
 
 // Assembled palette per theme, consumed by GraphView.
@@ -365,6 +396,9 @@ export const PALETTES: Record<Theme, GraphPalette> = {
     labelBackground: "#1a1f29",
     edgeLabel: "#93a0b8",
     background: "#12151c",
+    // --accent in index.css for the dark theme. Kept in step by hand: a spec
+    // that repalettes both must move this and the CSS variable together.
+    selectedRing: "#4c9aff",
   },
   light: {
     kind: KIND_COLORS_LIGHT,
@@ -377,6 +411,8 @@ export const PALETTES: Record<Theme, GraphPalette> = {
     labelBackground: "#ffffff",
     edgeLabel: "#5d6a77",
     background: "#f2f4f8",
+    // --accent in index.css for the light theme.
+    selectedRing: "#2472e8",
   },
 };
 
