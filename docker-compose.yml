@@ -3,7 +3,13 @@ services:
     build: .
     image: semantic-studio:latest
     ports:
-      - "8000:8000"
+      # Publish on loopback only: the host serves the application to itself,
+      # not to its network. The application is single-user and has no
+      # authentication (D-028), so binding to every interface would serve the
+      # whole ontology library to anyone on the same network — deletable, since
+      # DELETE cascades to saved queries. Dropping the "127.0.0.1:" prefix
+      # restores that exposure. See README "Network exposure".
+      - "127.0.0.1:8000:8000"
     volumes:
       # Ontologies loaded in the app are persisted here and survive
       # container rebuilds and recreations.
