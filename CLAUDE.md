@@ -50,7 +50,7 @@ app writes into the real per-user ontology library.
 
 ```bash
 cd backend  && python -m pytest tests    # 173 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 437 tests, vitest
+cd frontend && npm run test              # 454 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -821,6 +821,43 @@ prove a change works in the application rather than in the test suite.
   stays silent, and the sentence appears only when something was cleared. There
   is deliberately no reset control: *Show less* already discards expansions and
   now says so, which is the whole of D-027.
+
+- **The zoom controls are docked bottom right over the canvas, not in the
+  toolbar** (2026-08-05, spec `graph-zoom-controls`, backlog G-5). Zoom in, zoom
+  out and Fit are a `.graph-zoom` group inside `.graph-canvas-wrap` (already
+  `position: relative`); the toolbar keeps only layout and PNG. Frontend only, no
+  architecture impact, no decision entry.
+
+  **Three things are load-bearing.**
+
+  **The disabled state is a three-value edge, not the camera ratio.** The buttons
+  disable at Sigma's `minCameraRatio` (0.01, fully zoomed in → `+` off) and
+  `maxCameraRatio` (20 → `−` off), read from the camera's `updated` event. Storing
+  the raw ratio would re-render GraphView every animation frame; storing
+  `"min"/"max"/"mid"` lets React dedupe the frames between edges to one render —
+  the first performance row. Do not "simplify" it to hold the ratio.
+
+  **The camera listener is subscribed in the build effect and removed in its
+  cleanup.** A listener left on a camera that outlives its renderer leaks one per
+  ontology opened, invisibly; `GraphView.test.tsx` asserts the count is one after
+  mount and zero after unmount, and the mutation removing the cleanup was run and
+  goes red. The test's Sigma stub gained a stable `camera` with `on`/
+  `removeListener`/`__fire`/`__listeners` for exactly this — the previous stub
+  returned a fresh camera object per `getCamera()` call, which cannot model a
+  subscription.
+
+  **Focus moves to the partner when a press disables a control.** Zooming fully in
+  disables `+`, and a disabled button drops focus to `<body>` — the trap G-6 and
+  saved-query-deletion-warning both hit. `armZoomPress` records which button was
+  pressed and expires that record after the animation window, so an effect keyed
+  on the edge moves focus to the partner only for a press that reached the edge —
+  an edge reached by the scroll wheel, or by a wheel zoom after a mid-range press
+  whose intent has expired, moves nobody. That expiry is a real fix, not
+  belt-and-braces: without it a mid-range press then a wheel-to-edge steals focus,
+  and a test mutation-checks it. Confirmed in a real browser, both directions.
+
+  Reduced motion reuses X-1's `moveDuration` helper rather than passing
+  `duration: 200`; a literal there would undo X-1's work where nobody would look.
 
 ## Pull requests
 
