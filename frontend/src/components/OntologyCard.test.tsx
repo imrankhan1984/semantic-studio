@@ -83,6 +83,7 @@ function renderCard(over: Partial<OntologySummary> = {}, props = {}) {
     onOpen: vi.fn(),
     onEnterMode: vi.fn(),
     onViewSource: vi.fn(),
+    onDownloadDocs: vi.fn(),
     onRemove: vi.fn(),
   };
   const result = render(
@@ -168,6 +169,7 @@ describe("OntologyCard contents", () => {
         onOpen={vi.fn()}
         onEnterMode={vi.fn()}
         onViewSource={vi.fn()}
+        onDownloadDocs={vi.fn()}
         onRemove={vi.fn()}
       />,
     );
@@ -377,6 +379,18 @@ describe("OntologyCard menu", () => {
     expect(menuButton().getAttribute("aria-label")).toBe(
       "More actions for FIBO quickstart",
     );
+  });
+
+  it("Download documentation is the fourth item and hands off the id", () => {
+    // AC-13. The card only names the action and passes the id; the confirmation,
+    // progress and download are HomeScreen's, which owns the live region.
+    const { onDownloadDocs } = renderCard();
+    fireEvent.click(menuButton());
+    const item = screen.getByRole("button", { name: "Download documentation" });
+    fireEvent.click(item);
+    expect(onDownloadDocs).toHaveBeenCalledWith("o1");
+    // Choosing it closes the menu, exactly as the other items do.
+    expect(menuButton().getAttribute("aria-expanded")).toBe("false");
   });
 });
 

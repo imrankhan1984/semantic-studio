@@ -66,6 +66,7 @@ interface Props {
   onOpen: (id: string) => void;
   onEnterMode: (id: string, mode: AppMode) => void;
   onViewSource: (id: string) => void;
+  onDownloadDocs: (id: string) => void;
   onRemove: (id: string) => void;
 }
 
@@ -104,6 +105,7 @@ function OntologyCard({
   onOpen,
   onEnterMode,
   onViewSource,
+  onDownloadDocs,
   onRemove,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -254,6 +256,19 @@ function OntologyCard({
                     }}
                   >
                     View source
+                  </button>
+                  {/* DOC-1. The confirmation an URL-sourced ontology needs, the
+                      progress announcement and the download itself all live in
+                      HomeScreen, which owns the live region and the screen's
+                      busy state; the card only names the action and hands off
+                      the id, exactly as the three items above it do. */}
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onDownloadDocs(summary.id);
+                    }}
+                  >
+                    Download documentation
                   </button>
                   <button
                     className="danger"

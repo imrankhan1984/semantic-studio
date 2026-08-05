@@ -65,7 +65,7 @@ EXPECTED OUTPUT
 */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fetchOntology } from "../api";
+import { downloadDocumentation, fetchOntology } from "../api";
 import type { CatalogueEntry } from "../catalogue";
 import CatalogueList from "./CatalogueList";
 import OntologyCard from "./OntologyCard";
@@ -129,6 +129,35 @@ interface Props {
   onOpenDialog: (tab: "file" | "url") => void;
 }
 
+/** The host a fetch-source confirmation should name, or null for an upload.
+ *  Mirrors the backend's `docs_export.confirmation_host` (DOC-1, AC-14): an
+ *  uploaded file is the user's own and exports without a prompt; a URL-sourced
+ *  one probably has a publisher who already documents it, so the interface
+ *  confirms first and names the host. A source that does not parse as a URL is
+ *  treated as needing no host, which cannot happen for a real fetch. */
+function confirmationHost(source: string): string | null {
+  if (source === "upload") return null;
+  try {
+    return new URL(source).hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Trigger the browser's own download of a blob. The object URL is revoked
+ *  immediately after the synthetic click, so the blob is not held in memory
+ *  once the download has been handed to the browser. */
+function triggerDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 /** The remembered view, or null for "let the count decide". Reading localStorage
  *  can throw in a locked-down browser, and a preference is never worth failing a
  *  render over. */
@@ -162,6 +191,14 @@ export default function HomeScreen({
   const [fetching, setFetching] = useState<CatalogueEntry | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  // DOC-1. The ontology whose documentation is being generated, the one waiting
+  // on a fetch-source confirmation, the last error, and where the progress
+  // announcement is in its cycle. All local: nothing above this component acts
+  // on a download that produces a file the browser saves rather than app state.
+  const [docsBusyId, setDocsBusyId] = useState<string | null>(null);
+  const [docsConfirm, setDocsConfirm] = useState<OntologySummary | null>(null);
+  const [docsError, setDocsError] = useState<string | null>(null);
+  const [docsStatus, setDocsStatus] = useState<"" | "preparing" | "ready">("");
   // null means "follow the count". Read once, in the initialiser, so the choice
   // survives a reload without costing a localStorage read on every render.
   const [override, setOverride] = useState<HomeLayout | null>(storedLayout);
@@ -174,6 +211,15 @@ export default function HomeScreen({
   // Focus is taken once per mount, not on every render, or re-rendering while a
   // download is in flight would drag focus back out of wherever the user put it.
   const focusTaken = useRef(false);
+  // The confirm button of the docs dialog, focused when it opens, and the
+  // control that opened it (a card's menu button), refocused when it closes —
+  // so a keyboard user is returned to where they were rather than to <body>.
+  const docsConfirmBtn = useRef<HTMLButtonElement>(null);
+  const docsReturnFocus = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (docsConfirm) docsConfirmBtn.current?.focus();
+  }, [docsConfirm]);
 
   // Take focus once the library has resolved, because until then there is no
   // card to take it. This screen is the only thing on screen whenever it is
@@ -221,7 +267,56 @@ export default function HomeScreen({
     [onLoaded],
   );
 
-  const busy = fetching !== null || workingId !== null;
+  // Generate and download the documentation zip. The screen goes busy so a
+  // second action cannot start mid-generation (the same treatment a catalogue
+  // fetch gets), the progress cycles through the live region, and a refusal —
+  // the graph being over the 5 MB embed guard, say — surfaces as an error
+  // beneath the library rather than a saved but broken file.
+  const generateDocs = useCallback(async (target: OntologySummary) => {
+    setDocsConfirm(null);
+    setDocsBusyId(target.id);
+    setDocsStatus("preparing");
+    setDocsError(null);
+    try {
+      const { blob, filename } = await downloadDocumentation(target.id);
+      triggerDownload(blob, filename);
+      setDocsStatus("ready");
+    } catch (e: unknown) {
+      setDocsError(e instanceof Error ? e.message : String(e));
+      setDocsStatus("");
+    } finally {
+      setDocsBusyId(null);
+    }
+  }, []);
+
+  // The card hands over an id; this decides whether a confirmation is needed.
+  // An uploaded ontology exports straight away; a URL-sourced one is confirmed
+  // first, naming its host, because its publisher probably documents it (AC-14).
+  const requestDocs = useCallback(
+    (id: string) => {
+      const target = ontologies.find((o) => o.id === id);
+      if (!target) return;
+      if (confirmationHost(target.source) === null) {
+        void generateDocs(target);
+      } else {
+        // Remember where focus was (the card's menu button) so cancelling or
+        // confirming can return it there rather than dropping it on <body>.
+        docsReturnFocus.current = document.activeElement as HTMLElement | null;
+        setDocsError(null);
+        setDocsConfirm(target);
+      }
+    },
+    [ontologies, generateDocs],
+  );
+
+  // Dismiss the confirmation without generating anything (AC-14). Focus goes
+  // back to the control that opened it.
+  const cancelDocs = useCallback(() => {
+    setDocsConfirm(null);
+    docsReturnFocus.current?.focus();
+  }, []);
+
+  const busy = fetching !== null || workingId !== null || docsBusyId !== null;
 
   // Filtered by NAME only. Case-insensitive and a substring rather than a
   // prefix, because a user who remembers "quickstart" should not have to
@@ -250,13 +345,21 @@ export default function HomeScreen({
 
   // One live region, and what it says depends on what just happened. A download
   // is transient and more urgent than a result count, so it wins while it runs.
-  const announcement = fetching
-    ? `Downloading ${fetching.name}…`
-    : needle
-      ? matching.length === 1
-        ? "1 ontology matches"
-        : `${matching.length} ontologies match`
-      : "";
+  // Documentation generation is the most urgent of all — it is a deliberate
+  // action the user is waiting on — so it leads, and its "ready" holds until the
+  // next search keystroke clears it (see the search onChange).
+  const announcement =
+    docsStatus === "preparing"
+      ? "Preparing documentation…"
+      : docsStatus === "ready"
+        ? "Documentation ready."
+        : fetching
+          ? `Downloading ${fetching.name}…`
+          : needle
+            ? matching.length === 1
+              ? "1 ontology matches"
+              : `${matching.length} ontologies match`
+            : "";
 
   const heading = pendingMode ? PENDING_HEADING[pendingMode] : "Your library";
 
@@ -295,7 +398,12 @@ export default function HomeScreen({
                   type="search"
                   className="home-search"
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    // A finished-documentation announcement has had its moment;
+                    // let the region go back to reporting search matches.
+                    if (docsStatus === "ready") setDocsStatus("");
+                  }}
                   // Honest about what it does. Searching the CONTENTS of every
                   // saved ontology is real future work and is parked; a
                   // placeholder that invited a concept name would return
@@ -358,11 +466,16 @@ export default function HomeScreen({
                   onOpen={onOpen}
                   onEnterMode={onEnterMode}
                   onViewSource={onViewSource}
+                  onDownloadDocs={requestDocs}
                   onRemove={onRemove}
                 />
               ))}
             </div>
           )}
+          {/* A refusal (the graph is over the embed guard) or a generation
+              failure, named beneath the library rather than in a way that
+              leaves a broken file behind. */}
+          {docsError && <p className="detail-error">{docsError}</p>}
         </section>
 
         <section className="start-section" aria-labelledby="home-catalogue-heading">
@@ -394,6 +507,49 @@ export default function HomeScreen({
           </div>
         </section>
       </div>
+
+      {/* The fetch-source confirmation (AC-14). It names the host so the user
+          knows the ontology's own publisher probably documents it already, and
+          declining it generates nothing. Escape and the backdrop both cancel;
+          the message is not a scolding. */}
+      {docsConfirm && (
+        <div
+          className="modal-backdrop"
+          onClick={cancelDocs}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") cancelDocs();
+          }}
+        >
+          <div
+            className="modal modal-confirm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="docs-confirm-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h2 id="docs-confirm-title">Generate documentation?</h2>
+            </div>
+            <p>
+              <strong>{docsConfirm.name}</strong> was fetched from{" "}
+              <code>{confirmationHost(docsConfirm.source)}</code>. Its publisher
+              may already document it. Generate documentation anyway?
+            </p>
+            <div className="modal-actions">
+              <button className="ghost" onClick={cancelDocs}>
+                Cancel
+              </button>
+              <button
+                ref={docsConfirmBtn}
+                className="primary"
+                onClick={() => void generateDocs(docsConfirm)}
+              >
+                Generate documentation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

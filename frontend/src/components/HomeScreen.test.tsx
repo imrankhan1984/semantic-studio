@@ -43,8 +43,11 @@ import HomeScreen, { CARD_LAYOUT_MAX } from "./HomeScreen";
 import { CATALOGUE } from "../catalogue";
 import type { OntologySummary } from "../types";
 
-const { fetchOntology } = vi.hoisted(() => ({ fetchOntology: vi.fn() }));
-vi.mock("../api", () => ({ fetchOntology }));
+const { fetchOntology, downloadDocumentation } = vi.hoisted(() => ({
+  fetchOntology: vi.fn(),
+  downloadDocumentation: vi.fn(),
+}));
+vi.mock("../api", () => ({ fetchOntology, downloadDocumentation }));
 
 // A spy standing in for the catalogue, so its renders can be counted. The memo
 // under test is HomeScreen's own, applied at the import site, so it still wraps
@@ -132,6 +135,7 @@ function type(text: string) {
 
 beforeEach(() => {
   fetchOntology.mockReset();
+  downloadDocumentation.mockReset();
   catalogueRenders.count = 0;
   localStorage.clear();
 });
@@ -579,5 +583,135 @@ describe("HomeScreen render budget", () => {
 
     expect(container.querySelectorAll("canvas")).toHaveLength(0);
     expect(container.querySelectorAll(".onto-mini svg").length).toBe(12);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DOC-1 — the Download documentation flow. The card only names the action; the
+// confirmation, the progress announcement and the download live here, so this
+// is where AC-13 and AC-14 are proved. The real OntologyCard renders (it is not
+// mocked in this file), so the menu is driven end to end.
+// ---------------------------------------------------------------------------
+
+const UPLOAD_ONTOLOGY: OntologySummary = {
+  ...summaries(1)[0],
+  id: "up1",
+  name: "In-house vocab",
+  source: "upload",
+};
+
+const URL_ONTOLOGY: OntologySummary = {
+  ...summaries(1)[0],
+  id: "url1",
+  name: "FIBO",
+  source: "https://spec.edmcouncil.org/fibo/ontology/prod.ttl",
+};
+
+function openMenu(name: string) {
+  fireEvent.click(screen.getByRole("button", { name: `More actions for ${name}` }));
+}
+
+function liveText(): string {
+  return document.querySelector(".start-live")?.textContent ?? "";
+}
+
+describe("HomeScreen documentation export", () => {
+  beforeEach(() => {
+    // jsdom implements neither of these; the download helper needs both, and
+    // the synthetic anchor click would otherwise warn about navigation.
+    (URL as unknown as { createObjectURL: () => string }).createObjectURL = () => "blob:x";
+    (URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => {};
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  });
+
+  it("an uploaded ontology generates with no confirmation", async () => {
+    // AC-14. The user put this file here; it is theirs, so no prompt.
+    downloadDocumentation.mockResolvedValue({ blob: new Blob(["z"]), filename: "x-docs.zip" });
+    renderScreen({ ontologies: [UPLOAD_ONTOLOGY] });
+
+    openMenu("In-house vocab");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Download documentation" }));
+    });
+
+    expect(downloadDocumentation).toHaveBeenCalledWith("up1");
+    // No confirmation dialog was shown.
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("a URL-sourced ontology shows a confirmation naming its host", () => {
+    // AC-14. A fetched ontology's publisher probably documents it already, so
+    // the export is confirmed first — and nothing is generated until then.
+    renderScreen({ ontologies: [URL_ONTOLOGY] });
+
+    openMenu("FIBO");
+    fireEvent.click(screen.getByRole("button", { name: "Download documentation" }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).toContain("spec.edmcouncil.org");
+    // The host, not the whole URL, and generation has not started.
+    expect(downloadDocumentation).not.toHaveBeenCalled();
+  });
+
+  it("declining the confirmation generates nothing", () => {
+    // AC-14. Cancel closes the dialog and calls nothing.
+    renderScreen({ ontologies: [URL_ONTOLOGY] });
+
+    openMenu("FIBO");
+    fireEvent.click(screen.getByRole("button", { name: "Download documentation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(downloadDocumentation).not.toHaveBeenCalled();
+  });
+
+  it("confirming a URL-sourced ontology generates it", async () => {
+    // AC-14. The other side of the confirmation: Generate proceeds.
+    downloadDocumentation.mockResolvedValue({ blob: new Blob(["z"]), filename: "fibo-docs.zip" });
+    renderScreen({ ontologies: [URL_ONTOLOGY] });
+
+    openMenu("FIBO");
+    fireEvent.click(screen.getByRole("button", { name: "Download documentation" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Generate documentation" }));
+    });
+
+    expect(downloadDocumentation).toHaveBeenCalledWith("url1");
+  });
+
+  it("generation progress is announced politely", async () => {
+    // AC-13. The polite live region carries the two states the user waits
+    // through: it is the primary progress signal, not decoration.
+    let resolve!: (v: { blob: Blob; filename: string }) => void;
+    downloadDocumentation.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    renderScreen({ ontologies: [UPLOAD_ONTOLOGY] });
+
+    openMenu("In-house vocab");
+    fireEvent.click(screen.getByRole("button", { name: "Download documentation" }));
+    // While the request is in flight.
+    expect(liveText()).toBe("Preparing documentation…");
+
+    await act(async () => {
+      resolve({ blob: new Blob(["z"]), filename: "x-docs.zip" });
+    });
+    expect(liveText()).toBe("Documentation ready.");
+  });
+
+  it("a refusal surfaces its message instead of a broken file", async () => {
+    // The graph over the 5 MB embed guard is a 400 with the size named. It must
+    // read as an explanation, not a saved-but-broken download.
+    downloadDocumentation.mockRejectedValue(new Error("This ontology's graph is 7.5 MB, too large"));
+    renderScreen({ ontologies: [UPLOAD_ONTOLOGY] });
+
+    openMenu("In-house vocab");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Download documentation" }));
+    });
+
+    expect(document.querySelector(".detail-error")?.textContent).toContain("too large");
   });
 });
