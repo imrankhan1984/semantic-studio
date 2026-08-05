@@ -17,7 +17,8 @@ BASIC IDEA
         UPDATE syntax fails to parse as a query at all);
       * a SERVICE clause is refused at any nesting depth, because it is legal
         inside a SELECT and would make the server call out to an address the
-        query names;
+        query names; the walk fails closed, so a query nested too deeply to
+        verify is refused rather than passed (CF-1);
       * results are capped independently of whatever LIMIT the query carries;
       * evaluation runs in a worker thread with a wall-clock timeout, because
         rdflib itself offers no way to interrupt a running query.
@@ -71,12 +72,27 @@ class QueryTimeout(Exception):
 # UNION, OPTIONAL or a subselect.
 SERVICE_NODE_NAME = "ServiceGraphPattern"
 
+# The deepest the algebra walk descends before it gives up and refuses. Named
+# rather than a literal so the bound is visible and testable, and kept generous
+# so a normal query (a plain SELECT sits around depth 10, and rdflib's own
+# parser gives out well before this on hand-written nesting) never approaches
+# it. Only a pathological, machine-built input reaches the bound.
+MAX_ALGEBRA_DEPTH = 64
+
 # Shown when a query asks the server to call another endpoint. It describes a
 # product boundary that the README already states, rather than announcing a
 # security control, because that is what it is: federated query is backlog Q-3.
 SERVICE_REFUSED_DETAIL = (
     "Semantic Studio runs queries against the ontology loaded in the app. "
     "Federated queries using SERVICE are not supported."
+)
+
+# Shown when the algebra is nested past MAX_ALGEBRA_DEPTH. The walk cannot prove
+# such a query free of a SERVICE call, so it refuses it: a check that answers
+# "safe" when it means "I could not tell" is not a check. See CF-1.
+DEEP_QUERY_REFUSED_DETAIL = (
+    "This query is nested too deeply to verify as free of federated SERVICE "
+    "calls, so it is refused."
 )
 
 
@@ -89,11 +105,15 @@ def _contains_service(node, depth: int = 0) -> bool:
 
     A SERVICE nested inside a UNION, an OPTIONAL or a subselect is still a
     SERVICE, so the whole tree is walked and not only the top level.
+
+    Raises QueryError past MAX_ALGEBRA_DEPTH rather than returning False. The
+    depth bound is a guard against a pathological query, but a guard that
+    reported *no service here* on overflow would fail open — a SERVICE buried
+    below the bound would be accepted, the exact defect CF-1 records. Failing
+    closed makes the one case the walk cannot verify a refusal, not a pass.
     """
-    # rdflib's algebra is deeply nested but not unboundedly so; the bound is a
-    # guard against a pathological query rather than an expected condition.
-    if depth > 64:
-        return False
+    if depth > MAX_ALGEBRA_DEPTH:
+        raise QueryError(DEEP_QUERY_REFUSED_DETAIL)
     if getattr(node, "name", None) == SERVICE_NODE_NAME:
         return True
     # CompValue is a dict subclass, so its values are the child nodes.

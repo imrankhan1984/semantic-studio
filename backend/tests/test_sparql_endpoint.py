@@ -41,8 +41,17 @@ from fastapi.testclient import TestClient
 from rdflib import Graph
 from rdflib.plugins.sparql import prepareQuery
 
+from app import sparql_exec
 from app.main import app
-from app.sparql_exec import QueryError, _contains_service, execute_select, prepare_select
+from app.sparql_exec import (
+    DEEP_QUERY_REFUSED_DETAIL,
+    MAX_ALGEBRA_DEPTH,
+    SERVICE_NODE_NAME,
+    QueryError,
+    _contains_service,
+    execute_select,
+    prepare_select,
+)
 
 EXAMPLE = Path(__file__).parent.parent.parent / "examples" / "space-exploration.ttl"
 SPACE = "http://example.org/space#"
@@ -272,11 +281,20 @@ def test_service_is_refused_and_never_called(ontology_id, sparql_recorder):
     ],
     ids=["silent", "union", "optional", "subselect", "graph"],
 )
-def test_service_is_refused_at_every_nesting_depth(ontology_id, sparql_recorder, template):
+def test_service_is_refused_across_algebra_shapes(ontology_id, sparql_recorder, template):
     """SEC-7 and UNIT-2. Checking only the top level of the algebra is not enough.
 
     SILENT matters especially: it tells rdflib to swallow errors, so a naive
     implementation would call out and report success either way.
+
+    This proves the structural shapes a SERVICE can hide in (SILENT, UNION,
+    OPTIONAL, subselect, GRAPH). The one shape it does *not* prove — a SERVICE
+    nested past the walk's depth bound — is CF-1's, and is covered by
+    ``test_service_refused_past_depth_limit`` and
+    ``test_deep_query_refused_records_no_request`` below, because a query that
+    deep cannot be built as text: rdflib's own parser gives out first. The
+    former name, ``..._at_every_nesting_depth``, claimed the depth case this
+    test never reached.
     """
     endpoint = f"http://127.0.0.1:{sparql_recorder.server_address[1]}/sparql"
     query = template.format(ep=endpoint)
@@ -309,6 +327,97 @@ def test_service_detection_walks_the_algebra_not_the_text():
         "# SERVICE\nSELECT ?s WHERE { ?s ?p 'SERVICE' }",
     ):
         assert not _contains_service(prepareQuery(query).algebra), query
+
+
+# ---------------------------------------------------------------------------
+# CF-1 — the SERVICE walk must fail closed. Spec section 17.
+#
+# The walk carries a depth bound. Before the fix, overflowing it returned False
+# ("no service here"), so a SERVICE buried below the bound was accepted — the
+# guard failed open on the one case it could not verify. The fix raises instead,
+# so an unverifiable query is refused, not passed.
+#
+# A query genuinely nested past MAX_ALGEBRA_DEPTH cannot be written as text:
+# rdflib's parser hits its own recursion ceiling first (measured 2026-08-05).
+# So the endpoint tests lower the bound with monkeypatch to make the overflow
+# reachable with an ordinary query, and the pure-structure test drives the walk
+# directly. Both exercise the exact branch the fix changed.
+# ---------------------------------------------------------------------------
+
+
+def _service_leaf():
+    """A minimal algebra-shaped node the walk reads as a SERVICE call."""
+    from rdflib.plugins.sparql.parserutils import CompValue
+
+    return CompValue(SERVICE_NODE_NAME)
+
+
+def test_service_refused_past_depth_limit():
+    """AC-CF1-1, at the function itself. A SERVICE past the bound is refused.
+
+    Builds a structure deeper than MAX_ALGEBRA_DEPTH with a SERVICE at the
+    bottom and asserts the walk raises rather than returning — the fail-closed
+    behaviour. The raise fires on the overflow, before the service leaf is even
+    reached, which is the whole point: the walk refuses what it cannot verify.
+    """
+    # One dict per level of nesting, well past the bound, service at the floor.
+    node = _service_leaf()
+    for _ in range(MAX_ALGEBRA_DEPTH + 5):
+        node = {"p": node}
+
+    with pytest.raises(QueryError) as caught:
+        _contains_service(node)
+    assert caught.value.args[0] == DEEP_QUERY_REFUSED_DETAIL
+
+    # A shallow structure with no service is still cleanly False — the guard
+    # only bites past the bound, so ordinary queries are untouched.
+    assert _contains_service({"p": {"p": {"triples": []}}}) is False
+
+
+def test_deep_query_refused_records_no_request(ontology_id, sparql_recorder, monkeypatch):
+    """AC-CF1-1 and AC-CF1-2, through the endpoint with a recording server.
+
+    Lowers the depth bound so an ordinary SERVICE query overflows it, submits
+    it, and asserts the decisive property: the recorder saw zero requests. A
+    query refused at prepare time never reaches rdflib's evaluation, so the
+    SERVICE endpoint is never called — the fix closing the hole S-2 opened.
+    """
+    # 2 makes any SERVICE below the top two algebra levels overflow the bound;
+    # the query below nests the SERVICE far deeper than that.
+    monkeypatch.setattr(sparql_exec, "MAX_ALGEBRA_DEPTH", 2)
+
+    endpoint = f"http://127.0.0.1:{sparql_recorder.server_address[1]}/sparql"
+    query = (
+        f"SELECT ?s WHERE {{ OPTIONAL {{ ?s ?p ?o . "
+        f"OPTIONAL {{ SERVICE <{endpoint}> {{ ?s ?p ?o }} }} }} }}"
+    )
+    response = client.post(f"/api/ontologies/{ontology_id}/sparql", json={"query": query})
+    assert sparql_recorder.requests == [], "a query refused for depth still called out"
+    assert response.status_code == 400
+    # The message is the honest "could not verify" one, not the plain SERVICE
+    # refusal — the query was refused because the walk gave up, not because it
+    # confirmed a service, and the two are different facts.
+    assert response.json()["detail"] == DEEP_QUERY_REFUSED_DETAIL
+
+
+def test_normal_query_unaffected_by_depth_limit(ontology_id):
+    """AC-CF1-3. No ordinary query approaches the bound.
+
+    A plain SELECT and a modestly nested one both run at the real
+    MAX_ALGEBRA_DEPTH of 64 — the fix only ever meets pathological input.
+    """
+    for query in (
+        PLANETS,
+        # Nested OPTIONALs, no service, algebra depth well under 64.
+        f"""PREFIX : <{SPACE}>
+        SELECT ?planet WHERE {{ ?planet a :Planet .
+          OPTIONAL {{ ?planet :diameterKm ?d .
+            OPTIONAL {{ ?planet :nothingHere ?n }} }} }}""",
+    ):
+        response = client.post(
+            f"/api/ontologies/{ontology_id}/sparql", json={"query": query}
+        )
+        assert response.status_code == 200, response.json()
 
 
 @pytest.mark.parametrize(
