@@ -52,10 +52,11 @@ from urllib.parse import urljoin, urlparse
 import httpx
 # FastAPI request-shaping helpers: File/Form/UploadFile for uploads, Query for
 # query params, HTTPException for error responses, APIRouter to group endpoints.
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel  # declares/validates JSON request bodies
 
 # Delegate the real work to the domain modules.
+from ..docs_export import DocsExportError, build_zip
 from ..graph_builder import budget_viz, neighborhood_viz, node_details, search_nodes
 from ..net_guard import MAX_REDIRECTS, BlockedAddress, assert_url_fetchable
 from ..query_schema import describe_query_node
@@ -525,6 +526,54 @@ def get_source(
         "lines": text.count("\n") + 1,
         "name": ontology.name,
     }
+
+
+# Trailing RDF extensions stripped from a name before it becomes a zip filename,
+# so "acme-core.ttl" downloads as "acme-core-docs.zip" rather than
+# "acme-core.ttl-docs.zip".
+_NAME_EXTENSIONS = re.compile(r"\.(ttl|turtle|rdf|rdfs|owl|xml|nt|n3|jsonld|json|trig|nq|nquads)$", re.I)
+
+
+def _docs_filename(name: str) -> str:
+    """A safe "<name>-docs.zip" download filename from an ontology name.
+
+    The name is ontology-controlled, so it is slugged to characters that are
+    legal in a filename and safe in a Content-Disposition header; the title
+    inside the document is left unchanged. Falls back to "ontology" when nothing
+    usable survives.
+    """
+    base = _NAME_EXTENSIONS.sub("", name).strip()
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", base).strip("-. ")
+    return f"{slug or 'ontology'}-docs.zip"
+
+
+@router.get("/{oid}/documentation")
+def get_documentation(oid: str) -> Response:
+    """GET /{oid}/documentation -> a zip of a self-contained documentation site.
+
+    The zip is a complete static website the user drops into a repository and
+    points GitHub Pages at. Generation is local and makes no outbound request.
+    An ontology whose graph is too large to embed honestly is refused rather
+    than truncated (DocsExportError -> 400 with the size named), because a
+    published document with a silently partial graph is a false claim about the
+    vocabulary.
+    """
+    ontology = _get_or_404(oid)
+    try:
+        data = build_zip(ontology)
+    except DocsExportError as exc:
+        # The graph is over the embed guard; the message names the size.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ParseTimeout as exc:
+        # Generation parses the ontology if it was not loaded yet.
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except ParseError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{_docs_filename(ontology.name)}"'},
+    )
 
 
 @router.get("/{oid}/query-schema")
