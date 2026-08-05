@@ -234,6 +234,12 @@ const CAMERA_DURATION_MS = 500;
 const ZOOM_DURATION_MS = 200;
 const FIT_DURATION_MS = 400;
 
+/** The camera-ratio bounds Sigma is given, named once so the zoom controls can
+ *  disable "+" and "−" at the exact ends Sigma clamps to. Smaller ratio is more
+ *  zoomed IN, so the minimum is the fully-zoomed-in end. */
+const MIN_CAMERA_RATIO = 0.01;
+const MAX_CAMERA_RATIO = 20;
+
 /**
  * The reduced-motion settle: how much layout is applied in one blocking pass,
  * instead of animating it, before the graph is first drawn.
@@ -380,6 +386,38 @@ export default function GraphView({
   // without replacing `data` and a label that ignored expansions would tell a
   // screen reader user the opposite of what the status bar says.
   const [drawnCount, setDrawnCount] = useState(0);
+  // Which end of the zoom range the camera is at, so the matching zoom control
+  // can be disabled. A three-value string rather than the raw camera ratio,
+  // because the ratio changes on every animation frame and storing it would
+  // re-render GraphView a dozen times per zoom press; the edge changes at most
+  // once, so setState dedupes to one render — or none, mid-range. See the
+  // performance budget.
+  const [zoomEdge, setZoomEdge] = useState<"min" | "max" | "mid">("mid");
+  // The two zoomable buttons, so focus can move to the partner when a press
+  // disables the one that made it — the blur-to-body trap G-6 and
+  // saved-query-deletion-warning both hit. `lastZoomPress` records which was
+  // pressed, because the disable arrives asynchronously through the camera event
+  // and the effect that moves focus cannot otherwise tell which control to blame.
+  const zoomInRef = useRef<HTMLButtonElement>(null);
+  const zoomOutRef = useRef<HTMLButtonElement>(null);
+  const lastZoomPress = useRef<"in" | "out" | null>(null);
+  const zoomPressTimer = useRef<number | undefined>(undefined);
+
+  // Record a zoom-button press, and expire the record once its animation is
+  // over. The record is what lets the focus-move effect below tell a press that
+  // reached an edge from an edge reached any other way — but a press that stops
+  // mid-range never crosses an edge, so without the timer its record would
+  // linger and a later scroll-wheel zoom to the edge would inherit it and steal
+  // focus. The window is the animation's own duration, zero under reduced motion
+  // plus a small margin for the settling frame.
+  const armZoomPress = (dir: "in" | "out") => {
+    lastZoomPress.current = dir;
+    window.clearTimeout(zoomPressTimer.current);
+    zoomPressTimer.current = window.setTimeout(
+      () => (lastZoomPress.current = null),
+      moveDuration(ZOOM_DURATION_MS) + 60,
+    );
+  };
 
   const reduceMotion = useReducedMotion();
   // In a ref as well as in a variable: the layout and camera helpers below are
@@ -567,8 +605,8 @@ export default function GraphView({
       labelSize: 13,
       edgeLabelSize: 10,
       labelRenderedSizeThreshold: 5,
-      minCameraRatio: 0.01,
-      maxCameraRatio: 20,
+      minCameraRatio: MIN_CAMERA_RATIO,
+      maxCameraRatio: MAX_CAMERA_RATIO,
       defaultEdgeType: "arrow",
       zIndex: true,
       nodeReducer: (node, attrs) => {
@@ -774,6 +812,24 @@ export default function GraphView({
 
     sigmaRef.current = renderer;
 
+    // Drive the zoom controls' disabled state from the camera. Storing the
+    // derived edge rather than the ratio is what keeps this to one render per
+    // press: the ratio changes every animation frame, but "min"/"max"/"mid"
+    // changes at most once, so setState dedupes the frames in between away. A
+    // fresh graph starts at ratio 1, mid-range, so any stale edge is cleared.
+    const camera = renderer.getCamera();
+    setZoomEdge("mid");
+    const onCameraUpdate = (state: { ratio: number }) => {
+      setZoomEdge(
+        state.ratio <= MIN_CAMERA_RATIO
+          ? "min"
+          : state.ratio >= MAX_CAMERA_RATIO
+            ? "max"
+            : "mid",
+      );
+    };
+    camera.on("updated", onCameraUpdate);
+
     // No worker under reduced motion: nothing would ever start it, and the
     // layout it exists to animate has already been applied above.
     if (!syncModeRef.current && !reduceMotionRef.current) {
@@ -792,6 +848,10 @@ export default function GraphView({
         cancelAnimationFrame(rafRef.current);
         rafRef.current = undefined;
       }
+      // Before renderer.kill(): a listener left on a camera that outlives its
+      // renderer is the leak the performance budget's second row exists to
+      // catch, and it is invisible until several ontologies have been opened.
+      camera.removeListener("updated", onCameraUpdate);
       workerLayoutRef.current?.kill();
       workerLayoutRef.current = null;
       renderer.kill();
@@ -961,48 +1021,39 @@ export default function GraphView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusTick]);
 
+  // Move focus to the partner control when a zoom press disables the one that
+  // made it. A disabled button cannot hold focus and the browser drops it to
+  // <body>, which is the same trap G-6 and saved-query-deletion-warning hit — so
+  // this runs after the render that disabled the button, off the edge state
+  // rather than in the click handler, because the disable arrives one camera
+  // event later. The edge changes at most once per press, so this runs once; the
+  // intermediate "mid" updates during an animation do not re-run it, which is why
+  // lastZoomPress survives to the frame that reaches the edge. Keyed on that press
+  // (armed with a lifetime, see armZoomPress), so an edge reached by the scroll
+  // wheel moves nobody's focus.
+  useEffect(() => {
+    if (zoomEdge === "min" && lastZoomPress.current === "in") {
+      zoomOutRef.current?.focus();
+    } else if (zoomEdge === "max" && lastZoomPress.current === "out") {
+      zoomInRef.current?.focus();
+    }
+    lastZoomPress.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomEdge]);
+
+  // The zoom-press timer is the one thing armZoomPress leaves running; clear it
+  // on unmount so it cannot fire against a torn-down component.
+  useEffect(() => () => window.clearTimeout(zoomPressTimer.current), []);
+
   return (
     <div className="graph-wrap">
       <div className="graph-toolbar">
         {data ? (
           <>
-            <button
-              className="tool-btn"
-              onClick={() =>
-                sigmaRef.current
-                  ?.getCamera()
-                  .animatedReset({ duration: moveDuration(FIT_DURATION_MS) })
-              }
-              title="Zoom out to fit the whole graph"
-            >
-              ⤢ <span>Fit</span>
-            </button>
-            <button
-              className="tool-btn"
-              onClick={() => {
-                const camera = sigmaRef.current?.getCamera();
-                if (camera) camera.animatedZoom({ duration: moveDuration(ZOOM_DURATION_MS) });
-              }}
-              // The only content is a "＋" glyph, so name-from-contents gives
-              // this button the accessible name "＋". Fit and PNG carry words
-              // and need no help; these two do.
-              aria-label="Zoom in"
-              title="Zoom in"
-            >
-              ＋
-            </button>
-            <button
-              className="tool-btn"
-              onClick={() => {
-                const camera = sigmaRef.current?.getCamera();
-                if (camera) camera.animatedUnzoom({ duration: moveDuration(ZOOM_DURATION_MS) });
-              }}
-              aria-label="Zoom out"
-              title="Zoom out"
-            >
-              －
-            </button>
-            <div className="spacer" />
+            {/* Zoom in, zoom out and Fit moved to a control docked over the
+                canvas, bottom right, where a map puts them (G-5). What stays
+                here acts on the GRAPH rather than the VIEW: re-running the
+                layout and exporting a PNG. */}
             {/* Secondary: the layout runs automatically on load and while
                 dragging, so this is only for re-settling a big or fiddled
                 graph. Icon-only to keep it out of the way. */}
@@ -1067,6 +1118,61 @@ export default function GraphView({
               <p className="hint">
                 Use “Load” to upload a file or fetch one from a URL / GitHub.
               </p>
+            </div>
+          )}
+          {/* The zoom control, docked bottom right over the canvas (G-5). A
+              sibling of .graph-container rather than a child of it, because that
+              div is where Sigma mounts its canvases and manages their children;
+              .graph-canvas-wrap is already position: relative, so absolute
+              positioning here lands over the visible graph either way.
+
+              Its accessible names are words, not the glyphs — "＋" announces as
+              punctuation — so the glyphs carry aria-hidden and the labels do the
+              naming. The group names itself so the three read as a set. */}
+          {data && (
+            <div className="graph-zoom" role="group" aria-label="Zoom controls">
+              <button
+                ref={zoomInRef}
+                className="zoom-btn"
+                onClick={() => {
+                  armZoomPress("in");
+                  sigmaRef.current
+                    ?.getCamera()
+                    .animatedZoom({ duration: moveDuration(ZOOM_DURATION_MS) });
+                }}
+                disabled={zoomEdge === "min"}
+                aria-label="Zoom in"
+                title={zoomEdge === "min" ? "The view is fully zoomed in." : "Zoom in"}
+              >
+                <span aria-hidden="true">＋</span>
+              </button>
+              <button
+                ref={zoomOutRef}
+                className="zoom-btn"
+                onClick={() => {
+                  armZoomPress("out");
+                  sigmaRef.current
+                    ?.getCamera()
+                    .animatedUnzoom({ duration: moveDuration(ZOOM_DURATION_MS) });
+                }}
+                disabled={zoomEdge === "max"}
+                aria-label="Zoom out"
+                title={zoomEdge === "max" ? "The view is fully zoomed out." : "Zoom out"}
+              >
+                <span aria-hidden="true">－</span>
+              </button>
+              <button
+                className="zoom-btn"
+                onClick={() =>
+                  sigmaRef.current
+                    ?.getCamera()
+                    .animatedReset({ duration: moveDuration(FIT_DURATION_MS) })
+                }
+                aria-label="Fit the whole graph"
+                title="Zoom out to fit the whole graph"
+              >
+                <span aria-hidden="true">⤢</span>
+              </button>
             </div>
           )}
         </div>

@@ -47,6 +47,7 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
+import { Profiler } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { PALETTES } from "../types";
@@ -67,10 +68,14 @@ beforeAll(() => {
 const sigmaCalls = vi.hoisted(() => ({ last: null as any }));
 
 /** Every camera.animate target, in order, so "the camera arrived" is testable.
- *  The duration rides along because reduced motion is asserted on it. */
+ *  The duration rides along because reduced motion is asserted on it. The three
+ *  counters are for the zoom controls: which camera action each button fired. */
 const cameraMoves = vi.hoisted(() => ({
   to: [] as { x: number; y: number }[],
   durations: [] as number[],
+  zoomIn: 0,
+  zoomOut: 0,
+  fit: 0,
 }));
 
 // A Sigma that draws nothing and remembers everything it was given. Only the
@@ -95,8 +100,44 @@ vi.mock("sigma", () => {
       graph?.forEachNode?.((id: string, attrs: { x: number; y: number }) => {
         positionsAtFirstPaint[id] = [attrs.x, attrs.y];
       });
-      sigmaCalls.last = { graph, container, settings, positionsAtFirstPaint, handlers: this.handlers };
+      sigmaCalls.last = {
+        graph, container, settings, positionsAtFirstPaint,
+        handlers: this.handlers, camera: this.camera,
+      };
     }
+    // A stable camera per renderer, with the TypedEventEmitter surface GraphView
+    // uses — on/removeListener for the zoom controls' disabled state. `__fire`
+    // stands in for the real camera emitting `updated` as it animates, and
+    // `__listeners` lets a test prove the subscription was cleaned up.
+    camera = (() => {
+      const listeners = new Set<(s: { ratio: number }) => void>();
+      return {
+        ratio: 1,
+        on(_event: string, fn: (s: { ratio: number }) => void) { listeners.add(fn); },
+        removeListener(_event: string, fn: (s: { ratio: number }) => void) { listeners.delete(fn); },
+        animate(target: { x: number; y: number }, opts?: { duration?: number }) {
+          cameraMoves.to.push({ x: target.x, y: target.y });
+          cameraMoves.durations.push(opts?.duration ?? -1);
+        },
+        animatedReset(opts?: { duration?: number }) {
+          cameraMoves.fit += 1;
+          cameraMoves.durations.push(opts?.duration ?? -1);
+        },
+        animatedZoom(opts?: { duration?: number }) {
+          cameraMoves.zoomIn += 1;
+          cameraMoves.durations.push(opts?.duration ?? -1);
+        },
+        animatedUnzoom(opts?: { duration?: number }) {
+          cameraMoves.zoomOut += 1;
+          cameraMoves.durations.push(opts?.duration ?? -1);
+        },
+        __fire(ratio: number) {
+          this.ratio = ratio;
+          for (const fn of listeners) fn({ ratio });
+        },
+        __listeners() { return listeners.size; },
+      };
+    })();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     on(event: string, fn: (payload: any) => void) {
       this.handlers[event] = fn;
@@ -114,21 +155,7 @@ vi.mock("sigma", () => {
       return { x: graph.getNodeAttribute(node, "x"), y: graph.getNodeAttribute(node, "y") };
     }
     getCamera() {
-      return {
-        animate(target: { x: number; y: number }, opts?: { duration?: number }) {
-          cameraMoves.to.push({ x: target.x, y: target.y });
-          cameraMoves.durations.push(opts?.duration ?? -1);
-        },
-        animatedReset(opts?: { duration?: number }) {
-          cameraMoves.durations.push(opts?.duration ?? -1);
-        },
-        animatedZoom(opts?: { duration?: number }) {
-          cameraMoves.durations.push(opts?.duration ?? -1);
-        },
-        animatedUnzoom(opts?: { duration?: number }) {
-          cameraMoves.durations.push(opts?.duration ?? -1);
-        },
-      };
+      return this.camera;
     }
   }
   return { default: FakeSigma };
@@ -1126,5 +1153,263 @@ describe("the selected node's ring", () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (PALETTES as any).dark = realDark;
     }
+  });
+});
+
+/* --- the docked zoom controls (G-5) -------------------------------------- */
+
+/** The three zoom buttons by their accessible names. */
+const zoomIn = () => screen.getByRole("button", { name: "Zoom in" }) as HTMLButtonElement;
+const zoomOut = () => screen.getByRole("button", { name: "Zoom out" }) as HTMLButtonElement;
+const fit = () => screen.getByRole("button", { name: "Fit the whole graph" }) as HTMLButtonElement;
+
+/** Fire the camera's `updated` event the way the real camera does as it animates,
+ *  which is the only way to reach the disabled state from jsdom. */
+async function cameraRatio(value: number) {
+  await act(async () => {
+    sigmaCalls.last.camera.__fire(value);
+  });
+}
+
+describe("the docked zoom controls", () => {
+  beforeEach(() => {
+    cameraMoves.to = [];
+    cameraMoves.durations = [];
+    cameraMoves.zoomIn = 0;
+    cameraMoves.zoomOut = 0;
+    cameraMoves.fit = 0;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    // The two Sigma globals are stubbed once for the whole file; unstubAllGlobals
+    // has just removed them, so put them back for the next test.
+    vi.stubGlobal("WebGL2RenderingContext", class {});
+    vi.stubGlobal("WebGLRenderingContext", class {});
+    document.body.innerHTML = "";
+  });
+
+  it("zoom controls render inside the graph container", async () => {
+    // AC-1. The three controls live in a labelled group docked over the canvas —
+    // inside .graph-canvas-wrap, the positioned wrapper — not in the toolbar.
+    const { view } = await renderView();
+    const group = document.querySelector(".graph-canvas-wrap .graph-zoom")!;
+    expect(group).not.toBeNull();
+    expect(group.getAttribute("role")).toBe("group");
+    expect(group.getAttribute("aria-label")).toBe("Zoom controls");
+    expect(group.querySelectorAll("button")).toHaveLength(3);
+    for (const button of [zoomIn(), zoomOut(), fit()]) expect(group.contains(button)).toBe(true);
+    view.unmount();
+  });
+
+  it("the toolbar no longer contains zoom or fit", async () => {
+    // AC-1, the other half. The controls MOVED; a copy left in the toolbar would
+    // pass the test above while failing the point of the spec. Only layout and
+    // PNG remain in the strip above the canvas.
+    const { view } = await renderView();
+    const toolbar = document.querySelector(".graph-toolbar")!;
+    expect(toolbar.querySelector(".graph-zoom")).toBeNull();
+    for (const name of ["Zoom in", "Zoom out", "Fit the whole graph"]) {
+      const button = screen.getByRole("button", { name });
+      expect(toolbar.contains(button)).toBe(false);
+    }
+    view.unmount();
+  });
+
+  it("no controls render without an ontology", async () => {
+    // AC-2. Nothing to zoom, so nothing to zoom with.
+    const { view } = await renderView({ data: null });
+    expect(document.querySelector(".graph-zoom")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Zoom in" })).toBeNull();
+    view.unmount();
+  });
+
+  it("zoom in calls animatedZoom", async () => {
+    // AC-3. The same camera action the toolbar button performed.
+    const { view } = await renderView();
+    fireEvent.click(zoomIn());
+    expect(cameraMoves.zoomIn).toBe(1);
+    expect(cameraMoves.zoomOut).toBe(0);
+    view.unmount();
+  });
+
+  it("zoom out calls animatedUnzoom", async () => {
+    // AC-3.
+    const { view } = await renderView();
+    fireEvent.click(zoomOut());
+    expect(cameraMoves.zoomOut).toBe(1);
+    expect(cameraMoves.zoomIn).toBe(0);
+    view.unmount();
+  });
+
+  it("fit reuses the existing handler", async () => {
+    // AC-3. Fit is animatedReset, exactly as it was in the toolbar.
+    const { view } = await renderView();
+    fireEvent.click(fit());
+    expect(cameraMoves.fit).toBe(1);
+    view.unmount();
+  });
+
+  it("zoom in is disabled at the minimum ratio", async () => {
+    // AC-4. Smaller ratio is more zoomed in, so the minimum is the fully-in end.
+    const { view } = await renderView();
+    expect(zoomIn().disabled).toBe(false);
+    await cameraRatio(0.01); // MIN_CAMERA_RATIO
+    expect(zoomIn().disabled).toBe(true);
+    expect(zoomOut().disabled).toBe(false);
+    view.unmount();
+  });
+
+  it("zoom out is disabled at the maximum ratio", async () => {
+    // AC-4.
+    const { view } = await renderView();
+    expect(zoomOut().disabled).toBe(false);
+    await cameraRatio(20); // MAX_CAMERA_RATIO
+    expect(zoomOut().disabled).toBe(true);
+    expect(zoomIn().disabled).toBe(false);
+    view.unmount();
+  });
+
+  it("disabled controls carry a reason in their title", async () => {
+    // AC-4. The reason is stated, not left to a dimmed button — the rule G-6
+    // applied to Show more and Show less.
+    const { view } = await renderView();
+    await cameraRatio(0.01);
+    expect(zoomIn().disabled).toBe(true);
+    expect(zoomIn().getAttribute("title")).toMatch(/fully zoomed in/i);
+
+    await cameraRatio(20);
+    expect(zoomOut().disabled).toBe(true);
+    expect(zoomOut().getAttribute("title")).toMatch(/fully zoomed out/i);
+    view.unmount();
+  });
+
+  it("accessible names are words, not glyphs", async () => {
+    // AC-5. "＋" and "−" announce as punctuation, so the names are words and no
+    // button is addressable by its glyph.
+    const { view } = await renderView();
+    expect(zoomIn()).toBeTruthy();
+    expect(zoomOut()).toBeTruthy();
+    expect(fit()).toBeTruthy();
+    for (const glyph of ["＋", "－", "⤢"]) {
+      expect(screen.queryByRole("button", { name: glyph })).toBeNull();
+    }
+    view.unmount();
+  });
+
+  it("glyphs are hidden from assistive technology", async () => {
+    // AC-5. The glyph is decorative; the label carries the name, so the glyph is
+    // aria-hidden and does not get announced alongside it.
+    const { view } = await renderView();
+    for (const button of [zoomIn(), zoomOut(), fit()]) {
+      const glyph = button.querySelector("[aria-hidden='true']");
+      expect(glyph, button.getAttribute("aria-label") ?? "").not.toBeNull();
+    }
+    view.unmount();
+  });
+
+  it("focus moves to the partner when a control becomes disabled", async () => {
+    // AC-6. Zooming fully in disables "+"; a disabled button drops focus to
+    // <body>, so focus is put on "−" instead — the trap recorded twice already.
+    // The press is recorded so an edge reached by the scroll wheel moves nobody.
+    const { view } = await renderView();
+    zoomIn().focus();
+    fireEvent.click(zoomIn());
+    await cameraRatio(0.01);
+    expect(zoomIn().disabled).toBe(true);
+    expect(document.activeElement).toBe(zoomOut());
+    view.unmount();
+  });
+
+  it("a wheel zoom to an edge after a mid-range press moves nobody", async () => {
+    // Beyond the plan, guarding the timer armZoomPress uses. A button press that
+    // stops mid-range leaves an intent that must expire, or a later scroll-wheel
+    // zoom to the edge inherits it and steals focus — the invariant AC-6's
+    // wording relies on ("an edge reached by the scroll wheel moves nobody").
+    vi.useFakeTimers();
+    try {
+      const { view } = await renderView();
+      zoomIn().focus();
+      fireEvent.click(zoomIn()); // arms the "in" intent
+      await act(async () => {
+        sigmaCalls.last.camera.__fire(0.5); // animates, but stays mid-range
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(400); // the intent's window elapses
+      });
+      // Now a wheel zoom reaches the minimum, with no button pressed.
+      await act(async () => {
+        sigmaCalls.last.camera.__fire(0.01);
+      });
+      expect(zoomIn().disabled).toBe(true);
+      expect(document.activeElement).not.toBe(zoomOut());
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("zoom uses the shared camera helper, not a literal duration", async () => {
+    // AC-7. Under reduced motion the camera helper X-1 left behind returns a zero
+    // duration, and the zoom buttons must go through it rather than passing 200 —
+    // matching on the duration is how a reintroduced literal is caught.
+    stubMatchMedia(true);
+    const { view } = await renderView();
+    fireEvent.click(zoomIn());
+    fireEvent.click(zoomOut());
+    fireEvent.click(fit());
+    expect(cameraMoves.durations).toEqual([0, 0, 0]);
+    view.unmount();
+  });
+
+  it("a zoom press renders once", async () => {
+    // AC-8, first performance row. The camera emits `updated` every animation
+    // frame, but the component stores the derived edge, not the ratio, so the
+    // frames between edges dedupe to nothing: an edge-crossing press commits
+    // exactly once. (A mid-range press commits zero times, which is strictly
+    // better and is why the ratio is not held in state.)
+    const { default: GraphView } = await import("./GraphView");
+    let commits = 0;
+    let view!: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(
+        <Profiler id="gv" onRender={() => { commits += 1; }}>
+          <GraphView
+            data={DATA}
+            theme="dark"
+            hiddenKinds={new Set()}
+            selected={null}
+            onSelect={() => {}}
+            focusTick={0}
+          />
+        </Profiler>,
+      );
+    });
+    const before = commits;
+    await cameraRatio(0.005); // crosses to "min"
+    expect(commits - before).toBe(1);
+    view.unmount();
+  });
+
+  it("the camera listener is added once and removed", async () => {
+    // AC-8, second performance row, and the mutation target: a listener left on a
+    // camera that outlives its renderer leaks one per ontology opened, invisibly.
+    const { view } = await renderView();
+    expect(sigmaCalls.last.camera.__listeners()).toBe(1);
+    view.unmount();
+    expect(sigmaCalls.last.camera.__listeners()).toBe(0);
+  });
+
+  it("zoom makes no request", async () => {
+    // AC-8, third performance row. Zooming is a camera move and nothing else;
+    // GraphView reaches no network at all, and this holds it there.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
+    const { view } = await renderView();
+    fetchSpy.mockClear();
+    fireEvent.click(zoomIn());
+    fireEvent.click(zoomOut());
+    fireEvent.click(fit());
+    expect(fetchSpy).not.toHaveBeenCalled();
+    view.unmount();
   });
 });
