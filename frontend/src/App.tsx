@@ -1102,6 +1102,7 @@ export default function App() {
           {mode === "query" ? (
             <QueryPanel
               ontologyId={activeId}
+              ontologyName={active?.name}
               theme={theme}
               builder={builder}
               onPickIri={selectFromOutsideGraph}

@@ -66,6 +66,7 @@ EXPECTED OUTPUT
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { downloadDocumentation, fetchOntology } from "../api";
+import { triggerDownload } from "../download";
 import type { CatalogueEntry } from "../catalogue";
 import CatalogueList from "./CatalogueList";
 import OntologyCard from "./OntologyCard";
@@ -149,20 +150,6 @@ function confirmationHost(source: string): string | null {
   } catch {
     return null;
   }
-}
-
-/** Trigger the browser's own download of a blob. The object URL is revoked
- *  immediately after the synthetic click, so the blob is not held in memory
- *  once the download has been handed to the browser. */
-function triggerDownload(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
 }
 
 /** The remembered view, or null for "let the count decide". Reading localStorage

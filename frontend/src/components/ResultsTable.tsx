@@ -5,10 +5,10 @@ FILE: frontend/src/components/ResultsTable.tsx
 
 SUMMARY
     Renders SPARQL query results as a sortable, paged table: a column per
-    variable, a row count, duration and page position, a truncation notice, a
-    control that empties the results area, URI cells as clickable chips with a
-    secondary "view in source" control, and literal cells as text (unbound
-    cells shown as em dashes).
+    variable, a row count, duration and page position, a truncation notice,
+    Export CSV / Export JSON controls, a control that empties the results area,
+    URI cells as clickable chips with a secondary "view in source" control, and
+    literal cells as text (unbound cells shown as em dashes).
 
 BASIC IDEA
     Presentational over one SparqlResults. Column headers toggle client-side
@@ -31,6 +31,7 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES (props)
     - results: the SparqlResults to display.
+    - ontologyName: the active ontology's name, for the export filename.
     - onPickIri: select an entity when its result chip is clicked, drawing it
       first if it is not on the canvas.
     - onViewInSource: show that entity's first line in the raw source.
@@ -38,19 +39,32 @@ INPUTS / INPUT SOURCES (props)
 
 EXPECTED OUTPUT
     - The rendered results table (or an empty-result note); onPickIri and
-      onViewInSource on click; onClear when the clear control is pressed.
+      onViewInSource on click; onClear when the clear control is pressed; and a
+      CSV / JSON file download when an export control is pressed (Q-2).
 ================================================================================
 */
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { triggerDownload } from "../download";
+import { resultsFilename, toCsv, toJson } from "../sparql/exportResults";
 import type { SparqlResults, SparqlTerm } from "../types";
 
 interface Props {
   results: SparqlResults;
+  ontologyName?: string;
   onPickIri: (iri: string) => void;
   onViewInSource: (iri: string, prefixed?: string) => void;
   onClear: () => void;
 }
+
+type ExportFormat = "csv" | "json";
+
+/** What Tab may land on inside the truncation confirmation. Same selector as
+ *  AboutPanel: the document-bound trap wraps focus across these while the modal
+ *  is open, so a keyboard user cannot tab out into the table behind it. */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
+  'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
  * Rows to a page. Fifteen fills the results scroller at the current row height
@@ -76,13 +90,25 @@ function sortValue(term: SparqlTerm | null): string | number {
   return (term.label ?? term.value).toLowerCase();
 }
 
-function ResultsTable({ results, onPickIri, onViewInSource, onClear }: Props) {
+function ResultsTable({ results, ontologyName, onPickIri, onViewInSource, onClear }: Props) {
   const [sort, setSort] = useState<{ column: number; asc: boolean } | null>(null);
   const [page, setPage] = useState(0);
+  // The format awaiting the truncation confirmation, or null when no dialog is
+  // open. A truncated result holds only the first 1,000 rows, so exporting it is
+  // confirmed first — a partial file that looks whole is worse than none.
+  const [confirmFormat, setConfirmFormat] = useState<ExportFormat | null>(null);
 
   const prevRef = useRef<HTMLButtonElement>(null);
   const nextRef = useRef<HTMLButtonElement>(null);
   const pressed = useRef<Pressed | null>(null);
+  // The export buttons, the confirmation dialog, its default control, and the
+  // control to return focus to on either exit — the AboutPanel focus-trap
+  // pattern the documentation export uses.
+  const csvBtnRef = useRef<HTMLButtonElement>(null);
+  const jsonBtnRef = useRef<HTMLButtonElement>(null);
+  const confirmPanelRef = useRef<HTMLDivElement>(null);
+  const confirmBtnRef = useRef<HTMLButtonElement>(null);
+  const returnFocusRef = useRef<HTMLButtonElement | null>(null);
 
   const rows = useMemo(() => {
     if (!sort) return results.rows;
@@ -136,6 +162,90 @@ function ResultsTable({ results, onPickIri, onViewInSource, onClear }: Props) {
     [rows, current],
   );
 
+  const noRows = results.rowCount === 0;
+
+  // Build the file from ALL rows in the table's CURRENT sort order (`rows`, the
+  // sorted whole set — not the visible page and not the server's original
+  // order), so what you see is what you get (AC-9). CSV/JSON shaping and the
+  // formula neutralization live in the pure exportResults module.
+  const doExport = (format: ExportFormat) => {
+    const ordered: SparqlResults = { ...results, rows };
+    const text = format === "csv" ? toCsv(ordered) : toJson(ordered);
+    const mime = format === "csv" ? "text/csv;charset=utf-8" : "application/json";
+    const blob = new Blob([text], { type: mime });
+    triggerDownload(blob, resultsFilename(ontologyName, format));
+  };
+
+  // A press either exports immediately or, on a truncated result, opens the
+  // confirmation first (AC-13). The pressed button is remembered so focus can
+  // return to it on either exit of the dialog.
+  const requestExport = (format: ExportFormat) => {
+    if (noRows) return;
+    if (results.truncated) {
+      returnFocusRef.current = format === "csv" ? csvBtnRef.current : jsonBtnRef.current;
+      setConfirmFormat(format);
+    } else {
+      doExport(format);
+    }
+  };
+
+  const confirmExport = () => {
+    if (confirmFormat) doExport(confirmFormat);
+    setConfirmFormat(null);
+    returnFocusRef.current?.focus();
+  };
+
+  const cancelConfirm = () => {
+    setConfirmFormat(null);
+    returnFocusRef.current?.focus();
+  };
+
+  // Focus the dialog's default control when it opens.
+  useEffect(() => {
+    if (confirmFormat) confirmBtnRef.current?.focus();
+  }, [confirmFormat]);
+
+  // The focus trap (AC-13/AC-14), the AboutPanel document-bound pattern: Escape
+  // cancels, Tab and Shift+Tab wrap inside the dialog, and Tab from outside is
+  // pulled back to the first control. On `document`, not the panel, because
+  // clicking the panel's prose blurs focus to <body> and a panel-scoped handler
+  // would then see neither key.
+  useEffect(() => {
+    if (!confirmFormat) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        cancelConfirm();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const panel = confirmPanelRef.current;
+      if (!panel) return;
+      const items = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)];
+      if (items.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (!panel.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+    // cancelConfirm is stable enough for the dialog's lifetime; keying on
+    // confirmFormat is what installs and removes the trap with the dialog.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmFormat]);
+
   if (results.vars.length === 0) return null;
 
   const paged = pageCount > 1;
@@ -160,6 +270,29 @@ function ResultsTable({ results, onPickIri, onViewInSource, onClear }: Props) {
           </span>
         )}
         <div className="spacer" />
+        {/* Two plain buttons rather than an Export ▾ menu: two labelled controls
+            are reachable in the tab order with no focus-return question, for two
+            choices. Disabled by aria (not the native attribute) so they stay
+            focusable and announce their state; requestExport is a no-op with no
+            rows. AC-10/11/14. */}
+        <button
+          ref={csvBtnRef}
+          className="ghost results-export"
+          aria-disabled={noRows}
+          title={noRows ? "No results to export" : "Download all rows as CSV"}
+          onClick={() => requestExport("csv")}
+        >
+          Export CSV
+        </button>
+        <button
+          ref={jsonBtnRef}
+          className="ghost results-export"
+          aria-disabled={noRows}
+          title={noRows ? "No results to export" : "Download all rows as JSON (W3C SPARQL shape)"}
+          onClick={() => requestExport("json")}
+        >
+          Export JSON
+        </button>
         {/* "Clear results", not "Clear": the path bar already has a control
             called Clear path, and two controls sharing a word while doing
             different things is a defect in itself. */}
@@ -302,6 +435,40 @@ function ResultsTable({ results, onPickIri, onViewInSource, onClear }: Props) {
             </nav>
           )}
         </>
+      )}
+
+      {/* Truncation confirmation (AC-13): a real modal with a focus trap. A
+          capped result holds only the first 1,000 rows, so the file can only be
+          that — confirmed first so it is never a silent partial answer. Escape
+          and the backdrop cancel; focus returns to the pressed export button. */}
+      {confirmFormat && (
+        <div className="modal-backdrop" onClick={cancelConfirm}>
+          <div
+            ref={confirmPanelRef}
+            className="modal modal-confirm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="export-confirm-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h2 id="export-confirm-title">Export capped results?</h2>
+            </div>
+            <p>
+              These results were capped at {results.rowCount.toLocaleString()} rows,
+              so the file will contain the first {results.rowCount.toLocaleString()}.
+              Export anyway?
+            </p>
+            <div className="modal-actions">
+              <button className="ghost" onClick={cancelConfirm}>
+                Cancel
+              </button>
+              <button ref={confirmBtnRef} className="primary" onClick={confirmExport}>
+                Export anyway
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
