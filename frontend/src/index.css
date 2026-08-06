@@ -2497,6 +2497,18 @@ button.legend-row:hover {
   padding: 2px 8px;
 }
 
+/* Q-2 export controls, sized to sit beside Clear results. Disabled by aria (not
+   the native attribute) so they stay focusable and announce their state; the
+   dimming is the visible half of the same state, never the only signal. */
+.results-export {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+.results-export[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .results-pager {
   display: flex;
   align-items: center;

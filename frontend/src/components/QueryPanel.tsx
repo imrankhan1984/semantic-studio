@@ -54,6 +54,8 @@ import SparqlPreview from "./SparqlPreview";
 
 interface Props {
   ontologyId: string | null;
+  /** The active ontology's display name, for the result-export filename (Q-2). */
+  ontologyName?: string;
   theme: Theme;
   builder: ReturnType<typeof useQueryBuilder>;
   onPickIri: (iri: string) => void;
@@ -68,6 +70,7 @@ const PREVIEW_ROWS = 5;
 
 export default function QueryPanel({
   ontologyId,
+  ontologyName,
   theme,
   builder,
   onPickIri,
@@ -449,6 +452,7 @@ export default function QueryPanel({
           )}
           <ResultsTable
             results={results}
+            ontologyName={ontologyName}
             onPickIri={onPickIri}
             onViewInSource={onViewInSource}
             onClear={clearResults}

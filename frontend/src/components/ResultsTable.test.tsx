@@ -42,6 +42,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import ResultsTable from "./ResultsTable";
 import type { SparqlResults, SparqlTerm } from "../types";
 
+// The download helper is mocked so the export tests can assert the Blob and
+// filename handed to the browser without jsdom's missing object-URL machinery.
+const { triggerDownload } = vi.hoisted(() => ({ triggerDownload: vi.fn() }));
+vi.mock("../download", () => ({ triggerDownload }));
+
 const PAGE_SIZE = 15;
 
 /**
@@ -66,12 +71,13 @@ function resultsWith(count: number, truncated = false): SparqlResults {
   };
 }
 
-function renderTable(results: SparqlResults, onClear = vi.fn()) {
+function renderTable(results: SparqlResults, onClear = vi.fn(), ontologyName = "Acme Core") {
   const onPickIri = vi.fn();
   const onViewInSource = vi.fn();
   const view = render(
     <ResultsTable
       results={results}
+      ontologyName={ontologyName}
       onPickIri={onPickIri}
       onViewInSource={onViewInSource}
       onClear={onClear}
@@ -86,6 +92,7 @@ const pager = () => document.querySelector("nav.results-pager");
 afterEach(() => {
   cleanup();
   document.body.innerHTML = "";
+  triggerDownload.mockReset();
 });
 
 describe("ResultsTable paging", () => {
@@ -496,5 +503,128 @@ describe("ResultsTable results area", () => {
     renderTable(resultsWith(412));
     fireEvent.click(screen.getByRole("button", { name: "Last page" }));
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Previous page" }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Q-2 — Export CSV / Export JSON. The pure serialization is proved in
+// exportResults.test.ts; these prove the wiring: presence, disabled state, the
+// download call and filename, and the truncation confirmation.
+// ---------------------------------------------------------------------------
+
+/** A tiny result set with n rows and one column, optionally truncated. */
+function tiny(n: number, truncated = false): SparqlResults {
+  const rows: (SparqlTerm | null)[][] = Array.from({ length: n }, (_, i) => [
+    { type: "uri", value: `http://example.org/e${i}`, label: `E${i}` },
+  ]);
+  return { vars: ["s"], rows, rowCount: n, truncated, durationMs: 3 };
+}
+
+describe("ResultsTable export", () => {
+  const csvBtn = () => screen.getByRole("button", { name: "Export CSV" });
+  const jsonBtn = () => screen.getByRole("button", { name: "Export JSON" });
+
+  it("both export buttons are present and enabled with rows", () => {
+    // AC-10.
+    renderTable(tiny(3));
+    expect(csvBtn()).toBeTruthy();
+    expect(jsonBtn()).toBeTruthy();
+    expect(csvBtn().getAttribute("aria-disabled")).toBe("false");
+    expect(jsonBtn().getAttribute("aria-disabled")).toBe("false");
+  });
+
+  it("export buttons are disabled with a reason when there are no rows", () => {
+    // AC-11: columns but no rows. aria-disabled, not the native attribute, so
+    // they stay focusable; the reason is text, not colour.
+    renderTable({ vars: ["s"], rows: [], rowCount: 0, truncated: false, durationMs: 1 });
+    expect(csvBtn().getAttribute("aria-disabled")).toBe("true");
+    expect(csvBtn().getAttribute("title")).toBe("No results to export");
+    expect(jsonBtn().getAttribute("aria-disabled")).toBe("true");
+    // A press does nothing.
+    fireEvent.click(csvBtn());
+    expect(triggerDownload).not.toHaveBeenCalled();
+  });
+
+  it("pressing export triggers a download with the right filename", () => {
+    // AC-12.
+    renderTable(tiny(2));
+    fireEvent.click(csvBtn());
+    expect(triggerDownload).toHaveBeenCalledTimes(1);
+    expect(triggerDownload.mock.calls[0][1]).toBe("Acme-Core-results.csv");
+    fireEvent.click(jsonBtn());
+    expect(triggerDownload.mock.calls[1][1]).toBe("Acme-Core-results.json");
+  });
+
+  it("the buttons are keyboard reachable and announce their state", () => {
+    // AC-14: native <button>s (in the tab order), aria-disabled carrying the
+    // state. jsdom has no layout, so the focus ring itself is a browser check.
+    renderTable(tiny(1));
+    expect(csvBtn().tagName).toBe("BUTTON");
+    expect(csvBtn().hasAttribute("disabled")).toBe(false); // focusable even when off
+    expect(csvBtn().getAttribute("aria-disabled")).toBe("false");
+  });
+
+  it("a truncated result confirms before exporting", async () => {
+    // AC-13: the dialog names the cap, nothing is produced until confirmed, and
+    // declining produces nothing.
+    renderTable(tiny(1000, true));
+    fireEvent.click(csvBtn());
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).toContain("1,000");
+    expect(triggerDownload).not.toHaveBeenCalled();
+
+    // Cancel: nothing produced.
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(triggerDownload).not.toHaveBeenCalled();
+
+    // Confirm: the file is produced.
+    fireEvent.click(csvBtn());
+    fireEvent.click(screen.getByRole("button", { name: "Export anyway" }));
+    expect(triggerDownload).toHaveBeenCalledTimes(1);
+  });
+
+  it("the truncation dialog traps focus and Escape cancels", () => {
+    // AC-13/AC-14: the AboutPanel focus-trap pattern.
+    renderTable(tiny(1000, true));
+    const opener = csvBtn();
+    fireEvent.click(opener);
+    const dialog = screen.getByRole("dialog");
+    const buttons = within(dialog).getAllByRole("button");
+    const first = buttons[0];
+    const last = buttons[buttons.length - 1];
+    // "Export anyway" is focused on open (the last control); Tab wraps to first.
+    last.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toBe(first);
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+    // Escape cancels and restores focus to the opening button.
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("export follows the current sort order", async () => {
+    // AC-9: sort the single column descending, then export, and confirm the CSV
+    // rows are in that order — the whole set, not the visible page.
+    const rows: (SparqlTerm | null)[][] = [
+      [{ type: "literal", value: "1" }],
+      [{ type: "literal", value: "3" }],
+      [{ type: "literal", value: "2" }],
+    ];
+    renderTable({ vars: ["n"], rows, rowCount: 3, truncated: false, durationMs: 1 });
+    // One click sorts ascending; the export must reflect it.
+    fireEvent.click(screen.getByText("n"));
+    fireEvent.click(csvBtn());
+    const blob = triggerDownload.mock.calls[0][0] as Blob;
+    const text = await blob.text();
+    expect(text).toBe("n\r\n1\r\n2\r\n3");
+  });
+
+  it("filename falls back to results.csv with no ontology name", () => {
+    renderTable(tiny(1), vi.fn(), "");
+    fireEvent.click(csvBtn());
+    expect(triggerDownload.mock.calls[0][1]).toBe("results.csv");
   });
 });
