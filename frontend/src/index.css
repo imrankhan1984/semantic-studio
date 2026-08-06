@@ -1557,6 +1557,213 @@ button.legend-row:hover {
   margin: 14px 0 0;
 }
 
+/* --- hierarchy view --------------------------------------------------- */
+/* Fills the main area on its own (it replaces the graph, it does not overlay
+   it). A flex column: a fixed toolbar and note at the top, then the forests
+   sharing the remaining height, each its own scrolling, virtualized tree. */
+.hierarchy-view {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.hierarchy-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+}
+
+.hierarchy-toolbar h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.hierarchy-filter {
+  flex: 1;
+  max-width: 320px;
+}
+
+.hierarchy-note {
+  flex: none;
+  margin: 0;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.hierarchy-note code {
+  font-size: 11px;
+  color: var(--text);
+}
+
+.hierarchy-status {
+  padding: 12px 14px;
+}
+
+.hierarchy-forests {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Each forest shares the available height and scrolls independently, so a huge
+   concept tree does not push a small class tree off the screen. */
+.hierarchy-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.hierarchy-section:last-child {
+  border-bottom: none;
+}
+
+.hierarchy-section h3 {
+  flex: none;
+  margin: 0;
+  padding: 8px 14px 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.hierarchy-match-count {
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* The virtualized scroll container: only the windowed rows are inside, each
+   absolutely positioned by its index, inside a spacer sized to the full count. */
+.hierarchy-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  position: relative;
+}
+
+.hierarchy-scroll {
+  position: relative;
+}
+
+.hierarchy-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.hierarchy-row:hover {
+  background: var(--bg-raised);
+}
+
+/* Selection is a ring in the accent, not a fill swap — the same reasoning as the
+   graph's selected node: show WHAT is selected without hiding WHAT KIND it is. */
+.hierarchy-row.selected {
+  background: var(--bg-raised);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* The derived channel (D-046): a dashed left edge is the non-colour cue that an
+   edge is inferred rather than asserted. Dormant while every edge is asserted. */
+.hierarchy-row.inferred {
+  border-left: 2px dashed var(--text-dim);
+}
+
+.hierarchy-indent {
+  flex: none;
+}
+
+.hierarchy-twistie {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.hierarchy-twistie.spacer {
+  cursor: default;
+}
+
+.hierarchy-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.hierarchy-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.hierarchy-kind {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.hierarchy-count {
+  flex: none;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-raised);
+  border-radius: 10px;
+  padding: 0 7px;
+}
+
+.hierarchy-flag,
+.hierarchy-inferred {
+  flex: none;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.hierarchy-inferred {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.hierarchy-depth {
+  flex: none;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
 /* --- detail panel ----------------------------------------------------- */
 
 .detail-panel {

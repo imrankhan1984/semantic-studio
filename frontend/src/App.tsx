@@ -105,6 +105,7 @@ import DetailPanel from "./components/DetailPanel";
 import ExploreStart from "./components/ExploreStart";
 import GraphNotice from "./components/GraphNotice";
 import GraphView from "./components/GraphView";
+import HierarchyView from "./components/HierarchyView";
 import HomeScreen from "./components/HomeScreen";
 import Legend from "./components/Legend";
 import LoadDialog from "./components/LoadDialog";
@@ -116,6 +117,7 @@ import {
   IconAbout,
   IconClose,
   IconExplore,
+  IconHierarchy,
   IconHome,
   IconLoad,
   IconMoon,
@@ -879,6 +881,20 @@ export default function App() {
               <IconQuery />
               <span>Query</span>
             </button>
+            <button
+              role="tab"
+              aria-selected={tabSelected("hierarchy")}
+              className={tabSelected("hierarchy") ? "nav-item active" : "nav-item"}
+              onClick={() => onPickMode("hierarchy")}
+              title={
+                activeId
+                  ? "See the class and concept hierarchy as an indented tree"
+                  : NO_ONTOLOGY_TITLE
+              }
+            >
+              <IconHierarchy />
+              <span>Hierarchy</span>
+            </button>
           </nav>
           {/* Outside the tablist on purpose. View, Explore and Query select
               between views of an ontology; About opens a dialog, and joining
@@ -965,8 +981,10 @@ export default function App() {
               is not currently looking at and put its results nowhere. The home
               screen has its own search, over the library rather than into one
               ontology, and two search boxes on one screen meaning different
-              things is worse than one. */}
-          {!showHome && (
+              things is worse than one. Absent in Hierarchy too: the tree has its
+              own filter, and two search-like inputs meaning different things is
+              the same trap. */}
+          {!showHome && mode !== "hierarchy" && (
             <SearchBox
               ontologyId={activeId}
               theme={theme}
@@ -1011,8 +1029,10 @@ export default function App() {
           knowable before the first graph arrives. */}
       {/* Not on Home: the bar is about the canvas, and pressing Home does not
           throw the canvas away — so without this guard it would sit above the
-          library saying how much of an ontology nobody is looking at is drawn. */}
-      {!showHome && graphData && defaultBudget !== null && (
+          library saying how much of an ontology nobody is looking at is drawn.
+          Not in Hierarchy either: the tree is unbudgeted, so a "Show more"
+          about the graph is meaningless above it. */}
+      {!showHome && mode !== "hierarchy" && graphData && defaultBudget !== null && (
         <GraphNotice
           stats={graphData.stats}
           defaultBudget={defaultBudget}
@@ -1046,6 +1066,21 @@ export default function App() {
           onLoaded={onLoaded}
           onOpenDialog={openDialog}
         />
+      ) : mode === "hierarchy" ? (
+        // Hierarchy replaces the graph rather than overlaying it: it is a tree,
+        // not a view of the canvas, so it fills the main area on its own. A row
+        // selects through the same handler search and the results table use, so
+        // picking an entity the node budget left out draws it when the user
+        // switches back to the graph (AC-13). Leaving Hierarchy unmounts it and
+        // re-runs the graph layout, the honest cost of a second, separate view.
+        <main className="main">
+          <HierarchyView
+            ontologyId={activeId}
+            theme={theme}
+            selected={selected}
+            onSelect={selectFromOutsideGraph}
+          />
+        </main>
       ) : (
         <main className="main">
           {/* The keyboard route past the graph. It is the first focusable thing

@@ -24,6 +24,7 @@ EXPECTED OUTPUT
 
 import type { QueryState } from "./sparql/types";
 import type {
+  Hierarchy,
   NodeDetails,
   OntologyDeletion,
   OntologySource,
@@ -142,6 +143,17 @@ export function getNeighborhood(
   return fetch(
     `/api/ontologies/${id}/neighborhood?iri=${encodeURIComponent(iri)}${extra}`,
   ).then((r) => handle<VizNeighborhood>(r));
+}
+
+/**
+ * The subClassOf / broader forests for the Hierarchy view.
+ *
+ * Unbudgeted, unlike getGraph: the tree is a fraction of the graph's size and
+ * the frontend virtualizes it, so the whole asserted structure comes back. The
+ * server caches it on the ontology, so re-opening the tab is cheap.
+ */
+export function fetchHierarchy(id: string): Promise<Hierarchy> {
+  return fetch(`/api/ontologies/${id}/hierarchy`).then((r) => handle<Hierarchy>(r));
 }
 
 // Every statement about one entity, for the detail panel.

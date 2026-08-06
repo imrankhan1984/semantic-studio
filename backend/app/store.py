@@ -77,6 +77,7 @@ from rdflib.util import guess_format
 
 # Derived-view builders and the saved-query store live in sibling modules.
 from .graph_builder import build_card_sketch, build_viz_graph
+from .hierarchy import build_hierarchy
 from .net_guard import BlockedAddress, install_rdflib_guard
 from .queries_store import SavedQueryStore
 from .query_schema import build_query_schema
@@ -251,6 +252,7 @@ class Ontology:
     graph: Optional[Graph] = field(default=None, repr=False)          # parsed triples
     viz_cache: Optional[dict] = field(default=None, repr=False)       # graph-view nodes/edges
     schema_cache: Optional[dict] = field(default=None, repr=False)    # query-builder schema
+    hierarchy_cache: Optional[dict] = field(default=None, repr=False)  # subClassOf/broader forests
     pretty_cache: Optional[str] = field(default=None, repr=False)     # re-serialized Turtle
     # Guards the one-time parse so two concurrent requests cannot both parse.
     _load_lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
@@ -289,6 +291,16 @@ class Ontology:
         if self.schema_cache is None:
             self.schema_cache = build_query_schema(self.ensure_loaded())
         return self.schema_cache
+
+    def hierarchy(self) -> dict:
+        """The subClassOf / broader forests for the Hierarchy view (cached).
+
+        Cached like query_schema for the same reason: the forest is a pure
+        function of the graph and is read every time the Hierarchy tab opens.
+        """
+        if self.hierarchy_cache is None:
+            self.hierarchy_cache = build_hierarchy(self.ensure_loaded())
+        return self.hierarchy_cache
 
     def summary(self) -> dict:
         """The lightweight JSON the frontend lists in the dropdown.
