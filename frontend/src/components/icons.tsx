@@ -86,6 +86,20 @@ export function IconQuery() {
   );
 }
 
+/* Hierarchy is the indented-tree view. A root with two branches, each nested
+   one level, reads as "this is a kind of that" at icon size. */
+export function IconHierarchy() {
+  return (
+    <svg {...base}>
+      <path d="M5 4v13a2 2 0 002 2h2" />
+      <path d="M7 11h2" />
+      <rect x="3" y="2.5" width="4" height="3" rx="0.6" />
+      <rect x="9" y="9.5" width="4" height="3" rx="0.6" />
+      <rect x="9" y="17.5" width="4" height="3" rx="0.6" />
+    </svg>
+  );
+}
+
 /* About opens a dialog rather than selecting a view, so it does not want one of
    the mode icons' shapes. The circled "i" is what applications put there and is
    the one glyph a newcomer does not have to learn. */

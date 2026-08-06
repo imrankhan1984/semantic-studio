@@ -201,6 +201,24 @@ def prefixed(graph: Graph, iri: URIRef) -> str:
         return str(iri)
 
 
+def subclass_parents(graph: Graph) -> dict[URIRef, set[URIRef]]:
+    """child -> {named superclasses}, from asserted rdfs:subClassOf only.
+
+    The one asserted subClassOf pass, factored out so the query schema and the
+    hierarchy view read the class hierarchy the same way rather than each walking
+    the triples with its own subtly different rules. Both ends must be named
+    (URIRef); a blank-node superclass is an OWL restriction, not a parent in the
+    tree. A class stated to be a subclass of *itself* is skipped, because it is
+    its own parent in no useful sense and would otherwise be a trivial one-node
+    cycle for the hierarchy to break.
+    """
+    parents: dict[URIRef, set[URIRef]] = defaultdict(set)
+    for subject, obj in graph.subject_objects(RDFS.subClassOf):
+        if isinstance(subject, URIRef) and isinstance(obj, URIRef) and subject != obj:
+            parents[subject].add(obj)
+    return parents
+
+
 def build_viz_graph(graph: Graph) -> dict:
     """Extract nodes and edges for visualization from an rdflib graph.
 

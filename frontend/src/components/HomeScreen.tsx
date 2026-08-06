@@ -107,6 +107,7 @@ const PENDING_HEADING: Record<AppMode, string> = {
   explore: "Choose an ontology to explore",
   query: "Choose an ontology to query",
   view: "Choose an ontology to view",
+  hierarchy: "Choose an ontology to see its hierarchy",
   home: "Your library",
 };
 

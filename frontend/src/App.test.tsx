@@ -53,7 +53,7 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { ApiError } from "./api";
@@ -73,6 +73,7 @@ const {
   uploadOntology,
   listSavedQueries,
   getNeighborhood,
+  fetchHierarchy,
   getNodeDetails,
   getQuerySchema,
   getQueryNode,
@@ -89,6 +90,7 @@ const {
   uploadOntology: vi.fn(),
   listSavedQueries: vi.fn(),
   getNeighborhood: vi.fn(),
+  fetchHierarchy: vi.fn(),
   // The four below arrived with the Explore starting panel and the mode
   // regression test: the detail panel, the query builder and the source view all
   // fetch, and none of them could be rendered from here until they were mocked.
@@ -115,6 +117,7 @@ vi.mock("./api", async (importOriginal) => ({
   uploadOntology,
   listSavedQueries,
   getNeighborhood,
+  fetchHierarchy,
   getNodeDetails,
   getQuerySchema,
   getQueryNode,
@@ -134,6 +137,7 @@ const ALL_API = {
   uploadOntology,
   listSavedQueries,
   getNeighborhood,
+  fetchHierarchy,
   getNodeDetails,
   getQuerySchema,
   getQueryNode,
@@ -270,6 +274,40 @@ beforeEach(() => {
   listOntologies.mockResolvedValue([SUMMARY]);
   getGraph.mockResolvedValue(TRUNCATED);
   searchNodes.mockResolvedValue([]);
+  // The Hierarchy tab fetches this; one class-forest root, off the budgeted
+  // graph (whose nodes list is empty), so selecting it draws it.
+  fetchHierarchy.mockResolvedValue({
+    classes: {
+      nodes: {
+        "http://x/Instrument": {
+          label: "Instrument",
+          prefixed: "x:Instrument",
+          kind: "class",
+          hasChildren: false,
+        },
+      },
+      children: {},
+      roots: ["http://x/Instrument"],
+    },
+    concepts: { nodes: {}, children: {}, roots: [] },
+    counts: { classes: 1, concepts: 0 },
+    truncated: false,
+  });
+  getNeighborhood.mockResolvedValue({
+    nodes: [{ id: "http://x/Instrument", label: "Instrument", kind: "class", degree: 0 }],
+    edges: [],
+    stats: {
+      nodeCount: 1,
+      edgeCount: 0,
+      nodeTotal: 18717,
+      edgeTotal: 51446,
+      truncated: false,
+      budget: 200,
+      kindCounts: { class: 18717 },
+      neighborTotal: 0,
+      center: "http://x/Instrument",
+    },
+  });
   listSavedQueries.mockResolvedValue([]);
   deleteOntology.mockResolvedValue({ deleted: "o1", deletedQueries: 0 });
   getNodeDetails.mockResolvedValue({
@@ -1690,10 +1728,10 @@ describe("App About control", () => {
     await renderApp();
 
     const tablist = screen.getByRole("tablist");
-    // Four now, not three: `home-screen` made Home a real fourth view of the
-    // workspace, and it swaps the main region exactly as the other three do.
-    // About still does not, which is the distinction this test is about.
-    expect(screen.getAllByRole("tab")).toHaveLength(4);
+    // Five now: Home (home-screen), then View / Explore / Query, then Hierarchy
+    // (hierarchy-view), each a real view that swaps the main region. About still
+    // does not, which is the distinction this test is about.
+    expect(screen.getAllByRole("tab")).toHaveLength(5);
     expect(tablist.contains(aboutControl())).toBe(false);
     expect(aboutControl().getAttribute("role")).toBeNull();
     expect(aboutControl().getAttribute("aria-haspopup")).toBe("dialog");
@@ -2045,5 +2083,62 @@ describe("App keyboard route past the graph", () => {
     expect(
       notice.compareDocumentPosition(main) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+});
+
+describe("App Hierarchy mode", () => {
+  /** Open FIBO, then switch to the Hierarchy tab and wait for its tree. */
+  async function openHierarchy() {
+    await renderAppOpened();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Hierarchy" }));
+    });
+    await screen.findByRole("heading", { name: "Class hierarchy" });
+  }
+
+  it("the Hierarchy tab renders the tree in place of the graph", async () => {
+    // hierarchy-view AC-6 from App's side: the tree fills the main area and the
+    // graph canvas is gone (it is a separate view, not an overlay).
+    await openHierarchy();
+
+    expect(screen.getByRole("tree")).toBeTruthy();
+    expect(screen.queryByTestId("graph")).toBeNull();
+    // The budget bar is about the canvas and does not sit above the tree.
+    expect(document.querySelector(".graph-notice")).toBeNull();
+  });
+
+  it("selecting a tree node updates the shared selection and draws it", async () => {
+    // AC-13. Clicking a row routes through the same handler the search box and
+    // the results table use, so an entity the node budget left out is drawn —
+    // getNeighborhood is the "the graph can draw it" half, proving the shared
+    // selection was updated from the tree.
+    await openHierarchy();
+
+    const row = screen
+      .getAllByRole("treeitem")
+      .find((el) => el.textContent?.includes("Instrument"))!;
+    await act(async () => fireEvent.click(row));
+
+    expect(getNeighborhood).toHaveBeenCalledWith("o1", "http://x/Instrument");
+
+    // And the selection survives into Explore: switching there shows the detail
+    // panel rather than the starting panel.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
+    });
+    await waitFor(() => expect(document.querySelector(".detail-panel")).toBeTruthy());
+  });
+
+  it("mounting does not fetch the hierarchy until the tab is opened", async () => {
+    // The tree costs a request only when its tab is entered — the graph modes do
+    // not pay for it. Opening FIBO in Explore must not call fetchHierarchy.
+    await renderAppOpened();
+    expect(fetchHierarchy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Hierarchy" }));
+    });
+    await screen.findByRole("heading", { name: "Class hierarchy" });
+    expect(fetchHierarchy).toHaveBeenCalledWith("o1");
   });
 });

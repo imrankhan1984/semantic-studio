@@ -51,8 +51,9 @@ from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 
 # Shared label/prefix helpers keep class and predicate labels consistent with
-# the graph view.
-from .graph_builder import pick_label, prefixed
+# the graph view; subclass_parents is the one asserted subClassOf pass, shared
+# with the hierarchy view so both read the class hierarchy identically.
+from .graph_builder import pick_label, prefixed, subclass_parents
 
 # Meta-classes: the RDF/OWL vocabulary terms themselves. These describe the
 # schema language, so they are never offered as steppable classes to query.
@@ -275,17 +276,17 @@ def build_query_schema(graph: Graph) -> dict:
             if subject not in META_CLASSES:
                 classes.add(subject)
 
-    # Record direct parents (child -> {parents}); the frontend walks this to
-    # inherit links/properties down the hierarchy at lookup time.
-    super_classes: dict[URIRef, set[URIRef]] = defaultdict(set)
+    # Record direct parents (child -> {parents}) via the shared asserted
+    # subClassOf pass; the frontend walks this to inherit links/properties down
+    # the hierarchy at lookup time. Both ends of every subClassOf are classes
+    # worth listing, so they join the class set here regardless of whether the
+    # helper kept the edge (it drops a class that is a subclass of itself).
+    super_classes = subclass_parents(graph)
     for subject, obj in graph.subject_objects(RDFS.subClassOf):
-        if isinstance(subject, URIRef) and isinstance(obj, URIRef):
-            if subject not in META_CLASSES:
-                classes.add(subject)
-            if obj not in META_CLASSES:
-                classes.add(obj)
-            if subject != obj:
-                super_classes[subject].add(obj)
+        if isinstance(subject, URIRef) and subject not in META_CLASSES:
+            classes.add(subject)
+        if isinstance(obj, URIRef) and obj not in META_CLASSES:
+            classes.add(obj)
 
     # Any class used as a property's domain or (non-literal) range is a class
     # worth listing, even if nothing is typed as it directly.

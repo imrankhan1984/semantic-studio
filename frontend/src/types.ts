@@ -30,11 +30,12 @@ import type { QueryState } from "./sparql/types";
 // Which colour theme is active.
 export type Theme = "dark" | "light";
 
-// The top-level modes. The first three are selected by the header tabs and act
-// on an ontology; `home` is the library screen, which acts on none of them and
-// is why it is not a tab. Home is a VIEW rather than a reset — switching to it
-// keeps the loaded ontology, the selection and any query in progress. See D-026.
-export type AppMode = "view" | "explore" | "query" | "home";
+// The top-level modes. View / Explore / Query / Hierarchy are selected by the
+// header tabs and act on an ontology; `home` is the library screen, which acts
+// on none of them and is why it is not a tab. Home is a VIEW rather than a reset
+// — switching to it keeps the loaded ontology, the selection and any query in
+// progress. See D-026. `hierarchy` is the tree view over subClassOf / broader.
+export type AppMode = "view" | "explore" | "query" | "home" | "hierarchy";
 
 // Response of GET /source: the file text plus render/truncation metadata.
 export interface OntologySource {
@@ -244,6 +245,46 @@ export interface OntologySummary {
    *  stored before this field existed; such a card renders without a miniature
    *  rather than triggering a parse to backfill one. */
   card?: { sketch: CardSketch } | null;
+}
+
+/* --- hierarchy view ------------------------------------------------------ */
+
+// One node in a hierarchy forest. `id` is the map key, not a field here.
+// `hasChildren` marks a collapsed node worth an expand triangle; `cyclic` is
+// present only when the node is its own ancestor in malformed data.
+export interface HierarchyNode {
+  label: string;
+  prefixed: string;
+  kind: string;        // colours the kind badge, keyed like the graph's kinds
+  hasChildren: boolean;
+  cyclic?: boolean;
+}
+
+// A reference from a parent to one child. `origin` is "asserted" in this
+// version; it is the seam that lets an inferred hierarchy be added later as data
+// rather than a schema change — the tree renders an "inferred" edge as derived
+// with no new rendering code (D-046). Do not narrow this to a bare string: every
+// edge must carry its origin explicitly.
+export interface HierarchyChild {
+  id: string;
+  origin: "asserted" | "inferred";
+}
+
+// One forest: a flat node map, a parent->children adjacency, and the roots. A
+// class with two parents is stored once and referenced from each parent.
+export interface HierarchyForest {
+  nodes: Record<string, HierarchyNode>;
+  children: Record<string, HierarchyChild[]>;
+  roots: string[];
+}
+
+// The /hierarchy response: the class forest, the concept forest, the true node
+// counts (which exceed the carried nodes when truncated), and a truncation flag.
+export interface Hierarchy {
+  classes: HierarchyForest;
+  concepts: HierarchyForest;
+  counts: { classes: number; concepts: number };
+  truncated: boolean;
 }
 
 // One RDF term as shown in the detail panel (a URI, literal, or blank node).
