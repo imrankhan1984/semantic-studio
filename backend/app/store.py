@@ -310,6 +310,11 @@ class Ontology:
             "nodes": stats["nodeCount"],
             "edges": stats["edgeCount"],
             "kindCounts": stats["kindCounts"],
+            # The A-box assertion-edge count, for the documentation export opt-in
+            # (DOC-1 AC-16). `.get` because an ontology ingested before this
+            # existed has no such stat and serves 0 rather than raising — the
+            # same migration shape as `card` below.
+            "assertionCount": stats.get("assertionCount", 0),
             "namespaces": self.meta["namespaces"],
             "addedAt": self.meta["addedAt"],
             "loaded": self.graph is not None,

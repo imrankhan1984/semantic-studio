@@ -307,6 +307,13 @@ def build_viz_graph(graph: Graph) -> dict:
     for node in nodes:
         kind_counts[node["kind"]] += 1
 
+    # Count the object-property assertion edges between individuals. This is the
+    # A-box edge count the documentation export's opt-in confirmation reports
+    # (DOC-1 AC-16); computing it here means the Home screen can state it without
+    # a request, the same reason kindCounts is computed at ingest (D-017). The
+    # individual NODE count is already in kindCounts["individual"].
+    assertion_count = sum(1 for e in edge_list if e["kind"] == "assertion")
+
     return {
         "nodes": nodes,
         "edges": edge_list,
@@ -314,6 +321,7 @@ def build_viz_graph(graph: Graph) -> dict:
             "nodeCount": len(nodes),
             "edgeCount": len(edge_list),
             "kindCounts": dict(kind_counts),
+            "assertionCount": assertion_count,
         },
     }
 

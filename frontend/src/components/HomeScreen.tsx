@@ -129,6 +129,13 @@ interface Props {
   onOpenDialog: (tab: "file" | "url") => void;
 }
 
+/** What Tab may land on inside the confirmation dialog. Same selector as
+ *  AboutPanel: the document-bound trap wraps focus across these, so a keyboard
+ *  user cannot tab out into the page behind the modal (DOC-1 AC-23). */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
+  'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 /** The host a fetch-source confirmation should name, or null for an upload.
  *  Mirrors the backend's `docs_export.confirmation_host` (DOC-1, AC-14): an
  *  uploaded file is the user's own and exports without a prompt; a URL-sourced
@@ -199,6 +206,9 @@ export default function HomeScreen({
   const [docsConfirm, setDocsConfirm] = useState<OntologySummary | null>(null);
   const [docsError, setDocsError] = useState<string | null>(null);
   const [docsStatus, setDocsStatus] = useState<"" | "preparing" | "ready">("");
+  // The opt-in (DOC-1 D-038): off by default, reset each time the dialog opens,
+  // so the safe path is never carried over from a previous export.
+  const [docsInclude, setDocsInclude] = useState(false);
   // null means "follow the count". Read once, in the initialiser, so the choice
   // survives a reload without costing a localStorage read on every render.
   const [override, setOverride] = useState<HomeLayout | null>(storedLayout);
@@ -211,15 +221,31 @@ export default function HomeScreen({
   // Focus is taken once per mount, not on every render, or re-rendering while a
   // download is in flight would drag focus back out of wherever the user put it.
   const focusTaken = useRef(false);
-  // The confirm button of the docs dialog, focused when it opens, and the
-  // control that opened it (a card's menu button), refocused when it closes —
-  // so a keyboard user is returned to where they were rather than to <body>.
+  // The confirm button of the docs dialog, focused when it opens; the dialog
+  // itself, whose focusables the trap wraps across; and the control that opened
+  // it (a card's ⋮ menu button), refocused on every exit — so a keyboard user is
+  // returned to where they were rather than to <body>.
   const docsConfirmBtn = useRef<HTMLButtonElement>(null);
+  const docsPanelRef = useRef<HTMLDivElement>(null);
   const docsReturnFocus = useRef<HTMLElement | null>(null);
+  // A focus restore is owed once the current export finishes. Set in the finally
+  // of generateDocs; consumed by the effect below AFTER docsBusyId clears and the
+  // ⋮ button has re-enabled, because focus() on a still-disabled button does
+  // nothing — the saved-query-deletion-warning defect, in this component.
+  const docsRestorePending = useRef(false);
 
   useEffect(() => {
     if (docsConfirm) docsConfirmBtn.current?.focus();
   }, [docsConfirm]);
+
+  // Restore focus to the opening control once generation ends (success or error,
+  // AC-23), after the re-render that re-enables it.
+  useEffect(() => {
+    if (docsBusyId === null && docsRestorePending.current) {
+      docsRestorePending.current = false;
+      docsReturnFocus.current?.focus();
+    }
+  }, [docsBusyId]);
 
   // Take focus once the library has resolved, because until then there is no
   // card to take it. This screen is the only thing on screen whenever it is
@@ -267,41 +293,48 @@ export default function HomeScreen({
     [onLoaded],
   );
 
-  // Generate and download the documentation zip. The screen goes busy so a
-  // second action cannot start mid-generation (the same treatment a catalogue
-  // fetch gets), the progress cycles through the live region, and a refusal —
-  // the graph being over the 5 MB embed guard, say — surfaces as an error
-  // beneath the library rather than a saved but broken file.
-  const generateDocs = useCallback(async (target: OntologySummary) => {
+  // Generate and download the documentation zip, excluding instance data unless
+  // `includeIndividuals` is set (DOC-1 D-038). The screen goes busy so a second
+  // action cannot start mid-generation, the progress cycles through the live
+  // region, and a refusal — the graph being over a size guard, say — surfaces as
+  // an error beneath the library rather than a saved but broken file. Focus is
+  // restored on both success and error (AC-23) via the effect above.
+  const generateDocs = useCallback(async (target: OntologySummary, includeIndividuals: boolean) => {
     setDocsConfirm(null);
     setDocsBusyId(target.id);
     setDocsStatus("preparing");
     setDocsError(null);
     try {
-      const { blob, filename } = await downloadDocumentation(target.id);
+      const { blob, filename } = await downloadDocumentation(target.id, includeIndividuals);
       triggerDownload(blob, filename);
       setDocsStatus("ready");
     } catch (e: unknown) {
       setDocsError(e instanceof Error ? e.message : String(e));
       setDocsStatus("");
     } finally {
+      docsRestorePending.current = true;
       setDocsBusyId(null);
     }
   }, []);
 
-  // The card hands over an id; this decides whether a confirmation is needed.
-  // An uploaded ontology exports straight away; a URL-sourced one is confirmed
-  // first, naming its host, because its publisher probably documents it (AC-14).
+  // The card hands over an id; this decides whether a confirmation is needed. A
+  // dialog is shown when there is a decision to make: a URL host to acknowledge
+  // (AC-14), OR individuals the user could choose to include (D-038). An
+  // uploaded ontology with no individuals has neither, so it exports straight
+  // away, excluded — the common case keeps its one-click flow.
   const requestDocs = useCallback(
     (id: string) => {
       const target = ontologies.find((o) => o.id === id);
       if (!target) return;
-      if (confirmationHost(target.source) === null) {
-        void generateDocs(target);
+      // The ⋮ button focused itself before this ran (OntologyCard), so this is
+      // the stable control focus returns to on every exit.
+      docsReturnFocus.current = document.activeElement as HTMLElement | null;
+      const host = confirmationHost(target.source);
+      const individuals = target.kindCounts?.individual ?? 0;
+      if (host === null && individuals === 0) {
+        void generateDocs(target, false);
       } else {
-        // Remember where focus was (the card's menu button) so cancelling or
-        // confirming can return it there rather than dropping it on <body>.
-        docsReturnFocus.current = document.activeElement as HTMLElement | null;
+        setDocsInclude(false);
         setDocsError(null);
         setDocsConfirm(target);
       }
@@ -309,12 +342,50 @@ export default function HomeScreen({
     [ontologies, generateDocs],
   );
 
-  // Dismiss the confirmation without generating anything (AC-14). Focus goes
-  // back to the control that opened it.
+  // Dismiss the confirmation without generating anything (AC-14/AC-23). Focus
+  // goes back to the control that opened it — enabled at this point, so directly.
   const cancelDocs = useCallback(() => {
     setDocsConfirm(null);
     docsReturnFocus.current?.focus();
   }, []);
+
+  // The focus trap (AC-23), reusing AboutPanel's document-bound pattern: Escape
+  // cancels, Tab and Shift+Tab wrap inside the dialog, and Tab from outside is
+  // pulled back to the first control. On `document`, not the panel, because
+  // clicking the panel's own prose blurs focus to <body> and a panel-scoped
+  // handler would then see neither key.
+  useEffect(() => {
+    if (!docsConfirm) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        cancelDocs();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const panel = docsPanelRef.current;
+      if (!panel) return;
+      const items = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)];
+      if (items.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (!panel.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [docsConfirm, cancelDocs]);
 
   const busy = fetching !== null || workingId !== null || docsBusyId !== null;
 
@@ -508,48 +579,77 @@ export default function HomeScreen({
         </section>
       </div>
 
-      {/* The fetch-source confirmation (AC-14). It names the host so the user
-          knows the ontology's own publisher probably documents it already, and
-          declining it generates nothing. Escape and the backdrop both cancel;
-          the message is not a scolding. */}
-      {docsConfirm && (
-        <div
-          className="modal-backdrop"
-          onClick={cancelDocs}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") cancelDocs();
-          }}
-        >
-          <div
-            className="modal modal-confirm"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="docs-confirm-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <h2 id="docs-confirm-title">Generate documentation?</h2>
-            </div>
-            <p>
-              <strong>{docsConfirm.name}</strong> was fetched from{" "}
-              <code>{confirmationHost(docsConfirm.source)}</code>. Its publisher
-              may already document it. Generate documentation anyway?
-            </p>
-            <div className="modal-actions">
-              <button className="ghost" onClick={cancelDocs}>
-                Cancel
-              </button>
-              <button
-                ref={docsConfirmBtn}
-                className="primary"
-                onClick={() => void generateDocs(docsConfirm)}
+      {/* The confirmation dialog (AC-14/AC-16/AC-23). A real modal with a focus
+          trap: it names the fetch host when there is one, offers the instance
+          opt-in when there are individuals to include, and declining generates
+          nothing. Escape (document handler above) and the backdrop both cancel.
+          The message is not a scolding. */}
+      {docsConfirm &&
+        (() => {
+          const host = confirmationHost(docsConfirm.source);
+          const individuals = docsConfirm.kindCounts?.individual ?? 0;
+          const assertions = docsConfirm.assertionCount ?? 0;
+          return (
+            <div className="modal-backdrop" onClick={cancelDocs}>
+              <div
+                ref={docsPanelRef}
+                className="modal modal-confirm"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="docs-confirm-title"
+                onClick={(e) => e.stopPropagation()}
               >
-                Generate documentation
-              </button>
+                <div className="modal-header">
+                  <h2 id="docs-confirm-title">Generate documentation?</h2>
+                </div>
+                {host && (
+                  <p>
+                    <strong>{docsConfirm.name}</strong> was fetched from{" "}
+                    <code>{host}</code>. Its publisher may already document it.
+                  </p>
+                )}
+                <p>
+                  The documentation covers the schema. Instance data (named
+                  individuals and their assertions) is left out unless you ask
+                  for it below.
+                </p>
+                {individuals > 0 && (
+                  <>
+                    <label className="docs-optin">
+                      <input
+                        type="checkbox"
+                        checked={docsInclude}
+                        onChange={(e) => setDocsInclude(e.target.checked)}
+                      />
+                      Include instance examples (adds{" "}
+                      {individuals.toLocaleString()}{" "}
+                      {individuals === 1 ? "individual" : "individuals"},{" "}
+                      {assertions.toLocaleString()}{" "}
+                      {assertions === 1 ? "assertion" : "assertions"})
+                    </label>
+                    {docsInclude && (
+                      <p className="hint docs-optin-warning">
+                        This publishes instance data, not only the model.
+                      </p>
+                    )}
+                  </>
+                )}
+                <div className="modal-actions">
+                  <button className="ghost" onClick={cancelDocs}>
+                    Cancel
+                  </button>
+                  <button
+                    ref={docsConfirmBtn}
+                    className="primary"
+                    onClick={() => void generateDocs(docsConfirm, docsInclude)}
+                  >
+                    Generate documentation
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          );
+        })()}
     </main>
   );
 }

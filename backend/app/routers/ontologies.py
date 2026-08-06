@@ -45,6 +45,9 @@ from __future__ import annotations
 
 import os
 import re
+import threading
+import time
+from collections import deque
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
@@ -56,6 +59,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Respon
 from pydantic import BaseModel  # declares/validates JSON request bodies
 
 # Delegate the real work to the domain modules.
+from .. import provenance
 from ..docs_export import DocsExportError, build_zip
 from ..graph_builder import budget_viz, neighborhood_viz, node_details, search_nodes
 from ..net_guard import MAX_REDIRECTS, BlockedAddress, assert_url_fetchable
@@ -112,6 +116,43 @@ CHUNK_BYTES = 64 * 1024
 # How much source text the viewer receives in one request. The browser has
 # to render this, so it is deliberately far below the parse limit.
 SOURCE_MAX_BYTES = 2 * 1024 * 1024
+
+# Documentation export is a heavier action than a read — it parses (if needed),
+# reserializes and zips a whole ontology — so the endpoint is rate-limited per
+# process (D-042). On a single-user localhost box this bounds accidental hammering
+# (a held-down key, a retry loop) rather than an attacker, which is the honest
+# extent of what a limit without authentication can do here; the SaaS work adds
+# per-workspace policy on top. The window is a sliding one over the recent
+# request times.
+DOCS_RATE_MAX = _env_int("SEMANTIC_STUDIO_DOCS_RATE_MAX", 30)
+DOCS_RATE_WINDOW = _env_float("SEMANTIC_STUDIO_DOCS_RATE_WINDOW", 60.0)
+_docs_request_times: "deque[float]" = deque()
+_docs_rate_lock = threading.Lock()
+
+
+def _check_docs_rate_limit() -> None:
+    """Refuse (HTTP 429) once too many exports have run inside the window.
+
+    Reads the module-level DOCS_RATE_MAX at call time so a test can monkeypatch
+    it low without re-importing. Prunes expired timestamps on every call, so the
+    deque never grows past the window's worth of requests.
+    """
+    now = time.monotonic()
+    with _docs_rate_lock:
+        while _docs_request_times and now - _docs_request_times[0] > DOCS_RATE_WINDOW:
+            _docs_request_times.popleft()
+        if len(_docs_request_times) >= DOCS_RATE_MAX:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many documentation exports in a short time. Try again in a moment.",
+            )
+        _docs_request_times.append(now)
+
+
+def _reset_docs_rate_limit() -> None:
+    """Clear the rate-limit window. For tests."""
+    with _docs_rate_lock:
+        _docs_request_times.clear()
 SOURCE_HARD_MAX_BYTES = 16 * 1024 * 1024
 
 # How many graph nodes one /graph response may carry. The failure this bounds
@@ -548,27 +589,40 @@ def _docs_filename(name: str) -> str:
 
 
 @router.get("/{oid}/documentation")
-def get_documentation(oid: str) -> Response:
+def get_documentation(oid: str, include_individuals: str = Query("false")) -> Response:
     """GET /{oid}/documentation -> a zip of a self-contained documentation site.
 
     The zip is a complete static website the user drops into a repository and
     points GitHub Pages at. Generation is local and makes no outbound request.
-    An ontology whose graph is too large to embed honestly is refused rather
-    than truncated (DocsExportError -> 400 with the size named), because a
-    published document with a silently partial graph is a false claim about the
-    vocabulary.
+
+    Instance data (named individuals and their assertions) is excluded by
+    default (D-038); it is included only when the caller passes
+    ?include_individuals=true. Any other value, or the parameter's absence, means
+    excluded — the dangerous path is opt-in, not the easy default, and it is not
+    a boolean pydantic would 422 on for an odd value.
+
+    An ontology whose graph, source, HTML, term count or zip is over its limit is
+    refused rather than truncated (a DocsExportError -> 400 with the offending
+    size / count named), because a published document with a silently partial
+    graph is a false claim about the vocabulary (D-040). The endpoint is
+    rate-limited and the export is recorded as a provenance activity (D-042).
     """
+    _check_docs_rate_limit()
     ontology = _get_or_404(oid)
+    include = (include_individuals or "").lower() == "true"
     try:
-        data = build_zip(ontology)
+        data = build_zip(ontology, include_individuals=include)
     except DocsExportError as exc:
-        # The graph is over the embed guard; the message names the size.
+        # A part of the export is over its limit; the message names the number.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ParseTimeout as exc:
         # Generation parses the ontology if it was not loaded yet.
         raise HTTPException(status_code=504, detail=str(exc)) from exc
     except ParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # Record the export as a typed provenance activity, after it succeeds, so a
+    # refused export leaves no record of a file that was never produced (D-042).
+    provenance.record("documentation-export", oid, include_individuals=include)
     return Response(
         content=data,
         media_type="application/zip",
