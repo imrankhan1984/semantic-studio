@@ -126,6 +126,54 @@ code, .iri {
 .graph-caption { color: var(--muted); font-size: 0.9rem; margin: 0.4rem 0 0; }
 .graph-fallback { padding: 1rem; color: var(--muted); }
 
+/* The edge legend: a text key to the edge colours. The swatch is decorative
+   (aria-hidden); the label is what a reader who cannot tell the colours apart
+   relies on, which is why the legend is text beside the canvas (AC-17/AC-24). */
+.graph-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.graph-legend li { display: flex; align-items: center; gap: 0.4rem; }
+.legend-swatch {
+  display: inline-block;
+  width: 0.85rem;
+  height: 0.25rem;
+  border-radius: 2px;
+}
+
+/* The "instance data is not shown" statement, near the graph (D-038). */
+.graph-abox-note { color: var(--muted); font-size: 0.85rem; margin: 0.4rem 0 0; }
+
+/* Pointer tooltip naming the node or edge under the cursor. Positioned by the
+   viewer within the canvas wrap. */
+.graph-tooltip {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  max-width: 22rem;
+  padding: 0.2rem 0.5rem;
+  background: var(--fg);
+  color: var(--bg);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The viewer already skips the settling simulation; this guards any future
+     CSS transition in the published page from animating for a reader who asked
+     it not to (AC-24). */
+  #graph-figure * { transition: none !important; animation: none !important; }
+}
+
 /* A documented term: a bordered card with a fact table. */
 .term {
   margin: 1.25rem 0;

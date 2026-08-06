@@ -634,7 +634,7 @@ describe("HomeScreen documentation export", () => {
       fireEvent.click(screen.getByRole("button", { name: "Download documentation" }));
     });
 
-    expect(downloadDocumentation).toHaveBeenCalledWith("up1");
+    expect(downloadDocumentation).toHaveBeenCalledWith("up1", false);
     // No confirmation dialog was shown.
     expect(screen.queryByRole("dialog")).toBeNull();
   });
@@ -676,7 +676,7 @@ describe("HomeScreen documentation export", () => {
       fireEvent.click(screen.getByRole("button", { name: "Generate documentation" }));
     });
 
-    expect(downloadDocumentation).toHaveBeenCalledWith("url1");
+    expect(downloadDocumentation).toHaveBeenCalledWith("url1", false);
   });
 
   it("generation progress is announced politely", async () => {
@@ -702,8 +702,8 @@ describe("HomeScreen documentation export", () => {
   });
 
   it("a refusal surfaces its message instead of a broken file", async () => {
-    // The graph over the 5 MB embed guard is a 400 with the size named. It must
-    // read as an explanation, not a saved-but-broken download.
+    // The graph over a size guard is a 400 with the size named. It must read as
+    // an explanation, not a saved-but-broken download.
     downloadDocumentation.mockRejectedValue(new Error("This ontology's graph is 7.5 MB, too large"));
     renderScreen({ ontologies: [UPLOAD_ONTOLOGY] });
 
@@ -713,5 +713,137 @@ describe("HomeScreen documentation export", () => {
     });
 
     expect(document.querySelector(".detail-error")?.textContent).toContain("too large");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DOC-1 v0.5 rework — the dialog is a real modal with a focus trap (AC-23), the
+// opt-in is off by default (AC-16), and instance data is only ever added on it.
+// ---------------------------------------------------------------------------
+
+// An ontology with individuals, so the dialog shows the opt-in checkbox and the
+// counts. source "upload" — the modal appears because there is a choice to make
+// (individuals to include), not because of a fetch host.
+const INSTANCE_ONTOLOGY: OntologySummary = {
+  ...summaries(1)[0],
+  id: "inst1",
+  name: "Directory",
+  source: "upload",
+  kindCounts: { class: 2, individual: 3 },
+  assertionCount: 4,
+};
+
+function menuButton(name: string): HTMLButtonElement {
+  return screen.getByRole("button", { name: `More actions for ${name}` }) as HTMLButtonElement;
+}
+
+describe("HomeScreen documentation dialog (rework)", () => {
+  beforeEach(() => {
+    (URL as unknown as { createObjectURL: () => string }).createObjectURL = () => "blob:x";
+    (URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => {};
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  });
+
+  it("the confirmation traps focus and restores it on cancel", () => {
+    // AC-23. Tab and Shift+Tab wrap inside the dialog; Escape cancels; focus
+    // returns to the ⋮ button that opened it.
+    renderScreen({ ontologies: [URL_ONTOLOGY] });
+    openMenu("FIBO");
+    fireEvent.click(screen.getByRole("button", { name: "Download documentation" }));
+
+    const dialog = screen.getByRole("dialog");
+    const focusables = [...dialog.querySelectorAll<HTMLElement>("button")];
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+
+    // Generate is focused on open (the last control); Tab wraps to the first.
+    last.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toBe(first);
+    // Shift+Tab from the first wraps back to the last.
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+
+    // Escape cancels and restores focus to the opening ⋮ button.
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(menuButton("FIBO"));
+  });
+
+  // Focus restoration after generation runs through the busy cycle that
+  // disables the ⋮ button, and jsdom neither blurs nor re-focuses across a
+  // disable the way a browser does (see CLAUDE.md and App.tsx's own
+  // saved-query-deletion-warning tests). So these assert the focus() CALL on the
+  // opening control, not document.activeElement — the same reliable shape. The
+  // cancel test above, whose restore is synchronous and never disabled, can and
+  // does assert activeElement.
+  // The download is resolved/rejected on a later tick (not an instantly-resolved
+  // mock), so the busy state commits — the ⋮ button disables — before it clears.
+  // An instant mock collapses both into one commit and the restore never runs;
+  // in a real browser the network guarantees the gap.
+  it("focus is restored after a successful generation", async () => {
+    let resolve!: (v: { blob: Blob; filename: string }) => void;
+    downloadDocumentation.mockReturnValue(new Promise((r) => (resolve = r)));
+    renderScreen({ ontologies: [URL_ONTOLOGY] });
+    openMenu("FIBO");
+    const opener = menuButton("FIBO");
+    fireEvent.click(screen.getByRole("button", { name: "Download documentation" }));
+    const focusSpy = vi.spyOn(opener, "focus");
+    fireEvent.click(screen.getByRole("button", { name: "Generate documentation" }));
+    await act(async () => {
+      resolve({ blob: new Blob(["z"]), filename: "fibo-docs.zip" });
+    });
+    expect(focusSpy).toHaveBeenCalled();
+  });
+
+  it("focus is restored after an error", async () => {
+    let reject!: (e: Error) => void;
+    downloadDocumentation.mockReturnValue(new Promise((_r, rj) => (reject = rj)));
+    renderScreen({ ontologies: [URL_ONTOLOGY] });
+    openMenu("FIBO");
+    const opener = menuButton("FIBO");
+    fireEvent.click(screen.getByRole("button", { name: "Download documentation" }));
+    const focusSpy = vi.spyOn(opener, "focus");
+    fireEvent.click(screen.getByRole("button", { name: "Generate documentation" }));
+    await act(async () => {
+      reject(new Error("This ontology's graph is 7.5 MB, too large"));
+    });
+    expect(focusSpy).toHaveBeenCalled();
+  });
+
+  it("the opt-in is off by default and passes the flag when on", async () => {
+    // AC-16. The default export never includes instance data; only ticking the
+    // checkbox and generating passes include_individuals.
+    downloadDocumentation.mockResolvedValue({ blob: new Blob(["z"]), filename: "d-docs.zip" });
+    renderScreen({ ontologies: [INSTANCE_ONTOLOGY] });
+
+    openMenu("Directory");
+    fireEvent.click(screen.getByRole("button", { name: "Download documentation" }));
+    // The dialog states how many of each would be added (AC-16).
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).toContain("3 individuals");
+    expect(dialog.textContent).toContain("4 assertions");
+
+    const checkbox = screen.getByRole("checkbox") as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    fireEvent.click(checkbox);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Generate documentation" }));
+    });
+    expect(downloadDocumentation).toHaveBeenCalledWith("inst1", true);
+  });
+
+  it("leaving the opt-in unticked excludes instance data", async () => {
+    // AC-16 / AC-15's UI half: the safe path is the default even when the
+    // ontology has individuals to offer.
+    downloadDocumentation.mockResolvedValue({ blob: new Blob(["z"]), filename: "d-docs.zip" });
+    renderScreen({ ontologies: [INSTANCE_ONTOLOGY] });
+
+    openMenu("Directory");
+    fireEvent.click(screen.getByRole("button", { name: "Download documentation" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Generate documentation" }));
+    });
+    expect(downloadDocumentation).toHaveBeenCalledWith("inst1", false);
   });
 });

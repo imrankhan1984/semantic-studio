@@ -44,15 +44,24 @@ import pytest
 from fastapi.testclient import TestClient
 from rdflib import Graph
 
-from app import docs_export
+from app import docs_export, provenance
 from app.docs_export import (
     OversizeGraphError,
+    OversizeHtmlError,
+    OversizeNodeCountError,
+    OversizeSourceError,
+    OversizeZipError,
+    TermCountError,
+    abox_counts,
+    build_graph_data,
     build_zip,
     confirmation_host,
     detect_profile,
+    has_omitted_constructs,
     unresolved_imports,
 )
 from app.main import app
+from app.routers import ontologies as ontologies_router
 from app.store import OntologyStore
 
 client = TestClient(app)
@@ -140,7 +149,8 @@ def test_zip_contains_expected_entries():
     assert names == {
         "index.html",
         ".nojekyll",
-        "ontology.ttl",
+        "source/original.ttl",
+        "exports/ontology.ttl",
         "README.md",
         "assets/graph.js",
         "assets/styles.css",
@@ -156,7 +166,7 @@ def test_nojekyll_is_present_and_empty():
 
 def test_source_ontology_is_included():
     zf = _zip(OWL_TTL)
-    turtle = zf.read("ontology.ttl").decode("utf-8")
+    turtle = zf.read("exports/ontology.ttl").decode("utf-8")
     # It must be real, re-parseable RDF describing the same ontology.
     g = Graph()
     g.parse(data=turtle, format="turtle")
@@ -196,16 +206,18 @@ def test_mixed_ontology_uses_ontpub_and_says_so():
 # --- AC-5 / AC-10: the embedded graph, complete and bounded -----------------
 
 
-def test_graph_json_is_complete():
+def test_graph_json_is_complete_schema():
+    # AC-5 (amended): the embedded graph is the whole SCHEMA graph — every
+    # schema entity, never budgeted — but individuals are excluded by default.
+    # This is also the mutation guard for the truncate-instead-of-refuse defect:
+    # a truncated graph fails this the moment it drops a schema node.
     o = _add(OWL_TTL)
     viz = o.viz()
     gd = json.loads(zipfile.ZipFile(io.BytesIO(build_zip(o))).read("assets/graph-data.json"))
-    # Every entity in the full viz graph is present — never budgeted. This is
-    # also the mutation guard for the truncate-instead-of-refuse defect: a
-    # truncated graph fails this the moment it drops a node.
-    assert len(gd["nodes"]) == len(viz["nodes"])
-    assert {n["id"] for n in gd["nodes"]} == {n["id"] for n in viz["nodes"]}
-    assert len(gd["edges"]) == len(viz["edges"])
+    schema_ids = {n["id"] for n in viz["nodes"] if n["kind"] != "individual"}
+    assert {n["id"] for n in gd["nodes"]} == schema_ids
+    # No A-box edge survives the default export.
+    assert not any(e["kind"] in ("instanceOf", "assertion") for e in gd["edges"])
 
 
 def test_oversize_graph_is_refused(monkeypatch):
@@ -333,3 +345,302 @@ def test_endpoint_returns_zip_attachment():
     # The body is a real zip with the site in it.
     zf = zipfile.ZipFile(io.BytesIO(resp.content))
     assert "index.html" in zf.namelist()
+
+
+# ============================================================================
+# v0.5 REWORK — A-box exclusion, edge meaning, source preservation, guards,
+# the simplified-documentation statement, provenance and the rate limit.
+# ============================================================================
+
+# An ontology with two named individuals whose IRIs look confidential, and one
+# object-property assertion between them. The whole point of AC-15 is that these
+# do not reach the published artefact unless the user opts in.
+ALICE = f"{EX}AliceConfidential"
+BOB = f"{EX}BobConfidential"
+ABOX_TTL = f"""
+@prefix : <{EX}> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+<{EX}> a owl:Ontology ; rdfs:label "Directory" .
+:Person a owl:Class ; rdfs:label "Person" .
+:knows a owl:ObjectProperty ; rdfs:label "knows" ; rdfs:domain :Person ; rdfs:range :Person .
+:AliceConfidential a owl:NamedIndividual, :Person ; rdfs:label "Alice Confidential" .
+:BobConfidential a owl:NamedIndividual, :Person ; rdfs:label "Bob Confidential" ;
+    :knows :AliceConfidential .
+"""
+
+# owl:Restriction is a construct the exporter does not render; its presence must
+# trigger the simplified-documentation statement (AC-21).
+RESTRICTION_TTL = f"""
+@prefix : <{EX}> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+<{EX}> a owl:Ontology ; rdfs:label "Restricted" .
+:Animal a owl:Class ; rdfs:label "Animal" .
+:owns a owl:ObjectProperty ; rdfs:label "owns" .
+:Owner a owl:Class ; rdfs:label "Owner" ; rdfs:subClassOf
+    [ a owl:Restriction ; owl:onProperty :owns ; owl:someValuesFrom :Animal ] .
+"""
+
+# Non-Turtle sources, to prove the EXACT original bytes are preserved with the
+# right extension (AC-18) rather than silently reserialized to Turtle.
+RDFXML_BYTES = (
+    '<?xml version="1.0"?>\n'
+    '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n'
+    '         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"\n'
+    '         xmlns:owl="http://www.w3.org/2002/07/owl#">\n'
+    '  <owl:Class rdf:about="http://example.org/ex#Animal">\n'
+    "    <rdfs:label>Animal</rdfs:label>\n"
+    "  </owl:Class>\n"
+    "</rdf:RDF>\n"
+).encode("utf-8")
+
+JSONLD_BYTES = (
+    "{\n"
+    '  "@context": {"rdfs": "http://www.w3.org/2000/01/rdf-schema#",\n'
+    '               "owl": "http://www.w3.org/2002/07/owl#"},\n'
+    '  "@id": "http://example.org/ex#Animal",\n'
+    '  "@type": "owl:Class",\n'
+    '  "rdfs:label": "Animal"\n'
+    "}\n"
+).encode("utf-8")
+
+
+def _add_bytes(data: bytes, fmt: str, name: str, source: str = "upload"):
+    return _store().add(name, source, data, fmt)
+
+
+def _gd(ontology, **kw) -> dict:
+    """The graph-data.json of an ontology's export, parsed."""
+    return json.loads(zipfile.ZipFile(io.BytesIO(build_zip(ontology, **kw))).read("assets/graph-data.json"))
+
+
+def _html(ontology, **kw) -> str:
+    return zipfile.ZipFile(io.BytesIO(build_zip(ontology, **kw))).read("index.html").decode("utf-8")
+
+
+# --- AC-15: instance data excluded by default (the P0, the security row) ----
+
+
+def test_default_export_has_no_abox():
+    # Mutation guard: re-including the A-box (kind "individual" back in the
+    # default documentable set, or the abox edge filter removed) turns this red.
+    gd = _gd(_add(ABOX_TTL))
+    assert not any(n["kind"] == "individual" for n in gd["nodes"])
+    assert not any(e["kind"] in ("instanceOf", "assertion") for e in gd["edges"])
+
+
+def test_confidential_individual_absent_by_default():
+    o = _add(ABOX_TTL)
+    html = _html(o)
+    gd = _gd(o)
+    graph_json = json.dumps(gd)
+    for iri in (ALICE, BOB):
+        assert iri not in html
+        assert iri not in graph_json
+
+
+# --- AC-16: the opt-in includes them, and the counts are reported -----------
+
+
+def test_opt_in_includes_individuals():
+    o = _add(ABOX_TTL)
+    gd = _gd(o, include_individuals=True)
+    ids = {n["id"] for n in gd["nodes"]}
+    assert ALICE in ids and BOB in ids
+    assert any(e["kind"] == "assertion" for e in gd["edges"])
+    # The Named Individuals section appears in the page under the opt-in.
+    assert "Named Individuals" in _html(o, include_individuals=True)
+
+
+def test_opt_in_reports_counts():
+    # abox_counts is what the confirmation states before generating (AC-16).
+    individuals, assertions = abox_counts(_add(ABOX_TTL).viz())
+    assert individuals == 2
+    assert assertions == 1
+
+
+def test_endpoint_include_individuals_query():
+    with io.BytesIO(ABOX_TTL.encode("utf-8")) as f:
+        oid = client.post(
+            "/api/ontologies/upload", files={"file": ("dir.ttl", f, "text/turtle")}
+        ).json()["id"]
+    # Default: excluded.
+    default_zip = client.get(f"/api/ontologies/{oid}/documentation").content
+    default_gd = json.loads(zipfile.ZipFile(io.BytesIO(default_zip)).read("assets/graph-data.json"))
+    assert ALICE not in {n["id"] for n in default_gd["nodes"]}
+    # Opt-in: included.
+    inc_zip = client.get(f"/api/ontologies/{oid}/documentation?include_individuals=true").content
+    inc_gd = json.loads(zipfile.ZipFile(io.BytesIO(inc_zip)).read("assets/graph-data.json"))
+    assert ALICE in {n["id"] for n in inc_gd["nodes"]}
+    # Any other value means excluded, per the endpoint's contract.
+    other = client.get(f"/api/ontologies/{oid}/documentation?include_individuals=yes").content
+    other_gd = json.loads(zipfile.ZipFile(io.BytesIO(other)).read("assets/graph-data.json"))
+    assert ALICE not in {n["id"] for n in other_gd["nodes"]}
+
+
+# --- AC-17: edges keep their meaning, and a legend maps every kind present ---
+
+
+def test_graph_edges_carry_kind_and_label():
+    gd = _gd(_add(OWL_TTL))
+    assert gd["edges"], "the fixture has structural edges"
+    for e in gd["edges"]:
+        assert "kind" in e and "label" in e
+    assert any(e["kind"] == "subClassOf" for e in gd["edges"])
+
+
+def test_legend_covers_every_edge_kind_present():
+    html = _html(_add(OWL_TTL))
+    assert 'class="graph-legend"' in html
+    # OWL_TTL has subClassOf and domain/range edges; their legend labels appear.
+    assert "Sub-class of" in html
+    # A-box kinds are excluded by default, so their labels must NOT appear.
+    assert "Instance of" not in html
+    assert "Assertion" not in html
+
+
+def test_hostile_edge_label_is_escaped():
+    # An edge label is ontology-derived (a property name); prove the inline JSON
+    # path escapes it, so a hostile label cannot break out of the <script> block.
+    viz = {
+        "nodes": [
+            {"id": "a", "label": "A", "kind": "class", "degree": 1},
+            {"id": "b", "label": "B", "kind": "class", "degree": 1},
+        ],
+        "edges": [{"source": "a", "target": "b", "kind": "assertion",
+                   "label": "</script><script>alert(1)</script>"}],
+    }
+    gd = build_graph_data(viz, {}, include_individuals=True)
+    inline = docs_export._inline_graph_json(gd)
+    assert "<script>" not in inline
+    assert "</script>" not in inline
+    assert "\\u003cscript\\u003e" in inline
+
+
+# --- AC-18: the original source bytes are preserved -------------------------
+
+
+def test_original_source_bytes_preserved_ttl():
+    zf = _zip(OWL_TTL)
+    assert zf.read("source/original.ttl") == OWL_TTL.encode("utf-8")
+
+
+def test_original_source_bytes_preserved_rdfxml():
+    o = _add_bytes(RDFXML_BYTES, "xml", "animal.rdf")
+    zf = zipfile.ZipFile(io.BytesIO(build_zip(o)))
+    assert zf.read("source/original.rdf") == RDFXML_BYTES
+    # And the canonical Turtle is separate and real.
+    Graph().parse(data=zf.read("exports/ontology.ttl").decode("utf-8"), format="turtle")
+
+
+def test_original_source_bytes_preserved_jsonld():
+    o = _add_bytes(JSONLD_BYTES, "json-ld", "animal.jsonld")
+    zf = zipfile.ZipFile(io.BytesIO(build_zip(o)))
+    assert zf.read("source/original.jsonld") == JSONLD_BYTES
+
+
+def test_canonical_ttl_present_in_exports():
+    zf = _zip(OWL_TTL)
+    assert "exports/ontology.ttl" in zf.namelist()
+    Graph().parse(data=zf.read("exports/ontology.ttl").decode("utf-8"), format="turtle")
+
+
+# --- AC-19 / AC-20: the independent size guards, each naming its limit -------
+
+
+def test_oversize_node_count_is_refused(monkeypatch):
+    monkeypatch.setattr(docs_export, "GRAPH_MAX_NODES", 1)
+    with pytest.raises(OversizeNodeCountError) as caught:
+        build_zip(_add(OWL_TTL))
+    assert "entities" in str(caught.value)
+
+
+def test_interactive_ceiling_draws_statically(monkeypatch):
+    monkeypatch.setattr(docs_export, "GRAPH_INTERACTIVE_MAX_NODES", 1)
+    o = _add(OWL_TTL)
+    assert "interactive layout disabled" in _html(o)
+    # The ceiling rides in the data so the browser-side viewer honours it.
+    assert _gd(o)["interactiveMaxNodes"] == 1
+
+
+def test_oversize_source_is_refused(monkeypatch):
+    monkeypatch.setattr(docs_export, "MAX_SOURCE_BYTES", 5)
+    with pytest.raises(OversizeSourceError) as caught:
+        build_zip(_add(OWL_TTL))
+    assert "MB" in str(caught.value)
+
+
+def test_oversize_html_is_refused(monkeypatch):
+    monkeypatch.setattr(docs_export, "MAX_HTML_BYTES", 10)
+    with pytest.raises(OversizeHtmlError):
+        build_zip(_add(OWL_TTL))
+
+
+def test_zip_size_cap(monkeypatch):
+    monkeypatch.setattr(docs_export, "MAX_ZIP_BYTES", 10)
+    with pytest.raises(OversizeZipError):
+        build_zip(_add(OWL_TTL))
+
+
+def test_term_count_cap(monkeypatch):
+    monkeypatch.setattr(docs_export, "MAX_TERMS", 0)
+    with pytest.raises(TermCountError):
+        build_zip(_add(OWL_TTL))
+
+
+# --- AC-21: the simplified-documentation statement --------------------------
+
+
+def test_simplified_note_present_when_constructs_omitted():
+    o = _add(RESTRICTION_TTL)
+    assert has_omitted_constructs(o.ensure_loaded())
+    assert "simplified documentation" in _html(o)
+
+
+def test_simplified_note_absent_for_plain_vocab():
+    o = _add(SKOS_TTL)
+    assert not has_omitted_constructs(o.ensure_loaded())
+    assert "simplified documentation" not in _html(o)
+
+
+def test_abox_note_present_by_default_and_absent_under_opt_in():
+    o = _add(ABOX_TTL)
+    assert "Instance data (individuals) is not included" in _html(o)
+    assert "Instance data (individuals) is not included" not in _html(o, include_individuals=True)
+
+
+# --- AC-22: provenance activity and the rate limit --------------------------
+
+
+def test_export_records_a_provenance_activity():
+    provenance.reset()
+    with io.BytesIO(OWL_TTL.encode("utf-8")) as f:
+        oid = client.post(
+            "/api/ontologies/upload", files={"file": ("prov.ttl", f, "text/turtle")}
+        ).json()["id"]
+    client.get(f"/api/ontologies/{oid}/documentation")
+    matching = [
+        a for a in provenance.activities()
+        if a["@type"] == "documentation-export" and a["subject"] == oid
+    ]
+    assert len(matching) == 1
+    assert matching[0]["include_individuals"] is False
+    assert "at" in matching[0]
+
+
+def test_rate_limit_on_documentation_endpoint(monkeypatch):
+    ontologies_router._reset_docs_rate_limit()
+    monkeypatch.setattr(ontologies_router, "DOCS_RATE_MAX", 2)
+    try:
+        with io.BytesIO(OWL_TTL.encode("utf-8")) as f:
+            oid = client.post(
+                "/api/ontologies/upload", files={"file": ("rate.ttl", f, "text/turtle")}
+            ).json()["id"]
+        statuses = [
+            client.get(f"/api/ontologies/{oid}/documentation").status_code for _ in range(3)
+        ]
+        assert statuses[:2] == [200, 200]
+        assert statuses[2] == 429
+    finally:
+        ontologies_router._reset_docs_rate_limit()

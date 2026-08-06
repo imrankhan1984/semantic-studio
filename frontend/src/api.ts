@@ -235,8 +235,13 @@ function filenameFromDisposition(header: string | null): string | null {
  */
 export async function downloadDocumentation(
   id: string,
+  includeIndividuals = false,
 ): Promise<{ blob: Blob; filename: string }> {
-  const response = await fetch(`/api/ontologies/${id}/documentation`);
+  // Instance data is excluded by default (DOC-1 D-038); the flag is sent only
+  // when the user opted in, and the backend treats any value other than "true"
+  // as excluded, so omitting it is the safe path.
+  const query = includeIndividuals ? "?include_individuals=true" : "";
+  const response = await fetch(`/api/ontologies/${id}/documentation${query}`);
   if (!response.ok) {
     let detail = response.statusText;
     try {

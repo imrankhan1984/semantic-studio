@@ -264,7 +264,13 @@ function OntologyCard({
                       the id, exactly as the three items above it do. */}
                   <button
                     onClick={() => {
-                      setMenuOpen(false);
+                      // closeMenu (not a bare setMenuOpen) so focus lands back on
+                      // the ⋮ button BEFORE onDownloadDocs runs: that button is
+                      // the stable "opening control" HomeScreen captures to return
+                      // focus to on the dialog's three exits (DOC-1 AC-23). The
+                      // menu item itself is about to unmount, so capturing it
+                      // would leave the return target detached.
+                      closeMenu();
                       onDownloadDocs(summary.id);
                     }}
                   >

@@ -5,34 +5,50 @@ FILE: backend/app/docs_assets/graph.js
 
 SUMMARY
     The embedded graph viewer copied into every documentation site at
-    assets/graph.js. Reads the complete graph the generator inlined into the
-    page, lays it out with a small force simulation, draws it on a canvas, lets
-    the reader drag and pan it, and scrolls to a term's section when its node is
-    clicked. That click is the join between the moving picture and the prose.
+    assets/graph.js. Reads the complete SCHEMA graph the generator inlined into
+    the page, lays it out, draws it on a canvas, colours each edge by the kind of
+    relationship it is, lets the reader drag/pan/zoom, shows a tooltip naming the
+    node or edge under the cursor, and scrolls to a term's section when its node
+    is clicked. That click is the join between the moving picture and the prose.
 
 BASIC IDEA
-    This is deliberately dependency-free vanilla JavaScript rather than a
-    bundled Sigma/graphology build. The project ships no bundler step for a
-    standalone artefact, and a published page must be self-contained: no CDN,
-    no import, no network request of any kind (AC-3). A few hundred lines of
-    canvas code buy a live, movable graph with none of that surface.
-
-    The graph data is read from an inline
+    Dependency-free vanilla JavaScript rather than a bundled Sigma/graphology
+    build. A published page must be self-contained: no CDN, no import, no network
+    request of any kind (AC-3). The graph data is read from an inline
         <script id="graph-data" type="application/json">…</script>
-    element, NOT fetched. A fetch would be a network request, and worse, the
-    file:// origin a reader uses after unzipping blocks fetch entirely, so the
-    graph would silently never load. Each node carries an `anchor`: the id of
-    its term's section in the page, or null if it has none. Clicking a node with
-    an anchor moves the page to that section.
+    element, NOT fetched — a fetch would be a network request and the file://
+    origin a reader uses after unzipping blocks fetch entirely.
+
+    TWO bounds keep a large graph from freezing the reader's tab (D-039):
+
+    1. An interactive-layout ceiling. `interactiveMaxNodes` rides in the graph
+       data (default 800). AT OR BELOW it the O(n^2) force simulation runs; ABOVE
+       it the viewer skips the simulation entirely and draws the deterministic
+       golden-angle placement statically. The graph is still pannable, zoomable
+       and clickable — only the animated settling is skipped. The page caption,
+       written by the generator, says so.
+
+    2. prefers-reduced-motion. A reader who asks for reduced motion gets the same
+       static placement, settling skipped, whatever the node count.
+
+    Each node carries an `anchor`: the id of its term's section, or null. Each
+    edge carries a `kind` (subClassOf, domain, assertion, …) and a `label` (the
+    property name for an assertion). The kind colours the edge and, with the
+    label, names it in the tooltip; the page's HTML legend is the accessible text
+    key to those colours.
 
 INPUTS / INPUT SOURCES
-    - The inline #graph-data JSON: { nodes:[{id,label,kind,degree,anchor}],
-      edges:[{source,target}] }.
+    - The inline #graph-data JSON:
+      { nodes:[{id,label,kind,degree,anchor}],
+        edges:[{source,target,kind,label}],
+        interactiveMaxNodes:Number }.
     - Pointer events on the canvas.
+    - The prefers-reduced-motion media query.
 
 EXPECTED OUTPUT
-    - A rendered, interactive force-directed graph in #graph-canvas, and
-      navigation to a term section on node click.
+    - A rendered force-directed (or, above the ceiling, static) graph in
+      #graph-canvas, tooltips naming what is under the cursor, and navigation to
+      a term section on node click.
 ================================================================================
 */
 
@@ -55,6 +71,36 @@ EXPECTED OUTPUT
     other: "#94a3b8"
   };
 
+  // Edge colour + human label per kind. MUST match _EDGE_KIND_LEGEND in
+  // docs_export.py: that map renders the HTML legend beside the canvas, and this
+  // one colours the edges the legend describes. Change one, change the other.
+  var EDGE_KINDS = {
+    subClassOf: { color: "#4f9cf9", label: "Sub-class of" },
+    subPropertyOf: { color: "#6366f1", label: "Sub-property of" },
+    domain: { color: "#37b98a", label: "Domain" },
+    range: { color: "#0ea5e9", label: "Range" },
+    equivalentClass: { color: "#8b5cf6", label: "Equivalent class" },
+    equivalentProperty: { color: "#8b5cf6", label: "Equivalent property" },
+    disjointWith: { color: "#ef4444", label: "Disjoint with" },
+    inverseOf: { color: "#f59e42", label: "Inverse of" },
+    sameAs: { color: "#14b8a6", label: "Same as" },
+    broader: { color: "#a78bfa", label: "Broader" },
+    related: { color: "#f472b6", label: "Related" },
+    inScheme: { color: "#94a3b8", label: "In scheme" },
+    member: { color: "#eab308", label: "Member" },
+    seeAlso: { color: "#64748b", label: "See also" },
+    instanceOf: { color: "#cbd5e1", label: "Instance of" },
+    assertion: { color: "#f6c453", label: "Assertion" }
+  };
+  var EDGE_FALLBACK = "#8892a0";
+
+  function edgeColor(kind) {
+    return (EDGE_KINDS[kind] && EDGE_KINDS[kind].color) || EDGE_FALLBACK;
+  }
+  function edgeLabel(kind) {
+    return (EDGE_KINDS[kind] && EDGE_KINDS[kind].label) || kind || "Related";
+  }
+
   function readData() {
     var el = document.getElementById("graph-data");
     if (!el) return null;
@@ -62,6 +108,17 @@ EXPECTED OUTPUT
       return JSON.parse(el.textContent || "{}");
     } catch (e) {
       return null;
+    }
+  }
+
+  function prefersReducedMotion() {
+    try {
+      return (
+        window.matchMedia &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      );
+    } catch (e) {
+      return false;
     }
   }
 
@@ -86,6 +143,7 @@ EXPECTED OUTPUT
     }
 
     var ctx = canvas.getContext("2d");
+    if (!ctx) return;
     var nodes = data.nodes.map(function (n) {
       return {
         id: n.id,
@@ -106,7 +164,12 @@ EXPECTED OUTPUT
     });
     var edges = (data.edges || [])
       .map(function (e) {
-        return { s: index[e.source], t: index[e.target] };
+        return {
+          s: index[e.source],
+          t: index[e.target],
+          kind: e.kind || "",
+          label: e.label || ""
+        };
       })
       .filter(function (e) {
         return e.s !== undefined && e.t !== undefined;
@@ -114,6 +177,8 @@ EXPECTED OUTPUT
 
     // Deterministic initial placement: a golden-angle spiral, so the layout is
     // the same every time the page is opened rather than reshuffling per load.
+    // This is ALSO the static layout used above the interactive ceiling and
+    // under reduced motion — the same placement the force simulation starts from.
     var GOLDEN = Math.PI * (3 - Math.sqrt(5));
     var R0 = 260;
     nodes.forEach(function (n, i) {
@@ -124,8 +189,9 @@ EXPECTED OUTPUT
     });
 
     // Force simulation: repulsion between all nodes, spring along edges, and a
-    // gentle pull to the centre. Barnes–Hut is overkill at these sizes; the
-    // guard already refuses graphs over 5 MB of JSON, so this stays cheap.
+    // gentle pull to the centre. O(n^2), so it runs ONLY at or below the
+    // interactive ceiling — above it, or under reduced motion, it is skipped
+    // entirely and the golden-angle placement above is what the reader sees.
     var AREA = 900 * 900;
     var k = Math.sqrt(AREA / Math.max(nodes.length, 1));
     function step(temp) {
@@ -134,7 +200,7 @@ EXPECTED OUTPUT
         nodes[i].vx = 0;
         nodes[i].vy = 0;
       }
-      // Repulsion (O(n^2); fine because the graph is capped before it gets here).
+      // Repulsion (O(n^2); fine because this only runs below the ceiling).
       for (i = 0; i < nodes.length; i++) {
         n = nodes[i];
         for (j = i + 1; j < nodes.length; j++) {
@@ -178,12 +244,19 @@ EXPECTED OUTPUT
       }
     }
 
-    // Run the layout to a settled state before the first paint. Bounded by a
-    // fixed iteration count so a large graph cannot freeze the tab.
-    var ITER = Math.min(300, Math.max(80, Math.round(6000 / Math.sqrt(nodes.length))));
-    var t;
-    for (t = 0; t < ITER; t++) {
-      step(k * (1 - t / ITER) * 0.1 + 1);
+    // The two bounds. interactiveMaxNodes rides in the data (default 800 if an
+    // older generator omitted it); reduced motion is the reader's own setting.
+    var ceiling = typeof data.interactiveMaxNodes === "number" ? data.interactiveMaxNodes : 800;
+    var staticLayout = nodes.length > ceiling || prefersReducedMotion();
+
+    if (!staticLayout) {
+      // Run the layout to a settled state before the first paint. Bounded by a
+      // fixed iteration count; the ceiling guarantees a small node count here.
+      var ITER = Math.min(300, Math.max(80, Math.round(6000 / Math.sqrt(nodes.length))));
+      var t;
+      for (t = 0; t < ITER; t++) {
+        step(k * (1 - t / ITER) * 0.1 + 1);
+      }
     }
 
     // Camera: fit the settled layout into the canvas, then allow pan/zoom/drag.
@@ -193,11 +266,27 @@ EXPECTED OUTPUT
     // does not throw away the view they arranged.
     var userAdjusted = false;
 
+    // A DOM tooltip, positioned by the pointer, naming the node or edge under it.
+    var tip = document.createElement("div");
+    tip.className = "graph-tooltip";
+    tip.setAttribute("role", "status");
+    tip.style.display = "none";
+    wrap.appendChild(tip);
+
+    function showTip(text, mx, my) {
+      tip.textContent = text;
+      tip.style.display = "block";
+      tip.style.left = mx + 12 + "px";
+      tip.style.top = my + 12 + "px";
+    }
+    function hideTip() {
+      tip.style.display = "none";
+    }
+
     function resize() {
       // Fall back to sane dimensions when the container reports zero size — a
       // page that opens with the figure not yet laid out (or briefly hidden)
-      // would otherwise draw nothing and only recover on a resize event. The
-      // ResizeObserver below re-fits the moment a real size arrives.
+      // would otherwise draw nothing and only recover on a resize event.
       var w = wrap.clientWidth || 800;
       var h = wrap.clientHeight || 460;
       canvas.width = w * dpr;
@@ -238,17 +327,27 @@ EXPECTED OUTPUT
       var w = canvas.width / dpr;
       var h = canvas.height / dpr;
       ctx.clearRect(0, 0, w, h);
-      // Edges first, so nodes sit on top.
-      ctx.strokeStyle = "rgba(128,140,155,0.35)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
+      // Edges, grouped by colour so each kind is stroked in one path. Colour
+      // carries the relationship kind; the HTML legend is its text key.
+      var byColor = {};
       edges.forEach(function (e) {
-        var a = toScreen(nodes[e.s]);
-        var b = toScreen(nodes[e.t]);
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
+        var c = edgeColor(e.kind);
+        (byColor[c] || (byColor[c] = [])).push(e);
       });
-      ctx.stroke();
+      ctx.lineWidth = 1;
+      Object.keys(byColor).forEach(function (color) {
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath();
+        byColor[color].forEach(function (e) {
+          var a = toScreen(nodes[e.s]);
+          var b = toScreen(nodes[e.t]);
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+        });
+        ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
       // Nodes.
       nodes.forEach(function (n) {
         var p = toScreen(n);
@@ -282,6 +381,29 @@ EXPECTED OUTPUT
         }
       }
       return null;
+    }
+
+    function pickEdge(mx, my) {
+      // Closest edge within a few pixels of the cursor, by distance to segment.
+      var best = null;
+      var bestD = 5;
+      for (var i = 0; i < edges.length; i++) {
+        var a = toScreen(nodes[edges[i].s]);
+        var b = toScreen(nodes[edges[i].t]);
+        var vx = b.x - a.x;
+        var vy = b.y - a.y;
+        var len2 = vx * vx + vy * vy || 0.0001;
+        var t = ((mx - a.x) * vx + (my - a.y) * vy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        var cx = a.x + t * vx;
+        var cy = a.y + t * vy;
+        var d = Math.sqrt((mx - cx) * (mx - cx) + (my - cy) * (my - cy));
+        if (d < bestD) {
+          bestD = d;
+          best = edges[i];
+        }
+      }
+      return best;
     }
 
     // Interaction: drag a node, pan the background, wheel to zoom, click to
@@ -321,20 +443,40 @@ EXPECTED OUTPUT
         userAdjusted = true;
         dragging.x = (pos.x - view.ox) / view.scale;
         dragging.y = (pos.y - view.oy) / view.scale;
+        hideTip();
         draw();
       } else if (panning) {
         userAdjusted = true;
         view.ox += pos.x - last.x;
         view.oy += pos.y - last.y;
         last = pos;
+        hideTip();
         draw();
       } else {
-        canvas.style.cursor = pick(pos.x, pos.y) ? "pointer" : "default";
+        // Tooltip: a node's label, or an edge's relationship kind and (for an
+        // assertion) the property name.
+        var node = pick(pos.x, pos.y);
+        if (node) {
+          canvas.style.cursor = "pointer";
+          showTip(node.label, pos.x, pos.y);
+        } else {
+          var edge = pickEdge(pos.x, pos.y);
+          if (edge) {
+            canvas.style.cursor = "default";
+            var text = edgeLabel(edge.kind);
+            if (edge.label) text += ": " + edge.label;
+            showTip(text, pos.x, pos.y);
+          } else {
+            canvas.style.cursor = "default";
+            hideTip();
+          }
+        }
       }
     });
 
+    canvas.addEventListener("pointerleave", hideTip);
+
     canvas.addEventListener("pointerup", function (ev) {
-      var pos = localPos(ev);
       if (dragging && !moved && dragging.anchor) {
         // A click, not a drag: navigate to the term's section.
         var target = document.getElementById(dragging.anchor);
@@ -361,14 +503,13 @@ EXPECTED OUTPUT
         view.ox = pos.x - (pos.x - view.ox) * factor;
         view.oy = pos.y - (pos.y - view.oy) * factor;
         view.scale *= factor;
+        hideTip();
         draw();
       },
       { passive: false }
     );
 
     // Re-fit to the container until the reader has arranged their own view.
-    // This is what recovers a figure that was zero-sized at first paint: the
-    // observer fires when a real size arrives, and the fit finally has one.
     function refit() {
       resize();
       if (!userAdjusted) fit();

@@ -230,6 +230,11 @@ export interface OntologySummary {
   nodes: number;
   edges: number;
   kindCounts: Record<string, number>;
+  /** Count of object-property assertion edges between individuals — the A-box
+   *  edges the documentation export's opt-in would add (DOC-1 AC-16). Absent (0)
+   *  for anything ingested before this stat existed. The individual NODE count
+   *  is `kindCounts.individual`. */
+  assertionCount?: number;
   namespaces: Record<string, string>;
   /** ISO timestamp of when the ontology was first loaded (persisted). */
   addedAt?: string;
