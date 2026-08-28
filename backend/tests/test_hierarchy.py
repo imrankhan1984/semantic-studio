@@ -318,6 +318,115 @@ def test_build_hierarchy_is_a_pure_function_of_the_graph():
     assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
 
 
+# --- AC-17: property forests over subPropertyOf -----------------------------
+
+
+def test_property_forests_split_by_kind():
+    """AC-17. object / datatype / annotation subPropertyOf forests appear each
+    only when that kind exists, rooted at properties with no super-property, built
+    by the same forest logic as classes."""
+    hierarchy = _build(
+        # Object property tree: hasParent subPropertyOf hasRelative.
+        ":hasRelative a owl:ObjectProperty .\n"
+        ":hasParent a owl:ObjectProperty ; rdfs:subPropertyOf :hasRelative .\n"
+        # Datatype property tree: birthYear subPropertyOf year.
+        ":year a owl:DatatypeProperty .\n"
+        ":birthYear a owl:DatatypeProperty ; rdfs:subPropertyOf :year .\n"
+        # Annotation property tree: shortNote subPropertyOf note.
+        ":note a owl:AnnotationProperty .\n"
+        ":shortNote a owl:AnnotationProperty ; rdfs:subPropertyOf :note .\n"
+    )
+    obj = hierarchy["objectProperties"]
+    data = hierarchy["datatypeProperties"]
+    annot = hierarchy["annotationProperties"]
+    # Each forest is rooted at the property with no super-property and nests the
+    # sub-property beneath it.
+    assert obj["roots"] == [EX + "hasRelative"]
+    assert _child_ids(obj, EX + "hasRelative") == {EX + "hasParent"}
+    assert data["roots"] == [EX + "year"]
+    assert _child_ids(data, EX + "year") == {EX + "birthYear"}
+    assert annot["roots"] == [EX + "note"]
+    assert _child_ids(annot, EX + "note") == {EX + "shortNote"}
+    # The kind badge matches the forest, so the frontend colours it correctly.
+    assert obj["nodes"][EX + "hasParent"]["kind"] == "objectProperty"
+    assert data["nodes"][EX + "birthYear"]["kind"] == "datatypeProperty"
+    assert annot["nodes"][EX + "shortNote"]["kind"] == "annotationProperty"
+    # counts gains a key per property kind present, beside classes/concepts.
+    assert hierarchy["counts"]["objectProperties"] == 2
+    assert hierarchy["counts"]["datatypeProperties"] == 2
+    assert hierarchy["counts"]["annotationProperties"] == 2
+
+
+def test_property_forest_absent_when_kind_absent():
+    """AC-17. A pure object-property hierarchy emits no datatype or annotation
+    forest and no count for them — the key is present only when the kind exists."""
+    hierarchy = _build(
+        ":hasRelative a owl:ObjectProperty .\n"
+        ":hasParent a owl:ObjectProperty ; rdfs:subPropertyOf :hasRelative .\n"
+    )
+    assert "objectProperties" in hierarchy
+    assert "datatypeProperties" not in hierarchy
+    assert "annotationProperties" not in hierarchy
+    assert set(hierarchy["counts"]) == {"classes", "concepts", "objectProperties"}
+
+
+def test_lone_property_makes_no_forest():
+    """AC-17. A property declared with no subPropertyOf structure is not listed:
+    the property section is about sub-property hierarchy, not every property."""
+    hierarchy = _build(":p a owl:ObjectProperty .")
+    assert "objectProperties" not in hierarchy
+    assert set(hierarchy["counts"]) == {"classes", "concepts"}
+
+
+def test_property_forest_roots_origin_and_cycle():
+    """AC-17. Property forests carry the origin marker on every edge and break a
+    subPropertyOf cycle exactly as the class forest does — the shared _forest."""
+    # Origin: an edge is a {id, origin} ref, "asserted" today.
+    forest = _build(
+        ":q a owl:ObjectProperty .\n"
+        ":p a owl:ObjectProperty ; rdfs:subPropertyOf :q .\n"
+    )["objectProperties"]
+    edges = [ref for kids in forest["children"].values() for ref in kids]
+    assert edges and all(ref["origin"] == "asserted" for ref in edges)
+    assert all(set(ref) == {"id", "origin"} for ref in edges)
+
+    # Cycle: p subPropertyOf q, q subPropertyOf p terminates and is marked.
+    cyclic = _build(
+        ":p a owl:ObjectProperty ; rdfs:subPropertyOf :q .\n"
+        ":q a owl:ObjectProperty ; rdfs:subPropertyOf :p .\n"
+    )["objectProperties"]
+    assert EX + "p" in cyclic["nodes"] and EX + "q" in cyclic["nodes"]
+    assert cyclic["roots"], "the cycle must leave a reachable root"
+    assert [n for n, d in cyclic["nodes"].items() if d.get("cyclic")]
+
+
+def test_untyped_subproperty_participant_defaults_to_object():
+    """AC-17 edge. A subPropertyOf participant left untyped stays with its typed
+    relatives in the object-property forest rather than being dropped."""
+    forest = _build(
+        ":hasRelative a owl:ObjectProperty .\n"
+        ":hasParent rdfs:subPropertyOf :hasRelative .\n"  # no rdf:type
+    )["objectProperties"]
+    assert _child_ids(forest, EX + "hasRelative") == {EX + "hasParent"}
+
+
+def test_property_forests_reach_the_endpoint(client):
+    """AC-17 at the endpoint. A real upload returns the property forests over HTTP."""
+    ttl = PREAMBLE + (
+        ":hasRelative a owl:ObjectProperty .\n"
+        ":hasParent a owl:ObjectProperty ; rdfs:subPropertyOf :hasRelative .\n"
+    )
+    upload = client.post(
+        "/api/ontologies/upload",
+        files={"file": ("props.ttl", ttl.encode(), "text/turtle")},
+    )
+    assert upload.status_code == 200, upload.text
+    oid = upload.json()["id"]
+    body = client.get(f"/api/ontologies/{oid}/hierarchy").json()
+    assert body["objectProperties"]["roots"] == [EX + "hasRelative"]
+    assert body["counts"]["objectProperties"] == 2
+
+
 # --- AC-11: performance -----------------------------------------------------
 
 

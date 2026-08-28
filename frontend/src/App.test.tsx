@@ -2141,4 +2141,149 @@ describe("App Hierarchy mode", () => {
     await screen.findByRole("heading", { name: "Class hierarchy" });
     expect(fetchHierarchy).toHaveBeenCalledWith("o1");
   });
+
+  it("nothing selected shows the detail panel empty state", async () => {
+    // AC-15. With no selection the column beside the tree is the reused panel's
+    // empty state, not nothing — the whole fix for v0.2, which showed nothing at
+    // all about a selected entity.
+    await openHierarchy();
+    expect(
+      screen.getByText(/select a class, property or concept to see its details/i),
+    ).toBeTruthy();
+    // No DetailPanel yet, because nothing is selected.
+    expect(document.querySelector(".detail-panel .detail-header")).toBeNull();
+  });
+
+  it("selecting a row shows its detail and connections in the panel", async () => {
+    // AC-15. Selecting a tree row drives the reused Explore DetailPanel beside
+    // the tree over /node — the tree now explains an entity, not only navigates
+    // to it.
+    getNodeDetails.mockResolvedValue({
+      iri: "http://x/Instrument",
+      prefixed: "x:Instrument",
+      label: "Instrument",
+      outgoing: [
+        {
+          predicate: { type: "uri", value: "http://x/subClassOf", prefixed: "rdfs:subClassOf" },
+          object: { type: "uri", value: "http://x/Contract", prefixed: "x:Contract", label: "Contract" },
+        },
+      ],
+      incoming: [],
+      outgoingTotal: 1,
+      incomingTotal: 0,
+    });
+    await openHierarchy();
+
+    const row = screen
+      .getAllByRole("treeitem")
+      .find((el) => el.textContent?.includes("Instrument"))!;
+    await act(async () => fireEvent.click(row));
+
+    // The panel appears beside the tree (still in Hierarchy mode), naming the
+    // entity and listing its statement.
+    await waitFor(() => expect(document.querySelector(".detail-panel")).toBeTruthy());
+    expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/Instrument");
+    expect(screen.getByRole("heading", { name: /statements/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Contract/ })).toBeTruthy();
+    // The tree is still there — the panel is beside it, not instead of it.
+    expect(screen.getByRole("tree")).toBeTruthy();
+  });
+
+  it("clicking a panel link reselects and highlights the tree row", async () => {
+    // AC-16. Following a connection in the panel becomes the new selection (and
+    // draws it, the selectFromOutsideGraph half), so panel and tree stay in step.
+    getNodeDetails.mockImplementation((_id: string, iri: string) =>
+      Promise.resolve(
+        iri === "http://x/Instrument"
+          ? {
+              iri,
+              prefixed: "x:Instrument",
+              label: "Instrument",
+              outgoing: [
+                {
+                  predicate: { type: "uri", value: "http://x/subClassOf", prefixed: "rdfs:subClassOf" },
+                  object: { type: "uri", value: "http://x/Contract", prefixed: "x:Contract", label: "Contract" },
+                },
+              ],
+              incoming: [],
+              outgoingTotal: 1,
+              incomingTotal: 0,
+            }
+          : { iri, prefixed: "x:Contract", label: "Contract", outgoing: [], incoming: [], outgoingTotal: 0, incomingTotal: 0 },
+      ),
+    );
+    await openHierarchy();
+
+    const row = screen
+      .getAllByRole("treeitem")
+      .find((el) => el.textContent?.includes("Instrument"))!;
+    await act(async () => fireEvent.click(row));
+    await screen.findByRole("button", { name: /Contract/ });
+
+    // Click the linked entity in the panel.
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: /Contract/ })));
+
+    // It becomes the selection: the panel re-fetches Contract, and — being off
+    // the budgeted graph — it is drawn through the shared outside-graph route.
+    await waitFor(() => expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/Contract"));
+    expect(getNeighborhood).toHaveBeenCalledWith("o1", "http://x/Contract");
+  });
+
+  it("a selected property shows its connections in the panel", async () => {
+    // AC-18. A property row drives the same panel as a class, so its domain,
+    // range and sub/super-properties are the statements it lists.
+    fetchHierarchy.mockResolvedValue({
+      classes: { nodes: {}, children: {}, roots: [] },
+      concepts: { nodes: {}, children: {}, roots: [] },
+      objectProperties: {
+        nodes: {
+          "http://x/hasParty": {
+            label: "hasParty",
+            prefixed: "x:hasParty",
+            kind: "objectProperty",
+            hasChildren: false,
+          },
+        },
+        children: {},
+        roots: ["http://x/hasParty"],
+      },
+      counts: { classes: 0, concepts: 0, objectProperties: 1 },
+      truncated: false,
+    });
+    getNodeDetails.mockResolvedValue({
+      iri: "http://x/hasParty",
+      prefixed: "x:hasParty",
+      label: "hasParty",
+      outgoing: [
+        {
+          predicate: { type: "uri", value: "http://x/domain", prefixed: "rdfs:domain" },
+          object: { type: "uri", value: "http://x/Contract", prefixed: "x:Contract", label: "Contract" },
+        },
+        {
+          predicate: { type: "uri", value: "http://x/range", prefixed: "rdfs:range" },
+          object: { type: "uri", value: "http://x/Party", prefixed: "x:Party", label: "Party" },
+        },
+      ],
+      incoming: [],
+      outgoingTotal: 2,
+      incomingTotal: 0,
+    });
+
+    await renderAppOpened();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Hierarchy" }));
+    });
+    await screen.findByRole("heading", { name: "Object properties" });
+
+    const row = screen
+      .getAllByRole("treeitem")
+      .find((el) => el.textContent?.includes("hasParty"))!;
+    await act(async () => fireEvent.click(row));
+
+    await waitFor(() => expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/hasParty"));
+    // The property's domain and range are shown as connections, the same panel a
+    // class uses.
+    expect(screen.getByRole("button", { name: /Contract/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Party/ })).toBeTruthy();
+  });
 });

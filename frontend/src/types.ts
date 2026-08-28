@@ -278,12 +278,28 @@ export interface HierarchyForest {
   roots: string[];
 }
 
-// The /hierarchy response: the class forest, the concept forest, the true node
-// counts (which exceed the carried nodes when truncated), and a truncation flag.
+// The /hierarchy response: the class forest, the concept forest, up to three
+// property forests (object / datatype / annotation over rdfs:subPropertyOf,
+// added in v0.3), the true node counts (which exceed the carried nodes when
+// truncated), and a truncation flag.
+//
+// classes and concepts are always present (empty forests when the ontology has
+// none). A property key — and its count — is present only when the ontology
+// declares that kind of property in a subPropertyOf relationship, so most
+// ontologies carry none of the three.
 export interface Hierarchy {
   classes: HierarchyForest;
   concepts: HierarchyForest;
-  counts: { classes: number; concepts: number };
+  objectProperties?: HierarchyForest;
+  datatypeProperties?: HierarchyForest;
+  annotationProperties?: HierarchyForest;
+  counts: {
+    classes: number;
+    concepts: number;
+    objectProperties?: number;
+    datatypeProperties?: number;
+    annotationProperties?: number;
+  };
   truncated: boolean;
 }
 
