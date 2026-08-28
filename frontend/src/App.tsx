@@ -1073,6 +1073,15 @@ export default function App() {
         // picking an entity the node budget left out draws it when the user
         // switches back to the graph (AC-13). Leaving Hierarchy unmounts it and
         // re-runs the graph layout, the honest cost of a second, separate view.
+        //
+        // The tree navigates; the panel beside it explains. It is the SAME
+        // reused Explore DetailPanel, driven by the same shared selection, the
+        // same `selected === null ? empty : DetailPanel` shape Explore uses
+        // (D-047) — the fix for v0.2, where the tree could select an entity but
+        // nothing in the view said anything about it. A panel link reselects
+        // through selectFromOutsideGraph too, so following a connection behaves
+        // exactly like clicking a tree row (AC-16), and the tree highlights the
+        // new selection wherever it is drawn.
         <main className="main">
           <HierarchyView
             ontologyId={activeId}
@@ -1080,6 +1089,23 @@ export default function App() {
             selected={selected}
             onSelect={selectFromOutsideGraph}
           />
+          {selected === null ? (
+            <aside className="detail-panel detail-empty" aria-label="Entity details">
+              <p className="detail-note">
+                Select a class, property or concept to see its details and
+                connections.
+              </p>
+            </aside>
+          ) : (
+            <DetailPanel
+              ontologyId={activeId}
+              iri={selected}
+              onNavigate={selectFromOutsideGraph}
+              onClose={() => setSelected(null)}
+              onExpand={(entity) => void onExpand(entity)}
+              expanding={expandingIri === selected}
+            />
+          )}
         </main>
       ) : (
         <main className="main">

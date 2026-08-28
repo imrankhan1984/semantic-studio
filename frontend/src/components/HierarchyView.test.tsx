@@ -5,11 +5,11 @@ FILE: frontend/src/components/HierarchyView.test.tsx
 ================================================================================
 
 SUMMARY
-    The first test for HierarchyView: the two labelled sections, collapsed-to-
-    roots default, expand/collapse, the filter that keeps ancestors, the
-    virtualization that bounds the DOM regardless of tree size, the keyboard tree
-    operation and its ARIA, and the reserved "inferred" rendering channel proven
-    by a synthetic derived edge.
+    The test for HierarchyView: the labelled sections (class, concept and the
+    three v0.3 property forests), collapsed-to-roots default, expand/collapse,
+    the filter that keeps ancestors, the virtualization that bounds the DOM
+    regardless of tree size, the keyboard tree operation and its ARIA, and the
+    reserved "inferred" rendering channel proven by a synthetic derived edge.
 
 BASIC IDEA
     HierarchyView fetches its forests from api.ts, so the module is mocked and
@@ -305,6 +305,47 @@ describe("HierarchyView", () => {
     // 4,001 rows exist logically; the DOM holds only the virtual window.
     await waitFor(() => expect(items().length).toBeGreaterThan(1));
     expect(items().length).toBeLessThan(60);
+  });
+
+  it("renders property forests as their own labelled sections", async () => {
+    // AC-17 (frontend). object / datatype / annotation subPropertyOf forests
+    // render beside the class and concept trees, each only when present.
+    const classes = forestOf(
+      { [EX + "Alpha"]: node("Alpha", "class") },
+      {},
+      [EX + "Alpha"],
+    );
+    const objectProperties = forestOf(
+      {
+        [EX + "hasRelative"]: node("hasRelative", "objectProperty", true),
+        [EX + "hasParent"]: node("hasParent", "objectProperty"),
+      },
+      { [EX + "hasRelative"]: [EX + "hasParent"] },
+      [EX + "hasRelative"],
+    );
+    const annotationProperties = forestOf(
+      { [EX + "note"]: node("note", "annotationProperty") },
+      {},
+      [EX + "note"],
+    );
+    const hierarchy: Hierarchy = {
+      classes,
+      concepts: EMPTY,
+      objectProperties,
+      annotationProperties,
+      counts: { classes: 1, concepts: 0, objectProperties: 2, annotationProperties: 1 },
+      truncated: false,
+    };
+    renderView(hierarchy);
+
+    await screen.findByRole("heading", { name: "Class hierarchy" });
+    expect(screen.getByRole("heading", { name: "Object properties" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Annotation properties" })).toBeTruthy();
+    // No datatype forest in the payload, so no datatype section.
+    expect(screen.queryByRole("heading", { name: "Datatype properties" })).toBeNull();
+    // The object-property root is a branch and expand-all opens it.
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: /expand all/i })));
+    expect(itemByLabel("hasParent")).toBeTruthy();
   });
 
   it("renders an inferred edge as derived with no code change", async () => {

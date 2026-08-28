@@ -632,12 +632,15 @@ def get_documentation(oid: str, include_individuals: str = Query("false")) -> Re
 
 @router.get("/{oid}/hierarchy")
 def get_hierarchy(oid: str) -> dict:
-    """GET /{oid}/hierarchy -> the subClassOf and broader forests.
+    """GET /{oid}/hierarchy -> the subClassOf, broader and subPropertyOf forests.
 
-    Two forests — a class hierarchy over rdfs:subClassOf and a concept hierarchy
-    over skos:broader, rooted at concept schemes — each a flat node map plus a
-    parent->children adjacency and a root list. It is read every time the
-    Hierarchy tab opens, so it is cached on the ontology like the query schema.
+    A class hierarchy over rdfs:subClassOf, a concept hierarchy over skos:broader
+    rooted at concept schemes, and one property hierarchy per property kind
+    (object / datatype / annotation) over rdfs:subPropertyOf — each a flat node
+    map plus a parent->children adjacency and a root list. classes and concepts
+    are always present; a property key appears only when that kind exists. It is
+    read every time the Hierarchy tab opens, so it is cached on the ontology like
+    the query schema.
 
     Unbudgeted, unlike /graph: the tree is a fraction of the graph's size and the
     frontend virtualizes it, so the whole asserted structure is returned. A soft

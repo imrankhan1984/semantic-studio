@@ -859,6 +859,48 @@ prove a change works in the application rather than in the test suite.
   Reduced motion reuses X-1's `moveDuration` helper rather than passing
   `duration: 200`; a literal there would undo X-1's work where nobody would look.
 
+- **The Hierarchy view explains a selected entity and covers property trees**
+  (2026-08-28, spec `hierarchy-view` v0.3, backlog G-1, decision D-047). The
+  v0.2 build shipped a tree that selected an entity but showed nothing about it,
+  and covered only classes and concepts. Both are fixed.
+
+  **The detail panel lives in `App.tsx`, not in `HierarchyView`.** The Hierarchy
+  branch renders the reused Explore `DetailPanel` beside the tree in the exact
+  `selected === null ? empty : DetailPanel` shape Explore uses — so the panel is
+  reused unchanged rather than reimplemented, and `HierarchyView` stays the tree
+  alone. A tree row selects through `selectFromOutsideGraph` (the search /
+  results-table route), and so does the panel's `onNavigate`, so following a
+  connection behaves exactly like clicking a row and the tree highlights the new
+  selection wherever it is a rendered row. The empty-state string is an
+  acceptance criterion: *Select a class, property or concept to see its details
+  and connections.*
+
+  **Property forests carry only `subPropertyOf` participants, and that is a
+  deliberate asymmetry with the class and concept forests, which carry lone
+  declared nodes too.** `_build_property_forests` in `hierarchy.py` includes a
+  property only if it is either end of a `subPropertyOf` edge — because a large
+  ontology declares thousands of properties with no sub-property structure, and
+  a flat list of all of them is the wall the whole view exists to avoid. Do not
+  "fix" this into parity with the class forest without a spec that asks for it;
+  the spec's version row and D-047 both record it as intended.
+
+  **The three forests (object / datatype / annotation) reuse the one generic
+  `_forest`**, so `origin` (the D-046 inference seam), cycle-breaking and
+  multiple-inheritance all extend to them with no new code. A key and its count
+  appear in the payload only when that kind exists — `classes` and `concepts`
+  stay always-present, which is why `test_truly_empty_hierarchy` can still pin
+  `counts == {"classes": 0, "concepts": 0}`. Classification is by
+  `_property_kind` (best of the three explicit types), and an untyped
+  `subPropertyOf` participant **falls back to the object-property forest** so its
+  subtree stays with any typed relatives rather than being dropped. There is no
+  fourth "plain property" forest.
+
+  One measured browser fact worth not rediscovering: entering any graph mode
+  (Explore / Query / View) in headless Chrome can throw *Sigma: Container has no
+  width* if the container measures zero at mount — an environment timing artifact
+  of the WebGL canvas, **not** a Hierarchy defect (the tree mounts no Sigma). It
+  clears on reload once the viewport has a real width.
+
 ## Pull requests
 
 Small and single-purpose. Say what changed and why, and include before and after

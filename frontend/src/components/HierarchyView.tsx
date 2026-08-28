@@ -4,11 +4,17 @@ FILE: frontend/src/components/HierarchyView.tsx
 ================================================================================
 
 SUMMARY
-    The Hierarchy view: the ontology's structure as one or two indented,
-    expandable trees — a class hierarchy over rdfs:subClassOf and a concept
-    hierarchy over skos:broader, rooted at concept schemes. It is the force
-    graph's accessible structural equivalent (D-025): a WAI-ARIA `tree` a screen
-    reader and the keyboard can operate, which the WebGL canvas cannot be.
+    The Hierarchy view: the ontology's structure as indented, expandable trees —
+    a class hierarchy over rdfs:subClassOf, a concept hierarchy over skos:broader
+    rooted at concept schemes, and (v0.3) one property hierarchy per property
+    kind (object / datatype / annotation) over rdfs:subPropertyOf. Each section
+    is shown only when its forest is non-empty. It is the force graph's
+    accessible structural equivalent (D-025): a WAI-ARIA `tree` a screen reader
+    and the keyboard can operate, which the WebGL canvas cannot be.
+
+    The detail panel that explains a selected row is NOT here — App renders the
+    reused Explore DetailPanel beside this tree, driven by the same shared
+    selection (D-047), so this component stays the tree alone.
 
 BASIC IDEA
     A tree is the natural shape for a hierarchy and the cheap one. The whole
@@ -224,6 +230,26 @@ function internalIds(forest: HierarchyForest): string[] {
     .map(([id]) => id);
 }
 
+/** The forests to render, in order, with their section titles — each present
+ *  only when its forest carries nodes. The class forest and the property forests
+ *  (the T-box schema) come before the concept forest (the SKOS vocabulary),
+ *  matching the spec's layout. `objectProperties` and friends are absent from the
+ *  payload unless the ontology has that kind, so the optional chaining stands in
+ *  for a missing key. */
+function sectionsOf(data: Hierarchy): { title: string; forest: HierarchyForest }[] {
+  const candidates: { title: string; forest: HierarchyForest | undefined }[] = [
+    { title: "Class hierarchy", forest: data.classes },
+    { title: "Object properties", forest: data.objectProperties },
+    { title: "Datatype properties", forest: data.datatypeProperties },
+    { title: "Annotation properties", forest: data.annotationProperties },
+    { title: "Concept hierarchy", forest: data.concepts },
+  ];
+  return candidates.filter(
+    (c): c is { title: string; forest: HierarchyForest } =>
+      c.forest !== undefined && Object.keys(c.forest.nodes).length > 0,
+  );
+}
+
 export default function HierarchyView({ ontologyId, theme, selected, onSelect }: Props) {
   const [data, setData] = useState<Hierarchy | null>(null);
   const [loading, setLoading] = useState(false);
@@ -266,15 +292,16 @@ export default function HierarchyView({ ontologyId, theme, selected, onSelect }:
     });
   }, []);
 
+  // Every forest currently present, in render order. Computed once and reused by
+  // expand-all, the empty-state check and the render.
+  const sections = useMemo(() => (data ? sectionsOf(data) : []), [data]);
+
   const expandAll = useCallback(() => {
     if (!data) return;
-    setExpanded(new Set([...internalIds(data.classes), ...internalIds(data.concepts)]));
-  }, [data]);
+    setExpanded(new Set(sections.flatMap((s) => internalIds(s.forest))));
+  }, [data, sections]);
 
   const collapseAll = useCallback(() => setExpanded(new Set()), []);
-
-  const hasClasses = data ? Object.keys(data.classes.nodes).length > 0 : false;
-  const hasConcepts = data ? Object.keys(data.concepts.nodes).length > 0 : false;
 
   if (!ontologyId) return null;
 
@@ -303,8 +330,8 @@ export default function HierarchyView({ ontologyId, theme, selected, onSelect }:
           so nothing here depends on a triangle glyph being seen. */}
       <p className="hierarchy-note">
         Showing <strong>asserted</strong> {" "}
-        <code>rdfs:subClassOf</code> and <code>skos:broader</code>, not inferred
-        relationships.
+        <code>rdfs:subClassOf</code>, <code>skos:broader</code> and{" "}
+        <code>rdfs:subPropertyOf</code>, not inferred relationships.
       </p>
 
       {loading && <p className="hint hierarchy-status">Loading the hierarchy…</p>}
@@ -314,19 +341,20 @@ export default function HierarchyView({ ontologyId, theme, selected, onSelect }:
         </div>
       )}
 
-      {data && !hasClasses && !hasConcepts && (
+      {data && sections.length === 0 && (
         <p className="hint hierarchy-status">
-          This ontology declares no <code>subClassOf</code> or <code>broader</code>{" "}
-          structure to show as a tree.
+          This ontology declares no <code>subClassOf</code>, <code>broader</code> or{" "}
+          <code>subPropertyOf</code> structure to show as a tree.
         </p>
       )}
 
-      {data && (hasClasses || hasConcepts) && (
+      {data && sections.length > 0 && (
         <div className="hierarchy-forests">
-          {hasClasses && (
+          {sections.map((section) => (
             <Forest
-              title="Class hierarchy"
-              forest={data.classes}
+              key={section.title}
+              title={section.title}
+              forest={section.forest}
               filter={filter}
               expanded={expanded}
               selected={selected}
@@ -334,19 +362,7 @@ export default function HierarchyView({ ontologyId, theme, selected, onSelect }:
               onToggle={toggle}
               onSelect={onSelect}
             />
-          )}
-          {hasConcepts && (
-            <Forest
-              title="Concept hierarchy"
-              forest={data.concepts}
-              filter={filter}
-              expanded={expanded}
-              selected={selected}
-              theme={theme}
-              onToggle={toggle}
-              onSelect={onSelect}
-            />
-          )}
+          ))}
         </div>
       )}
     </section>

@@ -4,12 +4,13 @@ FILE: backend/app/hierarchy.py
 ================================================================================
 
 SUMMARY
-    Builds the two hierarchy forests the Hierarchy view draws: a class forest
-    over asserted rdfs:subClassOf, and a concept forest over asserted
-    skos:broader (with skos:narrower / skos:hasTopConcept normalized to their
-    inverse) rooted at skos:ConceptScheme. Each forest is a flat node map plus a
-    parent->children adjacency and a root list, so a class with two parents is
-    stored once and rendered under each.
+    Builds the hierarchy forests the Hierarchy view draws: a class forest over
+    asserted rdfs:subClassOf, a concept forest over asserted skos:broader (with
+    skos:narrower / skos:hasTopConcept normalized to their inverse) rooted at
+    skos:ConceptScheme, and — added in v0.3 — one property forest per property
+    kind (object, datatype, annotation) over asserted rdfs:subPropertyOf. Each
+    forest is a flat node map plus a parent->children adjacency and a root list,
+    so a class with two parents is stored once and rendered under each.
 
 BASIC IDEA
     A tree is the natural shape for subClassOf and broader, and it is the cheap
@@ -36,7 +37,12 @@ INPUTS / INPUT SOURCES
 EXPECTED OUTPUT
     - build_hierarchy(graph) -> {
         "classes":  forest, "concepts": forest,
-        "counts":   {"classes": int, "concepts": int},
+        # Each property key is present only when the ontology declares that kind
+        # of property in a subPropertyOf relationship (v0.3):
+        "objectProperties":     forest,   # optional
+        "datatypeProperties":   forest,   # optional
+        "annotationProperties": forest,   # optional
+        "counts":   {"classes": int, "concepts": int, [<property key>: int, ...]},
         "truncated": bool,
       }
       where forest = {
@@ -44,7 +50,9 @@ EXPECTED OUTPUT
         "children": { id: [{id, origin}, ...] },
         "roots":    [id, ...],
       }
-      Consumed by frontend/src/components/HierarchyView.tsx.
+      classes and concepts are always present (empty forests when the ontology
+      has none); the three property keys and their counts appear only when that
+      kind exists. Consumed by frontend/src/components/HierarchyView.tsx.
 ================================================================================
 """
 
@@ -56,17 +64,33 @@ from typing import Optional
 from rdflib import Graph, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS
 
-# Shared with the graph view and the query schema so labels, prefixes and the
-# asserted subClassOf pass are read identically across the application.
+# Shared with the graph view and the query schema so labels, prefixes, the
+# asserted subClassOf pass and the property-kind classification are read
+# identically across the application.
 from .graph_builder import (
+    KIND_ANNOTATION_PROPERTY,
     KIND_CLASS,
     KIND_CONCEPT,
-    KIND_SCHEME,
+    KIND_DATATYPE_PROPERTY,
+    KIND_OBJECT_PROPERTY,
+    TYPE_TO_KIND,
     pick_label,
     prefixed,
     subclass_parents,
 )
+from .graph_builder import KIND_SCHEME
 from .query_schema import META_CLASSES
+
+# The three property forests, in priority order, paired with the response key
+# each is emitted under. A property typed several ways is sorted by the earliest
+# of these it matches (an object property wins over a datatype one), the same
+# earliest-wins collapse graph_builder uses for node kinds.
+_PROPERTY_FORESTS: tuple[tuple[str, str], ...] = (
+    (KIND_OBJECT_PROPERTY, "objectProperties"),
+    (KIND_DATATYPE_PROPERTY, "datatypeProperties"),
+    (KIND_ANNOTATION_PROPERTY, "annotationProperties"),
+)
+_PROPERTY_KINDS = tuple(kind for kind, _ in _PROPERTY_FORESTS)
 
 # The origin every edge carries. "asserted" is the only value this version
 # emits; the field exists so an inferred hierarchy is data, not a schema change.
@@ -294,6 +318,83 @@ def _build_concept_forest(graph: Graph) -> tuple[dict, int]:
     return _forest(node_ids, parents_plain, labels, KIND_CONCEPT, kind_of=kind_of)
 
 
+def _property_kind(graph: Graph, node: URIRef) -> str:
+    """The property forest a property belongs in, from its asserted rdf:type.
+
+    Restricted to the three property kinds graph_builder distinguishes and
+    collapsed by the same earliest-wins priority. A property that names none of
+    them — a plain rdf:Property, or one that participates in subPropertyOf while
+    left untyped — falls back to the object-property forest, so its subtree stays
+    with any typed relatives rather than being dropped. There is no fourth,
+    "plain property" forest: the view offers exactly the three the spec names.
+    """
+    found = set()
+    for obj in graph.objects(node, RDF.type):
+        kind = TYPE_TO_KIND.get(obj) if isinstance(obj, URIRef) else None
+        if kind in _PROPERTY_KINDS:
+            found.add(kind)
+    for kind in _PROPERTY_KINDS:
+        if kind in found:
+            return kind
+    return KIND_OBJECT_PROPERTY
+
+
+def _build_property_forests(graph: Graph) -> dict[str, tuple[dict, int]]:
+    """One forest per property kind over asserted rdfs:subPropertyOf (v0.3).
+
+    `P subPropertyOf Q` makes `P` a child of `Q`, exactly as subClassOf builds
+    the class forest — the same generic _forest, so multiple inheritance, cycle
+    breaking and the origin marker all come for free. A property with no named
+    super-property is a root.
+
+    Only properties that PARTICIPATE in a subPropertyOf statement are included,
+    which is where this deliberately differs from the class and concept forests
+    (which carry lone declared nodes too). A large ontology declares thousands of
+    properties with no sub-property structure; listing them all as flat roots
+    would be the wall the whole view exists to avoid, and a flat property list is
+    the detail panel's job, not the hierarchy's. So the property section shows
+    what the ontology states ABOUT sub-property structure, and nothing when it
+    states none.
+
+    Returns a map from response key to (forest, node count) for each of the three
+    kinds that has at least one member, so a caller emits only the forests that
+    exist.
+    """
+    # child -> {named super-properties}, both ends named and not self-referential
+    # (a self subPropertyOf is a one-node cycle with no useful parent, dropped the
+    # same way subclass_parents drops a self subClassOf).
+    raw_parents: dict[URIRef, set[URIRef]] = defaultdict(set)
+    members: set[URIRef] = set()
+    for subject, obj in graph.subject_objects(RDFS.subPropertyOf):
+        if isinstance(subject, URIRef) and isinstance(obj, URIRef) and subject != obj:
+            raw_parents[subject].add(obj)
+            members.add(subject)
+            members.add(obj)
+
+    if not members:
+        return {}
+
+    kind_of = {n: _property_kind(graph, n) for n in members}
+    labels = {n: (pick_label(graph, n), prefixed(graph, n)) for n in members}
+
+    result: dict[str, tuple[dict, int]] = {}
+    for kind, key in _PROPERTY_FORESTS:
+        kind_nodes = {n for n in members if kind_of[n] == kind}
+        if not kind_nodes:
+            continue
+        # Parents restricted to this forest: a parent of a different kind is not a
+        # node here, so the child becomes a root — the same rule the class forest
+        # uses to strip owl:Thing and off-set parents.
+        parents = {}
+        for child in kind_nodes:
+            effective = {p for p in raw_parents.get(child, ()) if p in kind_nodes}
+            if effective:
+                parents[child] = effective
+        kind_labels = {n: labels[n] for n in kind_nodes}
+        result[key] = _forest(kind_nodes, parents, kind_labels, kind)
+    return result
+
+
 def _truncate(forest: dict, keep: int) -> dict:
     """Keep the `keep` most-connected nodes of a forest, dropping the rest.
 
@@ -322,7 +423,11 @@ def _truncate(forest: dict, keep: int) -> dict:
 
 
 def build_hierarchy(graph: Graph, *, max_nodes: int = HIERARCHY_MAX_NODES) -> dict:
-    """Build both hierarchy forests from an rdflib graph.
+    """Build the hierarchy forests from an rdflib graph.
+
+    The class forest, the concept forest, and one property forest per property
+    kind (object / datatype / annotation) the ontology declares in a
+    subPropertyOf relationship.
 
     A pure function of the graph: it reads and never mutates it, and makes no
     reasoning assumptions, so a future build_hierarchy(graph, reasoner=…) can add
@@ -337,19 +442,38 @@ def build_hierarchy(graph: Graph, *, max_nodes: int = HIERARCHY_MAX_NODES) -> di
     """
     classes, class_total = _build_class_forest(graph)
     concepts, concept_total = _build_concept_forest(graph)
+    # Property forests (v0.3): one per property kind the ontology declares in a
+    # subPropertyOf relationship, so most ontologies add nothing here.
+    properties = _build_property_forests(graph)
 
-    truncated = class_total + concept_total > max_nodes
+    # Every forest present, in emission order, as key -> (forest, node count).
+    # classes and concepts are always present (empty when the ontology has none);
+    # the property keys appear only when their kind exists.
+    forests: dict[str, tuple[dict, int]] = {
+        "classes": (classes, class_total),
+        "concepts": (concepts, concept_total),
+        **properties,
+    }
+
+    grand_total = sum(total for _, total in forests.values())
+    truncated = grand_total > max_nodes
     if truncated:
-        # Share the budget in proportion to each forest's size so a huge concept
-        # scheme does not crowd out a small class tree entirely.
-        total = class_total + concept_total
-        class_keep = max(1, round(max_nodes * class_total / total)) if class_total else 0
-        classes = _truncate(classes, class_keep)
-        concepts = _truncate(concepts, max_nodes - class_keep)
+        # Share the budget across every forest in proportion to its size, so a
+        # huge concept scheme does not crowd out a small class or property tree.
+        for key, (forest, total) in list(forests.items()):
+            keep = max(1, round(max_nodes * total / grand_total)) if total else 0
+            forests[key] = (_truncate(forest, keep), total)
 
-    return {
-        "classes": classes,
-        "concepts": concepts,
-        "counts": {"classes": class_total, "concepts": concept_total},
+    result: dict = {
+        "classes": forests["classes"][0],
+        "concepts": forests["concepts"][0],
+        # counts always names classes and concepts; a property count is added only
+        # for a kind that exists, so an ontology with no properties keeps the exact
+        # {"classes": N, "concepts": M} shape the first build established.
+        "counts": {key: total for key, (_, total) in forests.items()},
         "truncated": truncated,
     }
+    for _, key in _PROPERTY_FORESTS:
+        if key in properties:
+            result[key] = forests[key][0]
+    return result
