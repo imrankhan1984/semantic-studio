@@ -54,7 +54,7 @@ from app.net_guard import ALL_REFUSAL_MESSAGES, BlockedAddress
 from app.routers.ontologies import _download_capped
 from app.store import ParseError, parse_rdf
 
-client = TestClient(app)
+client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
 TURTLE = b"""
 @prefix : <http://example.org/secret#> .

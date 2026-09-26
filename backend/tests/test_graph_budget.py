@@ -48,7 +48,7 @@ EX = "http://example.org/budget#"
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
-    return TestClient(main.app)
+    return TestClient(main.app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
 
 def _hub_and_spokes_turtle(spokes: int = 40) -> str:

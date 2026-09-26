@@ -56,7 +56,7 @@ from app.sparql_exec import (
 EXAMPLE = Path(__file__).parent.parent.parent / "examples" / "space-exploration.ttl"
 SPACE = "http://example.org/space#"
 
-client = TestClient(app)
+client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
 PLANETS = f"""
 PREFIX : <{SPACE}>

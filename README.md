@@ -98,6 +98,16 @@ Open <http://localhost:8000>.
 > same. Dropping the `127.0.0.1:` prefix (or overriding it, e.g. with a
 > `docker-compose.override.yml`) publishes on every interface and serves your
 > whole ontology library — deletable — to anyone who can reach the host.
+>
+> **Other web pages in your browser.** Binding to localhost keeps other machines
+> out, but a web page you visit can still send requests to `127.0.0.1`. The API
+> therefore answers only requests whose `Host` is `localhost`, `127.0.0.1` or
+> `[::1]`, and refuses any request that changes something unless it carries the
+> `X-Semantic-Studio: 1` header, which a foreign page cannot send. If you put
+> the app behind your own reverse proxy under another name, list that name in
+> `SEMANTIC_STUDIO_ALLOWED_HOSTS` (comma-separated). Scripts calling the API
+> directly must send the header on `POST`, `PUT` and `DELETE`, for example
+> `curl -X DELETE -H "X-Semantic-Studio: 1" http://localhost:8000/api/queries/<id>`.
 
 ## Quick start (local development)
 
@@ -387,6 +397,10 @@ The image stores ontologies in the `/data` volume:
 | `POST /api/ontologies/{id}/sparql`  | `{query}` — run a SELECT             |
 | `GET/POST /api/queries`             | List / save visual queries           |
 | `DELETE /api/queries/{id}`          | Delete a saved query                 |
+
+Every `POST`, `PUT` and `DELETE` must carry `X-Semantic-Studio: 1`, and every
+request must name a loopback `Host` (see *Other web pages in your browser*
+above).
 
 ## Roadmap
 

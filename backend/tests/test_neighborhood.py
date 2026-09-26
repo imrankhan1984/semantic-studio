@@ -49,7 +49,7 @@ EX = "http://example.org/neighborhood#"
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
-    return TestClient(main.app)
+    return TestClient(main.app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
 
 def _hub_ntriples(spokes: int) -> bytes:

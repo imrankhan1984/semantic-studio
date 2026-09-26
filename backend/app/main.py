@@ -39,6 +39,8 @@ EXPECTED OUTPUT
       build directory exists.
     - HTTP 413 for an upload whose declared size exceeds the cap, returned
       before the body is read.
+    - HTTP 400 or 403 for a request that did not come from the application's
+      own page (local_guard.py), before any other middleware or route runs.
 ================================================================================
 """
 
@@ -62,6 +64,7 @@ from fastapi.staticfiles import StaticFiles
 
 # Import the two routers that hold every API endpoint. Splitting them by topic
 # (ontologies vs saved queries) keeps this file small.
+from .local_guard import LocalOnlyMiddleware
 from .routers import ontologies, queries
 
 # Create the application. The title/version surface in the auto-generated
@@ -110,6 +113,13 @@ async def refuse_oversized_bodies(request: Request, call_next):
                     },
                 )
     return await call_next(request)
+
+
+# Added last so it runs first: Starlette makes the most recently added
+# middleware the outermost. A request from a foreign page (DNS rebinding, or a
+# cross-site form post) is refused here before CORS, the upload cap or any route
+# sees it. See local_guard.py and decision D-065.
+app.add_middleware(LocalOnlyMiddleware)
 
 
 # Attach every endpoint. `ontologies` handles loading, viewing, the graph, the

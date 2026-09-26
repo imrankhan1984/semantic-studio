@@ -74,7 +74,7 @@ def demo() -> dict:
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
-    return TestClient(main.app)
+    return TestClient(main.app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
 
 # --- AC-1: class forest -----------------------------------------------------
