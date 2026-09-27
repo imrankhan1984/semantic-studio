@@ -323,7 +323,7 @@ describe("ExploreStart budgets", () => {
     );
   }
 
-  it("renders within budget", () => {
+  it("[budget] renders within budget", () => {
     // AC-13. 20 ms for eight rows. The warm-up render is discarded, because the
     // first render in the process pays module initialisation and React's first
     // reconciliation — the trap D-021 records, met again here.

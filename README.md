@@ -3,6 +3,8 @@
   Semantic Studio
 </h1>
 
+[![CI](https://github.com/imrankhan1984/semantic-studio/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/imrankhan1984/semantic-studio/actions/workflows/ci.yml)
+
 **An ontology workspace for RDF, RDFS, OWL and SKOS.**
 
 A self-contained web application that turns Semantic Web ontologies and
@@ -127,8 +129,8 @@ Prerequisites: Python ≥ 3.11, Node.js ≥ 20.
 ```bash
 cd backend
 python -m venv .venv
-.venv/Scripts/pip install -r requirements.txt   # Windows
-# .venv/bin/pip install -r requirements.txt     # Linux / macOS
+.venv/Scripts/pip install -r requirements-dev.txt   # Windows
+# .venv/bin/pip install -r requirements-dev.txt     # Linux / macOS
 .venv/Scripts/python -m uvicorn app.main:app --reload --port 8000
 ```
 
@@ -144,12 +146,24 @@ Open <http://localhost:5173>. For a production-style single server, run
 `npm run build` in `frontend/` — the backend then serves `frontend/dist`
 itself at <http://localhost:8000>.
 
+`requirements-dev.txt` is the runtime plus what the tests need (`pytest`,
+`pyyaml`); `requirements.txt` alone is enough to run the application.
+
 **Tests**:
 
 ```bash
 cd backend
 .venv/Scripts/python -m pytest tests
+
+cd frontend
+npm run test
 ```
+
+Both run everything locally, performance budgets included. CI runs both suites
+on every pull request — the backend on Linux (Python 3.12) and Windows (Python
+3.14), the frontend with its type check and production build, and the Docker
+image — with the timing budgets in a separate, informational job, because a
+shared runner is a loaded machine.
 
 ## Try it
 

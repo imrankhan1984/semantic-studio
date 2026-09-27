@@ -1,0 +1,152 @@
+# ==============================================================================
+# FILE: .github/workflows/ci.yml
+# ==============================================================================
+#
+# SUMMARY
+#     Continuous integration: both test suites, the type check, the production
+#     build and the Docker image, on every pull request and every push to main.
+#     Specified by ci-and-housekeeping (backlog X-8).
+#
+# BASIC IDEA
+#     Four blocking jobs and one informational one. The backend runs twice:
+#     on Linux with Python 3.12, which is what the Docker image ships, and on
+#     Windows with Python 3.14, which is what the application is developed on.
+#     A pass on one says little about the other -- path separators, line
+#     endings and loopback behaviour all differ.
+#
+#     Timing budgets are separated rather than deleted. A shared runner is a
+#     loaded machine, which is exactly where a wall-clock assertion fails
+#     without a line of code changing, so the backend's `perf` marker and the
+#     frontend's `[budget]` titles run only in `budgets`, which reports and
+#     never blocks. Count-based budgets (renders, calls, reads) are not timings
+#     and stay in the blocking jobs. Locally both suites still run everything.
+#
+#     `-m` on the command line replaces the `-m "not network"` in pytest.ini
+#     rather than adding to it, so every pytest line here names `network`
+#     again. Leave it out and the two tests that reach the internet run.
+#
+# INPUTS / INPUT SOURCES
+#     - backend/requirements-dev.txt, frontend/package-lock.json, Dockerfile.
+#
+# EXPECTED OUTPUT
+#     - A red or green check per job on the pull request. Branch protection on
+#       main requires backend-linux, backend-windows, frontend and docker; not
+#       budgets.
+# ==============================================================================
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push to a pull request makes the run for the previous one worthless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend-linux:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      # Without this the suite writes into the runner's real per-user library.
+      - name: Temporary data folder
+        shell: bash
+        run: echo "SEMANTIC_STUDIO_DATA_DIR=${{ runner.temp }}/semantic-studio-data" >> "$GITHUB_ENV"
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest tests -m "not perf and not network"
+
+  backend-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Temporary data folder
+        shell: bash
+        run: echo "SEMANTIC_STUDIO_DATA_DIR=${{ runner.temp }}/semantic-studio-data" >> "$GITHUB_ENV"
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest tests -m "not perf and not network"
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Temporary data folder
+        shell: bash
+        run: echo "SEMANTIC_STUDIO_DATA_DIR=${{ runner.temp }}/semantic-studio-data" >> "$GITHUB_ENV"
+      - run: npm ci --no-fund --no-audit
+      # Everything but the tests titled [budget]; see test:ci in package.json.
+      - run: npm run test:ci
+      # `npm run build` is these two steps; split so a failure names which.
+      - run: npx tsc -b
+      - run: npx vite build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Temporary data folder
+        shell: bash
+        run: echo "SEMANTIC_STUDIO_DATA_DIR=${{ runner.temp }}/semantic-studio-data" >> "$GITHUB_ENV"
+      # Built to prove the image builds; never pushed anywhere.
+      - run: docker build .
+
+  budgets:
+    runs-on: ubuntu-latest
+    # Informational. A slow runner reports a missed budget here and the pull
+    # request stays mergeable; the numbers that matter are measured locally.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Temporary data folder
+        shell: bash
+        run: echo "SEMANTIC_STUDIO_DATA_DIR=${{ runner.temp }}/semantic-studio-data" >> "$GITHUB_ENV"
+      - run: python -m pip install -r requirements-dev.txt
+        working-directory: backend
+      - run: npm ci --no-fund --no-audit
+        working-directory: frontend
+      - name: Backend perf budgets
+        run: python -m pytest tests -m "perf and not network"
+        working-directory: backend
+      # Runs even when the backend budgets missed, so one report carries both.
+      - name: Frontend timing budgets
+        if: ${{ !cancelled() }}
+        run: npm run test:budgets
+        working-directory: frontend

@@ -104,7 +104,7 @@ describe("ResultsTable paging", () => {
     expect(bodyRows()).toHaveLength(PAGE_SIZE);
   });
 
-  it("render cost is bounded by page size, not result size", () => {
+  it("[budget] render cost is bounded by page size, not result size", () => {
     // AC-1. A ratio, never a millisecond threshold: an absolute limit encodes
     // the machine that ran it, and both halves of a ratio run on the same
     // hardware in the same process. See architecture.md D-021.

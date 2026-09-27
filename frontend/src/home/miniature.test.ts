@@ -153,17 +153,30 @@ describe("layoutSketch", () => {
     expect(result.lines).toHaveLength(1);
   });
 
-  it("costs a fraction of a millisecond for a full sketch", () => {
+  it("[budget] costs a fraction of a millisecond for a full sketch", () => {
     // AC-16's other half. This runs once per card, and a library of fifty means
     // fifty of them inside one render — so it has to be cheap enough that the
     // sub-linear budget is about React rather than about this.
     const sketch = star(19);
     layoutSketch(sketch); // discard the warm-up: the first pass carries the JIT
 
-    const runs = 50;
-    const start = performance.now();
-    for (let i = 0; i < runs; i++) layoutSketch(sketch);
-    const each = (performance.now() - start) / runs;
+    // The median of seven batches, not one batch of fifty (ci-and-housekeeping).
+    // One batch averaged a collection or a descheduled slice into every call,
+    // and failed intermittently under load; a median lets the slow batch lose
+    // the vote. Batches of ten keep each sample well above timer resolution.
+    // Measured 2026-09-27, ten runs under the backend suite: 0.27 to 0.33 ms,
+    // slowest batch 0.45. Ten times the spring iterations measured 2.03 to
+    // 2.06 ms and a cubic repulsion loop 2.61 to 2.72 ms; both red, three of
+    // three, so the 2 ms limit catches an order-of-magnitude regression and
+    // nothing smaller.
+    const batch = 10;
+    const samples: number[] = [];
+    for (let s = 0; s < 7; s++) {
+      const start = performance.now();
+      for (let i = 0; i < batch; i++) layoutSketch(sketch);
+      samples.push((performance.now() - start) / batch);
+    }
+    const each = samples.sort((a, b) => a - b)[3];
 
     expect(each, `layoutSketch took ${each.toFixed(3)} ms`).toBeLessThan(2);
   });
