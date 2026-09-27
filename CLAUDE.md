@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 397 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 643 tests, vitest
+cd backend  && python -m pytest tests    # 429 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 650 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -228,6 +228,44 @@ the uvicorn process, calls the API, and drives the real UI in headless Chrome.
 prove a change works in the application rather than in the test suite.
 
 ## Known state, so you do not rediscover it
+
+- **SPARQL `SERVICE` runs, isolated, through `sparql_service.py`**
+  (2026-09-27, spec `external-access` Stage 3, backlog Q-10, decision D-069).
+  Every block is found and checked before anything is sent; the text each
+  block will send is fixed then and shown in the approval dialog; a handler in
+  rdflib's `CUSTOM_EVALS` answers every `ServiceGraphPattern` and sends only
+  that text, through the broker as `sparql:service`, once per distinct block
+  per run, capped at 10,000 rows, 10 MB and 20 s. The response carries
+  `services`; `ResultsTable` names the hosts.
+
+  **Five things are load-bearing.** **Never read rdflib's `service_string`**:
+  rdflib 7.6 searches the whole query from the start for it, so every block
+  in a two-block query carries the first block's text, and a nested `SERVICE`
+  recurses until Python gives up. `find_service_blocks` scans the text
+  (strings, IRIs, comments) and `match_blocks` pairs it with the *parse tree*
+  -- not the algebra, which moves a `FILTER EXISTS` block first -- before
+  `translateQuery` resolves the terms in place; any disagreement refuses.
+  **The handler must never raise `NotImplementedError` for a SERVICE node**:
+  that is rdflib's signal to fall through to its own `evalServiceQuery`, which
+  sends every local binding as `VALUES`. `test_mutation_without_the_handler_leaks_local_data`
+  shows what that looks like. **`execute_select` runs the worker in
+  `contextvars.copy_context()`**, or the just-once grant and the run's memo
+  never reach it and an approved retry is asked again. **The broker's
+  `total_timeout` reads unchunked**: `iter_bytes(64 * 1024)` buffers until
+  64 KB, so a trickling server never reached the deadline check. **The
+  User-Agent names the project and its URL**; Wikidata answers the bare name
+  with 403, which no local recorder can show.
+
+  A nested `SERVICE` is refused with its own sentence (rdflib cannot parse
+  one), only the `PREFIX` lines a block uses are sent, and SILENT is the join
+  identity, so the local rows pass through a failed call. **The scanner reads
+  `expandUnicodeEscapes(query)`, while `parseQuery` gets the raw query**: rdflib
+  expands backslash-u escapes before parsing, so scanning the raw text let an
+  escaped quote move a block boundary the dialog showed; expanding the text
+  handed to `parseQuery` as well would expand twice. And when writing a test
+  for it, build the escape with `chr(92)`: the tools that write files here
+  decoded a literal backslash-u sequence on the way in, and the first version
+  of the test held plain `"AB"` and passed with the fix removed.
 
 - **SPARQL can be written as text, beside a builder that did not change**
   (2026-09-27, spec `sparql-text-and-query-files`, backlog Q-1 and CF-5,

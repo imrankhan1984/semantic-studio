@@ -6,9 +6,10 @@ FILE: backend/tests/test_sparql_endpoint.py
 SUMMARY
     Tests SPARQL execution and its safety rails: SELECT returns rows, literals
     and unbound OPTIONAL variables serialize correctly, UPDATE/CONSTRUCT/ASK
-    and malformed queries are rejected, a SERVICE clause is refused at any
-    nesting depth without a request being made, the row cap truncates, and the
-    schema/query-node/saved-query endpoints behave.
+    and malformed queries are rejected, a SERVICE clause naming a non-public
+    address is refused at any nesting depth without a request being made, the
+    row cap truncates, and the schema/query-node/saved-query endpoints behave.
+    SERVICE to a public endpoint (D-069) is test_sparql_service.py's.
 
 BASIC IDEA
     Uploads the demo ontology through the HTTP layer, then runs known queries
@@ -43,12 +44,13 @@ from rdflib.plugins.sparql import prepareQuery
 
 from app import sparql_exec
 from app.main import app
+from app.sparql_service import NOT_PUBLIC_DETAIL
 from app.sparql_exec import (
     DEEP_QUERY_REFUSED_DETAIL,
     MAX_ALGEBRA_DEPTH,
     SERVICE_NODE_NAME,
     QueryError,
-    _contains_service,
+    find_services,
     execute_select,
     prepare_select,
 )
@@ -220,6 +222,12 @@ def test_saved_query_requires_known_ontology():
 # A SERVICE clause is legal inside a SELECT, so SELECT-only does not stop it.
 # rdflib resolves one by POSTing to the address in the query, which turns this
 # endpoint into a way to reach hosts the user could not reach themselves.
+#
+# Since D-069 a SERVICE to an approved public endpoint runs, through
+# sparql_service. What these tests still hold is S-2's half that did not
+# change: the loopback recorder below is a non-public address, so every shape
+# must be refused at planning, before a grant is even asked for, with zero
+# requests.
 # ---------------------------------------------------------------------------
 
 
@@ -306,7 +314,7 @@ def test_service_is_refused_across_algebra_shapes(ontology_id, sparql_recorder, 
 def test_service_detection_walks_the_algebra_not_the_text():
     """UNIT-2, at the function itself, with no HTTP in the way.
 
-    `_contains_service` is asserted against a parsed algebra directly so a
+    `find_services` is asserted against a parsed algebra directly so a
     failure points at the walk rather than at the endpoint wiring.
     """
     endpoint = "http://127.0.0.1:9/sparql"
@@ -316,7 +324,7 @@ def test_service_detection_walks_the_algebra_not_the_text():
         f"SELECT ?s WHERE {{ {{ ?s ?p ?o }} UNION {{ SERVICE <{endpoint}> {{ ?s ?p ?o }} }} }}",
     ]
     for query in nested:
-        assert _contains_service(prepareQuery(query).algebra), query
+        assert find_services(prepareQuery(query).algebra), query
         with pytest.raises(QueryError) as caught:
             prepare_select(query)
         assert "SERVICE" in str(caught.value)
@@ -326,7 +334,7 @@ def test_service_detection_walks_the_algebra_not_the_text():
         "SELECT ?service WHERE { ?service ?p ?o }",
         "# SERVICE\nSELECT ?s WHERE { ?s ?p 'SERVICE' }",
     ):
-        assert not _contains_service(prepareQuery(query).algebra), query
+        assert not find_services(prepareQuery(query).algebra), query
 
 
 # ---------------------------------------------------------------------------
@@ -366,12 +374,12 @@ def test_service_refused_past_depth_limit():
         node = {"p": node}
 
     with pytest.raises(QueryError) as caught:
-        _contains_service(node)
+        find_services(node)
     assert caught.value.args[0] == DEEP_QUERY_REFUSED_DETAIL
 
     # A shallow structure with no service is still cleanly False — the guard
     # only bites past the bound, so ordinary queries are untouched.
-    assert _contains_service({"p": {"p": {"triples": []}}}) is False
+    assert find_services({"p": {"p": {"triples": []}}}) == []
 
 
 def test_deep_query_refused_records_no_request(ontology_id, sparql_recorder, monkeypatch):
@@ -477,11 +485,11 @@ def test_query_text_at_the_cap_still_runs(ontology_id):
     assert response.status_code == 200, response.text
 
 
-def test_hand_written_service_gets_todays_sentence(ontology_id, sparql_recorder):
-    # A SERVICE call typed around a UNION the builder could never produce is
-    # refused with exactly the sentence the builder's path gets, and nothing
-    # reaches the endpoint. Stage 3 of external-access changes this; this
-    # spec does not.
+def test_hand_written_service_to_a_private_address_is_refused(ontology_id, sparql_recorder):
+    # A SERVICE call typed around a UNION the builder could never produce, to
+    # the loopback recorder. Before external-access Stage 3 every SERVICE got
+    # one fixed refusal; since D-069 a public endpoint is asked about, and a
+    # non-public one is refused by name at planning -- nothing reaches it.
     endpoint = f"http://127.0.0.1:{sparql_recorder.server_address[1]}/sparql"
     query = (
         "# pasted from documentation\n"
@@ -494,4 +502,4 @@ def test_hand_written_service_gets_todays_sentence(ontology_id, sparql_recorder)
     response = client.post(f"/api/ontologies/{ontology_id}/sparql", json={"query": query})
     assert sparql_recorder.requests == []
     assert response.status_code == 400
-    assert response.json()["detail"] == sparql_exec.SERVICE_REFUSED_DETAIL
+    assert response.json()["detail"] == NOT_PUBLIC_DETAIL.format(endpoint=endpoint)

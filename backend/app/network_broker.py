@@ -57,8 +57,9 @@ BASIC IDEA
     (open question 2, taken as recommended). The log records which was used.
 
 INPUTS / INPUT SOURCES
-    - Calls to `broker.request(capability, url, ...)` from the fetch router and
-      from net_guard's rdflib chokepoint.
+    - Calls to `broker.request(capability, url, ...)` from the fetch router,
+      from net_guard's rdflib chokepoint, from imports.py and from
+      sparql_service.py's SERVICE handler.
     - network-policy.json and network-activity.jsonl in the data directory.
     - The X-Semantic-Studio-Grant request header, via GrantScopeMiddleware.
     - The system resolver, through net_guard.resolve_host.
@@ -563,6 +564,15 @@ class NetworkBroker:
             raise net_guard.BlockedAddress(detail)
         return addresses[0]
 
+    def check_url(self, url: str) -> str:
+        """The host of ``url``, or BlockedAddress if gate 2 would refuse it.
+
+        For a caller that must ask about several hosts at once before sending
+        anything (a SERVICE query's endpoints): an address that can only be
+        refused should be refused then, not put to the user as a question.
+        """
+        return self._judge_without_lookup(url, after_redirect=False)
+
     def decision_for(self, capability: str, host: str) -> str:
         """The policy's answer with no network involved. Timed by
         test_decision_overhead against the 1 ms budget."""
@@ -584,9 +594,15 @@ class NetworkBroker:
         max_bytes: int,
         timeout: float,
         user_initiated: bool = False,
+        total_timeout: Optional[float] = None,
     ) -> BrokerResponse:
+        """``timeout`` is httpx's, per connect and per read. ``total_timeout``,
+        when given, bounds the whole request across redirects and reads: a
+        server that trickles one byte every few seconds never trips a per-read
+        timeout, and a SERVICE call's 20 s is a wall-clock promise."""
         if capability not in CAPABILITIES:
             raise ValueError(f"Unknown capability {capability!r}")
+        deadline = None if total_timeout is None else time.monotonic() + total_timeout
         # Gate 1. Nothing is looked at, resolved or sent.
         if self.policy.offline:
             self._log(capability, url, "offline")
@@ -635,7 +651,8 @@ class NetworkBroker:
                 raise
 
             response = self._send_pinned(
-                capability, current, address, method, headers, body, max_bytes, timeout
+                capability, current, address, method, headers, body, max_bytes,
+                _remaining(timeout, deadline, current), deadline,
             )
             if response.status in _REDIRECT_CODES:
                 location = response.headers.get("location")
@@ -652,7 +669,7 @@ class NetworkBroker:
         raise TooManyRedirects(url)
 
     def _send_pinned(
-        self, capability, url, address, method, headers, body, max_bytes, timeout
+        self, capability, url, address, method, headers, body, max_bytes, timeout, deadline=None
     ) -> BrokerResponse:
         parts = urlsplit(url)
         if parts.scheme == "http" and parts.port is None:
@@ -663,16 +680,19 @@ class NetworkBroker:
             try:
                 return self._send_once(
                     capability, upgraded, address, method, headers, body, max_bytes,
-                    httpx.Timeout(timeout, connect=UPGRADE_CONNECT_TIMEOUT),
+                    httpx.Timeout(timeout, connect=min(timeout, UPGRADE_CONNECT_TIMEOUT)),
+                    deadline,
                 )
             except FetchFailed:
                 pass
+            timeout = _remaining(timeout, deadline, url)
         return self._send_once(
-            capability, url, address, method, headers, body, max_bytes, httpx.Timeout(timeout)
+            capability, url, address, method, headers, body, max_bytes, httpx.Timeout(timeout),
+            deadline,
         )
 
     def _send_once(
-        self, capability, url, address, method, headers, body, max_bytes, timeout
+        self, capability, url, address, method, headers, body, max_bytes, timeout, deadline=None
     ) -> BrokerResponse:
         pinned, host_header = _pinned_url(url, address)
         request_headers = dict(headers or {})
@@ -704,7 +724,15 @@ class NetworkBroker:
                         self._log(capability, url, "too-large", response.status_code)
                         raise TooLarge(url, max_bytes)
                     chunks: list[bytes] = []
-                    for chunk in response.iter_bytes(64 * 1024):
+                    # With a deadline, take bytes as they arrive: a 64 KB chunk
+                    # is buffered until full, so a server dripping a few bytes
+                    # at a time would never reach the deadline check below.
+                    pieces = (
+                        response.iter_bytes()
+                        if deadline is not None
+                        else response.iter_bytes(64 * 1024)
+                    )
+                    for chunk in pieces:
                         received += len(chunk)
                         if received > max_bytes:
                             # Abandoned: the connection closes on exit and the
@@ -712,12 +740,25 @@ class NetworkBroker:
                             self._log(capability, url, "too-large", response.status_code, received)
                             raise TooLarge(url, max_bytes)
                         chunks.append(chunk)
+                        if deadline is not None and time.monotonic() > deadline:
+                            self._log(capability, url, "timeout", response.status_code, received)
+                            raise FetchFailed(url, "it took longer than the time allowed")
                     outcome = "ok" if response.status_code < 400 else "http-error"
                     self._log(capability, url, outcome, response.status_code, received)
                     return BrokerResponse(url, response.status_code, response.headers, b"".join(chunks))
         except httpx.HTTPError as exc:
             self._log(capability, url, "failed", 0, received)
             raise FetchFailed(url, str(exc) or type(exc).__name__) from exc
+
+
+def _remaining(timeout: float, deadline: Optional[float], url: str) -> float:
+    """The per-step timeout, shortened to what is left of the deadline."""
+    if deadline is None:
+        return timeout
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise FetchFailed(url, "it took longer than the time allowed")
+    return min(timeout, left)
 
 
 # The process-wide broker. Configured with the store's data directory by

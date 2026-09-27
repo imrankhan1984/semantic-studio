@@ -104,6 +104,7 @@ class _Handler(BaseHTTPRequestHandler):
         server = self.server
         server.requests.append(self.path)
         server.hosts.append(self.headers.get("Host"))
+        server.user_agents.append(self.headers.get("User-Agent"))
         length = int(self.headers.get("Content-Length") or 0)
         server.bodies.append(self.rfile.read(length) if length else b"")
         status, headers, body = server.route(self.path)
@@ -126,7 +127,7 @@ def http_server():
     """Start recording HTTP servers: ``http_server(route, host=..., port=...)``.
 
     ``route(path) -> (status, headers, body)``. Each server records ``requests``
-    (paths), ``hosts`` (Host headers) and ``bodies``.
+    (paths), ``hosts`` (Host headers), ``user_agents`` and ``bodies``.
     """
     started = []
 
@@ -134,6 +135,7 @@ def http_server():
         server = ThreadingHTTPServer((host, port), _Handler)
         server.route = route
         server.requests, server.hosts, server.bodies = [], [], []
+        server.user_agents = []
         threading.Thread(target=server.serve_forever, daemon=True).start()
         started.append(server)
         return server

@@ -7,8 +7,9 @@ SUMMARY
     Renders SPARQL query results as a sortable, paged table: a column per
     variable, a row count, duration and page position, a truncation notice,
     Export CSV / Export JSON controls, a control that empties the results area,
-    URI cells as clickable chips with a secondary "view in source" control, and
-    literal cells as text (unbound cells shown as em dashes).
+    URI cells as clickable chips with a secondary "view in source" control,
+    literal cells as text (unbound cells shown as em dashes), and, for a query
+    with SERVICE blocks, which sites the results came from.
 
 BASIC IDEA
     Presentational over one SparqlResults. Column headers toggle client-side
@@ -38,7 +39,10 @@ INPUTS / INPUT SOURCES (props)
     - onClear: empty the results area, leaving the query untouched.
 
 EXPECTED OUTPUT
-    - The rendered results table (or an empty-result note); onPickIri and
+    - The rendered results table (or an empty-result note), with a line per
+      SERVICE fact when there are any: the hosts that answered, a per-call row
+      cap reached, a call SERVICE SILENT skipped (external-access AC-32).
+    - onPickIri and
       onViewInSource on click; onClear when the clear control is pressed; and a
       CSV / JSON file download when an export control is pressed (Q-2).
 ================================================================================
@@ -47,7 +51,7 @@ EXPECTED OUTPUT
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { triggerDownload } from "../download";
 import { resultsFilename, toCsv, toJson } from "../sparql/exportResults";
-import type { SparqlResults, SparqlTerm } from "../types";
+import type { ServiceCall, SparqlResults, SparqlTerm } from "../types";
 
 interface Props {
   results: SparqlResults;
@@ -88,6 +92,35 @@ function sortValue(term: SparqlTerm | null): string | number {
     return Number.isNaN(asNumber) || term.value.trim() === "" ? term.value.toLowerCase() : asNumber;
   }
   return (term.label ?? term.value).toLowerCase();
+}
+
+/**
+ * What the results owe to other sites, one sentence each (external-access
+ * AC-32): which hosts answered, whose answer hit the per-call row cap, and
+ * which failed and were skipped under SERVICE SILENT. Hosts rather than full
+ * endpoint addresses, because the host is what the user approved.
+ */
+export function describeServices(services: ServiceCall[]): string[] {
+  const answered = [...new Set(services.filter((s) => !s.error).map((s) => s.host))];
+  const lines: string[] = [];
+  if (answered.length > 0) lines.push(`Includes results from ${answered.join(", ")}.`);
+  for (const s of services) {
+    if (s.truncated) {
+      lines.push(`The answer from ${s.host} was capped at ${s.rows.toLocaleString()} rows.`);
+    }
+    if (s.error) lines.push(`SERVICE SILENT went on without ${s.host}: ${s.error}`);
+  }
+  return lines;
+}
+
+function ServiceNotes({ services }: { services: ServiceCall[] }) {
+  return (
+    <div className="results-services">
+      {describeServices(services).map((line, i) => (
+        <p key={i}>{line}</p>
+      ))}
+    </div>
+  );
 }
 
 function ResultsTable({ results, ontologyName, onPickIri, onViewInSource, onClear }: Props) {
@@ -304,6 +337,9 @@ function ResultsTable({ results, ontologyName, onPickIri, onViewInSource, onClea
           Clear results
         </button>
       </div>
+      {results.services && results.services.length > 0 && (
+        <ServiceNotes services={results.services} />
+      )}
       {results.rowCount === 0 ? (
         <p className="detail-note">
           No rows matched. Try removing a filter, or making a hop OPTIONAL.

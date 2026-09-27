@@ -45,6 +45,9 @@ export interface ApprovalRequest {
   reason: string;
   sends: string;
   encrypted: boolean;
+  // SPARQL SERVICE only: the exact query text that will be sent, which the
+  // dialog shows in full (external-access Section 6).
+  text?: string;
 }
 
 // A decision the user made about a site. Only remembered ones are listed.
@@ -172,6 +175,20 @@ export interface SparqlResults {
   // Present when the query ran with imports on: how many imported documents
   // the merged view covered.
   importDocuments?: number;
+  // Present when the query had SERVICE blocks: one entry per endpoint call.
+  services?: ServiceCall[];
+}
+
+// One SERVICE call a query made (external-access Stage 3). `truncated` means
+// the endpoint's answer passed the 10,000-row per-call cap; `error` is set
+// when the call failed and SERVICE SILENT let the query carry on without it.
+export interface ServiceCall {
+  endpoint: string;
+  host: string;
+  rows: number;
+  truncated: boolean;
+  ms: number;
+  error: string | null;
 }
 
 // A persisted query in the saved-query library.

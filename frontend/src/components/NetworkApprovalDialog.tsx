@@ -15,6 +15,12 @@ BASIC IDEA
     decision. Every row is text from the 409 body or from networkWords.ts --
     the capability's own name is never shown, and nothing depends on colour.
 
+    For a SPARQL SERVICE question the *What is sent* row is the exact query
+    text of each block, in a read-only box, because that text is the whole of
+    what leaves the machine: the server fixed it before asking and sends it
+    byte for byte (D-069). One box per block, named by its endpoint when there
+    are several.
+
     Built on the About panel's pattern: the backdrop is a sibling, not the
     parent, because aria-hidden on an ancestor would remove the dialog from the
     accessibility tree; focus goes to the heading on open, Tab is trapped, and
@@ -47,6 +53,9 @@ import { alwaysPhrase } from "../networkWords";
 import type { ApprovalRequest } from "../types";
 import { useDialogTrap } from "./useDialogTrap";
 
+export const SERVICE_NOTHING_ELSE =
+  "Nothing else from your ontology is sent. Results are combined on your machine.";
+
 export const WHY_EXPLAINED = [
   "Some files and queries rely on material published on another site, such as a JSON-LD context or an ontology they import.",
   "Semantic Studio asks before it connects anywhere, so you always know what leaves this computer and where it goes.",
@@ -63,6 +72,7 @@ export default function NetworkApprovalDialog({ requests, onAnswer }: Props) {
   const [remember, setRemember] = useState(true);
   const first = requests[0];
   const hosts = [...new Set(requests.map((r) => r.host))];
+  const texts = requests.filter((r) => r.text !== undefined);
   const heading =
     hosts.length === 1
       ? `Allow a connection to ${hosts[0]}?`
@@ -76,7 +86,7 @@ export default function NetworkApprovalDialog({ requests, onAnswer }: Props) {
       <div className="modal-backdrop approval-backdrop" aria-hidden="true" onClick={decline} />
       <div
         ref={panelRef}
-        className="approval-dialog"
+        className={texts.length > 0 ? "approval-dialog approval-dialog-text" : "approval-dialog"}
         role="dialog"
         aria-modal="true"
         aria-labelledby="approval-heading"
@@ -89,11 +99,31 @@ export default function NetworkApprovalDialog({ requests, onAnswer }: Props) {
           <dt>Why</dt>
           <dd>{first.reason}</dd>
           <dt>What is sent</dt>
-          <dd>{first.sends}</dd>
+          {texts.length === 0 ? (
+            <dd>{first.sends}</dd>
+          ) : (
+            <dd className="approval-sent">
+              {texts.map((r, i) => (
+                <textarea
+                  key={i}
+                  className="approval-text"
+                  readOnly
+                  value={r.text}
+                  rows={Math.min(12, (r.text ?? "").split("\n").length)}
+                  aria-label={
+                    texts.length === 1 ? "Query text sent" : `Query text sent to ${r.url}`
+                  }
+                />
+              ))}
+              <p className="approval-text-note">{SERVICE_NOTHING_ELSE}</p>
+            </dd>
+          )}
           <dt>The site sees</dt>
           <dd>Your internet address and the address of what is requested.</dd>
           <dt>Address</dt>
-          <dd className="approval-url">{first.url}</dd>
+          <dd className="approval-url">
+            {[...new Set(requests.map((r) => r.url))].join(", ")}
+          </dd>
           {!first.encrypted && (
             <>
               <dt>Encryption</dt>

@@ -2695,6 +2695,19 @@ button.legend-row:hover {
   text-transform: none;
 }
 
+/* Which endpoints a SERVICE query drew on, and what happened to each call
+   that did not simply succeed. Text, never colour alone. */
+.results-services {
+  margin: 0;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.results-services p {
+  margin: 2px 0;
+}
+
 .results-page {
   text-transform: none;
 }
@@ -3239,6 +3252,18 @@ button.legend-row:hover {
   width: 620px;
 }
 
+/* A SERVICE question shows query text, which is the whole point of it, so the
+   dialog widens and the text takes the full row under its label. In the
+   480px dialog's value column a box showed 319px of a 476px line, and what
+   the user was approving scrolled out of sight (browser pass, 2026-09-27). */
+.approval-dialog-text {
+  width: 640px;
+}
+
+.approval-facts .approval-sent {
+  grid-column: 1 / -1;
+}
+
 .approval-heading,
 .network-heading {
   margin: 0 0 16px;
@@ -3268,6 +3293,31 @@ button.legend-row:hover {
 .approval-url {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
+}
+
+/* The exact SERVICE text. Read-only, but a real textarea so it can be
+   focused, scrolled and selected; not resizable sideways, so a long line
+   scrolls inside it rather than widening the dialog. */
+.approval-text {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 8px;
+  padding: 8px;
+  resize: vertical;
+  white-space: pre;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.approval-text-note {
+  margin: 0;
+  color: var(--text-dim);
 }
 
 .approval-why {

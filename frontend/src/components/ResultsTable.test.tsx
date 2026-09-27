@@ -39,8 +39,8 @@ EXPECTED OUTPUT
 
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import ResultsTable from "./ResultsTable";
-import type { SparqlResults, SparqlTerm } from "../types";
+import ResultsTable, { describeServices } from "./ResultsTable";
+import type { ServiceCall, SparqlResults, SparqlTerm } from "../types";
 
 // The download helper is mocked so the export tests can assert the Blob and
 // filename handed to the browser without jsdom's missing object-URL machinery.
@@ -626,5 +626,47 @@ describe("ResultsTable export", () => {
     renderTable(tiny(1), vi.fn(), "");
     fireEvent.click(csvBtn());
     expect(triggerDownload.mock.calls[0][1]).toBe("results.csv");
+  });
+});
+
+describe("ResultsTable SERVICE endpoints (external-access AC-32)", () => {
+  const call = (over: Partial<ServiceCall> = {}): ServiceCall => ({
+    endpoint: "https://query.wikidata.org/sparql",
+    host: "query.wikidata.org",
+    rows: 12,
+    truncated: false,
+    ms: 310,
+    error: null,
+    ...over,
+  });
+
+  it("the header names every endpoint that answered, in text", () => {
+    renderTable({
+      ...resultsWith(3),
+      services: [call(), call({ endpoint: "https://dbpedia.org/sparql", host: "dbpedia.org" })],
+    });
+    expect(screen.getByText("Includes results from query.wikidata.org, dbpedia.org.")).toBeTruthy();
+  });
+
+  it("a query without SERVICE says nothing about endpoints", () => {
+    renderTable(resultsWith(3));
+    expect(document.querySelector(".results-services")).toBeNull();
+  });
+
+  it("states a per-call row cap and a SILENT failure, and names no failed host as a source", () => {
+    const lines = describeServices([
+      call({ rows: 10000, truncated: true }),
+      call({ endpoint: "https://down.example.org/sparql", host: "down.example.org", rows: 0, error: "down.example.org answered with HTTP 500." }),
+    ]);
+    expect(lines).toEqual([
+      "Includes results from query.wikidata.org.",
+      `The answer from query.wikidata.org was capped at ${(10000).toLocaleString()} rows.`,
+      "SERVICE SILENT went on without down.example.org: down.example.org answered with HTTP 500.",
+    ]);
+  });
+
+  it("is shown even when no rows came back", () => {
+    renderTable({ ...resultsWith(0), vars: ["s"], services: [call({ rows: 0 })] });
+    expect(screen.getByText("Includes results from query.wikidata.org.")).toBeTruthy();
   });
 });
