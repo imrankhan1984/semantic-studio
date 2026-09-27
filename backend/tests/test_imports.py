@@ -766,3 +766,42 @@ def test_merged_view_overhead(no_network):
     single_ms = _median_ms(lambda: build_viz_graph(single))
     ratio = merged_ms / single_ms
     assert ratio <= 1.5, f"{merged_ms:.1f} ms merged vs {single_ms:.1f} ms single ({ratio:.2f}x)"
+
+
+# ---------------------------------------------------------------------------
+# PR #41 review -- one question, after everything local has resolved
+# ---------------------------------------------------------------------------
+
+
+def test_a_question_does_not_stop_local_imports_resolving():
+    """The import needing approval sorts first, FOAF after it. The resolve
+    still answers 409, but only after FOAF resolved from the bundle, so the
+    listing shows it resolved and the merged graph includes it -- which is
+    what the user is left with after Don't allow."""
+    private = "http://unknown.example.org/x"
+    oid = _upload("m.ttl", _doc("http://example.org/main", imports=(private, FOAF)))
+    r = _resolve(oid)
+    assert r.status_code == 409
+    assert [q["host"] for q in r.json()["detail"]["requests"]] == ["unknown.example.org"]
+    rows = _rows(oid)
+    assert rows[FOAF]["status"] == "resolved" and rows[FOAF]["source"] == "bundled"
+    assert rows[private]["status"] == "unresolved"
+    assert "permission to connect to unknown.example.org" in rows[private]["error"]
+    ids = {
+        n["id"]
+        for n in client.get(f"/api/ontologies/{oid}/graph?imports=true&limit=5000").json()["nodes"]
+    }
+    assert f"{FOAF}Person" in ids
+
+
+def test_every_host_needing_approval_is_asked_about_at_once():
+    """Two sites, three imports: one 409 naming each site once, and nothing
+    was looked up or sent -- the policy is asked before any name resolves."""
+    a1, a2 = "http://one.example.org/a", "http://one.example.org/b"
+    b = "http://two.example.org/c"
+    oid = _upload("m.ttl", _doc("http://example.org/main", imports=(a1, a2, b)))
+    r = _resolve(oid)
+    assert r.status_code == 409
+    requests = r.json()["detail"]["requests"]
+    assert [q["host"] for q in requests] == ["one.example.org", "two.example.org"]
+    assert '"m.ttl" imports 2 ontologies from this site.' == requests[0]["reason"]

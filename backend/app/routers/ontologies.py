@@ -242,6 +242,11 @@ class SparqlRequest(BaseModel):
     query: str
 
 
+# The refusal for chosen import files over the closure's total. Here so the
+# middleware in main.py and the endpoint say the same sentence.
+IMPORT_FILES_TOO_LARGE = "These files together are larger than the 150 MB imports limit."
+
+
 # JSON body for POST /{oid}/imports/mapping: use a library ontology for an import.
 class ImportMapping(BaseModel):
     iri: str
@@ -810,10 +815,9 @@ async def import_files(
     enforced while reading, and the request as a whole the closure's 150 MB.
     """
     ontology = _get_or_404(oid)
-    too_big = "These files together are larger than the 150 MB imports limit."
-    declared = request.headers.get("content-length")
-    if declared and declared.isdigit() and int(declared) > imports_mod.MAX_TOTAL_BYTES + CHUNK_BYTES:
-        raise HTTPException(status_code=413, detail=too_big)
+    too_big = IMPORT_FILES_TOO_LARGE
+    # A declared oversize never reaches here: main.py's middleware refuses it
+    # before FastAPI parses the body (D-015). What is left is the real size.
     received: list[tuple[str, bytes]] = []
     total = 0
     for upload in files:

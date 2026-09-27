@@ -638,6 +638,9 @@ class ImportsService:
         total_bytes = 0
         documents = 0
         limit: Optional[str] = None
+        # Approval requests met along the way, asked all at once after the
+        # closure has resolved everything it can locally.
+        questions: list[dict] = []
         progress.total = len(queue)
 
         def save():
@@ -682,20 +685,21 @@ class ImportsService:
                     max_bytes=max_bytes,
                     reason=self._reason(own_name, iri, [q[0] for q in queue]),
                 )
-            except ApprovalRequired:
-                # Save what resolved so far, and the question, then ask. The
-                # retry reuses everything local and cached, so progress across
-                # several hosts is kept rather than asked for again.
+            except ApprovalRequired as question:
+                # Not raised here. Everything that can resolve without the
+                # network -- the rest of this closure included -- is resolved
+                # first, and the questions are asked once, together, at the
+                # end. Raising on the first one used to leave every later
+                # import unresolved, bundled FOAF included, and a Don't allow
+                # then left the merged view as the file alone.
+                #
                 # Worded to stay true whichever way the user answers: after a
                 # Don't allow this row is what the panel shows, with its ways out.
                 host = urlsplit(iri).hostname or iri
                 row["error"] = f"Not loaded: this needs your permission to connect to {host}."
-                for pending, pdepth, pparent in queue:
-                    if normalize_iri(pending) not in visited:
-                        rows.append(self._initial_row(pending, pdepth, pparent))
-                        visited.add(normalize_iri(pending))
-                save()
-                raise
+                questions.extend(question.requests)
+                progress.done += 1
+                continue
             progress.done += 1
             if found is None:
                 # Needed the network and this pass may not use it: keep what the
@@ -727,7 +731,15 @@ class ImportsService:
             progress.total += len(children)
 
         self._count_subtrees(rows)
-        return save()
+        state = save()
+        if questions:
+            # One 409 naming every host. The dialog records a grant per
+            # request, and the retry presents them all, so a closure spread
+            # over several sites is one question rather than one per site.
+            # Saved first: the listing, and the merged view, keep everything
+            # local whichever way the user answers.
+            raise ApprovalRequired(_one_per_host(questions))
+        return state
 
     @staticmethod
     def _count_subtrees(rows: list[dict]) -> None:
@@ -1045,6 +1057,22 @@ def merged_hierarchy(ontology: Ontology, parse_timeout: Optional[float] = None) 
 def merged_query_schema(ontology: Ontology, parse_timeout: Optional[float] = None) -> dict:
     imports_service.merged(ontology, parse_timeout)
     return imports_service.derived(ontology, "schema", build_query_schema)
+
+
+def _one_per_host(requests: list[dict]) -> list[dict]:
+    """The first request for each capability and host, in the order met.
+
+    Every import from one site gets the same answer, so asking about the site
+    once is the question; the count of imports is already in its reason.
+    """
+    seen: set[tuple[str, str]] = set()
+    unique: list[dict] = []
+    for request in requests:
+        key = (request["capability"], request["host"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(request)
+    return unique
 
 
 def _format_from_response(response) -> Optional[str]:

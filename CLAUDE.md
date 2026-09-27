@@ -49,7 +49,7 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 354 tests (+2 marked `network`, deselected)
+cd backend  && python -m pytest tests    # 358 tests (+2 marked `network`, deselected)
 cd frontend && npm run test              # 589 tests, vitest
 ```
 
@@ -242,9 +242,14 @@ prove a change works in the application rather than in the test suite.
   `test_merged_view_overhead` holds 1.5x (measured 1.30x). Both mutations were
   run and go red. **The vocabulary files are pinned by SHA-256 and marked
   `binary` in `.gitattributes`** -- a CRLF checkout would otherwise change
-  their bytes and every hash check would refuse them. **On a 409 the closure
-  saves what resolved before raising**, so an approved retry across several
-  hosts makes progress rather than asking again for spent just-once grants.
+  their bytes and every hash check would refuse them. **A question never
+  stops the closure**: an import needing approval is noted and the loop goes
+  on, so everything local across the whole closure resolves first, and one
+  409 then names every host, saved before it is raised. Raising on the first
+  question (PR #41 review) left later imports unresolved, bundled FOAF
+  included, and a Don't allow collapsed the merged view to the file alone.
+  The files route for chosen imports is in main.py's declared-size refusal
+  too (D-015), at the closure's 150 MB plus framing.
 
   The merged caches live in `Ontology.merged_cache`, apart from the file-only
   ones, and are dropped whenever the closure is saved. The *Include imports*

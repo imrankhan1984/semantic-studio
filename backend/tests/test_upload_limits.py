@@ -338,3 +338,28 @@ def test_chunked_read_is_not_materially_slower_than_one_read():
 
     overhead = timed(chunked) - timed(one_read)
     assert overhead < 100, f"chunked read cost {overhead:.1f} ms more for 5 MB"
+
+
+def test_declared_oversize_chosen_import_files_are_refused_before_parsing():
+    """external-access Stage 2: the files chosen for unresolved imports are a
+    second multipart route, and D-015's reasoning applies to it unchanged --
+    a check inside the endpoint runs after FastAPI has buffered the body. The
+    ontology id does not exist: a 413 rather than a 404 is the proof that the
+    middleware answered before any route did."""
+    response = client.post(
+        "/api/ontologies/ont-does-not-exist/imports/files",
+        files={"files": ("huge.ttl", io.BytesIO(b"x" * 1024), "text/turtle")},
+        headers={"content-length": str(200 * 1024 * 1024)},
+    )
+    assert response.status_code == 413
+    assert "150 MB imports limit" in response.json()["detail"]
+
+
+def test_chosen_import_files_within_the_limit_reach_the_endpoint():
+    """A body within the 150 MB total plus framing is not
+    refused by the middleware, so the endpoint gets to answer (here, 404)."""
+    response = client.post(
+        "/api/ontologies/ont-does-not-exist/imports/files",
+        files={"files": ("small.ttl", io.BytesIO(b"x" * 1024), "text/turtle")},
+    )
+    assert response.status_code == 404
