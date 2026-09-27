@@ -64,6 +64,15 @@ them by clicking, without writing SPARQL by hand.
   it, a link to this repository for source and issues, the MIT licence and its
   no-warranty notice, and the promise that ontologies you load stay on your
   machine. It opens with nothing loaded and makes no network request.
+- **Imports** (*View* and *Hierarchy* modes): an ontology's `owl:imports` are
+  listed, and nothing is fetched until you press *Resolve imports*. Each import
+  is looked for locally first — the library, then eleven bundled vocabularies
+  (SKOS, DCMI Terms, DC Elements, FOAF, DCAT 3, PROV-O, ORG, OWL-Time, SHACL,
+  vCard, BFO 2020), then a file you chose — and only then downloaded, after you
+  approve the site. An import the app cannot download can be opened in your
+  browser and chosen as a file, or a whole folder of files. *Include imports*
+  shows the ontology together with its imports in every view; imported entities
+  are marked and read-only.
 - **Dark & light mode** with adapted graph palettes.
 - **PNG export** of the current graph view.
 - **Publish documentation** — from any ontology card's `⋮` menu on the home

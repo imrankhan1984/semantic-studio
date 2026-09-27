@@ -269,3 +269,22 @@ describe("SearchBox as a combobox", () => {
     expect(input().getAttribute("aria-activedescendant")).toBe(after[2].id);
   });
 });
+
+describe("SearchBox imports (external-access Stage 2)", () => {
+  it("searches the merged view when told to, and names an imported hit's source", async () => {
+    searchNodes.mockResolvedValue([DRAWN, { ...UNDRAWN, importedFrom: "FOAF" }]);
+    render(<SearchBox ontologyId="o1" theme="dark" onPick={vi.fn()} imports />);
+    fireEvent.change(input(), { target: { value: "thing" } });
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+    });
+    expect(searchNodes).toHaveBeenCalledWith("o1", "thing", true);
+    const rows = options();
+    expect(rows.find((r) => r.textContent?.includes("Hidden Thing"))!.textContent).toContain(
+      "from FOAF",
+    );
+    expect(rows.find((r) => r.textContent?.includes("Drawn Thing"))!.textContent).not.toContain(
+      "from",
+    );
+  });
+});

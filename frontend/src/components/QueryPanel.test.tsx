@@ -30,7 +30,7 @@ EXPECTED OUTPUT
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import QueryPanel from "./QueryPanel";
+import QueryPanel, { queryScopeText } from "./QueryPanel";
 import type { useQueryBuilder } from "../sparql/useQueryBuilder";
 import type { QueryState } from "../sparql/types";
 
@@ -171,5 +171,38 @@ describe("QueryPanel result navigation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "View B1 in source" }));
     expect(onViewInSource).toHaveBeenCalledWith("http://example.org/b1", undefined);
+  });
+});
+
+describe("QueryPanel imports (external-access Stage 2, AC-20)", () => {
+  it("states what a query runs over, in text", () => {
+    expect(queryScopeText(true, 3)).toBe("Querying this ontology and 3 imports.");
+    expect(queryScopeText(true, 1)).toBe("Querying this ontology and 1 import.");
+    expect(queryScopeText(false, 3)).toBe(
+      "Querying this ontology on its own, without its imports.",
+    );
+    // Nothing to say for an ontology with nothing resolved.
+    expect(queryScopeText(false, 0)).toBeNull();
+    expect(queryScopeText(false, null)).toBeNull();
+  });
+
+  it("runs over the merged view when the switch is on, and says so", async () => {
+    render(
+      <QueryPanel
+        ontologyId="ont-1"
+        theme="light"
+        builder={builderStub()}
+        onPickIri={vi.fn()}
+        onViewInSource={vi.fn()}
+        ontologyTriples={0}
+        includeImports
+        importsCount={2}
+      />,
+    );
+    expect(screen.getByText("Querying this ontology and 2 imports.")).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Execute/ }));
+    });
+    expect(runSparql).toHaveBeenCalledWith("ont-1", expect.any(String), true);
   });
 });

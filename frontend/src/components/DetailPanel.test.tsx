@@ -263,3 +263,28 @@ describe("DetailPanel expand control", () => {
     expect(button.hasAttribute("disabled")).toBe(true);
   });
 });
+
+describe("DetailPanel imports (external-access Stage 2)", () => {
+  it("says an entity is imported, and from where, in text (AC-21)", async () => {
+    await renderPanel({ ...detailsWith(1), importedFrom: "FOAF" });
+    expect(screen.getByText("Imported from FOAF (read-only)")).toBeTruthy();
+  });
+
+  it("says nothing of the kind for the ontology's own entity", async () => {
+    await renderPanel(detailsWith(1));
+    expect(screen.queryByText(/Imported from/)).toBeNull();
+  });
+
+  it("asks for the merged view only when told to", async () => {
+    await renderPanel(detailsWith(1));
+    expect(getNodeDetails).toHaveBeenLastCalledWith("o1", SUBJECT, false);
+    cleanup();
+    getNodeDetails.mockResolvedValue(detailsWith(1));
+    await act(async () => {
+      render(
+        <DetailPanel ontologyId="o1" iri={SUBJECT} onNavigate={vi.fn()} onClose={vi.fn()} imports />,
+      );
+    });
+    expect(getNodeDetails).toHaveBeenLastCalledWith("o1", SUBJECT, true);
+  });
+});

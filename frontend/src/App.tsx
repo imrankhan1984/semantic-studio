@@ -84,6 +84,13 @@ BASIC IDEA
     so the component that started the action (the Load dialog, usually) only
     ever sees success or a sentence saying the connection was not made.
 
+    Imports (external-access Stage 2) are resolved from the imports panel, shown
+    in View and Hierarchy modes, and nothing is resolved on open. Whether the
+    views include them is one switch per ontology, held here because every view
+    reads it -- the graph, search, the detail panel, the hierarchy, the query
+    builder and SPARQL all pass it to the server as ?imports=true. It is off
+    unless the user turned it on, and remembered per ontology in this browser.
+
     Removal is the one destructive action here, and it counts what it will
     destroy before it asks. Deleting an ontology has always deleted every query
     saved against it; onRemove now fetches that count first, puts it in the
@@ -92,7 +99,7 @@ BASIC IDEA
 INPUTS / INPUT SOURCES
     - The backend API (via api.ts) for the ontology list and graph.
     - User interaction: header tabs, dropdown, graph clicks, search.
-    - localStorage for the remembered theme.
+    - localStorage for the remembered theme and the per-ontology imports switch.
 
 EXPECTED OUTPUT
     - The full rendered application UI, and the side effects of user actions
@@ -107,6 +114,7 @@ import {
   getGraph,
   getNeighborhood,
   grantNetwork,
+  listImports,
   listOntologies,
   listSavedQueries,
   setApprovalHandler,
@@ -118,6 +126,7 @@ import GraphNotice from "./components/GraphNotice";
 import GraphView from "./components/GraphView";
 import HierarchyView from "./components/HierarchyView";
 import HomeScreen from "./components/HomeScreen";
+import ImportsPanel from "./components/ImportsPanel";
 import Legend from "./components/Legend";
 import LoadDialog from "./components/LoadDialog";
 import Logo from "./components/Logo";
@@ -146,6 +155,7 @@ import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type {
   AppMode,
   ApprovalRequest,
+  ImportsListing,
   MergeResult,
   OntologySummary,
   Theme,
@@ -198,6 +208,25 @@ function initialTheme(): Theme {
     localStorage.getItem("semantic-viewer-theme"); // pre-rename preference
   if (saved === "dark" || saved === "light") return saved;
   return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+// Where the per-ontology "Include imports" switch is remembered. A browser
+// convenience rather than server state: it changes what this viewer is shown,
+// never what is stored, and losing it (a private window, cleared site data)
+// only returns an ontology to the default, which is off.
+const INCLUDE_IMPORTS_KEY = "semantic-studio-include-imports";
+
+function readIncludeImports(): Record<string, boolean> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(INCLUDE_IMPORTS_KEY) ?? "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function resolvedCount(listing: ImportsListing): number {
+  return listing.imports.filter((r) => r.status === "resolved").length;
 }
 
 /** What expansions have added to the budgeted graph. The node ids rather than a
@@ -348,7 +377,42 @@ export default function App() {
   // effect that reads it re-runs on its own.
   const [sourceTarget, setSourceTarget] = useState<SourceTarget | null>(null);
   // The shared query-builder state; the schema is only fetched in Query mode.
-  const builder = useQueryBuilder(activeId, mode === "query");
+  // The merged-view switch, per ontology (external-access Stage 2). Off by
+  // default, so opening a file shows the file, exactly as before (Section 7).
+  const [includeImportsById, setIncludeImportsById] =
+    useState<Record<string, boolean>>(readIncludeImports);
+  const includeImports = activeId !== null && includeImportsById[activeId] === true;
+  const includeImportsRef = useRef(includeImports);
+  includeImportsRef.current = includeImports;
+  const setIncludeImports = useCallback(
+    (next: boolean) => {
+      if (!activeId) return;
+      setIncludeImportsById((prev) => {
+        const updated = { ...prev, [activeId]: next };
+        try {
+          localStorage.setItem(INCLUDE_IMPORTS_KEY, JSON.stringify(updated));
+        } catch {
+          /* remembered for this session only */
+        }
+        return updated;
+      });
+    },
+    [activeId],
+  );
+  // Bumped when the resolved closure changes, so views built over the merged
+  // view are fetched again. Only the graph effect reads it, and only while the
+  // switch is on: with it off, a new closure changes nothing on screen.
+  const [importsVersion, setImportsVersion] = useState(0);
+  // How many imported documents are resolved, for the query panel's sentence.
+  // null until known, and never fetched on mount: only in Query mode, or when
+  // the imports panel reports a change.
+  const [importsCount, setImportsCount] = useState<number | null>(null);
+  const onImportsChanged = useCallback((listing: ImportsListing) => {
+    setImportsCount(resolvedCount(listing));
+    setImportsVersion((v) => v + 1);
+  }, []);
+  // The shared query-builder state; the schema is only fetched in Query mode.
+  const builder = useQueryBuilder(activeId, mode === "query", includeImports);
 
   // Apply and persist the theme whenever it changes (data-theme drives the CSS).
   useEffect(() => {
@@ -404,6 +468,7 @@ export default function App() {
     setFocusPanel(false);
     setHiddenKinds(new Set());
     setSourceTarget(null);
+    setImportsCount(null);
   }
 
   // Fetch the graph whenever the ontology or the requested budget changes.
@@ -429,7 +494,7 @@ export default function App() {
     if (!activeId) return;
     setLoadingGraph(true);
     let cancelled = false;
-    getGraph(activeId, graphBudget ?? undefined)
+    getGraph(activeId, graphBudget ?? undefined, includeImports)
       .then((g) => {
         if (cancelled) return;
         setGraphData(g);
@@ -454,7 +519,24 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeId, graphBudget]);
+    // importsVersion only while the switch is on: a closure resolved with it
+    // off changes nothing drawn, so it must not cost a refetch.
+  }, [activeId, graphBudget, includeImports, includeImports ? importsVersion : 0]);
+
+  // The query panel says what a query runs over, which needs the number of
+  // resolved imports. Asked for in Query mode only, so neither mount nor
+  // opening an ontology costs a request for it.
+  const inQuery = mode === "query";
+  useEffect(() => {
+    if (!activeId || !inQuery || importsCount !== null) return;
+    let live = true;
+    listImports(activeId)
+      .then((listing) => live && setImportsCount(resolvedCount(listing)))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [activeId, inQuery, importsCount]);
 
   // The currently active ontology's summary (or null).
   const active = ontologies.find((o) => o.id === activeId) ?? null;
@@ -723,7 +805,7 @@ export default function App() {
     if (!id) return;
     setExpandingIri(iri);
     try {
-      const data = await getNeighborhood(id, iri);
+      const data = await getNeighborhood(id, iri, undefined, includeImportsRef.current);
       if (activeIdRef.current !== id) return;
       // The token, not the data, is what tells GraphView this is a new merge:
       // expanding the same entity twice hands over an equal object.
@@ -1079,6 +1161,7 @@ export default function App() {
               theme={theme}
               onPick={onSearchPick}
               drawnIds={drawnIds}
+              imports={includeImports}
               placeholder={
                 mode === "query" ? "Search to add a step…" : "Search concepts, properties…"
               }
@@ -1139,6 +1222,24 @@ export default function App() {
           two. Note it is rendered rather than hidden, so pressing Home really
           does unmount the graph — but App keeps activeId, the selection and the
           query builder's state, which is what makes Home a view. D-026. */}
+      {/* The imports panel, in the two modes Section 6 puts it in. It renders
+          nothing for an ontology with no imports, and asks for its listing only
+          when it mounts, so neither mount nor opening an ontology in Explore
+          costs a request. Keyed on the ontology so one ontology's panel state
+          never shows another's rows. */}
+      {!showHome && activeId && (mode === "view" || mode === "hierarchy") && (
+        <ImportsPanel
+          key={activeId}
+          ontologyId={activeId}
+          library={ontologies
+            .filter((o) => o.id !== activeId)
+            .map((o) => ({ id: o.id, name: o.name }))}
+          includeImports={includeImports}
+          onIncludeImportsChange={setIncludeImports}
+          onChanged={onImportsChanged}
+        />
+      )}
+
       {showHome ? (
         <HomeScreen
           ontologies={ontologies}
@@ -1177,6 +1278,7 @@ export default function App() {
             theme={theme}
             selected={selected}
             onSelect={selectFromOutsideGraph}
+            imports={includeImports}
           />
           {selected === null ? (
             <aside className="detail-panel detail-empty" aria-label="Entity details">
@@ -1193,6 +1295,7 @@ export default function App() {
               onClose={() => setSelected(null)}
               onExpand={(entity) => void onExpand(entity)}
               expanding={expandingIri === selected}
+              imports={includeImports}
             />
           )}
         </main>
@@ -1258,6 +1361,8 @@ export default function App() {
               onPickIri={selectFromOutsideGraph}
               onViewInSource={onViewInSource}
               ontologyTriples={active?.triples ?? 0}
+              includeImports={includeImports}
+              importsCount={importsCount}
             />
           ) : mode === "explore" ? (
             // The two halves of the Explore column. Which one shows is decided
@@ -1280,6 +1385,7 @@ export default function App() {
                 focusHeading={focusPanel}
                 onExpand={(entity) => void onExpand(entity)}
                 expanding={expandingIri === selected}
+                imports={includeImports}
               />
             )
           ) : null}

@@ -1413,3 +1413,38 @@ describe("the docked zoom controls", () => {
     view.unmount();
   });
 });
+
+describe("imported entities (external-access Stage 2, AC-21)", () => {
+  /** DATA with Planet defined only in an import. */
+  const WITH_IMPORTED: VizGraph = {
+    ...DATA,
+    nodes: DATA.nodes.map((n) =>
+      n.id === "http://x/Planet" ? { ...n, importedFrom: "Solar System" } : n,
+    ),
+  };
+
+  it("draws an imported entity smaller than its own degree would", async () => {
+    // Size, not colour: colour already says the kind, and marking by colour
+    // alone is what AC-35 rules out. Planet and a same-degree own node differ
+    // only in the flag, so the ratio is the whole of the marking.
+    const plain = await renderView();
+    const own = sigmaCalls.last.graph.getNodeAttribute("http://x/Planet", "size");
+    plain.view.unmount();
+    const { view } = await renderView({ data: WITH_IMPORTED });
+    const imported = sigmaCalls.last.graph.getNodeAttribute("http://x/Planet", "size");
+    expect(imported).toBeCloseTo(own * 0.6, 5);
+    view.unmount();
+  });
+
+  it("says in the canvas label that imported entities are smaller, and only then", async () => {
+    const { view } = await renderView({ data: WITH_IMPORTED });
+    const label = screen.getByRole("img").getAttribute("aria-label")!;
+    expect(label).toContain("Entities from imports are drawn smaller.");
+    // Counts and fixed words only: the import's name is not interpolated.
+    expect(label).not.toContain("Solar System");
+    view.unmount();
+    const plain = await renderView();
+    expect(screen.getByRole("img").getAttribute("aria-label")).not.toContain("imports");
+    plain.view.unmount();
+  });
+});

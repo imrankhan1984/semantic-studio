@@ -46,7 +46,9 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - Ontology objects with a stable id, metadata summary, and lazily parsed
-      graph, plus cached viz/schema/pretty views.
+      graph, plus cached viz/schema/pretty views. A second cache,
+      `merged_cache`, holds the views over the file plus its resolved imports;
+      imports.py fills it and it never mixes with the file-only one.
     - Raises ParseError for unparseable input and ParseTimeout when a bounded
       parse runs out of time; the router maps them to HTTP 422 and 504.
       The broker's decisions (ApprovalRequired, Offline, HostBlocked) pass
@@ -87,7 +89,7 @@ from rdflib import Graph
 from rdflib.util import guess_format
 
 # Derived-view builders and the saved-query store live in sibling modules.
-from .graph_builder import build_card_sketch, build_viz_graph
+from .graph_builder import build_card_sketch, build_viz_graph, ontology_iris
 from .hierarchy import build_hierarchy
 from . import network_broker
 from .net_guard import (
@@ -286,6 +288,11 @@ class Ontology:
     schema_cache: Optional[dict] = field(default=None, repr=False)    # query-builder schema
     hierarchy_cache: Optional[dict] = field(default=None, repr=False)  # subClassOf/broader forests
     pretty_cache: Optional[str] = field(default=None, repr=False)     # re-serialized Turtle
+    # The same views over the file plus its resolved imports, built by
+    # imports.py. A cache of its own rather than a second key inside the ones
+    # above, so the file-only views cannot be served from a merged build or the
+    # other way round; dropped whole whenever the resolved closure changes.
+    merged_cache: Optional[dict] = field(default=None, repr=False)
     # Guards the one-time parse so two concurrent requests cannot both parse.
     _load_lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
@@ -478,6 +485,11 @@ class OntologyStore:
             # without costing a request. Measured over the whole viz dict, so
             # it is a pass over an in-memory list rather than over the triples.
             "card": {"sketch": build_card_sketch(viz)},
+            # What an owl:imports elsewhere in the library is matched against
+            # (external-access Stage 2). Recorded here because this parse has
+            # already happened; an entry stored before it existed is read once,
+            # when some other ontology's imports are resolved.
+            "ontologyIris": ontology_iris(graph),
             # Only named prefixes are stored (the empty prefix is filtered here;
             # the query schema keeps it because SPARQL needs it — see query_schema).
             "namespaces": {
@@ -508,6 +520,13 @@ class OntologyStore:
             self._items[oid] = ontology
         return ontology
 
+    def update_meta(self, ontology: Ontology, **fields) -> None:
+        """Add fields to an ontology's stored metadata and write it back."""
+        ontology.meta.update(fields)
+        self._meta_path(ontology.id).write_text(
+            json.dumps(ontology.meta, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
     def get(self, oid: str) -> Optional[Ontology]:
         # Look up a loaded ontology by id, or None if unknown.
         return self._items.get(oid)
@@ -523,7 +542,10 @@ class OntologyStore:
             return False
         # Delete both on-disk files; missing_ok tolerates a partial state.
         data_path = self._data_path(oid)
-        for path in (self._meta_path(oid), data_path, contexts_path_for(data_path)):
+        # The imports state goes with it. The imports cache does not: a
+        # downloaded or chosen vocabulary serves every ontology that imports it.
+        imports_state = data_path.with_suffix(".imports.json")
+        for path in (self._meta_path(oid), data_path, contexts_path_for(data_path), imports_state):
             try:
                 path.unlink(missing_ok=True)
             except OSError:

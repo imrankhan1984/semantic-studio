@@ -42,6 +42,8 @@ import type { QueryState } from "./sparql/types";
 import type {
   ApprovalRequest,
   Hierarchy,
+  ImportFilesResult,
+  ImportsListing,
   NodeDetails,
   OntologyDeletion,
   OntologySource,
@@ -180,6 +182,16 @@ async function handle<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+/**
+ * The merged-view switch, as a query-string fragment (external-access Stage 2).
+ * Sent only when on, so every request made with imports off is byte for byte
+ * the request it was before the toggle existed.
+ */
+function withImports(url: string, imports: boolean): string {
+  if (!imports) return url;
+  return url + (url.includes("?") ? "&" : "?") + "imports=true";
+}
+
 // List loaded ontologies (dropdown summaries).
 export function listOntologies(): Promise<OntologySummary[]> {
   return send("/api/ontologies").then((r) => handle<OntologySummary[]>(r));
@@ -225,9 +237,11 @@ export function deleteOntology(id: string): Promise<OntologyDeletion> {
  * nothing, which is the setting the whole choice of default relies on.
  * Callers pass a limit only once the user has asked for more.
  */
-export function getGraph(id: string, limit?: number): Promise<VizGraph> {
+export function getGraph(id: string, limit?: number, imports = false): Promise<VizGraph> {
   const query = limit === undefined ? "" : `?limit=${limit}`;
-  return send(`/api/ontologies/${id}/graph${query}`).then((r) => handle<VizGraph>(r));
+  return send(withImports(`/api/ontologies/${id}/graph${query}`, imports)).then((r) =>
+    handle<VizGraph>(r),
+  );
 }
 
 /**
@@ -242,10 +256,14 @@ export function getNeighborhood(
   id: string,
   iri: string,
   limit?: number,
+  imports = false,
 ): Promise<VizNeighborhood> {
   const extra = limit === undefined ? "" : `&limit=${limit}`;
   return send(
-    `/api/ontologies/${id}/neighborhood?iri=${encodeURIComponent(iri)}${extra}`,
+    withImports(
+      `/api/ontologies/${id}/neighborhood?iri=${encodeURIComponent(iri)}${extra}`,
+      imports,
+    ),
   ).then((r) => handle<VizNeighborhood>(r));
 }
 
@@ -256,22 +274,24 @@ export function getNeighborhood(
  * the frontend virtualizes it, so the whole asserted structure comes back. The
  * server caches it on the ontology, so re-opening the tab is cheap.
  */
-export function fetchHierarchy(id: string): Promise<Hierarchy> {
-  return send(`/api/ontologies/${id}/hierarchy`).then((r) => handle<Hierarchy>(r));
+export function fetchHierarchy(id: string, imports = false): Promise<Hierarchy> {
+  return send(withImports(`/api/ontologies/${id}/hierarchy`, imports)).then((r) =>
+    handle<Hierarchy>(r),
+  );
 }
 
 // Every statement about one entity, for the detail panel.
-export function getNodeDetails(id: string, iri: string): Promise<NodeDetails> {
-  return send(`/api/ontologies/${id}/node?iri=${encodeURIComponent(iri)}`).then((r) =>
-    handle<NodeDetails>(r),
-  );
+export function getNodeDetails(id: string, iri: string, imports = false): Promise<NodeDetails> {
+  return send(
+    withImports(`/api/ontologies/${id}/node?iri=${encodeURIComponent(iri)}`, imports),
+  ).then((r) => handle<NodeDetails>(r));
 }
 
 // Label/IRI search for the search box.
-export function searchNodes(id: string, q: string): Promise<VizNode[]> {
-  return send(`/api/ontologies/${id}/search?q=${encodeURIComponent(q)}`).then((r) =>
-    handle<VizNode[]>(r),
-  );
+export function searchNodes(id: string, q: string, imports = false): Promise<VizNode[]> {
+  return send(
+    withImports(`/api/ontologies/${id}/search?q=${encodeURIComponent(q)}`, imports),
+  ).then((r) => handle<VizNode[]>(r));
 }
 
 // The source text for the View tab (original bytes, or pretty Turtle).
@@ -284,20 +304,22 @@ export function getSource(id: string, pretty = false): Promise<OntologySource> {
 /* --- visual query builder ------------------------------------------------ */
 
 // The class-level schema powering the query builder.
-export function getQuerySchema(id: string): Promise<QuerySchema> {
-  return send(`/api/ontologies/${id}/query-schema`).then((r) => handle<QuerySchema>(r));
-}
-
-// Map a clicked graph node to the class/type the builder should step on.
-export function getQueryNode(id: string, iri: string): Promise<QueryNodeInfo> {
-  return send(`/api/ontologies/${id}/query-node?iri=${encodeURIComponent(iri)}`).then((r) =>
-    handle<QueryNodeInfo>(r),
+export function getQuerySchema(id: string, imports = false): Promise<QuerySchema> {
+  return send(withImports(`/api/ontologies/${id}/query-schema`, imports)).then((r) =>
+    handle<QuerySchema>(r),
   );
 }
 
+// Map a clicked graph node to the class/type the builder should step on.
+export function getQueryNode(id: string, iri: string, imports = false): Promise<QueryNodeInfo> {
+  return send(
+    withImports(`/api/ontologies/${id}/query-node?iri=${encodeURIComponent(iri)}`, imports),
+  ).then((r) => handle<QueryNodeInfo>(r));
+}
+
 // Execute a SPARQL SELECT and return the result rows.
-export function runSparql(id: string, query: string): Promise<SparqlResults> {
-  return send(`/api/ontologies/${id}/sparql`, {
+export function runSparql(id: string, query: string, imports = false): Promise<SparqlResults> {
+  return send(withImports(`/api/ontologies/${id}/sparql`, imports), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
     body: JSON.stringify({ query }),
@@ -421,4 +443,68 @@ export function getNetworkActivity(limit = 200): Promise<NetworkActivity[]> {
   return send(`/api/network/activity?limit=${limit}`).then((r) =>
     handle<NetworkActivity[]>(r),
   );
+}
+
+/* --- owl:imports (external-access Stage 2) --------------------------------- */
+
+// Each import and its status. Reads files on the server; never connects.
+export function listImports(id: string): Promise<ImportsListing> {
+  return send(`/api/ontologies/${id}/imports`).then((r) => handle<ImportsListing>(r));
+}
+
+// Run the resolution chain. A host nobody has approved yet comes back as a 409,
+// which `send` turns into the approval dialog and retries, as for any action.
+export function resolveImports(id: string): Promise<ImportsListing> {
+  return send(`/api/ontologies/${id}/imports/resolve`, {
+    method: "POST",
+    headers: { ...CLIENT_HEADER },
+  }).then((r) => handle<ImportsListing>(r));
+}
+
+// Download again whatever came from the network, through the broker.
+export function refreshImports(id: string): Promise<ImportsListing> {
+  return send(`/api/ontologies/${id}/imports/refresh`, {
+    method: "POST",
+    headers: { ...CLIENT_HEADER },
+  }).then((r) => handle<ImportsListing>(r));
+}
+
+// Stop a running resolution after the document it is on.
+export function cancelImports(id: string): Promise<{ cancelled: boolean }> {
+  return send(`/api/ontologies/${id}/imports/cancel`, {
+    method: "POST",
+    headers: { ...CLIENT_HEADER },
+  }).then((r) => handle<{ cancelled: boolean }>(r));
+}
+
+// Use an ontology already in the library for one import IRI.
+export function mapImport(id: string, iri: string, ontologyId: string): Promise<ImportsListing> {
+  return send(`/api/ontologies/${id}/imports/mapping`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
+    body: JSON.stringify({ iri, ontologyId }),
+  }).then((r) => handle<ImportsListing>(r));
+}
+
+/**
+ * Files the user chose in the browser's picker, matched to imports on the
+ * server by the IRI each declares. Only bytes travel: the server never sees,
+ * and never reads, a path (AC-43). `forIri` is set when the files were chosen
+ * for one import, and `acceptMismatch` is the user's confirmation that a file
+ * declaring a different IRI should be used for it anyway (AC-42).
+ */
+export function chooseImportFiles(
+  id: string,
+  files: File[],
+  options: { forIri?: string; acceptMismatch?: boolean } = {},
+): Promise<ImportFilesResult> {
+  const form = new FormData();
+  for (const file of files) form.append("files", file);
+  if (options.forIri) form.append("forIri", options.forIri);
+  if (options.acceptMismatch) form.append("acceptMismatch", "true");
+  return send(`/api/ontologies/${id}/imports/files`, {
+    method: "POST",
+    headers: { ...CLIENT_HEADER },
+    body: form,
+  }).then((r) => handle<ImportFilesResult>(r));
 }

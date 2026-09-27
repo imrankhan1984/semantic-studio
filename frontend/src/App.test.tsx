@@ -87,6 +87,7 @@ const {
   grantNetwork,
   getNetworkPolicy,
   getNetworkActivity,
+  listImports,
 } = vi.hoisted(() => ({
   listOntologies: vi.fn(),
   getGraph: vi.fn(),
@@ -113,6 +114,9 @@ const {
   grantNetwork: vi.fn(),
   getNetworkPolicy: vi.fn(),
   getNetworkActivity: vi.fn(),
+  // external-access Stage 2. The imports panel reads this in View and
+  // Hierarchy modes, and Query mode reads it for the "Querying ..." sentence.
+  listImports: vi.fn(),
 }));
 
 // importOriginal rather than a bare factory, so ApiError stays the real class.
@@ -141,10 +145,12 @@ vi.mock("./api", async (importOriginal) => ({
   grantNetwork,
   getNetworkPolicy,
   getNetworkActivity,
+  listImports,
 }));
 
 /** Every mocked client function, so a test can count what mount actually did. */
 const ALL_API = {
+  listImports,
   listOntologies,
   getGraph,
   deleteOntology,
@@ -235,13 +241,20 @@ vi.mock("./components/QueryPanel", () => ({
   default: ({
     onPickIri,
     onViewInSource,
+    includeImports,
+    importsCount,
   }: {
     onPickIri: (iri: string) => void;
     onViewInSource: (iri: string, prefixed?: string) => void;
+    includeImports?: boolean;
+    importsCount?: number | null;
   }) => (
     <div className="query-panel">
       <button onClick={() => onPickIri(pick.iri)}>fake result chip</button>
       <button onClick={() => onViewInSource(pick.iri, pick.prefixed)}>fake source control</button>
+      {/* What App hands over for the "Querying ..." sentence (external-access
+          Stage 2); the sentence itself is QueryPanel.test.tsx's. */}
+      <span data-testid="query-scope">{`${includeImports}|${importsCount}`}</span>
     </div>
   ),
 }));
@@ -293,6 +306,7 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   listOntologies.mockResolvedValue([SUMMARY]);
   getGraph.mockResolvedValue(TRUNCATED);
+  listImports.mockResolvedValue({ imports: [], limit: null, resolving: null, offline: false });
   searchNodes.mockResolvedValue([]);
   // The Hierarchy tab fetches this; one class-forest root, off the budgeted
   // graph (whose nodes list is empty), so selecting it draws it.
@@ -527,7 +541,7 @@ describe("App startup chooser", () => {
 
     expect(homeShown()).toBe(false);
     expect(document.querySelector(".query-panel")).toBeTruthy();
-    expect(getGraph).toHaveBeenCalledWith("o1", undefined);
+    expect(getGraph).toHaveBeenCalledWith("o1", undefined, false);
   });
 
   it("opening a library entry hides the chooser and loads it", async () => {
@@ -535,7 +549,7 @@ describe("App startup chooser", () => {
     await renderAppOpened();
 
     expect(getGraph).toHaveBeenCalledTimes(1);
-    expect(getGraph).toHaveBeenCalledWith("o1", undefined);
+    expect(getGraph).toHaveBeenCalledWith("o1", undefined, false);
     expect(homeShown()).toBe(false);
     expect(screen.getByTestId("graph")).toBeTruthy();
     expect(statusBar()).toContain("FIBO");
@@ -667,13 +681,13 @@ describe("App status bar", () => {
     // from stats.budget, so a clamped response doubles from what was granted,
     // not what was asked for.
     await renderAppOpened();
-    expect(getGraph).toHaveBeenLastCalledWith("o1", undefined);
+    expect(getGraph).toHaveBeenLastCalledWith("o1", undefined, false);
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /show more/i }));
     });
 
-    expect(getGraph).toHaveBeenLastCalledWith("o1", 4000);
+    expect(getGraph).toHaveBeenLastCalledWith("o1", 4000, false);
   });
 });
 
@@ -727,10 +741,10 @@ describe("App graph budget range", () => {
     await renderAppOpened();
     await press(showMore);
     await press(showMore);
-    expect(getGraph).toHaveBeenLastCalledWith("o1", 8000);
+    expect(getGraph).toHaveBeenLastCalledWith("o1", 8000, false);
 
     await press(showLess);
-    expect(getGraph).toHaveBeenLastCalledWith("o1", 4000);
+    expect(getGraph).toHaveBeenLastCalledWith("o1", 4000, false);
   });
 
   it("show less clamps to the floor rather than going below", async () => {
@@ -741,10 +755,10 @@ describe("App graph budget range", () => {
     serverLike({ nodeTotal: 40000, serverDefault: 15000 });
     await renderAppOpened();
     await press(showMore);
-    expect(getGraph).toHaveBeenLastCalledWith("o1", 30000);
+    expect(getGraph).toHaveBeenLastCalledWith("o1", 30000, false);
 
     await press(showLess);
-    expect(getGraph).toHaveBeenLastCalledWith("o1", 15000);
+    expect(getGraph).toHaveBeenLastCalledWith("o1", 15000, false);
   });
 
   it("show more and show less are inverses", async () => {
@@ -794,10 +808,10 @@ describe("App graph budget range", () => {
     serverLike({ serverDefault: 500 });
     await renderAppOpened();
     await press(showMore);
-    expect(getGraph).toHaveBeenLastCalledWith("o1", 1000);
+    expect(getGraph).toHaveBeenLastCalledWith("o1", 1000, false);
 
     await press(showLess);
-    expect(getGraph).toHaveBeenLastCalledWith("o1", 500);
+    expect(getGraph).toHaveBeenLastCalledWith("o1", 500, false);
     expect(showLess().disabled).toBe(true);
   });
 
@@ -989,7 +1003,7 @@ describe("App expand on demand", () => {
     // whatever the panel happens to have loaded: the two can differ while the
     // detail request is still in flight.
     await expandTheSelectedNode();
-    expect(getNeighborhood).toHaveBeenCalledWith("o1", "http://x/issuedBy");
+    expect(getNeighborhood).toHaveBeenCalledWith("o1", "http://x/issuedBy", undefined, false);
   });
 
   it("expanding announces the new drawn count", async () => {
@@ -1109,7 +1123,7 @@ describe("App explore column", () => {
     });
     expect(document.querySelector(".detail-panel")).toBeTruthy();
     expect(startPanel()).toBeNull();
-    expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/Bond");
+    expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/Bond", false);
 
     // By title rather than by accessible name: that control's name is the glyph
     // it contains, "✕", because name-from-contents wins over a title attribute.
@@ -1251,7 +1265,7 @@ describe("App result navigation", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
     });
-    expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/Bond");
+    expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/Bond", false);
   });
 
   it("clicking a drawn result makes no request", async () => {
@@ -1278,7 +1292,7 @@ describe("App result navigation", () => {
     await clickResultChip();
 
     expect(getNeighborhood).toHaveBeenCalledTimes(1);
-    expect(getNeighborhood).toHaveBeenCalledWith("o1", "http://x/Issuer");
+    expect(getNeighborhood).toHaveBeenCalledWith("o1", "http://x/Issuer", undefined, false);
   });
 
   it("clicking an undrawn result announces what was added", async () => {
@@ -1314,7 +1328,7 @@ describe("App result navigation", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
     });
-    expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/Issuer");
+    expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/Issuer", false);
     expect(document.querySelector(".detail-panel")).toBeTruthy();
   });
 
@@ -1380,7 +1394,7 @@ describe("App result navigation", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "fake search hit" }));
     });
-    expect(getQueryNode).toHaveBeenCalledWith("o1", "http://x/Issuer");
+    expect(getQueryNode).toHaveBeenCalledWith("o1", "http://x/Issuer", false);
   });
 
   it("view in source switches mode and passes the target", async () => {
@@ -1898,7 +1912,7 @@ describe("App home screen", () => {
     });
 
     expect(getGraph).toHaveBeenCalledTimes(1);
-    expect(getGraph).toHaveBeenCalledWith("o1", undefined);
+    expect(getGraph).toHaveBeenCalledWith("o1", undefined, false);
     expect(homeShown()).toBe(false);
     expect(document.querySelector(".query-panel")).toBeTruthy();
   });
@@ -2139,7 +2153,7 @@ describe("App Hierarchy mode", () => {
       .find((el) => el.textContent?.includes("Instrument"))!;
     await act(async () => fireEvent.click(row));
 
-    expect(getNeighborhood).toHaveBeenCalledWith("o1", "http://x/Instrument");
+    expect(getNeighborhood).toHaveBeenCalledWith("o1", "http://x/Instrument", undefined, false);
 
     // And the selection survives into Explore: switching there shows the detail
     // panel rather than the starting panel.
@@ -2159,7 +2173,7 @@ describe("App Hierarchy mode", () => {
       fireEvent.click(screen.getByRole("tab", { name: "Hierarchy" }));
     });
     await screen.findByRole("heading", { name: "Class hierarchy" });
-    expect(fetchHierarchy).toHaveBeenCalledWith("o1");
+    expect(fetchHierarchy).toHaveBeenCalledWith("o1", false);
   });
 
   it("nothing selected shows the detail panel empty state", async () => {
@@ -2202,7 +2216,7 @@ describe("App Hierarchy mode", () => {
     // The panel appears beside the tree (still in Hierarchy mode), naming the
     // entity and listing its statement.
     await waitFor(() => expect(document.querySelector(".detail-panel")).toBeTruthy());
-    expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/Instrument");
+    expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/Instrument", false);
     expect(screen.getByRole("heading", { name: /statements/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Contract/ })).toBeTruthy();
     // The tree is still there — the panel is beside it, not instead of it.
@@ -2245,8 +2259,8 @@ describe("App Hierarchy mode", () => {
 
     // It becomes the selection: the panel re-fetches Contract, and — being off
     // the budgeted graph — it is drawn through the shared outside-graph route.
-    await waitFor(() => expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/Contract"));
-    expect(getNeighborhood).toHaveBeenCalledWith("o1", "http://x/Contract");
+    await waitFor(() => expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/Contract", false));
+    expect(getNeighborhood).toHaveBeenCalledWith("o1", "http://x/Contract", undefined, false);
   });
 
   it("a selected property shows its connections in the panel", async () => {
@@ -2300,7 +2314,7 @@ describe("App Hierarchy mode", () => {
       .find((el) => el.textContent?.includes("hasParty"))!;
     await act(async () => fireEvent.click(row));
 
-    await waitFor(() => expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/hasParty"));
+    await waitFor(() => expect(getNodeDetails).toHaveBeenCalledWith("o1", "http://x/hasParty", false));
     // The property's domain and range are shown as connections, the same panel a
     // class uses.
     expect(screen.getByRole("button", { name: /Contract/ })).toBeTruthy();
@@ -2419,5 +2433,83 @@ describe("App network approval (external-access Stage 1)", () => {
     });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.activeElement).toBe(network);
+  });
+});
+
+describe("App imports (external-access Stage 2)", () => {
+  const RESOLVED = {
+    imports: [
+      {
+        iri: "http://xmlns.com/foaf/0.1/",
+        status: "resolved" as const,
+        source: "bundled" as const,
+        sourceName: "FOAF",
+        fetchedAt: null,
+        error: null,
+        documentCount: 1,
+        depth: 1,
+        importedBy: null,
+      },
+    ],
+    limit: null,
+    resolving: null,
+    offline: false,
+  };
+
+  beforeEach(() => {
+    localStorage.removeItem("semantic-studio-include-imports");
+    listImports.mockResolvedValue(RESOLVED);
+  });
+
+  it("opening an ontology in Explore asks nothing about its imports (AC-16)", async () => {
+    await renderAppOpened();
+    expect(listImports).not.toHaveBeenCalled();
+    expect(getGraph).toHaveBeenLastCalledWith("o1", undefined, false);
+  });
+
+  it("the switch in the imports panel turns every view over to the merged view (AC-20)", async () => {
+    await renderAppOpened();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Hierarchy" }));
+    });
+    await screen.findByRole("heading", { name: "Class hierarchy" });
+    expect(listImports).toHaveBeenCalledWith("o1");
+    fireEvent.click(await screen.findByRole("button", { name: /Imports/ }));
+    const toggle = screen.getByRole("switch", { name: "Include imports" });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+    expect(fetchHierarchy).toHaveBeenLastCalledWith("o1", true);
+    expect(screen.getByRole("switch", { name: "Include imports" }).getAttribute("aria-checked")).toBe(
+      "true",
+    );
+    expect(JSON.parse(localStorage.getItem("semantic-studio-include-imports")!)).toEqual({
+      o1: true,
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
+    });
+    expect(getGraph).toHaveBeenLastCalledWith("o1", undefined, true);
+  });
+
+  it("the switch is remembered per ontology", async () => {
+    localStorage.setItem("semantic-studio-include-imports", JSON.stringify({ o1: true }));
+    await renderAppOpened();
+    expect(getGraph).toHaveBeenLastCalledWith("o1", undefined, true);
+  });
+
+  it("the query panel is told the switch and how many imports resolved", async () => {
+    // The count is asked for on entering Query mode, not before: the mount
+    // test above and the Explore test here hold the other half.
+    getQuerySchema.mockResolvedValue({ classes: [], links: [], namespaces: {}, truncated: false });
+    await renderAppOpened();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Query" }));
+    });
+    await waitFor(() => expect(screen.getByTestId("query-scope").textContent).toBe("false|1"));
+    expect(listImports).toHaveBeenCalledTimes(1);
   });
 });

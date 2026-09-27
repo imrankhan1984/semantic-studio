@@ -201,6 +201,18 @@ def prefixed(graph: Graph, iri: URIRef) -> str:
         return str(iri)
 
 
+def ontology_iris(graph: Graph) -> list[str]:
+    """The IRIs a document says it is: its owl:Ontology nodes and versionIRIs.
+
+    What an owl:imports is matched against (external-access Stage 2). Here
+    rather than in imports.py because the store records it at ingest, so the
+    library can be searched for an import without parsing every entry.
+    """
+    iris = {str(s) for s in graph.subjects(RDF.type, OWL.Ontology) if isinstance(s, URIRef)}
+    iris |= {str(o) for o in graph.objects(None, OWL.versionIRI) if isinstance(o, URIRef)}
+    return sorted(iris)
+
+
 def subclass_parents(graph: Graph) -> dict[URIRef, set[URIRef]]:
     """child -> {named superclasses}, from asserted rdfs:subClassOf only.
 

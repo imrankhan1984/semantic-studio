@@ -31,6 +31,9 @@ INPUTS / INPUT SOURCES (props)
     - focusHeading: whether this selection should move focus to the heading.
     - onExpand + expanding: draw this entity's connections on the graph, and
       whether that request is in flight.
+    - imports: describe the entity from the merged view (external-access
+      Stage 2). An entity defined only in an import says so, in text, under
+      its name: "Imported from FOAF (read-only)".
 
 EXPECTED OUTPUT
     - The rendered detail panel (or nothing when no node is selected).
@@ -56,6 +59,8 @@ interface Props {
   /** An expansion is in flight. The control says so and the graph is not
    *  blocked, because the canvas stays interactive while the request runs. */
   expanding?: boolean;
+  /** Read the entity from the ontology together with its resolved imports. */
+  imports?: boolean;
 }
 
 /** The heading id, so the panel can be named by it and focus can be sent to it. */
@@ -99,6 +104,7 @@ export default function DetailPanel({
   focusHeading = false,
   onExpand,
   expanding = false,
+  imports = false,
 }: Props) {
   const [details, setDetails] = useState<NodeDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -111,14 +117,14 @@ export default function DetailPanel({
     if (!ontologyId || !iri) return;
     setLoading(true);
     let cancelled = false;
-    getNodeDetails(ontologyId, iri)
+    getNodeDetails(ontologyId, iri, imports)
       .then((d) => !cancelled && setDetails(d))
       .catch((e) => !cancelled && setError(String(e.message ?? e)))
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [ontologyId, iri]);
+  }, [ontologyId, iri, imports]);
 
   // Take focus when this selection asked for it, rather than when the details
   // arrive, because the wait is a request: keystrokes made in between would go
@@ -148,6 +154,9 @@ export default function DetailPanel({
             {details?.label ?? "…"}
           </h2>
           <div className="detail-prefixed">{details?.prefixed}</div>
+          {details?.importedFrom && (
+            <p className="detail-imported">Imported from {details.importedFrom} (read-only)</p>
+          )}
         </div>
         <button className="icon-btn" onClick={onClose} title="Close panel">✕</button>
       </div>

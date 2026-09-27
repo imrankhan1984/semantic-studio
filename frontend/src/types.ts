@@ -166,6 +166,9 @@ export interface SparqlResults {
   rowCount: number;
   truncated: boolean;   // true when the server row cap was hit
   durationMs: number;
+  // Present when the query ran with imports on: how many imported documents
+  // the merged view covered.
+  importDocuments?: number;
 }
 
 // A persisted query in the saved-query library.
@@ -194,6 +197,9 @@ export interface VizNode {
   label: string;
   kind: string;    // colours the node and keys the legend
   degree: number;  // edge count, used to size the node
+  // With imports on: the import that defines this entity. The graph draws it
+  // smaller, so being imported is not told by colour alone (AC-21).
+  importedFrom?: string;
 }
 
 // One edge in the graph view.
@@ -306,6 +312,9 @@ export interface HierarchyNode {
   kind: string;        // colours the kind badge, keyed like the graph's kinds
   hasChildren: boolean;
   cyclic?: boolean;
+  // With imports on: the import that defines this entity, which the row names
+  // as "from FOAF" (external-access Stage 2, AC-21). Absent for the file's own.
+  importedFrom?: string;
 }
 
 // A reference from a parent to one child. `origin` is "asserted" in this
@@ -315,8 +324,12 @@ export interface HierarchyNode {
 // edge must carry its origin explicitly.
 export interface HierarchyChild {
   id: string;
-  origin: "asserted" | "inferred";
+  origin: HierarchyOrigin;
 }
+
+// "imported" is the value external-access Stage 2 added: an edge leading to an
+// entity defined only in an import, shown with the merged view on.
+export type HierarchyOrigin = "asserted" | "inferred" | "imported";
 
 // One forest: a flat node map, a parent->children adjacency, and the roots. A
 // class with two parents is stored once and referenced from each parent.
@@ -371,6 +384,8 @@ export interface NodeDetails {
   incoming: { subject: TermRef; predicate: TermRef }[];
   outgoingTotal: number;
   incomingTotal: number;
+  // With imports on, for an entity defined only in an import (AC-21).
+  importedFrom?: string;
 }
 
 /* --- theme-aware palettes ------------------------------------------------ */
@@ -546,3 +561,43 @@ export const KIND_LABELS: Record<string, string> = {
   ontology: "Ontology",
   other: "Other",
 };
+
+/* --- owl:imports (external-access Stage 2) --------------------------------- */
+
+export type ImportStatus = "builtin" | "unresolved" | "resolved" | "failed" | "blocked";
+export type ImportSource = "builtin" | "library" | "bundled" | "mapped" | "file" | "network";
+
+// One import in the closure. `importedBy` is the import that brought it in, or
+// null for one the ontology declares itself.
+export interface ImportRow {
+  iri: string;
+  status: ImportStatus;
+  source: ImportSource | null;
+  sourceName: string | null;
+  fetchedAt: string | null;
+  error: string | null;
+  documentCount: number;
+  depth: number;
+  importedBy: string | null;
+  sourceUrl?: string | null;
+  sha256?: string;
+}
+
+// GET /imports. `limit` names a closure limit that was reached; `resolving` is
+// present while a resolution runs, for "Resolving 2 of 3…".
+export interface ImportsListing {
+  imports: ImportRow[];
+  limit: string | null;
+  resolving: { done: number; total: number } | null;
+  offline: boolean;
+}
+
+// POST /imports/files. `mismatch` asks the user to confirm a file whose
+// declared IRI is not the one it was chosen for; `invalid` did not parse.
+export interface ImportFilesResult {
+  matched: { iri: string; file: string }[];
+  unmatched: string[];
+  mismatch: { file: string; declares: string | null; forIri: string }[];
+  invalid: { file: string; error: string }[];
+  imports: ImportsListing;
+}
