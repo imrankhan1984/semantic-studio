@@ -6,7 +6,7 @@ FILE: frontend/src/components/AboutPanel.tsx
 SUMMARY
     The About dialog: what this application is, who made it, where its source
     lives, under what licence, and the promise that ontologies loaded into it
-    never leave the machine. Four blocks of static text separated by hairlines,
+    never leave the machine and that it connects only when allowed. Four blocks of static text separated by hairlines,
     over a dimmed backdrop.
 
 BASIC IDEA
@@ -52,7 +52,10 @@ import { useEffect, useRef } from "react";
  *
  * The privacy pair is the one line in this file that is a promise rather than a
  * description. It is true of the application by construction and is enforced by
- * the four network and resource specifications and their tests. If any future
+ * the four network and resource specifications and their tests. Its second
+ * sentence was rewritten by external-access Stage 1, in the commit that made it
+ * true: every outbound connection now goes through the network broker, which
+ * asks first, and a source scan keeps it the only way out. If any future
  * feature ever sends ontology content anywhere, these two sentences must change
  * in the same commit — see about-panel.md Section 15, which names the two
  * backlog items that would engage it.
@@ -67,7 +70,8 @@ export const ABOUT = {
   licence: "MIT licensed · © 2026 Imran Khan",
   warranty: 'Provided "as is", without warranty of any kind.',
   privacy: "Your ontologies stay on this machine.",
-  privacyDetail: "Semantic Studio does not upload them.",
+  privacyDetail:
+    "Semantic Studio connects to the internet only when you allow it, and never uploads your ontologies.",
 } as const;
 
 /** What Tab may land on inside the panel. The heading carries tabindex="-1" so

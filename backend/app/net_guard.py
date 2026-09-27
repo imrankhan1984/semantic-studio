@@ -4,10 +4,12 @@ FILE: backend/app/net_guard.py
 ================================================================================
 
 SUMMARY
-    Decides whether the server is allowed to make an outbound HTTP request to a
-    URL the user supplied. The rule is a deny rule on address ranges, not an
-    allowlist of hosts: the application's whole purpose is fetching arbitrary
-    public ontology URLs, so anything host-based would break the product.
+    Decides whether an address is one the server may connect to, and hands the
+    requests rdflib makes on its own while parsing to the network broker. The
+    address rule is a deny rule on ranges, not an allowlist of hosts: the
+    application's whole purpose is fetching arbitrary public ontology URLs, so
+    anything host-based would break the product. Which hosts the user has
+    allowed is the broker's question (network_broker.py, D-066), not this one.
 
 BASIC IDEA
     Two functions, deliberately separable so the judgement can be unit-tested
@@ -29,30 +31,39 @@ BASIC IDEA
         Unwrapping here makes the answer the same on every supported version.
 
     Redirects are not followed automatically anywhere in the application. The
-    caller follows them in a loop and calls back in for each new location, which
-    is what makes "checked again after every hop" true rather than aspirational.
+    broker follows them in a loop and judges each new location, which is what
+    makes "checked again after every hop" true rather than aspirational.
+
+    The second half of the file is rdflib's network chokepoint (D-016). It no
+    longer opens connections: it asks the broker for a `jsonld:context` request,
+    and records what it received so a stored ontology can be re-parsed later
+    without connecting again.
 
 INPUTS / INPUT SOURCES
-    - A URL string supplied by the user, via POST /api/ontologies/fetch.
+    - URLs from the broker, and from rdflib while it parses.
     - The system resolver, through socket.getaddrinfo.
 
 EXPECTED OUTPUT
     - None, when the URL may be fetched.
     - Raises BlockedAddress, carrying a message written for the person who
       typed the URL, which the router turns into an HTTP 400 detail.
+    - For rdflib: a buffered response object, or the broker's refusal.
 ================================================================================
 """
 
 from __future__ import annotations
 
+import base64
+import contextvars
 import ipaddress
 import os
 import socket
-import urllib.request
+from contextlib import contextmanager
+from email.message import Message
 from io import BytesIO
-from typing import Union
+from typing import Iterator, Optional, Union
 from urllib.error import HTTPError
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 from urllib.response import addinfourl
 
 IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
@@ -218,7 +229,11 @@ def assert_url_fetchable(url: str, *, after_redirect: bool = False) -> None:
 # is reachable without the user typing an address at all.
 #
 # The fix is placed at rdflib's single network chokepoint rather than at the
-# JSON-LD plugin, so a parser nobody has examined yet is covered too.
+# JSON-LD plugin, so a parser nobody has examined yet is covered too. Since
+# D-066 the chokepoint no longer connects by itself: it asks the network
+# broker for a `jsonld:context` request, so a context is fetched only after the
+# user has allowed that host, and never silently. The chokepoint stays as
+# defence in depth -- it is what routes a parser's request to the broker at all.
 # ---------------------------------------------------------------------------
 
 # Shares SEMANTIC_STUDIO_MAX_FETCH_BYTES with the fetch endpoint deliberately:
@@ -255,87 +270,112 @@ CONTEXT_TOO_LARGE_DETAIL = (
     "and that resource is larger than the {mb} MB limit."
 )
 
+CONTEXT_FAILED_DETAIL = (
+    "This file asks Semantic Studio to load part of its definition from {url}, "
+    "and it could not be downloaded: {reason}"
+)
 
-class _NoRedirects(urllib.request.HTTPRedirectHandler):
-    """Makes urllib surface a redirect instead of quietly following it.
+CONTEXT_REASON = (
+    "The file you are opening defines its terms in a JSON-LD context "
+    "published on this site."
+)
 
-    Returning None from redirect_request leaves the 3xx unhandled, so the
-    default error handler raises HTTPError and the caller can judge the new
-    location before deciding to go there.
-    """
+# Contexts fetched during one parse, kept so the ontology can be re-parsed
+# after a restart without asking again or connecting again. A context approved
+# "just this time" was approved for loading this file; re-reading the same file
+# from disk later is not a new connection, so it must not become one. store.py
+# records them at ingest and replays them on lazy restore. None outside those
+# two scopes, which is the ordinary case.
+_recording: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "semantic_studio_context_recording", default=None
+)
+_replay: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "semantic_studio_context_replay", default=None
+)
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
+
+@contextmanager
+def recording_contexts() -> Iterator[dict]:
+    """Collect every context fetched inside the block into the yielded dict."""
+    recorded: dict = {}
+    token = _recording.set(recorded)
+    try:
+        yield recorded
+    finally:
+        _recording.reset(token)
 
 
-# build_opener replaces the default redirect handler with our subclass.
-_opener = urllib.request.build_opener(_NoRedirects)
+@contextmanager
+def replaying_contexts(recorded: Optional[dict]) -> Iterator[None]:
+    """Serve contexts from ``recorded`` instead of the network inside the block."""
+    token = _replay.set(recorded or {})
+    try:
+        yield
+    finally:
+        _replay.reset(token)
 
-_REDIRECT_CODES = (301, 302, 303, 307, 308)
+
+def _as_response(url: str, entry: dict) -> addinfourl:
+    headers = Message()
+    headers["Content-Type"] = entry.get("contentType") or "application/ld+json"
+    body = base64.b64decode(entry["body"])
+    # rdflib reads the stream and asks for .geturl(), .headers and .info();
+    # addinfourl over the buffered body provides all three.
+    return addinfourl(BytesIO(body), headers, entry.get("finalUrl", url), 200)
 
 
-def guarded_urlopen(request: urllib.request.Request) -> addinfourl:
+def guarded_urlopen(request) -> addinfourl:
     """Drop-in replacement for ``rdflib._networking._urlopen``.
 
-    Judges the address before every connection, follows redirects by hand so
-    each hop is judged too, and reads the body under a cap. Returns the same
-    kind of object rdflib expects, with the body already buffered.
+    Asks the broker for the context as a `jsonld:context` request. The broker
+    applies the policy (offline, Block, Ask), judges every address and every
+    redirect hop, pins the connection and caps the body; this function only
+    translates its answers into what rdflib expects, and its refusals into the
+    sentences this module has always used.
 
-    Following redirects by hand is the whole point. ``urlopen`` follows them
-    internally, so checking only the URL rdflib was given lets a public context
-    redirect straight to loopback -- verified, and the reason this is not a
-    two-line wrapper.
+    Policy decisions (ApprovalRequired, Offline, HostBlocked) propagate as they
+    are: store.py stops the parse on them and the router turns them into 409,
+    503 and 403.
     """
+    from . import network_broker  # the broker imports this module
+
     url = request.full_url
-    # Carry rdflib's headers (its Accept negotiation matters) across hops.
+    replay = _replay.get()
+    if replay is not None and url in replay:
+        return _as_response(url, replay[url])
+
+    # Carry rdflib's headers (its Accept negotiation matters).
     headers = dict(request.headers)
+    try:
+        response = network_broker.broker.request(
+            "jsonld:context",
+            url,
+            reason=CONTEXT_REASON,
+            headers=headers,
+            max_bytes=MAX_FETCH_BYTES,
+            timeout=CONTEXT_SOCKET_TIMEOUT,
+        )
+    except BlockedAddress as exc:
+        raise BlockedAddress(CONTEXT_REFUSED_DETAIL.format(url=url)) from exc
+    except network_broker.TooLarge as exc:
+        raise BlockedAddress(
+            CONTEXT_TOO_LARGE_DETAIL.format(url=url, mb=MAX_FETCH_BYTES // (1024 * 1024))
+        ) from exc
+    except network_broker.FetchFailed as exc:
+        raise BlockedAddress(CONTEXT_FAILED_DETAIL.format(url=url, reason=exc)) from exc
 
-    for hop in range(MAX_REDIRECTS + 1):
-        try:
-            assert_url_fetchable(url, after_redirect=hop > 0)
-        except BlockedAddress as exc:
-            raise BlockedAddress(CONTEXT_REFUSED_DETAIL.format(url=url)) from exc
+    if response.status >= 400:
+        raise HTTPError(url, response.status, f"HTTP {response.status}", Message(), None)
 
-        try:
-            response = _opener.open(
-                urllib.request.Request(url, None, headers),
-                timeout=CONTEXT_SOCKET_TIMEOUT,
-            )
-        except HTTPError as error:
-            if error.code in _REDIRECT_CODES:
-                location = error.headers.get("Location")
-                if location:
-                    # A Location may be relative to the URL that sent it.
-                    url = urljoin(url, location)
-                    continue
-            raise
-
-        with response:
-            # Read in chunks so an oversized body is abandoned rather than
-            # measured after the fact.
-            chunks: list[bytes] = []
-            total = 0
-            while True:
-                chunk = response.read(64 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > MAX_FETCH_BYTES:
-                    raise BlockedAddress(
-                        CONTEXT_TOO_LARGE_DETAIL.format(
-                            url=url, mb=MAX_FETCH_BYTES // (1024 * 1024)
-                        )
-                    )
-                chunks.append(chunk)
-            body = b"".join(chunks)
-            # rdflib reads the stream and asks for .geturl(), .headers and
-            # .info(); addinfourl over the buffered body provides all three.
-            return addinfourl(BytesIO(body), response.headers, url, response.status)
-
-    raise BlockedAddress(
-        f"That file's context URL redirected more than {MAX_REDIRECTS} times "
-        "and was not followed."
-    )
+    entry = {
+        "finalUrl": response.url,
+        "contentType": response.headers.get("content-type"),
+        "body": base64.b64encode(response.body).decode("ascii"),
+    }
+    recording = _recording.get()
+    if recording is not None:
+        recording[url] = entry
+    return _as_response(url, entry)
 
 
 def install_rdflib_guard() -> None:

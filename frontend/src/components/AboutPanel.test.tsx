@@ -102,9 +102,13 @@ describe("AboutPanel content", () => {
     // description, and this assertion is what keeps it honest: a feature that
     // ever sends ontology content anywhere has to come through here and change
     // the words. See about-panel.md Section 15.
+    // external-access AC-34 rewrote the second sentence when the network
+    // broker made it true; the whole sentence is asserted, not a fragment.
     open();
-    expect(panelText()).toContain("stay on this machine");
-    expect(panelText()).toContain("does not upload them");
+    expect(panelText()).toContain("Your ontologies stay on this machine.");
+    expect(panelText()).toContain(
+      "Semantic Studio connects to the internet only when you allow it, and never uploads your ontologies.",
+    );
   });
 
   it("links to the repository with rel noreferrer", () => {

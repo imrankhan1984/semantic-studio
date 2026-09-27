@@ -5,7 +5,11 @@ FILE: frontend/src/api.test.ts
 
 SUMMARY
     Proves every call in api.ts that changes something on the server sends the
-    X-Semantic-Studio header, and that read-only calls are plain GETs. Covers
+    X-Semantic-Studio header, and that read-only calls are plain GETs. Also
+    proves the approval round trip in `send` (external-access Stage 1): a 409
+    asks the registered handler, Allow repeats the same request with the grant
+    id, Don't allow fails with a sentence naming the host and sends nothing
+    more. Covers
     AC-4 of the external-access spec, Stage 0 (backlog S-6, decision D-065):
     the backend refuses a state-changing request without the header, so a
     mutating call that forgot it would break in the application while every
@@ -82,6 +86,20 @@ const CALLS: Record<string, () => Promise<unknown>> = {
     }),
   deleteSavedQuery: () => api.deleteSavedQuery("q-1"),
   downloadDocumentation: () => api.downloadDocumentation("ont-1"),
+  getNetworkPolicy: () => api.getNetworkPolicy(),
+  grantNetwork: () =>
+    api.grantNetwork({
+      capability: "jsonld:context",
+      host: "example.org",
+      decision: "allow",
+      remember: false,
+    }),
+  revokeNetworkGrant: () => api.revokeNetworkGrant("grant-1"),
+  setNetworkOffline: () => api.setNetworkOffline(true),
+  getNetworkActivity: () => api.getNetworkActivity(),
+  // Not requests: the approval plumbing. Listed so the export check holds.
+  setApprovalHandler: async () => api.setApprovalHandler(null),
+  declinedMessage: async () => api.declinedMessage([]),
 };
 
 describe("api client header (S-6)", () => {
@@ -102,10 +120,13 @@ describe("api client header (S-6)", () => {
     expect(mutating.map((r) => r.method).sort()).toEqual([
       "DELETE",
       "DELETE",
+      "DELETE",
       "POST",
       "POST",
       "POST",
       "POST",
+      "POST",
+      "PUT",
     ]);
     for (const request of mutating) {
       expect(request.headers, `${request.method} ${request.url}`).toMatchObject({
@@ -127,5 +148,99 @@ describe("api client header (S-6)", () => {
     // Content-Type would drop it and the server could not read the file.
     await api.uploadOntology(new File(["x"], "x.ttl"));
     expect(recorded[0].headers).toEqual({ "X-Semantic-Studio": "1" });
+  });
+});
+
+describe("approval round trip (external-access Stage 1)", () => {
+  const QUESTION = {
+    capability: "jsonld:context",
+    host: "json-ld.org",
+    url: "https://json-ld.org/contexts/person.jsonld",
+    reason: "The file you are opening defines its terms in a JSON-LD context.",
+    sends: "A download request for the context.",
+    encrypted: true,
+  };
+
+  let answers: Response[];
+  let bodies: unknown[];
+
+  beforeEach(() => {
+    answers = [];
+    bodies = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        recorded.push({
+          url,
+          method: (init?.method ?? "GET").toUpperCase(),
+          headers: { ...((init?.headers as Record<string, string>) ?? {}) },
+        });
+        bodies.push(init?.body);
+        return answers.shift() ?? new Response("{}", { status: 200 });
+      }),
+    );
+  });
+
+  afterEach(() => api.setApprovalHandler(null));
+
+  const approval = () =>
+    new Response(
+      JSON.stringify({ detail: { code: "approval_required", requests: [QUESTION] } }),
+      { status: 409, headers: { "Content-Type": "application/json" } },
+    );
+
+  it("asks, then repeats the same request with the just-once grant", async () => {
+    const handler = vi.fn(async () => ["grant-abc"]);
+    api.setApprovalHandler(handler);
+    answers = [approval(), new Response(JSON.stringify({ id: "ont-9" }), { status: 200 })];
+    const file = new File(["{}"], "doc.jsonld");
+
+    const summary = await api.uploadOntology(file);
+
+    expect(summary).toEqual({ id: "ont-9" });
+    expect(handler).toHaveBeenCalledWith([QUESTION]);
+    expect(recorded).toHaveLength(2);
+    expect(recorded[0].headers).toEqual({ "X-Semantic-Studio": "1" });
+    expect(recorded[1].headers).toEqual({
+      "X-Semantic-Studio": "1",
+      "X-Semantic-Studio-Grant": "grant-abc",
+    });
+    // The same FormData, so the browser re-sends the file it still holds.
+    expect(bodies[1]).toBe(bodies[0]);
+  });
+
+  it("retries without a grant id when the answer was remembered", async () => {
+    api.setApprovalHandler(async () => []);
+    answers = [approval(), new Response("[]", { status: 200 })];
+    await api.getGraph("ont-1");
+    expect(recorded).toHaveLength(2);
+    expect(recorded[1].headers).toEqual({});
+  });
+
+  it("fails with a sentence naming the host on Don't allow, and sends nothing more", async () => {
+    api.setApprovalHandler(async () => null);
+    answers = [approval()];
+    const error = await api.fetchOntology("https://example.org/x.jsonld").catch((e) => e);
+    expect(error).toBeInstanceOf(api.ApiError);
+    expect(error.message).toBe(
+      "Semantic Studio did not connect to json-ld.org, so nothing was sent.",
+    );
+    expect(recorded).toHaveLength(1);
+  });
+
+  it("says what was needed when no dialog is registered", async () => {
+    answers = [approval()];
+    const error = await api.getGraph("ont-1").catch((e) => e);
+    expect(error.status).toBe(409);
+    expect(error.message).toContain("permission to connect to json-ld.org");
+  });
+
+  it("stops asking after a bounded number of rounds", async () => {
+    const handler = vi.fn(async () => ["g"]);
+    api.setApprovalHandler(handler);
+    answers = Array.from({ length: 20 }, approval);
+    const error = await api.getGraph("ont-1").catch((e) => e);
+    expect(error.status).toBe(409);
+    expect(recorded.length).toBeLessThanOrEqual(7);
   });
 });

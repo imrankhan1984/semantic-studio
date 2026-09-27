@@ -29,11 +29,18 @@ BASIC IDEA
     worker thread so the request can be released; the work itself cannot be
     killed, which is why the upload size cap matters (see D-013).
 
+    A JSON-LD file may need a remote @context, which the network broker fetches
+    only once the user has allowed it (D-066). The contexts fetched at ingest
+    are kept beside the file as <id>.contexts.json and replayed when the file
+    is re-parsed after a restart, so reading a stored ontology never connects
+    and never asks twice.
+
 INPUTS / INPUT SOURCES
     - Raw file bytes from uploads or URL fetches (passed to `add`).
     - A format hint from the file extension / caller, else content sniffing.
     - An optional parse timeout, supplied by the router from configuration.
-    - Previously persisted <id>.rdf and <id>.meta.json files in the data dir.
+    - Previously persisted <id>.rdf, <id>.meta.json and (for JSON-LD with a
+      remote context) <id>.contexts.json files in the data dir.
     - Environment variable SEMANTIC_STUDIO_DATA_DIR (or the legacy
       SEMANTIC_VIEWER_DATA_DIR) to relocate the data directory.
 
@@ -42,6 +49,8 @@ EXPECTED OUTPUT
       graph, plus cached viz/schema/pretty views.
     - Raises ParseError for unparseable input and ParseTimeout when a bounded
       parse runs out of time; the router maps them to HTTP 422 and 504.
+      The broker's decisions (ApprovalRequired, Offline, HostBlocked) pass
+      through unchanged and main.py maps them to 409, 503 and 403.
     - Two module-level singletons imported across the app: `store` (the
       ontology store) and `saved_queries` (the saved-query library, kept in a
       sibling directory).
@@ -51,12 +60,14 @@ EXPECTED OUTPUT
 from __future__ import annotations
 
 # Standard library:
+#   contextvars - carry the request's grants into the parse worker thread
 #   json      - read/write the per-ontology metadata files
 #   os        - read the data-directory environment override
 #   re        - pull a file extension off a name for format detection
 #   sys       - detect the operating system to pick the OS-standard data dir
 #   threading - locks so concurrent requests do not double-parse or corrupt state
 #   uuid      - generate stable, collision-free ontology ids
+import contextvars
 import json
 import os
 import re
@@ -78,7 +89,13 @@ from rdflib.util import guess_format
 # Derived-view builders and the saved-query store live in sibling modules.
 from .graph_builder import build_card_sketch, build_viz_graph
 from .hierarchy import build_hierarchy
-from .net_guard import BlockedAddress, install_rdflib_guard
+from . import network_broker
+from .net_guard import (
+    BlockedAddress,
+    install_rdflib_guard,
+    recording_contexts,
+    replaying_contexts,
+)
 from .queries_store import SavedQueryStore
 from .query_schema import build_query_schema
 
@@ -109,6 +126,11 @@ EXTENSION_FORMATS = {
 # When the format cannot be inferred from the name, try these parsers in order
 # and keep whichever one succeeds. Turtle is first because it is the most common.
 SNIFF_ORDER = ["turtle", "xml", "json-ld", "nt", "trig"]
+
+
+def contexts_path_for(data_path: Path) -> Path:
+    """Where the JSON-LD contexts an ontology needed at ingest are kept."""
+    return data_path.with_suffix(".contexts.json")
 
 
 class ParseError(Exception):
@@ -185,6 +207,11 @@ def _parse_rdf_blocking(data: bytes, fmt: Optional[str]) -> tuple[Graph, str]:
         try:
             graph.parse(data=data, format=candidate)
             return graph, candidate
+        except network_broker.NetworkDecision:
+            # Offline, a Block, or a question for the user. Like the refusal
+            # below it is about the document, not the format, and the router
+            # needs the exception itself to answer 503, 403 or 409.
+            raise
         except BlockedAddress as exc:
             # Not "this format did not match". The format matched well enough
             # for the parser to act on the document and ask for a resource we
@@ -221,7 +248,12 @@ def parse_rdf(
     # Same pattern as sparql_exec: a single-worker pool so the request thread
     # can stop waiting, since rdflib offers no way to interrupt a parse.
     with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(_parse_rdf_blocking, data, fmt)
+        # Run in a copy of the caller's context: the just-once grants the
+        # request presented, and the context recorder, are contextvars, and a
+        # bare submit would start the worker without them -- so an approved
+        # retry would be asked again, for ever.
+        context = contextvars.copy_context()
+        future = pool.submit(context.run, _parse_rdf_blocking, data, fmt)
         try:
             return future.result(timeout=timeout)
         except FuturesTimeout as exc:
@@ -266,9 +298,23 @@ class Ontology:
         if self.graph is None:
             with self._load_lock:
                 if self.graph is None:
-                    graph, _ = parse_rdf(self.data_path.read_bytes(), self.format)
+                    # Contexts the file needed when it was loaded are served
+                    # from the copy kept then, so a restart re-reads the file
+                    # without connecting. One stored before that copy existed
+                    # asks the broker like any other parse.
+                    with replaying_contexts(self._stored_contexts()):
+                        graph, _ = parse_rdf(self.data_path.read_bytes(), self.format)
                     self.graph = graph
         return self.graph
+
+    def _stored_contexts(self) -> Optional[dict]:
+        path = contexts_path_for(self.data_path)
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
 
     def viz(self) -> dict:
         """Visualization nodes/edges for the graph view (built once, cached)."""
@@ -411,7 +457,10 @@ class OntologyStore:
         until it succeeds, so a timed-out upload leaves no trace in the library.
         """
         # Parse now so we can fail fast on bad input and compute the summary.
-        graph, used_format = parse_rdf(data, fmt, timeout=parse_timeout)
+        # Any remote JSON-LD context the parse fetches is recorded, so the lazy
+        # restore after a restart can re-read the file without a connection.
+        with recording_contexts() as contexts:
+            graph, used_format = parse_rdf(data, fmt, timeout=parse_timeout)
         viz = build_viz_graph(graph)
         # A short random id keeps URLs and filenames stable across restarts.
         oid = "ont-" + uuid.uuid4().hex[:12]
@@ -438,6 +487,8 @@ class OntologyStore:
         # Persist the raw bytes and the metadata side by side.
         data_path = self._data_path(oid)
         data_path.write_bytes(data)
+        if contexts:
+            contexts_path_for(data_path).write_text(json.dumps(contexts), encoding="utf-8")
         self._meta_path(oid).write_text(
             json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -471,7 +522,8 @@ class OntologyStore:
         if ontology is None:
             return False
         # Delete both on-disk files; missing_ok tolerates a partial state.
-        for path in (self._meta_path(oid), self._data_path(oid)):
+        data_path = self._data_path(oid)
+        for path in (self._meta_path(oid), data_path, contexts_path_for(data_path)):
             try:
                 path.unlink(missing_ok=True)
             except OSError:
@@ -487,3 +539,6 @@ class OntologyStore:
 # data directory once at import time; the saved-query store lives beside it.
 store = OntologyStore()
 saved_queries = SavedQueryStore(store.data_dir)
+# The broker keeps its policy and activity log beside the library, and this is
+# the one module that knows where that is.
+network_broker.broker.configure(store.data_dir)

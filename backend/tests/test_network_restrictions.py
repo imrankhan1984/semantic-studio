@@ -51,7 +51,7 @@ from fastapi.testclient import TestClient
 from app import net_guard
 from app.main import app
 from app.net_guard import ALL_REFUSAL_MESSAGES, BlockedAddress
-from app.routers.ontologies import _download_capped
+from app.network_broker import broker
 from app.store import ParseError, parse_rdf
 
 client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
@@ -177,81 +177,67 @@ def test_multi_address_host_is_refused(monkeypatch):
     assert "Local file tab" in r.json()["detail"]
 
 
-@pytest.mark.anyio
-async def test_redirect_to_loopback_is_not_followed(recorder, monkeypatch):
+def _turtle(_path):
+    return 200, {"Content-Type": "text/turtle"}, TURTLE
+
+
+def test_redirect_to_loopback_is_not_followed(http_server, loopback_is_public):
     """SEC-3 / AC-2. The case that breaks a check applied only to the first URL.
 
     The first hop is a public host, so the naive implementation passes its one
-    check and then follows the redirect straight to loopback. Here the loop
-    re-checks, so the recorder is never contacted and the message says the
-    redirect was the problem.
+    check and then follows the redirect straight to a private address. Here
+    every hop is judged, so the private server is never contacted and the
+    message says the redirect was the problem.
     """
-    blocked = _url(recorder)
-    seen: list[str] = []
+    private = http_server(_turtle, host="127.0.0.2")
+    target = f"http://127.0.0.2:{private.server_address[1]}/secret.ttl"
+    public = http_server(lambda path: (302, {"Location": target}, b""))
+    loopback_is_public["public.test"] = [ipaddress.ip_address("127.0.0.1")]
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(str(request.url))
-        return httpx.Response(302, headers={"location": blocked})
-
-    monkeypatch.setattr(
-        "app.net_guard.resolve_host",
-        lambda host: [ipaddress.ip_address("93.184.216.34")]
-        if host == "public.example"
-        else [ipaddress.ip_address("127.0.0.1")],
-    )
-
-    transport = httpx.MockTransport(handler)
-    async with httpx.AsyncClient(transport=transport, follow_redirects=False) as http:
-        with pytest.raises(BlockedAddress) as caught:
-            await _download_capped(http, "https://public.example/onto.ttl")
-
-    assert recorder.requests == [], "the redirect was followed to the loopback server"
-    assert seen == ["https://public.example/onto.ttl"], "more than the first hop was requested"
-    # The user pasted a legitimate URL; the message must say what really failed.
-    assert "redirected" in str(caught.value)
-
-
-@pytest.mark.anyio
-async def test_redirect_chain_is_bounded(monkeypatch):
-    """A redirect loop between public hosts ends rather than spinning."""
-    hops: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        hops.append(str(request.url))
-        nxt = len(hops)
-        return httpx.Response(302, headers={"location": f"https://public.example/hop{nxt}"})
-
-    monkeypatch.setattr(
-        "app.net_guard.resolve_host",
-        lambda host: [ipaddress.ip_address("93.184.216.34")],
-    )
-    transport = httpx.MockTransport(handler)
-    async with httpx.AsyncClient(transport=transport, follow_redirects=False) as http:
-        with pytest.raises(Exception) as caught:
-            await _download_capped(http, "https://public.example/start")
-    assert "redirected more than" in str(getattr(caught.value, "detail", caught.value))
-    # Six requests: the original plus MAX_REDIRECTS further hops.
-    assert len(hops) == 6
-
-
-def test_a_public_url_still_reaches_the_download_path(monkeypatch, recorder):
-    """The guard must not refuse the thing the application exists to do.
-
-    The address check passes for a public host; the fetch then fails at the
-    connection, which proves the request got past the guard rather than being
-    stopped by it.
-    """
-    monkeypatch.setattr(
-        "app.net_guard.resolve_host",
-        lambda host: [ipaddress.ip_address("93.184.216.34")],
-    )
     r = client.post(
         "/api/ontologies/fetch",
-        json={"url": "https://public.example.invalid/onto.ttl"},
+        json={"url": f"http://public.test:{public.server_address[1]}/onto.ttl"},
     )
-    # 502 is a connection failure, which only happens after the guard allowed it.
-    assert r.status_code == 502, r.json()
-    assert "Local file tab" not in r.json().get("detail", "")
+    assert r.status_code == 400, r.json()
+    assert private.requests == [], "the redirect was followed to the private server"
+    assert public.requests == ["/onto.ttl"], "more than the first hop was requested"
+    # The user pasted a legitimate URL; the message must say what really failed.
+    assert "redirected" in r.json()["detail"]
+
+
+def test_redirect_chain_is_bounded(http_server, loopback_is_public):
+    """A redirect loop on one public host ends rather than spinning."""
+    def loop(path):
+        n = int(path.rsplit("hop", 1)[-1] or 0) if "hop" in path else 0
+        return 302, {"Location": f"/hop{n + 1}"}, b""
+
+    server = http_server(loop)
+    loopback_is_public["public.test"] = [ipaddress.ip_address("127.0.0.1")]
+    r = client.post(
+        "/api/ontologies/fetch",
+        json={"url": f"http://public.test:{server.server_address[1]}/start"},
+    )
+    assert r.status_code == 502
+    assert "redirected more than" in r.json()["detail"]
+    # Six requests: the original plus MAX_REDIRECTS further hops.
+    assert len(server.requests) == 6
+
+
+def test_a_public_url_still_reaches_the_download_path(http_server, loopback_is_public):
+    """The guard must not refuse the thing the application exists to do.
+
+    A typed URL on a public host is fetched with no dialog (AC-15), the
+    connection goes to the judged address with the name in the Host header,
+    and the ontology loads.
+    """
+    server = http_server(_turtle)
+    port = server.server_address[1]
+    loopback_is_public["public.test"] = [ipaddress.ip_address("127.0.0.1")]
+    r = client.post("/api/ontologies/fetch", json={"url": f"http://public.test:{port}/onto.ttl"})
+    assert r.status_code == 200, r.json()
+    assert server.requests == ["/onto.ttl"]
+    assert server.hosts == [f"public.test:{port}"]
+    client.delete(f"/api/ontologies/{r.json()['id']}")
 
 
 def test_scheme_and_github_enterprise_rules_are_unchanged():
@@ -352,7 +338,7 @@ def test_loopback_context_is_refused_and_never_fetched(context_server):
     assert url in str(caught.value)
 
 
-def test_context_redirect_to_loopback_is_not_followed(context_server, monkeypatch):
+def test_context_redirect_to_loopback_is_not_followed(context_server, loopback_is_public):
     """SEC-13 / AC-2. The case a naive implementation fails.
 
     `urlopen` follows redirects internally, so a guard that judges only the URL
@@ -361,16 +347,9 @@ def test_context_redirect_to_loopback_is_not_followed(context_server, monkeypatc
     redirects to must still be refused.
     """
     port = context_server.server_address[1]
-    real_resolve = net_guard.resolve_host
-
-    def fake_resolve(host):
-        # The first hop looks like an ordinary public host...
-        if host == "127.0.0.1":
-            return [ipaddress.ip_address("93.184.216.34")]
-        # ...and the host it redirects to resolves honestly, to loopback.
-        return real_resolve(host)
-
-    monkeypatch.setattr("app.net_guard.resolve_host", fake_resolve)
+    # The first hop looks like an ordinary public host, which the user has
+    # allowed; the host it redirects to, `localhost`, is refused on its name.
+    broker.policy.grant("jsonld:context", "127.0.0.1", "allow", remember=True)
 
     with pytest.raises(ParseError):
         parse_rdf(_doc_with_context(f"http://127.0.0.1:{port}/redirect"), "json-ld", timeout=30)
@@ -408,13 +387,10 @@ def test_blocked_context_is_refused_through_content_sniffing(context_server):
     assert url in response.json()["detail"]
 
 
-def test_oversized_context_is_refused_while_reading(context_server, monkeypatch):
+def test_oversized_context_is_refused_while_reading(context_server, monkeypatch, loopback_is_public):
     """SEC-16 / AC-4."""
     monkeypatch.setattr("app.net_guard.MAX_FETCH_BYTES", 64 * 1024)
-    monkeypatch.setattr(
-        "app.net_guard.resolve_host",
-        lambda host: [ipaddress.ip_address("93.184.216.34")],
-    )
+    broker.policy.grant("jsonld:context", "127.0.0.1", "allow", remember=True)
     context_server.body = b'{"@context":{"name":"http://example.org/name"},"pad":"' + b"x" * (
         2 * 1024 * 1024
     ) + b'"}'
@@ -465,6 +441,8 @@ def test_a_public_remote_context_still_resolves():
         b'"@id":"http://dbpedia.org/resource/John_Lennon","name":"John Lennon",'
         b'"born":"1940-10-09"}'
     )
+    # A remote context asks first now (D-066); this is the answer "Allow".
+    broker.policy.grant("jsonld:context", "json-ld.org", "allow", remember=True)
     graph, fmt = parse_rdf(doc, "json-ld", timeout=60)
     predicates = {str(p) for _s, p, _o in graph}
     assert "http://xmlns.com/foaf/0.1/name" in predicates, predicates
@@ -499,17 +477,16 @@ def test_parsing_a_local_document_pays_no_measurable_cost():
     assert per_parse_ms < 50, f"{per_parse_ms:.2f} ms per parse"
 
 
-def test_peak_memory_is_bounded_by_the_cap_not_the_body(context_server, monkeypatch):
+def test_peak_memory_is_bounded_by_the_cap_not_the_body(
+    context_server, monkeypatch, loopback_is_public
+):
     """PERF-6 / AC-9.
 
     The body is far larger than the cap, so a passing measurement shows the
     limit bounds what is held rather than reporting a number afterwards.
     """
     monkeypatch.setattr("app.net_guard.MAX_FETCH_BYTES", 512 * 1024)
-    monkeypatch.setattr(
-        "app.net_guard.resolve_host",
-        lambda host: [ipaddress.ip_address("93.184.216.34")],
-    )
+    broker.policy.grant("jsonld:context", "127.0.0.1", "allow", remember=True)
     context_server.body = b'{"@context":{"n":"http://example.org/n"},"pad":"' + b"x" * (
         20 * 1024 * 1024
     ) + b'"}'

@@ -6,7 +6,7 @@ FILE: frontend/src/types.ts
 SUMMARY
     The shared, app-wide TypeScript types that mirror the backend's JSON
     shapes (ontology summaries, graph, node details, query schema, SPARQL
-    results, saved queries), plus the theme-aware colour palettes and label
+    results, saved queries, the network broker's policy and activity), plus the theme-aware colour palettes and label
     maps used to render the graph.
 
 BASIC IDEA
@@ -26,6 +26,54 @@ EXPECTED OUTPUT
 */
 
 import type { QueryState } from "./sparql/types";
+
+// --- the network broker (external-access Stage 1, D-066) -----------------
+
+// What an outbound request is for. Never shown to the user by name; the
+// approval dialog and the Network panel phrase each one in words.
+export type NetworkCapability =
+  | "ontology:fetch"
+  | "ontology:import"
+  | "jsonld:context"
+  | "sparql:service";
+
+// One question the server needs answered before it connects: the body of a 409.
+export interface ApprovalRequest {
+  capability: NetworkCapability;
+  host: string;
+  url: string;
+  reason: string;
+  sends: string;
+  encrypted: boolean;
+}
+
+// A decision the user made about a site. Only remembered ones are listed.
+export interface NetworkGrant {
+  id: string;
+  capability: NetworkCapability;
+  host: string;
+  decision: "allow" | "block";
+  remember: boolean;
+  grantedAt: string;
+}
+
+export interface NetworkPolicy {
+  offline: boolean;
+  grants: NetworkGrant[];
+}
+
+// One line of the activity log. `outcome` is "ok" for a completed download;
+// every other value is a request that was refused, asked about, or failed.
+export interface NetworkActivity {
+  time: string;
+  capability: NetworkCapability;
+  url: string;
+  host: string;
+  outcome: string;
+  status: number;
+  bytes: number;
+  encrypted: boolean;
+}
 
 // Which colour theme is active.
 export type Theme = "dark" | "light";

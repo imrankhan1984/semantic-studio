@@ -49,7 +49,9 @@ EXPECTED OUTPUT
       startup-chooser-screen, AC-23 of partial-graph-rendering, AC-11 to
       AC-16 of saved-query-deletion-warning, AC-1, AC-15 and AC-16 of
       explore-mode-starting-point, AC-1 to AC-8 and AC-12 of
-      result-navigation, and AC-1 to AC-4, AC-11 and AC-13 of about-panel.
+      result-navigation, AC-1 to AC-4, AC-11 and AC-13 of about-panel, and
+      the approval and Network-control glue of external-access Stage 1
+      (AC-7 to AC-10 as App sees them, and the unchanged mount budget).
 ================================================================================
 */
 
@@ -81,6 +83,10 @@ const {
   saveQuery,
   runSparql,
   deleteSavedQuery,
+  setApprovalHandler,
+  grantNetwork,
+  getNetworkPolicy,
+  getNetworkActivity,
 } = vi.hoisted(() => ({
   listOntologies: vi.fn(),
   getGraph: vi.fn(),
@@ -101,6 +107,12 @@ const {
   saveQuery: vi.fn(),
   runSparql: vi.fn(),
   deleteSavedQuery: vi.fn(),
+  // external-access Stage 1. setApprovalHandler is not a request; it is mocked
+  // so a test can take the handler App registers and ask it a question.
+  setApprovalHandler: vi.fn(),
+  grantNetwork: vi.fn(),
+  getNetworkPolicy: vi.fn(),
+  getNetworkActivity: vi.fn(),
 }));
 
 // importOriginal rather than a bare factory, so ApiError stays the real class.
@@ -125,6 +137,10 @@ vi.mock("./api", async (importOriginal) => ({
   saveQuery,
   runSparql,
   deleteSavedQuery,
+  setApprovalHandler,
+  grantNetwork,
+  getNetworkPolicy,
+  getNetworkActivity,
 }));
 
 /** Every mocked client function, so a test can count what mount actually did. */
@@ -145,6 +161,10 @@ const ALL_API = {
   saveQuery,
   runSparql,
   deleteSavedQuery,
+  // The Network panel's two reads and the grant: none of them on mount.
+  grantNetwork,
+  getNetworkPolicy,
+  getNetworkActivity,
 };
 
 // Sigma needs a WebGL context; jsdom has none. Nothing here asserts on the
@@ -2285,5 +2305,119 @@ describe("App Hierarchy mode", () => {
     // class uses.
     expect(screen.getByRole("button", { name: /Contract/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Party/ })).toBeTruthy();
+  });
+});
+
+describe("App network approval (external-access Stage 1)", () => {
+  const QUESTION = {
+    capability: "jsonld:context" as const,
+    host: "json-ld.org",
+    url: "https://json-ld.org/contexts/person.jsonld",
+    reason: "The file you are opening defines its terms in a JSON-LD context.",
+    sends: "A download request for the context.",
+    encrypted: true,
+  };
+
+  /** The handler App registered with api.ts on mount. */
+  function registeredHandler(): (r: (typeof QUESTION)[]) => Promise<string[] | null> {
+    const calls = setApprovalHandler.mock.calls.filter(([h]) => h !== null);
+    expect(calls.length).toBeGreaterThan(0);
+    return calls[calls.length - 1][0];
+  }
+
+  /** Ask the registered handler a question. The pending answer is wrapped:
+   *  an async function returning a bare promise would flatten it, and awaiting
+   *  ask() would then wait for an answer nobody has given. */
+  async function ask(): Promise<{ answer: Promise<string[] | null> }> {
+    let answer!: Promise<string[] | null>;
+    await act(async () => {
+      answer = registeredHandler()([QUESTION]);
+    });
+    return { answer };
+  }
+
+  it("registers the dialog on mount without making a request", async () => {
+    await renderApp();
+    expect(setApprovalHandler).toHaveBeenCalledTimes(1);
+    expect(grantNetwork).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("Allow, just this time, hands back the grant id for the retry", async () => {
+    grantNetwork.mockResolvedValue({ id: "grant-1", remember: false });
+    await renderApp();
+    const { answer: pending } = await ask();
+    expect(screen.getByRole("dialog", { name: "Allow a connection to json-ld.org?" })).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Just this time"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    });
+    await expect(pending).resolves.toEqual(["grant-1"]);
+    expect(grantNetwork).toHaveBeenCalledWith({
+      capability: "jsonld:context",
+      host: "json-ld.org",
+      decision: "allow",
+      remember: false,
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("Allow, always, remembers the grant and needs no id", async () => {
+    grantNetwork.mockResolvedValue({ id: "grant-2", remember: true });
+    await renderApp();
+    const { answer: pending } = await ask();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    });
+    await expect(pending).resolves.toEqual([]);
+    expect(grantNetwork.mock.calls[0][0]).toMatchObject({ decision: "allow", remember: true });
+  });
+
+  it("Don't allow, always, records a Block and refuses", async () => {
+    grantNetwork.mockResolvedValue({ id: "grant-3", remember: true });
+    await renderApp();
+    const { answer: pending } = await ask();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Don't allow" }));
+    });
+    await expect(pending).resolves.toBeNull();
+    expect(grantNetwork.mock.calls[0][0]).toMatchObject({ decision: "block", remember: true });
+  });
+
+  it("Escape is Don't allow, just this time, and records nothing", async () => {
+    await renderApp();
+    const { answer: pending } = await ask();
+    await act(async () => {
+      fireEvent.keyDown(document, { key: "Escape" });
+    });
+    await expect(pending).resolves.toBeNull();
+    expect(grantNetwork).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("the Network control sits beside About, outside the tablist, and opens the panel", async () => {
+    getNetworkPolicy.mockResolvedValue({ offline: false, grants: [] });
+    getNetworkActivity.mockResolvedValue([]);
+    await renderApp();
+    const about = screen.getByRole("button", { name: "About" });
+    const network = screen.getByRole("button", { name: "Network" });
+    expect(screen.getByRole("tablist").contains(network)).toBe(false);
+    expect(network.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(about.compareDocumentPosition(network) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(getNetworkPolicy).not.toHaveBeenCalled();
+
+    network.focus();
+    await act(async () => {
+      fireEvent.click(network);
+    });
+    expect(screen.getByRole("dialog", { name: "Network settings" })).toBeTruthy();
+    expect(getNetworkPolicy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      fireEvent.keyDown(document, { key: "Escape" });
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(network);
   });
 });
