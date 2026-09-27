@@ -137,10 +137,14 @@ function stopServer(proc) {
 // API
 // ---------------------------------------------------------------------------
 
+// The backend refuses a state-changing request without this header (see
+// backend/app/local_guard.py), exactly as the frontend's api.ts sends it.
+const CLIENT_HEADER = { 'x-semantic-studio': '1' };
+
 async function api(method, path, body) {
-  const init = { method };
+  const init = { method, headers: method === 'GET' ? {} : { ...CLIENT_HEADER } };
   if (body !== undefined) {
-    init.headers = { 'content-type': 'application/json' };
+    init.headers['content-type'] = 'application/json';
     init.body = typeof body === 'string' ? body : JSON.stringify(body);
   }
   const r = await fetch(`${BASE}${path}`, init);
@@ -156,7 +160,11 @@ async function uploadOntology(file) {
   const bytes = await readFile(file);
   const fd = new FormData();
   fd.append('file', new Blob([bytes], { type: 'text/turtle' }), file.split(/[\\/]/).pop());
-  const r = await fetch(`${BASE}/api/ontologies/upload`, { method: 'POST', body: fd });
+  const r = await fetch(`${BASE}/api/ontologies/upload`, {
+    method: 'POST',
+    headers: { ...CLIENT_HEADER },
+    body: fd,
+  });
   const body = await r.json().catch(() => null);
   if (!r.ok) fail('upload', `${r.status} ${JSON.stringify(body)}`);
   return body;

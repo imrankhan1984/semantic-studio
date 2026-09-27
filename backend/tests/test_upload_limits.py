@@ -55,7 +55,7 @@ from app.main import app
 from app.routers.ontologies import _download_capped, _read_capped
 from app.store import ParseTimeout, parse_rdf
 
-client = TestClient(app)
+client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
 
 def make_ntriples(count: int) -> bytes:

@@ -13,6 +13,12 @@ BASIC IDEA
     centralises turning a non-2xx response into a thrown Error carrying the
     backend's `detail` message, so callers can just try/catch.
 
+    Every call that changes something on the server carries CLIENT_HEADER. The
+    backend refuses a state-changing request without it (local_guard.py), which
+    is what stops another web page open in the same browser from uploading to,
+    or deleting from, the user's library. Any new mutating call must spread
+    CLIENT_HEADER into its headers; api.test.ts fails for one that does not.
+
 INPUTS / INPUT SOURCES
     - Arguments from the components (ids, IRIs, query text, files, payloads).
     - HTTP responses from the FastAPI backend.
@@ -37,6 +43,15 @@ import type {
   VizNeighborhood,
   VizNode,
 } from "./types";
+
+/**
+ * Marks a request as coming from Semantic Studio's own page. A browser will not
+ * attach a custom header to a request from a foreign origin without a CORS
+ * preflight, and the backend's CORS policy refuses those preflights — so a
+ * foreign page cannot send this, and the server refuses writes that lack it.
+ * The value is not a secret; the browser's rules are what make it work.
+ */
+export const CLIENT_HEADER = { "X-Semantic-Studio": "1" } as const;
 
 /**
  * A failed request, carrying the status code alongside the backend's message.
@@ -88,16 +103,18 @@ export function listOntologies(): Promise<OntologySummary[]> {
 export function uploadOntology(file: File): Promise<OntologySummary> {
   const form = new FormData();
   form.append("file", file);
-  return fetch("/api/ontologies/upload", { method: "POST", body: form }).then((r) =>
-    handle<OntologySummary>(r),
-  );
+  return fetch("/api/ontologies/upload", {
+    method: "POST",
+    headers: { ...CLIENT_HEADER },
+    body: form,
+  }).then((r) => handle<OntologySummary>(r));
 }
 
 // Ask the backend to download an ontology from a URL.
 export function fetchOntology(url: string): Promise<OntologySummary> {
   return fetch("/api/ontologies/fetch", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
     body: JSON.stringify({ url }),
   }).then((r) => handle<OntologySummary>(r));
 }
@@ -107,9 +124,10 @@ export function fetchOntology(url: string): Promise<OntologySummary> {
 // count of destroyed work exists — the client's own count was taken before the
 // delete and can be out of date by the time it lands.
 export function deleteOntology(id: string): Promise<OntologyDeletion> {
-  return fetch(`/api/ontologies/${id}`, { method: "DELETE" }).then((r) =>
-    handle<OntologyDeletion>(r),
-  );
+  return fetch(`/api/ontologies/${id}`, {
+    method: "DELETE",
+    headers: { ...CLIENT_HEADER },
+  }).then((r) => handle<OntologyDeletion>(r));
 }
 
 /**
@@ -195,7 +213,7 @@ export function getQueryNode(id: string, iri: string): Promise<QueryNodeInfo> {
 export function runSparql(id: string, query: string): Promise<SparqlResults> {
   return fetch(`/api/ontologies/${id}/sparql`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
     body: JSON.stringify({ query }),
   }).then((r) => handle<SparqlResults>(r));
 }
@@ -217,14 +235,17 @@ export function saveQuery(payload: {
 }): Promise<SavedQuery> {
   return fetch("/api/queries", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
     body: JSON.stringify(payload),
   }).then((r) => handle<SavedQuery>(r));
 }
 
 // Delete a saved query by id.
 export function deleteSavedQuery(qid: string): Promise<void> {
-  return fetch(`/api/queries/${qid}`, { method: "DELETE" }).then((r) => handle(r));
+  return fetch(`/api/queries/${qid}`, {
+    method: "DELETE",
+    headers: { ...CLIENT_HEADER },
+  }).then((r) => handle(r));
 }
 
 /** Pull the filename out of a Content-Disposition header, or null. The backend

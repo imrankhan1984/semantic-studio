@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 173 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 454 tests, vitest
+cd backend  && python -m pytest tests    # 283 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 519 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -172,11 +172,16 @@ the results header in `ResultsTable.tsx` for the pattern.
 ```
 backend/app/
   main.py            FastAPI app, CORS for the dev frontend, static mount
+  local_guard.py     Refuses requests not from the app's own page (Host, header, Origin)
+  net_guard.py       Outbound address judgement; guards rdflib's own network calls
   store.py           In-memory ontology store, disk persistence, lazy parsing
   graph_builder.py   RDF -> visualization nodes and edges, labels, node kinds
   query_schema.py    Class-level schema powering the visual query builder
   sparql_exec.py     SELECT-only execution, row cap, wall-clock timeout
   queries_store.py   Saved visual queries, one JSON file each
+  hierarchy.py       subClassOf / broader / subPropertyOf forests for the tree view
+  docs_export.py     The documentation-site zip (with docs_assets/)
+  provenance.py      Activity records for exports
   routers/           HTTP layer only; the real work lives in the modules above
 
 frontend/src/
@@ -219,6 +224,28 @@ the uvicorn process, calls the API, and drives the real UI in headless Chrome.
 prove a change works in the application rather than in the test suite.
 
 ## Known state, so you do not rediscover it
+
+- **The API answers only the application's own page** (2026-09-26, spec
+  `external-access` Stage 0, backlog S-6, decision D-065). Binding to
+  `127.0.0.1` keeps other machines out but not other web pages in the same
+  browser. Measured before the fix: a cross-site multipart upload was stored,
+  and a forged `Host` header (DNS rebinding) listed and deleted ontologies.
+  `local_guard.py` is plain ASGI middleware, added **last** in `main.py` so it
+  runs **first**. It refuses a non-loopback `Host` with 400 on every method,
+  and a `POST`/`PUT`/`PATCH`/`DELETE` without `X-Semantic-Studio: 1` or with a
+  foreign `Origin` with 403.
+
+  **Every new mutating call in `api.ts` must spread `CLIENT_HEADER`**;
+  `api.test.ts` calls every export and fails otherwise, and fails if an export
+  is added without being listed there. **Every backend `TestClient` is built
+  with `base_url="http://localhost"` and the header**, because the default
+  `testserver` host is refused. `test_local_guard.py` reads the mutating routes
+  from the OpenAPI document, so a new route is covered without anyone adding it.
+  Verified in headless Chromium: a foreign page's no-cors multipart POST stored
+  `evil.ttl` with the middleware removed and nothing with it in place; its
+  header-carrying fetch never left the browser, because the preflight fails.
+  Scripts hitting the API directly (curl, `driver.mjs`) must send the header on
+  writes; `SEMANTIC_STUDIO_ALLOWED_HOSTS` adds names for a reverse proxy.
 
 - **Selecting an IRI that is not a node in the drawn graph used to blank the
   whole application. Fixed 2026-07-30; both halves of the fix are load-bearing.**

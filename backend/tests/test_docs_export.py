@@ -64,7 +64,7 @@ from app.main import app
 from app.routers import ontologies as ontologies_router
 from app.store import OntologyStore
 
-client = TestClient(app)
+client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
 # --- fixtures ---------------------------------------------------------------
 

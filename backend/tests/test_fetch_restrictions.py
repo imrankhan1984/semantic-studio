@@ -32,7 +32,7 @@ from app.routers.ontologies import is_github_enterprise_host, to_raw_url
 EXAMPLE = Path(__file__).parent.parent.parent / "examples" / "space-exploration.ttl"
 
 # In-process HTTP client that drives the FastAPI app without a real server.
-client = TestClient(app)
+client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
 
 def test_rejects_github_enterprise_host():

@@ -48,7 +48,7 @@ from app.graph_builder import SKETCH_NODE_LIMIT
 from app.main import app
 from app.store import OntologyStore
 
-client = TestClient(app)
+client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
 EXAMPLE = Path(__file__).parent.parent.parent / "examples" / "space-exploration.ttl"
 

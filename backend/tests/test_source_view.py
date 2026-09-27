@@ -30,7 +30,7 @@ from app.main import app
 
 EXAMPLE = Path(__file__).parent.parent.parent / "examples" / "space-exploration.ttl"
 
-client = TestClient(app)
+client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
 
 @pytest.fixture(scope="module")
