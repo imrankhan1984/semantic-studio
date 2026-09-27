@@ -29,6 +29,9 @@ INPUTS / INPUT SOURCES (props)
       drawing it first if the node budget left it out.
     - onViewInSource: follow a result into the raw source text.
     - ontologyTriples: size gate for the auto-preview.
+    - includeImports / importsCount: whether queries run over the ontology
+      and its resolved imports (external-access Stage 2), and over how many
+      imported documents. The panel states which, in text (AC-20).
 
 EXPECTED OUTPUT
     - The rendered query panel and the side effects of its controls (executing
@@ -62,6 +65,21 @@ interface Props {
   onViewInSource: (iri: string, prefixed?: string) => void;
   /** Auto-preview is only worth running while it stays instant. */
   ontologyTriples: number;
+  /** Run queries over the merged view. */
+  includeImports?: boolean;
+  /** Resolved imported documents, or null when the ontology has none known. */
+  importsCount?: number | null;
+}
+
+/** What the panel says about what a query runs over. Null says nothing: an
+ *  ontology with no resolved imports has only one thing to query. */
+export function queryScopeText(includeImports: boolean, importsCount: number | null): string | null {
+  if (includeImports) {
+    const n = importsCount ?? 0;
+    return `Querying this ontology and ${n} ${n === 1 ? "import" : "imports"}.`;
+  }
+  if (importsCount && importsCount > 0) return "Querying this ontology on its own, without its imports.";
+  return null;
 }
 
 /** Above this size a preview is no longer guaranteed to feel immediate. */
@@ -76,6 +94,8 @@ export default function QueryPanel({
   onPickIri,
   onViewInSource,
   ontologyTriples,
+  includeImports = false,
+  importsCount = null,
 }: Props) {
   const {
     schema,
@@ -173,12 +193,14 @@ export default function QueryPanel({
     [state, labelFor],
   );
 
+  const scope = queryScopeText(includeImports, importsCount);
+
   const execute = async () => {
     if (!ontologyId || !sparql) return;
     setRunning(true);
     setError(null);
     try {
-      setResults(await runSparql(ontologyId, preview));
+      setResults(await runSparql(ontologyId, preview, includeImports));
       setIsPreview(false);
     } catch (e: unknown) {
       setResults(null);
@@ -205,7 +227,7 @@ export default function QueryPanel({
     if (!previewQuery) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      runSparql(ontologyId, previewQuery)
+      runSparql(ontologyId, previewQuery, includeImports)
         .then((res) => {
           if (cancelled) return;
           setResults(res);
@@ -220,7 +242,7 @@ export default function QueryPanel({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [autoPreviewable, ontologyId, schema, state]);
+  }, [autoPreviewable, ontologyId, schema, state, includeImports]);
 
   const doSave = async (name: string) => {
     if (!ontologyId || !name.trim()) return;
@@ -276,6 +298,7 @@ export default function QueryPanel({
     // graph with no heading of its own. tabIndex -1 adds no stop to the tab
     // order. Backlog X-1.
     <aside className="query-panel" id="query-panel-region" aria-label="Query builder" tabIndex={-1}>
+      {scope && <p className="query-scope">{scope}</p>}
       {loadingSchema && <div className="detail-note">Analysing the ontology…</div>}
       {schemaError && <p className="detail-error">{schemaError}</p>}
 

@@ -49,13 +49,13 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 316 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 553 tests, vitest
+cd backend  && python -m pytest tests    # 358 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 589 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
 
-Five backend tests carry `@pytest.mark.perf` and hold the graph and
+Seven backend tests carry `@pytest.mark.perf` and hold the graph and
 neighbourhood endpoints' performance budgets. Unlike `network`, they **run by default** — a budget nobody
 enforces is a note in a document. Deselect them on a slow machine with
 `-m "not perf"`.
@@ -225,6 +225,37 @@ the uvicorn process, calls the API, and drives the real UI in headless Chrome.
 prove a change works in the application rather than in the test suite.
 
 ## Known state, so you do not rediscover it
+
+- **`owl:imports` resolve local first, into an opt-in merged view**
+  (2026-09-27, spec `external-access` Stage 2, backlog X-5, decision D-068).
+  `imports.py` holds discovery, the chain (built in, library, bundled, the
+  user's mapping or chosen file, a cached download, then the network as
+  `ontology:import`), the closure (depth 10, 100 documents, 150 MB), the
+  `imports/` cache with provenance, and `MergedView`. Nothing is resolved on
+  open; the read endpoints take `?imports=true`.
+
+  **Four things are load-bearing.** **`MergedView` deduplicates**: rdflib's
+  `ReadOnlyGraphAggregate` yields a triple once per graph holding it, so a
+  class declared in the file and in FOAF came back as two SPARQL rows.
+  **It prunes by subject** through a subject-to-documents index; without it
+  building the graph view over eleven documents cost 2.2x a single graph, and
+  `test_merged_view_overhead` holds 1.5x (measured 1.30x). Both mutations were
+  run and go red. **The vocabulary files are pinned by SHA-256 and marked
+  `binary` in `.gitattributes`** -- a CRLF checkout would otherwise change
+  their bytes and every hash check would refuse them. **A question never
+  stops the closure**: an import needing approval is noted and the loop goes
+  on, so everything local across the whole closure resolves first, and one
+  409 then names every host, saved before it is raised. Raising on the first
+  question (PR #41 review) left later imports unresolved, bundled FOAF
+  included, and a Don't allow collapsed the merged view to the file alone.
+  The files route for chosen imports is in main.py's declared-size refusal
+  too (D-015), at the closure's 150 MB plus framing.
+
+  The merged caches live in `Ontology.merged_cache`, apart from the file-only
+  ones, and are dropped whenever the closure is saved. The *Include imports*
+  switch is per ontology in `localStorage`; the query panel states which
+  view a query ran over. `POST /imports/cancel` is not in the spec's
+  endpoint table, which names a Cancel control but no route for it.
 
 - **Every outbound connection goes through the network broker** (2026-09-27,
   spec `external-access` Stage 1, backlog E-T1, decisions D-066 and D-067).

@@ -374,3 +374,28 @@ describe("HierarchyView", () => {
     expect(derived.querySelector('[aria-label="inferred, derived"]')).toBeTruthy();
   });
 });
+
+describe("HierarchyView imports (external-access Stage 2)", () => {
+  it("names the import an imported row comes from, in text (AC-21)", async () => {
+    const classes: HierarchyForest = {
+      nodes: {
+        [EX + "Agent"]: { ...node("Agent", "class", true), importedFrom: "FOAF" },
+        [EX + "Student"]: node("Student"),
+      },
+      children: { [EX + "Agent"]: [{ id: EX + "Student", origin: "asserted" }] },
+      roots: [EX + "Agent"],
+    };
+    renderView(hierarchyOf(classes, EMPTY));
+    await screen.findByText("Agent");
+    expect(itemByLabel("Agent")?.textContent).toContain("from FOAF");
+    fireEvent.click(itemByLabel("Agent")!.querySelector(".hierarchy-twistie")!);
+    expect(itemByLabel("Student")?.textContent).not.toContain("from");
+  });
+
+  it("fetches the merged forests only when told to", async () => {
+    fetchHierarchy.mockResolvedValue(mixed());
+    render(<HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} imports />);
+    await screen.findByText("Alpha");
+    expect(fetchHierarchy).toHaveBeenCalledWith("o1", true);
+  });
+});

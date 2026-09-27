@@ -35,6 +35,11 @@ BASIC IDEA
     mention — is present and exercised by a test, so adding real inference later
     is data, not new rendering code (D-046).
 
+    With imports on (external-access Stage 2) the forests come from the merged
+    view. A row for an entity defined only in an import carries a "from FOAF"
+    suffix, in text, and the edge leading to it the origin "imported" -- the
+    same seam, a third value.
+
 INPUTS / INPUT SOURCES (props)
     - ontologyId: which ontology's hierarchy to fetch (null renders nothing).
     - theme: for the kind swatches, via the same kindColor the legend uses.
@@ -42,6 +47,7 @@ INPUTS / INPUT SOURCES (props)
     - onSelect: select an entity in the app's shared model, exactly as a graph
       click or a search pick does — so Explore shows its detail and the graph can
       draw it even when the budget left it out (AC-13).
+    - imports: fetch the forests over the ontology plus its resolved imports.
 
 EXPECTED OUTPUT
     - The rendered tree(s), an empty state, or the loading / error treatments.
@@ -51,7 +57,7 @@ EXPECTED OUTPUT
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiError, fetchHierarchy } from "../api";
-import type { Hierarchy, HierarchyForest, Theme } from "../types";
+import type { Hierarchy, HierarchyForest, HierarchyOrigin, Theme } from "../types";
 import { KIND_LABELS, kindColor } from "../types";
 
 interface Props {
@@ -59,6 +65,7 @@ interface Props {
   theme: Theme;
   selected: string | null;
   onSelect: (iri: string) => void;
+  imports?: boolean;
 }
 
 /** Fixed row height, in pixels, shared by the CSS and the windowing maths. */
@@ -141,7 +148,9 @@ interface Row {
   label: string;
   prefixed: string;
   kind: string;
-  origin: "asserted" | "inferred";
+  origin: HierarchyOrigin;
+  /** The import that defines this entity, with imports on; else undefined. */
+  importedFrom?: string;
   /** Has children AND this occurrence is not a cycle repeat. */
   expandable: boolean;
   expanded: boolean;
@@ -169,7 +178,7 @@ function flatten(
   const rows: Row[] = [];
   const path = new Set<string>();
 
-  const visit = (id: string, depth: number, origin: "asserted" | "inferred") => {
+  const visit = (id: string, depth: number, origin: HierarchyOrigin) => {
     if (keep && !keep.has(id)) return;
     const node = forest.nodes[id];
     if (!node) return;
@@ -188,6 +197,7 @@ function flatten(
       prefixed: node.prefixed,
       kind: node.kind,
       origin,
+      importedFrom: node.importedFrom,
       expandable,
       expanded: isExpanded,
       childCount: keptKids.length,
@@ -250,7 +260,13 @@ function sectionsOf(data: Hierarchy): { title: string; forest: HierarchyForest }
   );
 }
 
-export default function HierarchyView({ ontologyId, theme, selected, onSelect }: Props) {
+export default function HierarchyView({
+  ontologyId,
+  theme,
+  selected,
+  onSelect,
+  imports = false,
+}: Props) {
   const [data, setData] = useState<Hierarchy | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -271,7 +287,7 @@ export default function HierarchyView({ ontologyId, theme, selected, onSelect }:
     setFilter("");
     setExpanded(new Set());
     let cancelled = false;
-    fetchHierarchy(ontologyId)
+    fetchHierarchy(ontologyId, imports)
       .then((h) => !cancelled && setData(h))
       .catch((e: unknown) => {
         if (cancelled) return;
@@ -281,7 +297,7 @@ export default function HierarchyView({ ontologyId, theme, selected, onSelect }:
     return () => {
       cancelled = true;
     };
-  }, [ontologyId]);
+  }, [ontologyId, imports]);
 
   const toggle = useCallback((id: string, next: boolean) => {
     setExpanded((prev) => {
@@ -635,6 +651,11 @@ function TreeRow({ row, index, theme, isSelected, isFocus, onToggle, onSelect }:
       />
       <span className="hierarchy-label">{row.label}</span>
       <span className="hierarchy-kind">{KIND_LABELS[row.kind] ?? KIND_LABELS.other}</span>
+      {row.importedFrom && (
+        // Text, not a tint: imported and read-only has to survive being read
+        // aloud (AC-21, AC-35).
+        <span className="hierarchy-imported">from {row.importedFrom}</span>
+      )}
       {inferred && (
         // The derived channel (D-046): a badge, a non-colour cue (the dashed
         // row border in CSS) and this aria mention. Dormant while every edge is

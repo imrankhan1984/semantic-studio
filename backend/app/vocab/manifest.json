@@ -1,0 +1,196 @@
+{
+  "description": "Vocabularies shipped with Semantic Studio so that importing them needs no network. Each file is byte-for-byte what its source URL served on the retrieval date; sha256 is checked before a file is parsed (test_imports.py fails on a mismatch or a missing license). Regenerate a hash only together with a fresh download from the same source.",
+  "retrieved": "2026-09-27",
+  "vocabularies": [
+    {
+      "id": "skos",
+      "title": "SKOS",
+      "file": "skos.rdf",
+      "format": "xml",
+      "sourceUrl": "https://www.w3.org/2009/08/skos-reference/skos.rdf",
+      "license": {
+        "name": "W3C Document License",
+        "url": "https://www.w3.org/copyright/document-license/",
+        "basis": "Published by W3C on w3.org; W3C documents may be copied and redistributed unmodified with the notice"
+      },
+      "sha256": "e79633b8d0564816cee8a99f5c9acf9a0e6fc7257c7209acd684ecad53a89dd6",
+      "iris": [
+        "http://www.w3.org/2004/02/skos/core",
+        "http://www.w3.org/2004/02/skos/core#"
+      ]
+    },
+    {
+      "id": "dcterms",
+      "title": "DCMI Metadata Terms",
+      "file": "dcterms.ttl",
+      "format": "turtle",
+      "sourceUrl": "https://www.dublincore.org/specifications/dublin-core/dcmi-terms/dublin_core_terms.ttl",
+      "license": {
+        "name": "CC BY 4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "DCMI publishes its specifications under CC BY 4.0 (https://www.dublincore.org/about/copyright/)"
+      },
+      "sha256": "13df401072dd7015bf9d75162f3e41c8138075304b7b9cc1aa1e9c16db976797",
+      "iris": [
+        "http://purl.org/dc/terms/"
+      ]
+    },
+    {
+      "id": "dcelements",
+      "title": "Dublin Core Elements 1.1",
+      "file": "dcelements.ttl",
+      "format": "turtle",
+      "sourceUrl": "https://www.dublincore.org/specifications/dublin-core/dcmi-terms/dublin_core_elements.ttl",
+      "license": {
+        "name": "CC BY 4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "DCMI publishes its specifications under CC BY 4.0 (https://www.dublincore.org/about/copyright/)"
+      },
+      "sha256": "ffb46b7a21e40344b93bc4ad2e6808b24dd53e261995ec3a926df6bcd87bbfa5",
+      "iris": [
+        "http://purl.org/dc/elements/1.1/"
+      ]
+    },
+    {
+      "id": "foaf",
+      "title": "FOAF",
+      "file": "foaf.rdf",
+      "format": "xml",
+      "sourceUrl": "https://xmlns.com/foaf/spec/index.rdf",
+      "license": {
+        "name": "CC BY 1.0",
+        "url": "https://creativecommons.org/licenses/by/1.0/",
+        "basis": "Stated on the FOAF specification page (http://xmlns.com/foaf/spec/)"
+      },
+      "sha256": "3d859b5d92a2c3d041545d014fa826f682ca06d056af8c7b31e32d930abf2bc5",
+      "iris": [
+        "http://xmlns.com/foaf/0.1/"
+      ]
+    },
+    {
+      "id": "dcat3",
+      "title": "DCAT 3",
+      "file": "dcat3.ttl",
+      "format": "turtle",
+      "sourceUrl": "https://www.w3.org/ns/dcat3.ttl",
+      "license": {
+        "name": "CC BY 4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Stated in the file (dcterms:license)"
+      },
+      "sha256": "d1624d3bbf364f6fc1d43b9a188bbb9e67639b1a7d46a5cb7ea3f5d47d02b62f",
+      "iris": [
+        "http://www.w3.org/ns/dcat",
+        "http://www.w3.org/ns/dcat#",
+        "http://www.w3.org/ns/dcat3"
+      ]
+    },
+    {
+      "id": "prov-o",
+      "title": "PROV-O",
+      "file": "prov-o.ttl",
+      "format": "turtle",
+      "sourceUrl": "https://www.w3.org/ns/prov-o.ttl",
+      "license": {
+        "name": "W3C Document License",
+        "url": "https://www.w3.org/copyright/document-license/",
+        "basis": "Published by W3C on w3.org; W3C documents may be copied and redistributed unmodified with the notice"
+      },
+      "sha256": "7d203989f67b38bca572253942acc5a1bf24ce3ccfece16f072dcb4be2b79a96",
+      "iris": [
+        "http://www.w3.org/ns/prov-o",
+        "http://www.w3.org/ns/prov-o#",
+        "http://www.w3.org/ns/prov",
+        "http://www.w3.org/ns/prov#",
+        "http://www.w3.org/ns/prov-o-20130430"
+      ]
+    },
+    {
+      "id": "org",
+      "title": "ORG (Organization Ontology)",
+      "file": "org.ttl",
+      "format": "turtle",
+      "sourceUrl": "https://www.w3.org/ns/org.ttl",
+      "license": {
+        "name": "ODC PDDL 1.0",
+        "url": "http://www.opendatacommons.org/licenses/pddl/1.0/",
+        "basis": "Stated in the file (dct:license)"
+      },
+      "sha256": "3e01f89a17475a88f8b1606ca0fae04800d34dbbf93adc6db12dc30929848729",
+      "iris": [
+        "http://www.w3.org/ns/org",
+        "http://www.w3.org/ns/org#"
+      ]
+    },
+    {
+      "id": "time",
+      "title": "OWL-Time",
+      "file": "time.ttl",
+      "format": "turtle",
+      "sourceUrl": "https://www.w3.org/2006/time.ttl",
+      "license": {
+        "name": "CC BY 4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Stated in the file (dct:license)"
+      },
+      "sha256": "251bd6970b0d7a5efa97ff681afe81a297df85deab3d860fa4f8eeba72d8f16c",
+      "iris": [
+        "http://www.w3.org/2006/time",
+        "http://www.w3.org/2006/time#",
+        "http://www.w3.org/2006/time#2016"
+      ]
+    },
+    {
+      "id": "shacl",
+      "title": "SHACL",
+      "file": "shacl.ttl",
+      "format": "turtle",
+      "sourceUrl": "https://www.w3.org/ns/shacl.ttl",
+      "license": {
+        "name": "W3C Document License",
+        "url": "https://www.w3.org/copyright/document-license/",
+        "basis": "Published by W3C on w3.org; W3C documents may be copied and redistributed unmodified with the notice"
+      },
+      "sha256": "0e5d8aea0eab98a072d4a02faaee1ee914ec99eab2ca473429726faed4a13f69",
+      "iris": [
+        "http://www.w3.org/ns/shacl",
+        "http://www.w3.org/ns/shacl#"
+      ]
+    },
+    {
+      "id": "vcard",
+      "title": "vCard Ontology",
+      "file": "vcard.ttl",
+      "format": "turtle",
+      "sourceUrl": "https://www.w3.org/2006/vcard/ns.ttl",
+      "license": {
+        "name": "W3C Document License",
+        "url": "https://www.w3.org/copyright/document-license/",
+        "basis": "Published by W3C on w3.org; W3C documents may be copied and redistributed unmodified with the notice"
+      },
+      "sha256": "2442baf3d07d660910a0e24dd96b1efe1ec22cb26d12cdfd415195da91b43a0c",
+      "iris": [
+        "http://www.w3.org/2006/vcard/ns",
+        "http://www.w3.org/2006/vcard/ns#"
+      ]
+    },
+    {
+      "id": "bfo-2020",
+      "title": "BFO 2020",
+      "file": "bfo-2020.ttl",
+      "format": "turtle",
+      "sourceUrl": "https://raw.githubusercontent.com/BFO-ontology/BFO-2020/master/21838-2/owl/bfo-core.ttl",
+      "license": {
+        "name": "CC BY 4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Stated in the file (dcterms:license) and in the repository README"
+      },
+      "sha256": "a7f0385eb859e707fa81bad532ff252427dc3490e3896a929332016fc53d9ece",
+      "iris": [
+        "http://purl.obolibrary.org/obo/bfo.owl",
+        "http://purl.obolibrary.org/obo/bfo/2020/bfo-core.ttl",
+        "http://purl.obolibrary.org/obo/bfo/2020/bfo.owl"
+      ]
+    }
+  ]
+}

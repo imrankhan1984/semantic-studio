@@ -38,7 +38,8 @@ BASIC IDEA
     milliseconds.
 
 INPUTS / INPUT SOURCES (props)
-    - data: the VizGraph to draw (or null for the empty state).
+    - data: the VizGraph to draw (or null for the empty state). A node
+      carrying `importedFrom` is drawn smaller (external-access Stage 2).
     - theme: which colour palette to use.
     - hiddenKinds: kinds toggled off in the legend (hidden).
     - selected + focusTick: the selected node and a counter that, when bumped,
@@ -59,7 +60,7 @@ EXPECTED OUTPUT
 */
 
 import type React from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Graph from "graphology";                       // in-memory graph data structure
 import { circular } from "graphology-layout";         // initial ring placement
 import forceAtlas2, { inferSettings } from "graphology-layout-forceatlas2"; // sync physics
@@ -315,6 +316,17 @@ function nodeSize(degree: number): number {
   return Math.min(16, 3 + Math.log2(degree + 1) * 2.2);
 }
 
+/** How much smaller an entity defined only in an import is drawn, with the
+ *  merged view on (external-access Stage 2, AC-21). Size is the channel because
+ *  the colour already says the kind, and marking by colour alone is exactly
+ *  what AC-35 rules out; the detail panel and the hierarchy say it in words. */
+const IMPORTED_SIZE_SCALE = 0.6;
+
+function drawnSize(node: { degree: number; importedFrom?: string }): number {
+  const size = nodeSize(node.degree);
+  return node.importedFrom ? size * IMPORTED_SIZE_SCALE : size;
+}
+
 /** The key an edge is stored under. Shared by the initial build and the merge,
  *  because the merge's whole duplicate check is that these agree. */
 function edgeKey(edge: { kind: string; label: string; source: string; target: string }) {
@@ -386,6 +398,12 @@ export default function GraphView({
   // without replacing `data` and a label that ignored expansions would tell a
   // screen reader user the opposite of what the status bar says.
   const [drawnCount, setDrawnCount] = useState(0);
+  // Whether the canvas label should explain the smaller nodes. A pass over the
+  // response, once per response rather than once per render.
+  const hasImported = useMemo(
+    () => data?.nodes.some((n) => n.importedFrom !== undefined) ?? false,
+    [data],
+  );
   // Which end of the zoom range the camera is at, so the matching zoom control
   // can be disabled. A three-value string rather than the raw camera ratio,
   // because the ratio changes on every animation frame and storing it would
@@ -555,7 +573,7 @@ export default function GraphView({
       graph.addNode(node.id, {
         label: node.label,
         kind: node.kind,
-        size: nodeSize(node.degree),
+        size: drawnSize(node),
       });
     }
     const labelLength = new Map(data.nodes.map((n) => [n.id, n.label.length]));
@@ -907,7 +925,7 @@ export default function GraphView({
       graph.addNode(node.id, {
         label: node.label,
         kind: node.kind,
-        size: nodeSize(node.degree),
+        size: drawnSize(node),
         x: anchorX + Math.cos(angle) * EXPAND_RING_RADIUS,
         y: anchorY + Math.sin(angle) * EXPAND_RING_RADIUS,
       });
@@ -1108,6 +1126,7 @@ export default function GraphView({
               data
                 ? `Ontology graph, ${drawnCount.toLocaleString()} of ` +
                   `${data.stats.nodeTotal.toLocaleString()} entities drawn. ` +
+                  (hasImported ? "Entities from imports are drawn smaller. " : "") +
                   `Use the entity list to browse.`
                 : undefined
             }

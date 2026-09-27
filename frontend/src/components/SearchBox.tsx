@@ -35,6 +35,8 @@ INPUTS / INPUT SOURCES (props)
     - onPick: called with the chosen node's IRI.
     - drawnIds: the entities currently on the canvas, or null when unknown.
     - placeholder: prompt text (differs per mode).
+    - imports: search the merged view (external-access Stage 2); an imported
+      result names the import it comes from.
 
 EXPECTED OUTPUT
     - The rendered search box and dropdown; onPick on selection.
@@ -55,6 +57,8 @@ interface Props {
   /** Entities on the canvas. null while no graph is loaded: mark nothing then. */
   drawnIds?: Set<string> | null;
   placeholder?: string;
+  /** Search the ontology together with its resolved imports. */
+  imports?: boolean;
 }
 
 /** The listbox's id, and the stem every option id is built from. Constants
@@ -69,6 +73,7 @@ export default function SearchBox({
   onPick,
   drawnIds = null,
   placeholder = "Search concepts, properties…",
+  imports = false,
 }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<VizNode[]>([]);
@@ -93,7 +98,7 @@ export default function SearchBox({
       return;
     }
     timer.current = window.setTimeout(() => {
-      searchNodes(ontologyId, query)
+      searchNodes(ontologyId, query, imports)
         .then((r) => {
           setResults(r);
           setActive(-1);
@@ -104,7 +109,7 @@ export default function SearchBox({
         })
         .catch(() => setResults([]));
     }, 200);
-  }, [query, ontologyId]);
+  }, [query, ontologyId, imports]);
 
   useEffect(() => {
     const close = (e: MouseEvent) => {
@@ -213,6 +218,9 @@ export default function SearchBox({
                   >
                     not drawn
                   </span>
+                )}
+                {r.importedFrom && (
+                  <span className="result-imported">from {r.importedFrom}</span>
                 )}
                 <span className="result-kind">{KIND_LABELS[r.kind] ?? r.kind}</span>
               </li>

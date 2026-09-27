@@ -53,9 +53,11 @@ from __future__ import annotations
 
 # `os` is used to read the optional STATIC_DIR environment variable.
 import os
+import re
 # `Path` gives us cross-platform filesystem path handling for locating the
 # built frontend directory.
 from pathlib import Path
+from typing import Optional
 
 # FastAPI is the web framework; CORSMiddleware allows the browser dev server
 # on a different port to call this API; StaticFiles serves the built frontend.
@@ -98,24 +100,37 @@ async def refuse_oversized_bodies(request: Request, call_next):
 
     The cap is read from the router module at call time rather than imported
     once, so it stays a single source of truth and tests can adjust it.
+
+    Two routes take a multipart body: the upload, and the files chosen for
+    unresolved imports (external-access Stage 2), whose request as a whole is
+    held to the imports closure's 150 MB. Both endpoints still enforce the real
+    size while reading; this is the half that runs before FastAPI buffers the
+    body (D-015).
     """
-    if request.method == "POST" and request.url.path == "/api/ontologies/upload":
+    if request.method != "POST":
+        return await call_next(request)
+    path = request.url.path
+    limit: Optional[int] = None
+    detail = ""
+    if path == "/api/ontologies/upload":
+        limit = ontologies.MAX_UPLOAD_BYTES
+        detail = ontologies.too_large_detail(limit, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES")
+    elif _IMPORT_FILES_PATH.match(path):
+        limit = ontologies.imports_mod.MAX_TOTAL_BYTES
+        detail = ontologies.IMPORT_FILES_TOO_LARGE
+    if limit is not None:
         declared = request.headers.get("content-length")
-        if declared and declared.isdigit():
-            # Content-Length covers the whole multipart envelope, not just the
-            # file, so allow for the framing; the endpoint enforces the exact
-            # limit while reading.
-            if int(declared) > ontologies.MAX_UPLOAD_BYTES + ontologies.CHUNK_BYTES:
-                return JSONResponse(
-                    status_code=413,
-                    content={
-                        "detail": ontologies.too_large_detail(
-                            ontologies.MAX_UPLOAD_BYTES,
-                            "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES",
-                        )
-                    },
-                )
+        # Content-Length covers the whole multipart envelope, not just the
+        # files, so allow for the framing; the endpoint enforces the exact
+        # limit while reading.
+        if declared and declared.isdigit() and int(declared) > limit + ontologies.CHUNK_BYTES:
+            return JSONResponse(status_code=413, content={"detail": detail})
     return await call_next(request)
+
+
+# The one parameterised multipart route. Matched rather than compared, because
+# the ontology id is in the path.
+_IMPORT_FILES_PATH = re.compile(r"^/api/ontologies/[^/]+/imports/files$")
 
 
 # Carries a just-once grant from the X-Semantic-Studio-Grant header to the

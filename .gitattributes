@@ -22,3 +22,9 @@
 *.woff  binary
 *.woff2 binary
 *.ttf   binary
+
+# The bundled vocabularies are pinned by SHA-256 in backend/app/vocab/
+# manifest.json. A checkout that rewrote their line endings would fail that
+# check, so their bytes are never touched.
+backend/app/vocab/*.ttl binary
+backend/app/vocab/*.rdf binary

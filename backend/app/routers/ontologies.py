@@ -6,9 +6,15 @@ FILE: backend/app/routers/ontologies.py
 SUMMARY
     The main REST API surface. Every endpoint for loading, listing, deleting,
     viewing, exploring (graph + node details + search) and querying (schema +
-    SPARQL execution) an ontology lives here, under the /api/ontologies prefix.
+    SPARQL execution) an ontology lives here, under the /api/ontologies prefix,
+    together with its owl:imports routes (list, resolve, refresh, cancel, map,
+    chosen files) from external-access Stage 2.
 
 BASIC IDEA
+    The read endpoints take ?imports=true, which serves the same view built
+    over the ontology plus its resolved imports (imports.py). Off is the
+    default and answers exactly as before.
+
     This is the thin HTTP layer: it validates and shapes requests, delegates
     the real work to the store and the builder modules, and maps their
     exceptions to the right HTTP status codes. It also implements URL fetching
@@ -62,6 +68,8 @@ from starlette.concurrency import run_in_threadpool
 from .. import provenance
 from ..docs_export import DocsExportError, build_zip
 from ..graph_builder import budget_viz, neighborhood_viz, node_details, search_nodes
+from .. import imports as imports_mod
+from ..imports import imports_service
 from ..net_guard import BlockedAddress
 from ..network_broker import FetchFailed, TooLarge, TooManyRedirects, broker
 from ..query_schema import describe_query_node
@@ -232,6 +240,33 @@ class FetchRequest(BaseModel):
 # JSON body for POST /{oid}/sparql: the query text to run.
 class SparqlRequest(BaseModel):
     query: str
+
+
+# The refusal for chosen import files over the closure's total. Here so the
+# middleware in main.py and the endpoint say the same sentence.
+IMPORT_FILES_TOO_LARGE = "These files together are larger than the 150 MB imports limit."
+
+
+# JSON body for POST /{oid}/imports/mapping: use a library ontology for an import.
+class ImportMapping(BaseModel):
+    iri: str
+    ontologyId: str
+
+
+# The merged view is opt-in per request (external-access Stage 2). A parameter
+# rather than a second set of routes, so every view the toggle covers takes it
+# the same way and the file-only answer stays the default.
+IMPORTS_PARAM = Query(default=False, description="Include resolved owl:imports")
+
+
+def _viz(ontology, imports: bool) -> dict:
+    return imports_mod.merged_viz(ontology, PARSE_TIMEOUT_SECONDS) if imports else ontology.viz()
+
+
+def _graph(ontology, imports: bool):
+    if not imports:
+        return ontology.ensure_loaded()
+    return imports_service.merged(ontology, PARSE_TIMEOUT_SECONDS)["graph"]
 
 
 def _get_or_404(oid: str):
@@ -429,7 +464,9 @@ def delete_ontology(oid: str) -> dict:
 
 
 @router.get("/{oid}/graph")
-def get_graph(oid: str, limit: Optional[int] = Query(default=None, ge=1)) -> dict:
+def get_graph(
+    oid: str, limit: Optional[int] = Query(default=None, ge=1), imports: bool = IMPORTS_PARAM
+) -> dict:
     """GET /{oid}/graph?limit=N -> the highest-degree N nodes and their edges.
 
     `ge=1` gives the 422 for zero and negatives through FastAPI's own
@@ -443,7 +480,7 @@ def get_graph(oid: str, limit: Optional[int] = Query(default=None, ge=1)) -> dic
     response reports the clamped `budget` so the interface can say so.
     """
     budget = min(DEFAULT_GRAPH_NODE_BUDGET if limit is None else limit, MAX_GRAPH_NODE_BUDGET)
-    return budget_viz(_get_or_404(oid).viz(), budget)
+    return budget_viz(_viz(_get_or_404(oid), imports), budget)
 
 
 @router.get("/{oid}/neighborhood")
@@ -451,6 +488,7 @@ def get_neighborhood(
     oid: str,
     iri: str = Query(...),
     limit: Optional[int] = Query(default=None, ge=1),
+    imports: bool = IMPORTS_PARAM,
 ) -> dict:
     """GET /{oid}/neighborhood?iri=... -> one entity and its top neighbours.
 
@@ -468,7 +506,7 @@ def get_neighborhood(
         DEFAULT_NEIGHBORHOOD_LIMIT if limit is None else limit,
         MAX_NEIGHBORHOOD_LIMIT,
     )
-    result = neighborhood_viz(ontology.viz(), iri, budget)
+    result = neighborhood_viz(_viz(ontology, imports), iri, budget)
     if result is None:
         # Blank nodes are excluded from the viz graph by build_viz_graph, so
         # this is also the expected answer for one, and for a predicate that
@@ -481,20 +519,34 @@ def get_neighborhood(
 
 
 @router.get("/{oid}/node")
-def get_node(oid: str, iri: str = Query(...)) -> dict:
-    """GET /{oid}/node?iri=... -> every statement about one entity (detail panel)."""
+def get_node(oid: str, iri: str = Query(...), imports: bool = IMPORTS_PARAM) -> dict:
+    """GET /{oid}/node?iri=... -> every statement about one entity (detail panel).
+
+    With imports on, the statements come from the merged view, and an entity
+    defined only in an import says which one, so the panel can mark it
+    imported and read-only (AC-21).
+    """
     ontology = _get_or_404(oid)
-    details = node_details(ontology.ensure_loaded(), iri)
+    details = node_details(_graph(ontology, imports), iri)
     if details is None:
         raise HTTPException(status_code=404, detail=f"No triples found for {iri}")
+    if imports:
+        source = imports_service.merged(ontology)["importedFrom"].get(iri)
+        if source is not None:
+            details["importedFrom"] = source
     return details
 
 
 @router.get("/{oid}/search")
-def search(oid: str, q: str = Query(...), limit: int = Query(default=25, le=100)) -> list[dict]:
+def search(
+    oid: str,
+    q: str = Query(...),
+    limit: int = Query(default=25, le=100),
+    imports: bool = IMPORTS_PARAM,
+) -> list[dict]:
     """GET /{oid}/search?q=... -> ranked label/IRI matches for the search box."""
     ontology = _get_or_404(oid)
-    return search_nodes(ontology.viz(), q, limit)
+    return search_nodes(_viz(ontology, imports), q, limit)
 
 
 @router.get("/{oid}/source")
@@ -607,7 +659,7 @@ def get_documentation(oid: str, include_individuals: str = Query("false")) -> Re
 
 
 @router.get("/{oid}/hierarchy")
-def get_hierarchy(oid: str) -> dict:
+def get_hierarchy(oid: str, imports: bool = IMPORTS_PARAM) -> dict:
     """GET /{oid}/hierarchy -> the subClassOf, broader and subPropertyOf forests.
 
     A class hierarchy over rdfs:subClassOf, a concept hierarchy over skos:broader
@@ -627,20 +679,38 @@ def get_hierarchy(oid: str) -> dict:
     documentation export's `include_individuals`; it is reserved and not
     implemented, so absent means asserted-only (D-046).
     """
-    return _get_or_404(oid).hierarchy()
+    ontology = _get_or_404(oid)
+    if imports:
+        # Imported rows carry `importedFrom`, and the edge to each one the
+        # origin "imported" -- D-046's seam with a new value (AC-21).
+        return imports_mod.merged_hierarchy(ontology, PARSE_TIMEOUT_SECONDS)
+    return ontology.hierarchy()
 
 
 @router.get("/{oid}/query-schema")
-def get_query_schema(oid: str) -> dict:
+def get_query_schema(oid: str, imports: bool = IMPORTS_PARAM) -> dict:
     """Class-level schema powering the visual query builder."""
-    return _get_or_404(oid).query_schema()
+    ontology = _get_or_404(oid)
+    if imports:
+        return imports_mod.merged_query_schema(ontology, PARSE_TIMEOUT_SECONDS)
+    return ontology.query_schema()
 
 
 @router.get("/{oid}/query-node")
-def get_query_node(oid: str, iri: str = Query(...)) -> dict:
-    """Map a clicked graph node to the class (and optional instance pin)."""
+def get_query_node(oid: str, iri: str = Query(...), imports: bool = IMPORTS_PARAM) -> dict:
+    """Map a clicked graph node to the class (and optional instance pin).
+
+    Takes the imports flag although the spec's list of changed endpoints does
+    not name it: with the merged view on, the builder's steps are imported
+    classes too, and describing one against the file alone would refuse it.
+    """
     ontology = _get_or_404(oid)
-    described = describe_query_node(ontology.ensure_loaded(), iri, ontology.query_schema())
+    schema = (
+        imports_mod.merged_query_schema(ontology, PARSE_TIMEOUT_SECONDS)
+        if imports
+        else ontology.query_schema()
+    )
+    described = describe_query_node(_graph(ontology, imports), iri, schema)
     if described is None:
         raise HTTPException(
             status_code=404,
@@ -650,16 +720,120 @@ def get_query_node(oid: str, iri: str = Query(...)) -> dict:
 
 
 @router.post("/{oid}/sparql")
-def run_sparql(oid: str, request: SparqlRequest) -> dict:
+def run_sparql(oid: str, request: SparqlRequest, imports: bool = IMPORTS_PARAM) -> dict:
     """POST /{oid}/sparql -> run a SELECT query and return the result rows.
 
     Maps the executor's exceptions to HTTP: timeout -> 504, bad/forbidden
-    query -> 400.
+    query -> 400. With imports on it runs over the merged view, which is
+    read-only by construction, and says how many imported documents it
+    covered, so the results can state what was queried.
     """
     ontology = _get_or_404(oid)
+    graph = _graph(ontology, imports)
     try:
-        return execute_select(ontology.ensure_loaded(), request.query)
+        result = execute_select(graph, request.query)
+        if imports:
+            result["importDocuments"] = imports_service.merged(ontology)["documents"]
+        return result
     except QueryTimeout as exc:
         raise HTTPException(status_code=504, detail=str(exc)) from exc
     except QueryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# owl:imports (external-access Stage 2). The logic is in imports.py; these are
+# the HTTP shapes around it.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{oid}/imports")
+def list_imports(oid: str) -> dict:
+    """The imports panel: each import and its status. Never connects and never
+    parses an import (AC-16)."""
+    return imports_service.listing(_get_or_404(oid))
+
+
+@router.post("/{oid}/imports/resolve")
+def resolve_imports(oid: str) -> dict:
+    """Run the resolution chain over the closure. May answer 409 for a host the
+    user has not approved; what resolved before the question is kept."""
+    ontology = _get_or_404(oid)
+    imports_service.resolve(
+        ontology, parse_timeout=PARSE_TIMEOUT_SECONDS, max_bytes=MAX_FETCH_BYTES
+    )
+    return imports_service.listing(ontology)
+
+
+@router.post("/{oid}/imports/refresh")
+def refresh_imports(oid: str) -> dict:
+    """Re-download every import that came from the network, through the broker."""
+    ontology = _get_or_404(oid)
+    imports_service.resolve(
+        ontology, refresh=True, parse_timeout=PARSE_TIMEOUT_SECONDS, max_bytes=MAX_FETCH_BYTES
+    )
+    return imports_service.listing(ontology)
+
+
+@router.post("/{oid}/imports/cancel")
+def cancel_imports(oid: str) -> dict:
+    """Stop a resolution after the document it is on (Section 6's Cancel).
+
+    Not in the spec's endpoint table, which names the Cancel control but no
+    route for it. A resolution is one request, so stopping it takes a second.
+    """
+    _get_or_404(oid)
+    return {"cancelled": imports_service.cancel(oid)}
+
+
+@router.post("/{oid}/imports/mapping")
+def map_import(oid: str, body: ImportMapping) -> dict:
+    """Use an ontology already in the library for one import IRI, remembered in
+    imports-catalog.json. Resolves locally afterwards and never connects."""
+    ontology = _get_or_404(oid)
+    target = store.get(body.ontologyId)
+    if target is None or target.id == ontology.id:
+        raise HTTPException(status_code=400, detail="Choose another ontology from your library.")
+    imports_service.map_to_library(ontology, body.iri, target, parse_timeout=PARSE_TIMEOUT_SECONDS)
+    return imports_service.listing(ontology)
+
+
+@router.post("/{oid}/imports/files")
+async def import_files(
+    oid: str,
+    request: Request,
+    files: list[UploadFile] = File(...),
+    forIri: Optional[str] = Form(default=None),  # noqa: N803 - the wire name
+    acceptMismatch: bool = Form(default=False),  # noqa: N803
+) -> dict:
+    """Files the user chose in the browser, matched to imports by the IRI they
+    declare (Section 5.3.1).
+
+    The server never reads a path from the client: bytes arrive only through
+    the browser's picker, which is why this works the same inside Docker and
+    adds no new trust (AC-43). Each file keeps the upload path's 50 MB cap,
+    enforced while reading, and the request as a whole the closure's 150 MB.
+    """
+    ontology = _get_or_404(oid)
+    too_big = IMPORT_FILES_TOO_LARGE
+    # A declared oversize never reaches here: main.py's middleware refuses it
+    # before FastAPI parses the body (D-015). What is left is the real size.
+    received: list[tuple[str, bytes]] = []
+    total = 0
+    for upload in files:
+        data = await _read_capped(upload, MAX_UPLOAD_BYTES, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES")
+        total += len(data)
+        if total > imports_mod.MAX_TOTAL_BYTES:
+            raise HTTPException(status_code=413, detail=too_big)
+        if data:
+            received.append((upload.filename or "chosen file", data))
+    result = await run_in_threadpool(
+        imports_service.accept_files,
+        ontology,
+        received,
+        for_iri=forIri,
+        accept_mismatch=acceptMismatch,
+        parse_timeout=PARSE_TIMEOUT_SECONDS,
+    )
+    result["imports"] = imports_service.listing(ontology)
+    return result

@@ -97,6 +97,12 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   revokeNetworkGrant: () => api.revokeNetworkGrant("grant-1"),
   setNetworkOffline: () => api.setNetworkOffline(true),
   getNetworkActivity: () => api.getNetworkActivity(),
+  listImports: () => api.listImports("ont-1"),
+  resolveImports: () => api.resolveImports("ont-1"),
+  refreshImports: () => api.refreshImports("ont-1"),
+  cancelImports: () => api.cancelImports("ont-1"),
+  mapImport: () => api.mapImport("ont-1", "http://example.org/i", "ont-2"),
+  chooseImportFiles: () => api.chooseImportFiles("ont-1", [new File(["x"], "x.ttl")]),
   // Not requests: the approval plumbing. Listed so the export check holds.
   setApprovalHandler: async () => api.setApprovalHandler(null),
   declinedMessage: async () => api.declinedMessage([]),
@@ -121,6 +127,11 @@ describe("api client header (S-6)", () => {
       "DELETE",
       "DELETE",
       "DELETE",
+      "POST",
+      "POST",
+      "POST",
+      "POST",
+      "POST",
       "POST",
       "POST",
       "POST",
@@ -242,5 +253,20 @@ describe("approval round trip (external-access Stage 1)", () => {
     const error = await api.getGraph("ont-1").catch((e) => e);
     expect(error.status).toBe(409);
     expect(recorded.length).toBeLessThanOrEqual(7);
+  });
+});
+
+describe("the merged-view flag (external-access Stage 2)", () => {
+  it("adds imports=true only when on, so an off request is unchanged", async () => {
+    await api.getGraph("ont-1");
+    await api.getGraph("ont-1", 4000, true);
+    await api.searchNodes("ont-1", "ab", true);
+    await api.runSparql("ont-1", "SELECT * WHERE { ?s ?p ?o }", true);
+    expect(recorded.map((r) => r.url)).toEqual([
+      "/api/ontologies/ont-1/graph",
+      "/api/ontologies/ont-1/graph?limit=4000&imports=true",
+      "/api/ontologies/ont-1/search?q=ab&imports=true",
+      "/api/ontologies/ont-1/sparql?imports=true",
+    ]);
   });
 });

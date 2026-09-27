@@ -20,6 +20,8 @@ BASIC IDEA
 INPUTS / INPUT SOURCES
     - ontologyId: which ontology to build against.
     - active: whether Query mode is on (the schema is only fetched then).
+    - imports: build against the ontology plus its resolved imports
+      (external-access Stage 2); the schema is fetched again when it changes.
     - The backend /query-schema and /query-node endpoints (via api.ts).
     - User actions dispatched from the query components.
 
@@ -149,14 +151,14 @@ export function linkOptionsBetween(
 }
 
 /** The hook itself: owns the builder state and exposes state + actions. */
-export function useQueryBuilder(ontologyId: string | null, active: boolean) {
+export function useQueryBuilder(ontologyId: string | null, active: boolean, imports = false) {
   const [schema, setSchema] = useState<QuerySchema | null>(null);      // class-level schema
   const [schemaError, setSchemaError] = useState<string | null>(null); // schema fetch error
   const [loadingSchema, setLoadingSchema] = useState(false);
   const [state, setState] = useState<QueryState>(emptyQueryState);     // the query being built
   const [hint, setHint] = useState<string | null>(null);               // transient user guidance
   const [openQuery, setOpenQuery] = useState<{ id: string; name: string } | null>(null); // saved query being edited
-  const requestedFor = useRef<string | null>(null);  // ontology whose schema we already fetched
+  const requestedFor = useRef<string | null>(null);  // "ontology|imports" whose schema we already fetched
   // A ref mirror of state so async callbacks read the latest without re-binding.
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -172,12 +174,18 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
   }, [ontologyId]);
 
   // The schema is only computed when the user actually enters Query mode.
+  //
+  // Keyed on the imports switch as well (external-access Stage 2): with the
+  // merged view on, the schema carries the imported classes, and a schema
+  // fetched for the other setting would offer steps the query cannot use. The
+  // query being built is kept across the switch; only the schema is replaced.
   useEffect(() => {
-    if (!active || !ontologyId || requestedFor.current === ontologyId) return;
-    requestedFor.current = ontologyId;
+    const key = `${ontologyId}|${imports}`;
+    if (!active || !ontologyId || requestedFor.current === key) return;
+    requestedFor.current = key;
     setLoadingSchema(true);
     let cancelled = false;
-    getQuerySchema(ontologyId)
+    getQuerySchema(ontologyId, imports)
       .then((result) => !cancelled && setSchema(result))
       .catch((e: unknown) => {
         if (cancelled) return;
@@ -188,7 +196,7 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
     return () => {
       cancelled = true;
     };
-  }, [active, ontologyId]);
+  }, [active, ontologyId, imports]);
 
   // The live SPARQL, regenerated whenever the state or namespaces change.
   const sparql = useMemo(
@@ -333,7 +341,7 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
       setHint(null);
       let info: QueryNodeInfo;
       try {
-        info = await getQueryNode(ontologyId, nodeIri);
+        info = await getQueryNode(ontologyId, nodeIri, imports);
       } catch {
         setHint("That node has no type, so it cannot be used as a query step.");
         return;
@@ -355,7 +363,7 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean) {
         );
       }
     },
-    [ontologyId, schema, appendClass],
+    [ontologyId, schema, appendClass, imports],
   );
 
   /** Every continuation available from the current path, best first. */
