@@ -19,6 +19,16 @@ BASIC IDEA
     or deleting from, the user's library. Any new mutating call must spread
     CLIENT_HEADER into its headers; api.test.ts fails for one that does not.
 
+    Every call goes through `send`, which is where a 409 `approval_required`
+    becomes a question for the user (external-access Stage 1, D-066). App
+    registers the handler that opens the approval dialog; on Allow, `send`
+    repeats the same request with the just-once grant id in
+    X-Semantic-Studio-Grant, so an upload re-sends the file the browser still
+    holds and the caller never learns there was a question. On Don't allow the
+    call fails with one sentence naming the host. Putting this in one place
+    means any action that can reach the network -- including a GET whose lazy
+    parse needs a JSON-LD context -- asks the same way.
+
 INPUTS / INPUT SOURCES
     - Arguments from the components (ids, IRIs, query text, files, payloads).
     - HTTP responses from the FastAPI backend.
@@ -30,6 +40,7 @@ EXPECTED OUTPUT
 
 import type { QueryState } from "./sparql/types";
 import type {
+  ApprovalRequest,
   Hierarchy,
   NodeDetails,
   OntologyDeletion,
@@ -42,6 +53,10 @@ import type {
   VizGraph,
   VizNeighborhood,
   VizNode,
+  NetworkActivity,
+  NetworkCapability,
+  NetworkGrant,
+  NetworkPolicy,
 } from "./types";
 
 /**
@@ -76,6 +91,73 @@ export class ApiError extends Error {
 }
 
 /**
+ * What the approval dialog answers: the just-once grant ids to present on the
+ * retry (empty when the grant was remembered and the server needs no id), or
+ * null when the user said Don't allow.
+ */
+export type ApprovalHandler = (requests: ApprovalRequest[]) => Promise<string[] | null>;
+
+let approvalHandler: ApprovalHandler | null = null;
+
+/** App registers the dialog here once, on mount. Passing null removes it. */
+export function setApprovalHandler(handler: ApprovalHandler | null): void {
+  approvalHandler = handler;
+}
+
+/** The sentence for a declined approval. Names the host and says nothing left. */
+export function declinedMessage(requests: ApprovalRequest[]): string {
+  const hosts = [...new Set(requests.map((r) => r.host))].join(", ");
+  return `Semantic Studio did not connect to ${hosts}, so nothing was sent.`;
+}
+
+// One action can meet more than one question -- a redirect to a second host
+// asks again for that host -- but never an unbounded number. Five is the
+// broker's redirect limit, plus the first host.
+const MAX_APPROVAL_ROUNDS = 6;
+
+async function approvalRequests(response: Response): Promise<ApprovalRequest[] | null> {
+  try {
+    const body = await response.clone().json();
+    const detail = body?.detail;
+    if (detail?.code === "approval_required" && Array.isArray(detail.requests)) {
+      return detail.requests as ApprovalRequest[];
+    }
+  } catch {
+    /* not the approval shape */
+  }
+  return null;
+}
+
+/**
+ * fetch, with the approval round trip. The first attempt is exactly the
+ * request the caller built; only a retry adds the grant header.
+ */
+async function send(url: string, init?: RequestInit): Promise<Response> {
+  let grants: string[] = [];
+  for (let round = 0; ; round++) {
+    const attempt =
+      grants.length === 0
+        ? init
+        : {
+            ...init,
+            headers: {
+              ...((init?.headers as Record<string, string>) ?? {}),
+              "X-Semantic-Studio-Grant": grants.join(","),
+            },
+          };
+    const response = await (attempt === undefined ? fetch(url) : fetch(url, attempt));
+    if (response.status !== 409 || !approvalHandler || round >= MAX_APPROVAL_ROUNDS) {
+      return response;
+    }
+    const requests = await approvalRequests(response);
+    if (!requests) return response;
+    const answer = await approvalHandler(requests);
+    if (answer === null) throw new ApiError(declinedMessage(requests), 409);
+    grants = [...grants, ...answer];
+  }
+}
+
+/**
  * Unwrap a fetch Response: return the parsed JSON on success, or throw an
  * ApiError carrying the backend's `detail` (falling back to the status text).
  */
@@ -85,7 +167,11 @@ async function handle<T>(response: Response): Promise<T> {
     try {
       // Backend errors put a human message in { detail: ... }.
       const body = await response.json();
-      if (body.detail) detail = String(body.detail);
+      if (body.detail?.code === "approval_required") {
+        // Reached only with no dialog registered: say what was needed.
+        const hosts = (body.detail.requests as ApprovalRequest[]).map((r) => r.host);
+        detail = `Semantic Studio needs your permission to connect to ${hosts.join(", ")}.`;
+      } else if (body.detail) detail = String(body.detail);
     } catch {
       /* keep statusText */
     }
@@ -96,14 +182,14 @@ async function handle<T>(response: Response): Promise<T> {
 
 // List loaded ontologies (dropdown summaries).
 export function listOntologies(): Promise<OntologySummary[]> {
-  return fetch("/api/ontologies").then((r) => handle<OntologySummary[]>(r));
+  return send("/api/ontologies").then((r) => handle<OntologySummary[]>(r));
 }
 
 // Upload a local file as multipart form data.
 export function uploadOntology(file: File): Promise<OntologySummary> {
   const form = new FormData();
   form.append("file", file);
-  return fetch("/api/ontologies/upload", {
+  return send("/api/ontologies/upload", {
     method: "POST",
     headers: { ...CLIENT_HEADER },
     body: form,
@@ -112,7 +198,7 @@ export function uploadOntology(file: File): Promise<OntologySummary> {
 
 // Ask the backend to download an ontology from a URL.
 export function fetchOntology(url: string): Promise<OntologySummary> {
-  return fetch("/api/ontologies/fetch", {
+  return send("/api/ontologies/fetch", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
     body: JSON.stringify({ url }),
@@ -124,7 +210,7 @@ export function fetchOntology(url: string): Promise<OntologySummary> {
 // count of destroyed work exists — the client's own count was taken before the
 // delete and can be out of date by the time it lands.
 export function deleteOntology(id: string): Promise<OntologyDeletion> {
-  return fetch(`/api/ontologies/${id}`, {
+  return send(`/api/ontologies/${id}`, {
     method: "DELETE",
     headers: { ...CLIENT_HEADER },
   }).then((r) => handle<OntologyDeletion>(r));
@@ -141,7 +227,7 @@ export function deleteOntology(id: string): Promise<OntologyDeletion> {
  */
 export function getGraph(id: string, limit?: number): Promise<VizGraph> {
   const query = limit === undefined ? "" : `?limit=${limit}`;
-  return fetch(`/api/ontologies/${id}/graph${query}`).then((r) => handle<VizGraph>(r));
+  return send(`/api/ontologies/${id}/graph${query}`).then((r) => handle<VizGraph>(r));
 }
 
 /**
@@ -158,7 +244,7 @@ export function getNeighborhood(
   limit?: number,
 ): Promise<VizNeighborhood> {
   const extra = limit === undefined ? "" : `&limit=${limit}`;
-  return fetch(
+  return send(
     `/api/ontologies/${id}/neighborhood?iri=${encodeURIComponent(iri)}${extra}`,
   ).then((r) => handle<VizNeighborhood>(r));
 }
@@ -171,26 +257,26 @@ export function getNeighborhood(
  * server caches it on the ontology, so re-opening the tab is cheap.
  */
 export function fetchHierarchy(id: string): Promise<Hierarchy> {
-  return fetch(`/api/ontologies/${id}/hierarchy`).then((r) => handle<Hierarchy>(r));
+  return send(`/api/ontologies/${id}/hierarchy`).then((r) => handle<Hierarchy>(r));
 }
 
 // Every statement about one entity, for the detail panel.
 export function getNodeDetails(id: string, iri: string): Promise<NodeDetails> {
-  return fetch(`/api/ontologies/${id}/node?iri=${encodeURIComponent(iri)}`).then((r) =>
+  return send(`/api/ontologies/${id}/node?iri=${encodeURIComponent(iri)}`).then((r) =>
     handle<NodeDetails>(r),
   );
 }
 
 // Label/IRI search for the search box.
 export function searchNodes(id: string, q: string): Promise<VizNode[]> {
-  return fetch(`/api/ontologies/${id}/search?q=${encodeURIComponent(q)}`).then((r) =>
+  return send(`/api/ontologies/${id}/search?q=${encodeURIComponent(q)}`).then((r) =>
     handle<VizNode[]>(r),
   );
 }
 
 // The source text for the View tab (original bytes, or pretty Turtle).
 export function getSource(id: string, pretty = false): Promise<OntologySource> {
-  return fetch(`/api/ontologies/${id}/source?pretty=${pretty}`).then((r) =>
+  return send(`/api/ontologies/${id}/source?pretty=${pretty}`).then((r) =>
     handle<OntologySource>(r),
   );
 }
@@ -199,19 +285,19 @@ export function getSource(id: string, pretty = false): Promise<OntologySource> {
 
 // The class-level schema powering the query builder.
 export function getQuerySchema(id: string): Promise<QuerySchema> {
-  return fetch(`/api/ontologies/${id}/query-schema`).then((r) => handle<QuerySchema>(r));
+  return send(`/api/ontologies/${id}/query-schema`).then((r) => handle<QuerySchema>(r));
 }
 
 // Map a clicked graph node to the class/type the builder should step on.
 export function getQueryNode(id: string, iri: string): Promise<QueryNodeInfo> {
-  return fetch(`/api/ontologies/${id}/query-node?iri=${encodeURIComponent(iri)}`).then((r) =>
+  return send(`/api/ontologies/${id}/query-node?iri=${encodeURIComponent(iri)}`).then((r) =>
     handle<QueryNodeInfo>(r),
   );
 }
 
 // Execute a SPARQL SELECT and return the result rows.
 export function runSparql(id: string, query: string): Promise<SparqlResults> {
-  return fetch(`/api/ontologies/${id}/sparql`, {
+  return send(`/api/ontologies/${id}/sparql`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
     body: JSON.stringify({ query }),
@@ -220,7 +306,7 @@ export function runSparql(id: string, query: string): Promise<SparqlResults> {
 
 // The saved-query library for one ontology.
 export function listSavedQueries(ontologyId: string): Promise<SavedQuery[]> {
-  return fetch(`/api/queries?ontology=${encodeURIComponent(ontologyId)}`).then((r) =>
+  return send(`/api/queries?ontology=${encodeURIComponent(ontologyId)}`).then((r) =>
     handle<SavedQuery[]>(r),
   );
 }
@@ -233,7 +319,7 @@ export function saveQuery(payload: {
   state: QueryState;
   sparql: string;
 }): Promise<SavedQuery> {
-  return fetch("/api/queries", {
+  return send("/api/queries", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
     body: JSON.stringify(payload),
@@ -242,7 +328,7 @@ export function saveQuery(payload: {
 
 // Delete a saved query by id.
 export function deleteSavedQuery(qid: string): Promise<void> {
-  return fetch(`/api/queries/${qid}`, {
+  return send(`/api/queries/${qid}`, {
     method: "DELETE",
     headers: { ...CLIENT_HEADER },
   }).then((r) => handle(r));
@@ -274,7 +360,7 @@ export async function downloadDocumentation(
   // when the user opted in, and the backend treats any value other than "true"
   // as excluded, so omitting it is the safe path.
   const query = includeIndividuals ? "?include_individuals=true" : "";
-  const response = await fetch(`/api/ontologies/${id}/documentation${query}`);
+  const response = await send(`/api/ontologies/${id}/documentation${query}`);
   if (!response.ok) {
     let detail = response.statusText;
     try {
@@ -289,4 +375,50 @@ export async function downloadDocumentation(
   const filename =
     filenameFromDisposition(response.headers.get("content-disposition")) ?? `${id}-docs.zip`;
   return { blob, filename };
+}
+
+/* --- the network broker (external-access Stage 1) ------------------------- */
+
+// The offline switch and every remembered decision, for the Network panel.
+export function getNetworkPolicy(): Promise<NetworkPolicy> {
+  return send("/api/network/policy").then((r) => handle<NetworkPolicy>(r));
+}
+
+// Record the user's answer to the approval dialog. A just-once Allow comes
+// back with the id the retry presents; a Block is always remembered.
+export function grantNetwork(payload: {
+  capability: NetworkCapability;
+  host: string;
+  decision: "allow" | "block";
+  remember: boolean;
+}): Promise<NetworkGrant> {
+  return send("/api/network/grants", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
+    body: JSON.stringify(payload),
+  }).then((r) => handle<NetworkGrant>(r));
+}
+
+// Forget a remembered decision; the site is asked about again next time.
+export function revokeNetworkGrant(id: string): Promise<{ revoked: string }> {
+  return send(`/api/network/grants/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { ...CLIENT_HEADER },
+  }).then((r) => handle<{ revoked: string }>(r));
+}
+
+// Turn working offline on or off.
+export function setNetworkOffline(offline: boolean): Promise<{ offline: boolean }> {
+  return send("/api/network/offline", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
+    body: JSON.stringify({ offline }),
+  }).then((r) => handle<{ offline: boolean }>(r));
+}
+
+// The latest connections, newest first. The server caps the limit.
+export function getNetworkActivity(limit = 200): Promise<NetworkActivity[]> {
+  return send(`/api/network/activity?limit=${limit}`).then((r) =>
+    handle<NetworkActivity[]>(r),
+  );
 }

@@ -70,10 +70,19 @@ BASIC IDEA
     leads the other way: its second control switches to View mode with that
     entity as the source pane's target.
 
-    The header carries one control that is about the application rather than
+    The header carries two controls that are about the application rather than
     about an ontology: About, which opens a static dialog naming the project,
-    its author, its repository and its licence. It is held in the same shape as
-    the Load dialog — one boolean, and the panel rendered only while open.
+    its author, its repository and its licence; and Network, which opens the
+    offline switch, the sites allowed or blocked, and the recent connections.
+    Each is held in the same shape as the Load dialog — one boolean, and the
+    panel rendered only while open.
+
+    App is also where a network question is answered (external-access Stage 1).
+    On mount it registers a handler with api.ts; when any call meets a 409
+    approval_required, the handler opens NetworkApprovalDialog and waits. The
+    answer is posted as a grant and handed back, and api.ts repeats the call —
+    so the component that started the action (the Load dialog, usually) only
+    ever sees success or a sentence saying the connection was not made.
 
     Removal is the one destructive action here, and it counts what it will
     destroy before it asks. Deleting an ontology has always deleted every query
@@ -97,8 +106,10 @@ import {
   deleteOntology,
   getGraph,
   getNeighborhood,
+  grantNetwork,
   listOntologies,
   listSavedQueries,
+  setApprovalHandler,
 } from "./api";
 import AboutPanel from "./components/AboutPanel";
 import DetailPanel from "./components/DetailPanel";
@@ -110,6 +121,8 @@ import HomeScreen from "./components/HomeScreen";
 import Legend from "./components/Legend";
 import LoadDialog from "./components/LoadDialog";
 import Logo from "./components/Logo";
+import NetworkApprovalDialog from "./components/NetworkApprovalDialog";
+import NetworkPanel from "./components/NetworkPanel";
 import QueryPanel from "./components/QueryPanel";
 import SearchBox from "./components/SearchBox";
 import SourceView from "./components/SourceView";
@@ -121,6 +134,7 @@ import {
   IconHome,
   IconLoad,
   IconMoon,
+  IconNetwork,
   IconQuery,
   IconSun,
   IconTrash,
@@ -131,6 +145,7 @@ import type { SourceTarget } from "./sourceTarget";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type {
   AppMode,
+  ApprovalRequest,
   MergeResult,
   OntologySummary,
   Theme,
@@ -255,6 +270,15 @@ export default function App() {
   // The ref is what closing focuses back to — only App holds that element.
   const [aboutOpen, setAboutOpen] = useState(false);
   const aboutRef = useRef<HTMLButtonElement>(null);
+  // Network settings, the same shape again. Focus goes back to the control by
+  // the panel itself (useDialogTrap), because it records what opened it.
+  const [networkOpen, setNetworkOpen] = useState(false);
+  // The question the network broker is waiting on, and the resolver of the
+  // api.ts promise that is paused until it is answered.
+  const [approval, setApproval] = useState<{
+    requests: ApprovalRequest[];
+    resolve: (grantIds: string[] | null) => void;
+  } | null>(null);
   const [loadingGraph, setLoadingGraph] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The ontology list's own loading and failure state, kept apart from `error`
@@ -571,6 +595,59 @@ export default function App() {
     setAboutOpen(false);
     aboutRef.current?.focus();
   }, []);
+
+  // Register the approval dialog with api.ts for the life of the app. No
+  // request is made here: this is a callback, and mount's budget of exactly
+  // one request is unchanged.
+  useEffect(() => {
+    setApprovalHandler(
+      (requests) => new Promise((resolve) => setApproval({ requests, resolve })),
+    );
+    return () => setApprovalHandler(null);
+  }, []);
+
+  // Turn the dialog's answer into grants, then let the paused call continue.
+  // Allow, just this time: a grant whose id the retry presents, spent by it.
+  // Allow, always: a remembered grant, so the retry needs no id. Don't allow,
+  // always: a remembered Block. Don't allow, just this time: nothing recorded.
+  const answerApproval = useCallback(
+    async (allow: boolean, remember: boolean) => {
+      if (!approval) return;
+      const { requests, resolve } = approval;
+      setApproval(null);
+      try {
+        if (!allow) {
+          if (remember) {
+            for (const r of requests) {
+              await grantNetwork({
+                capability: r.capability,
+                host: r.host,
+                decision: "block",
+                remember: true,
+              });
+            }
+          }
+          resolve(null);
+          return;
+        }
+        const ids: string[] = [];
+        for (const r of requests) {
+          const grant = await grantNetwork({
+            capability: r.capability,
+            host: r.host,
+            decision: "allow",
+            remember,
+          });
+          if (!grant.remember) ids.push(grant.id);
+        }
+        resolve(ids);
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : String(e));
+        resolve(null);
+      }
+    },
+    [approval],
+  );
 
   // Select a node AND re-centre the camera on it (focusTick is the trigger the
   // graph watches). Used by search picks and detail-panel navigation.
@@ -911,6 +988,18 @@ export default function App() {
             <IconAbout />
             <span>About</span>
           </button>
+          {/* Beside About and outside the tablist for the same reason: it
+              opens a dialog about the application, not a view of an
+              ontology. */}
+          <button
+            className="nav-item about-item"
+            onClick={() => setNetworkOpen(true)}
+            aria-haspopup="dialog"
+            title="Work offline, and see which sites Semantic Studio may connect to"
+          >
+            <IconNetwork />
+            <span>Network</span>
+          </button>
           <div className="spacer" />
           <button
             className="header-icon-btn"
@@ -1217,11 +1306,21 @@ export default function App() {
 
       {aboutOpen && <AboutPanel onClose={closeAbout} />}
 
+      {networkOpen && <NetworkPanel onClose={() => setNetworkOpen(false)} />}
+
       {dialogOpen && (
         <LoadDialog
           onLoaded={onLoaded}
           onClose={() => setDialogOpen(false)}
           initialTab={dialogTab}
+        />
+      )}
+
+      {/* Last, so it stacks over the Load dialog that usually caused it. */}
+      {approval && (
+        <NetworkApprovalDialog
+          requests={approval.requests}
+          onAnswer={(allow, remember) => void answerApproval(allow, remember)}
         />
       )}
     </div>

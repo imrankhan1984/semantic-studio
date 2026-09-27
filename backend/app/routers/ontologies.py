@@ -15,13 +15,13 @@ BASIC IDEA
     (converting github.com "blob" links to raw ones and rejecting GitHub
     Enterprise hosts we cannot authenticate against) and the source-text view.
 
-    The two paths that accept bytes from outside are bounded here, and the
-    bounding happens *while* reading rather than after. An upload is read in
-    chunks and refused the moment it passes the cap; a fetch follows its own
-    redirects so `net_guard` can judge every hop before the connection is made,
-    then streams the body under the same kind of cap. Parsing is handed a
-    wall-clock timeout. Doing any of these afterwards would report a number
-    rather than prevent the harm.
+    The two paths that accept bytes from outside are bounded, and the bounding
+    happens *while* reading rather than after. An upload is read in chunks here
+    and refused the moment it passes the cap; a fetch is handed to the network
+    broker, which judges every redirect hop before connecting and streams the
+    body under the same kind of cap. Parsing is handed a wall-clock timeout.
+    Doing any of these afterwards would report a number rather than prevent the
+    harm.
 
 INPUTS / INPUT SOURCES
     - HTTP requests from the frontend / API clients.
@@ -37,7 +37,8 @@ EXPECTED OUTPUT
       node details, search results, query schema, source text, SPARQL results)
       and appropriate HTTP errors:
       400 for a blocked address or refused query, 413 for a body over the cap,
-      504 for a parse that ran out of time.
+      504 for a parse that ran out of time. The broker's policy decisions are
+      mapped once, in main.py: 409 approval required, 403 blocked, 503 offline.
 ================================================================================
 """
 
@@ -49,20 +50,20 @@ import threading
 import time
 from collections import deque
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
-# httpx is the async HTTP client used to fetch remote ontology files.
-import httpx
 # FastAPI request-shaping helpers: File/Form/UploadFile for uploads, Query for
 # query params, HTTPException for error responses, APIRouter to group endpoints.
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel  # declares/validates JSON request bodies
+from starlette.concurrency import run_in_threadpool
 
 # Delegate the real work to the domain modules.
 from .. import provenance
 from ..docs_export import DocsExportError, build_zip
 from ..graph_builder import budget_viz, neighborhood_viz, node_details, search_nodes
-from ..net_guard import MAX_REDIRECTS, BlockedAddress, assert_url_fetchable
+from ..net_guard import BlockedAddress
+from ..network_broker import FetchFailed, TooLarge, TooManyRedirects, broker
 from ..query_schema import describe_query_node
 from ..sparql_exec import QueryError, QueryTimeout, execute_select
 from ..store import ParseError, ParseTimeout, detect_format, saved_queries, store
@@ -330,57 +331,20 @@ FETCH_HEADERS = {
 }
 
 
-async def _download_capped(client: httpx.AsyncClient, url: str) -> tuple[str, bytes]:
-    """Follow redirects by hand, checking each hop, and stream the body under a cap.
-
-    Returns the final URL and its bytes. Redirects are followed here rather than
-    by httpx because `follow_redirects=True` would take the hop before anything
-    could judge it: a permitted public host that redirects to 127.0.0.1 defeats
-    a check applied only to the URL the user typed.
-    """
-    current = url
-    for _hop in range(MAX_REDIRECTS + 1):
-        # Judge every URL, including the first, immediately before connecting.
-        assert_url_fetchable(current, after_redirect=current != url)
-        async with client.stream("GET", current, headers=FETCH_HEADERS) as response:
-            if response.is_redirect:
-                location = response.headers.get("location")
-                if not location:
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"Fetching {current} failed: redirect without a location.",
-                    )
-                # A Location header may be relative to the URL that sent it.
-                current = urljoin(str(response.url), location)
-                continue
-            response.raise_for_status()
-            too_large = HTTPException(
-                status_code=413,
-                detail=too_large_detail(MAX_FETCH_BYTES, "SEMANTIC_STUDIO_MAX_FETCH_BYTES"),
-            )
-            # A declared length over the cap means there is no point starting.
-            declared = response.headers.get("content-length")
-            if declared and declared.isdigit() and int(declared) > MAX_FETCH_BYTES:
-                raise too_large
-            chunks: list[bytes] = []
-            total = 0
-            async for chunk in response.aiter_bytes(CHUNK_BYTES):
-                total += len(chunk)
-                if total > MAX_FETCH_BYTES:
-                    # Abandon the response; the connection closes on exit and
-                    # the remainder is never pulled into this process.
-                    raise too_large
-                chunks.append(chunk)
-            return current, b"".join(chunks)
-    raise HTTPException(
-        status_code=502,
-        detail=f"That URL redirected more than {MAX_REDIRECTS} times and was not followed.",
-    )
+FETCH_REASON = "You asked Semantic Studio to load an ontology from this address."
 
 
 @router.post("/fetch")
 async def fetch_ontology(request: FetchRequest) -> dict:
-    """POST /api/ontologies/fetch -> download an RDF file by URL and store it."""
+    """POST /api/ontologies/fetch -> download an RDF file by URL and store it.
+
+    The download goes through the network broker as `ontology:fetch`, marked
+    user-initiated: the typed URL is its own approval for the host typed, so no
+    dialog appears for it, but offline, a remembered Block, the address rules
+    and a redirect to another host all still apply (external-access Stage 1).
+    The broker follows redirects by hand, judging every hop, pins each
+    connection to the address it judged, and streams the body under the cap.
+    """
     raw_input = request.url.strip()
     parsed = urlparse(raw_input)
     # Only web URLs are fetchable.
@@ -393,27 +357,39 @@ async def fetch_ontology(request: FetchRequest) -> dict:
     # Turn a github.com "blob" page URL into the raw download URL.
     url = to_raw_url(raw_input)
     try:
-        # trust_env=False is part of the guard, not a preference. With a proxy
-        # set in the environment httpx would hand the hostname to the proxy and
-        # let *it* resolve and connect, so the address check here would decide
-        # nothing at all. Ontology fetches go direct or not at all.
-        # Redirects are handled in _download_capped so each hop can be judged.
-        async with httpx.AsyncClient(
-            follow_redirects=False, timeout=60, trust_env=False
-        ) as client:
-            final_url, data = await _download_capped(client, url)
+        # The broker is synchronous (the rdflib chokepoint calls it from a
+        # parse thread), so it runs on the threadpool here. The context, and
+        # with it any just-once grant this request presented, travels along.
+        response = await run_in_threadpool(
+            broker.request,
+            "ontology:fetch",
+            url,
+            reason=FETCH_REASON,
+            headers=FETCH_HEADERS,
+            max_bytes=MAX_FETCH_BYTES,
+            timeout=60,
+            user_initiated=True,
+        )
     except BlockedAddress as exc:
         # Refused before any connection was made to the address in question.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except httpx.HTTPStatusError as exc:
+    except TooLarge as exc:
+        raise HTTPException(
+            status_code=413,
+            detail=too_large_detail(MAX_FETCH_BYTES, "SEMANTIC_STUDIO_MAX_FETCH_BYTES"),
+        ) from exc
+    except TooManyRedirects as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except FetchFailed as exc:
+        # Connection/timeout/DNS failure.
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if response.status >= 400:
         # The remote server returned an error status (404, 403, ...).
         raise HTTPException(
             status_code=502,
-            detail=f"Fetching {url} failed with HTTP {exc.response.status_code}.",
-        ) from exc
-    except httpx.HTTPError as exc:
-        # Connection/timeout/DNS failure.
-        raise HTTPException(status_code=502, detail=f"Fetching {url} failed: {exc}") from exc
+            detail=f"Fetching {url} failed with HTTP {response.status}.",
+        )
+    final_url, data = response.url, response.body
 
     # Name defaults to the URL's last path segment; format from the extension.
     filename = final_url.rsplit("/", 1)[-1] or final_url

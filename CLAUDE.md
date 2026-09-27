@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 283 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 519 tests, vitest
+cd backend  && python -m pytest tests    # 316 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 553 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
@@ -173,7 +173,8 @@ the results header in `ResultsTable.tsx` for the pattern.
 backend/app/
   main.py            FastAPI app, CORS for the dev frontend, static mount
   local_guard.py     Refuses requests not from the app's own page (Host, header, Origin)
-  net_guard.py       Outbound address judgement; guards rdflib's own network calls
+  net_guard.py       Outbound address judgement; hands rdflib's own network calls to the broker
+  network_broker.py  The one door out: capability grants, offline, pinning, activity log
   store.py           In-memory ontology store, disk persistence, lazy parsing
   graph_builder.py   RDF -> visualization nodes and edges, labels, node kinds
   query_schema.py    Class-level schema powering the visual query builder
@@ -224,6 +225,35 @@ the uvicorn process, calls the API, and drives the real UI in headless Chrome.
 prove a change works in the application rather than in the test suite.
 
 ## Known state, so you do not rediscover it
+
+- **Every outbound connection goes through the network broker** (2026-09-27,
+  spec `external-access` Stage 1, backlog E-T1, decisions D-066 and D-067).
+  `network_broker.py` is the only module that connects out, and
+  `test_no_direct_network.py` fails if another module imports a network client.
+  Each request names a capability (`ontology:fetch`, `jsonld:context`, and the
+  two later stages' `ontology:import`, `sparql:service`); per capability and
+  host the policy is Ask, Allow or Block, stored in `network-policy.json`.
+  No grant raises `ApprovalRequired`, which `main.py` maps to **409** for every
+  route; Block is 403, offline is 503. Direct connections only: the proxy and
+  certificate settings are Stage 4 (X-7).
+
+  **Four things are load-bearing.** **The policy is asked before any name is
+  resolved** -- a DNS query for a name in a file tells its owner the file was
+  opened. **The connection goes to the judged address** with the name in
+  `Host` and SNI (`_pinned_url`), closing D-012's rebinding residual; the test
+  fakes `socket.getaddrinfo` itself, and with pinning removed it reaches the
+  private server. **A just-once grant rides on `X-Semantic-Studio-Grant`** and
+  reaches the parse worker only because `store.parse_rdf` submits inside
+  `contextvars.copy_context()`; drop that and every approved retry asks again.
+  **Contexts fetched at ingest are kept as `<id>.contexts.json`** and replayed
+  on lazy restore, so a restart neither reconnects nor re-asks.
+
+  The frontend answers a 409 in one place: `send` in `api.ts` calls the handler
+  App registers, which opens `NetworkApprovalDialog`, and repeats the request
+  with the grant. Tests reaching a loopback server now use `conftest.py`'s
+  `loopback_is_public` (exactly 127.0.0.1 counts as public; 127.0.0.2 plays
+  the private address) -- faking `resolve_host` alone no longer works, because
+  the broker connects to whatever address it returned.
 
 - **The API answers only the application's own page** (2026-09-26, spec
   `external-access` Stage 0, backlog S-6, decision D-065). Binding to

@@ -32,7 +32,8 @@ INPUTS / INPUT SOURCES
     - N-Triples generated in-process, in example.org namespaces.
     - The FastAPI app driven by TestClient, with the module-level caps
       monkeypatched down so the tests stay fast.
-    - httpx.MockTransport for the streamed-download cases.
+    - httpx.MockTransport, installed as the network broker's transport, for
+      the streamed-download cases.
 
 EXPECTED OUTPUT
     - Pass/fail per assertion. A failure means a body can reach memory
@@ -52,7 +53,8 @@ from fastapi.testclient import TestClient
 from starlette.datastructures import Headers, UploadFile
 
 from app.main import app
-from app.routers.ontologies import _download_capped, _read_capped
+from app.network_broker import broker
+from app.routers.ontologies import _read_capped
 from app.store import ParseTimeout, parse_rdf
 
 client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
@@ -191,8 +193,15 @@ def test_peak_memory_stays_small_while_rejecting_a_real_oversized_upload(monkeyp
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.anyio
-async def test_download_aborts_mid_stream_when_the_body_is_too_large(monkeypatch):
+@pytest.fixture
+def mock_transport(monkeypatch):
+    """Install a handler as the broker's transport for one test."""
+    def install(handler):
+        monkeypatch.setattr(broker, "transport", httpx.MockTransport(handler))
+    return install
+
+
+def test_download_aborts_mid_stream_when_the_body_is_too_large(monkeypatch, mock_transport):
     """SEC-10 / AC-7. The abort is counted, not assumed.
 
     The transport hands out 4 MB in 64 KB chunks. With the cap at 256 KB the
@@ -206,7 +215,7 @@ async def test_download_aborts_mid_stream_when_the_body_is_too_large(monkeypatch
     served = {"chunks": 0}
     total_chunks = 64
 
-    async def stream():
+    def stream():
         for _ in range(total_chunks):
             served["chunks"] += 1
             yield b"y" * (64 * 1024)
@@ -215,17 +224,14 @@ async def test_download_aborts_mid_stream_when_the_body_is_too_large(monkeypatch
         # No content-length: force the streaming path rather than the header gate.
         return httpx.Response(200, content=stream())
 
-    transport = httpx.MockTransport(handler)
-    async with httpx.AsyncClient(transport=transport, follow_redirects=False) as http:
-        with pytest.raises(Exception) as caught:
-            await _download_capped(http, "https://public.example/big.nt")
-    assert getattr(caught.value, "status_code", None) == 413
+    mock_transport(handler)
+    r = client.post("/api/ontologies/fetch", json={"url": "https://public.example/big.nt"})
+    assert r.status_code == 413
     assert served["chunks"] < total_chunks, "the whole body was streamed anyway"
     assert served["chunks"] <= 8, f"pulled {served['chunks']} chunks for a 4-chunk cap"
 
 
-@pytest.mark.anyio
-async def test_declared_oversize_download_is_refused_before_streaming(monkeypatch):
+def test_declared_oversize_download_is_refused_before_streaming(monkeypatch, mock_transport):
     """A Content-Length over the cap means there is no point starting."""
     monkeypatch.setattr("app.routers.ontologies.MAX_FETCH_BYTES", 256 * 1024)
     monkeypatch.setattr(
@@ -234,7 +240,7 @@ async def test_declared_oversize_download_is_refused_before_streaming(monkeypatc
     )
     pulled = {"chunks": 0}
 
-    async def stream():
+    def stream():
         pulled["chunks"] += 1
         yield b"z" * 1024
 
@@ -243,11 +249,9 @@ async def test_declared_oversize_download_is_refused_before_streaming(monkeypatc
             200, headers={"content-length": str(200 * 1024 * 1024)}, content=stream()
         )
 
-    transport = httpx.MockTransport(handler)
-    async with httpx.AsyncClient(transport=transport, follow_redirects=False) as http:
-        with pytest.raises(Exception) as caught:
-            await _download_capped(http, "https://public.example/big.nt")
-    assert getattr(caught.value, "status_code", None) == 413
+    mock_transport(handler)
+    r = client.post("/api/ontologies/fetch", json={"url": "https://public.example/big.nt"})
+    assert r.status_code == 413
     assert pulled["chunks"] == 0, "the body was streamed despite a declared oversize"
 
 

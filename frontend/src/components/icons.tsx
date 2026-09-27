@@ -113,6 +113,19 @@ export function IconAbout() {
   );
 }
 
+/* Network settings. A globe: the one shape that reads as "the internet"
+   without a word, and unlike a wifi or signal glyph it does not suggest the
+   control is about this machine's own connection. */
+export function IconNetwork() {
+  return (
+    <svg {...base}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18" />
+      <path d="M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9s1.3-6.4 3.8-9z" />
+    </svg>
+  );
+}
+
 export function IconSun() {
   return (
     <svg {...base}>
