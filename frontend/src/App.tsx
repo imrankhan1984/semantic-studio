@@ -713,7 +713,13 @@ export default function App() {
           return;
         }
         const ids: string[] = [];
-        for (const r of requests) {
+        // One grant per capability and host: a SERVICE query can send two
+        // blocks to the same site, and that is one question and one answer.
+        const unique = requests.filter(
+          (r, i) =>
+            requests.findIndex((o) => o.capability === r.capability && o.host === r.host) === i,
+        );
+        for (const r of unique) {
           const grant = await grantNetwork({
             capability: r.capability,
             host: r.host,

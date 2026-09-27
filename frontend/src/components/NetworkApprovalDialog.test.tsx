@@ -29,7 +29,7 @@ EXPECTED OUTPUT
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApprovalRequest } from "../types";
-import NetworkApprovalDialog, { WHY_EXPLAINED } from "./NetworkApprovalDialog";
+import NetworkApprovalDialog, { SERVICE_NOTHING_ELSE, WHY_EXPLAINED } from "./NetworkApprovalDialog";
 
 const REQUEST: ApprovalRequest = {
   capability: "jsonld:context",
@@ -162,5 +162,47 @@ describe("NetworkApprovalDialog", () => {
     renderDialog({ ...REQUEST, capability: "constructor" as never });
     expect(screen.getByLabelText("Always, for this kind of connection from this site")).toBeTruthy();
     expect(screen.getByRole("dialog").textContent).not.toContain("constructor");
+  });
+
+  describe("SPARQL SERVICE (external-access Stage 3, AC-27)", () => {
+    const TEXT = "PREFIX ex: <http://example.org/>\nSELECT * WHERE {\n  ?s ex:name ?n\n}";
+    const SERVICE: ApprovalRequest = {
+      capability: "sparql:service",
+      host: "query.wikidata.org",
+      url: "https://query.wikidata.org/sparql",
+      reason: "Your query asks this site to answer part of it.",
+      sends: "The query text shown. Nothing else from your ontology.",
+      encrypted: true,
+      text: TEXT,
+    };
+
+    it("shows the exact text that will be sent, read-only, and says nothing else goes", () => {
+      renderDialog(SERVICE);
+      const box = screen.getByRole("textbox", { name: "Query text sent" }) as HTMLTextAreaElement;
+      expect(box.value).toBe(TEXT);
+      expect(box.readOnly).toBe(true);
+      expect(screen.getByText(SERVICE_NOTHING_ELSE)).toBeTruthy();
+      expect(screen.getByLabelText("Always, for running SPARQL queries from this site")).toBeTruthy();
+      expect(screen.getByRole("dialog").textContent).not.toContain("sparql:service");
+    });
+
+    it("gives each block its own box, named by its endpoint, and asks about each host once", () => {
+      const second = { ...SERVICE, url: "https://dbpedia.org/sparql", host: "dbpedia.org", text: "SELECT * WHERE {\n  ?a ?b ?c\n}" };
+      render(<NetworkApprovalDialog requests={[SERVICE, second]} onAnswer={vi.fn()} />);
+      expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
+        "Allow connections to query.wikidata.org, dbpedia.org?",
+      );
+      const boxes = screen.getAllByRole("textbox") as HTMLTextAreaElement[];
+      expect(boxes.map((b) => b.getAttribute("aria-label"))).toEqual([
+        "Query text sent to https://query.wikidata.org/sparql",
+        "Query text sent to https://dbpedia.org/sparql",
+      ]);
+      expect(boxes.map((b) => b.value)).toEqual([TEXT, second.text]);
+    });
+
+    it("a download question keeps its plain sentence and has no text box", () => {
+      renderDialog();
+      expect(screen.queryByRole("textbox")).toBeNull();
+    });
   });
 });
