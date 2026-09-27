@@ -219,6 +219,19 @@ live preview that updates on every edit.
    ontologies (see below) and keep the *visual* state, so reopening one
    restores the path, pins, modifiers and filters — not just the query text.
 
+**Writing SPARQL as text.** For anything the builder cannot express — a
+`UNION`, `BIND`, `GROUP BY` — press **Edit as text** above the query, or
+**New text query** to start from a blank editor. The first change turns the
+query into text: a notice says so, the path bar steps aside, and clicking the
+graph no longer changes the query. **Back to the visual version** returns to
+the builder exactly as you left it. **Run** (or Ctrl+Enter) runs the text;
+**Save** keeps it, marked *text* in the saved list, and it reopens in the
+editor. **Open .rq file…** and **Download .rq** read and write query files
+in the browser; nothing is sent until you run or save. If the loaded file
+stores queries itself — SHACL `sh:select`, `sh:construct`, `sh:ask`, or SPIN
+`sp:text` — they are listed under **Queries in this file**. SELECT queries
+run; the other forms open read-only. Query text is limited to 100 KB.
+
 SKOS taxonomies are fully supported: `skos:Concept` and friends are steppable
 types, and a self-hop offers both `broader` and `^broader` (narrower), so
 `?concept (^skos:broader)+ ?descendant` is a few clicks away.

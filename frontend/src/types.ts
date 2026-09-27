@@ -138,6 +138,9 @@ export interface QuerySchema {
   dataProperties: Record<string, SchemaDataProp[]>;
   namespaces: Record<string, string>;
   truncated: boolean;
+  /** Queries the file stores in itself. Carried on the schema so Query mode
+   *  needs no request of its own to know whether to list them. */
+  embeddedQueryCount?: number;
 }
 
 // Result of clicking a node: whether it is itself a class, or an individual
@@ -177,10 +180,37 @@ export interface SavedQuery {
   name: string;
   ontologyId: string;
   ontologyName: string;
-  state: QueryState;  // the visual state, so it reopens in the builder
-  sparql: string;     // the generated text, for reference
+  /** Absent on anything saved before text queries existed, which is visual. */
+  mode?: "visual" | "text";
+  /** Visual: the state it reopens in. Text: the state it forked from, for
+   *  "Back to the visual version", or null when written from nothing. */
+  state: QueryState | null;
+  /** Visual: the generated text, for reference. Text: the query itself. */
+  sparql: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// One SPARQL query stored inside the loaded ontology (SHACL sh:select,
+// sh:construct, sh:ask, or SPIN sp:text), from GET /{id}/embedded-queries.
+export interface EmbeddedQuery {
+  /** Null when the query hangs off a blank node, as SHACL's usually does. */
+  subject: string | null;
+  label: string;
+  predicate: string;
+  form: "SELECT" | "CONSTRUCT" | "ASK" | "DESCRIBE" | "UPDATE" | "UNKNOWN";
+  text: string;
+  /** Cut at 100 KB; what is shown is not the whole query. */
+  truncated: boolean;
+  /** Uses $this or $value, which a SHACL engine binds and a standalone run does not. */
+  shaclVariables: boolean;
+}
+
+export interface EmbeddedQueries {
+  queries: EmbeddedQuery[];
+  /** Every query in the file; `queries` holds at most 200 of them. */
+  total: number;
+  truncated: boolean;
 }
 
 // What DELETE /api/ontologies/{id} reports. `deletedQueries` is the count the

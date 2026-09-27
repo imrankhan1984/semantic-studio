@@ -4,8 +4,9 @@ FILE: backend/app/queries_store.py
 ================================================================================
 
 SUMMARY
-    A small persistent library of saved visual queries, stored one JSON file
-    per query in a "queries" subfolder of the per-user data directory.
+    A small persistent library of saved queries, visual or text, stored one
+    JSON file per query in a "queries" subfolder of the per-user data
+    directory.
 
 BASIC IDEA
     Users can save a query they built visually and reopen it later. We store
@@ -14,9 +15,21 @@ BASIC IDEA
     visually — not just re-run as opaque SPARQL. Each query is its own file so
     saves/deletes are independent and crash-safe.
 
+    A text query (sparql-text-and-query-files) stores `mode: "text"`, and then
+    its SPARQL is the source of truth; `state` is the builder state it forked
+    from, or None when it was written from nothing. An entry without `mode` is
+    visual, so nothing saved before text queries existed is rewritten.
+
+    The id is a file name, so it is checked against QUERY_ID before any path
+    is built from it. An id of `../escaped` once wrote a file outside
+    `queries/` (backlog CF-5). The router refuses it first with a 422; the
+    check here is the second line, and it covers get and delete as well,
+    which take the id from the URL.
+
 INPUTS / INPUT SOURCES
     - The data directory (shared with the ontology store).
-    - Save requests carrying: name, ontology id/name, builder state, SPARQL.
+    - Save requests carrying: name, ontology id/name, mode, builder state (or
+      None for a text query written from nothing), SPARQL.
     - Query ids for get/delete; an optional ontology id to filter the list.
 
 EXPECTED OUTPUT
@@ -31,11 +44,27 @@ from __future__ import annotations
 # threading - a lock so a save cannot race another save/list
 # uuid      - generate stable query ids
 import json
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+
+# What save() mints: "q-" and twelve hex digits. Nothing else is a query id.
+QUERY_ID = re.compile(r"^q-[0-9a-f]{12}$")
+
+
+class InvalidQueryId(ValueError):
+    """A query id that is not one this store could have minted."""
+
+
+def _with_mode(entry: dict) -> dict:
+    # An entry saved before text queries existed is visual. Answered on read
+    # rather than by a migration, so no file on disk is rewritten.
+    entry.setdefault("mode", "visual")
+    return entry
 
 
 class SavedQueryStore:
@@ -49,7 +78,10 @@ class SavedQueryStore:
         self._lock = threading.Lock()
 
     def _path(self, qid: str) -> Path:
-        # On-disk path for a query id.
+        # fullmatch, not match: `$` in a Python pattern also matches before a
+        # trailing newline, so an id ending in a newline would otherwise pass.
+        if not isinstance(qid, str) or not QUERY_ID.fullmatch(qid):
+            raise InvalidQueryId(qid)
         return self.dir / f"{qid}.json"
 
     def list(self, ontology_id: Optional[str] = None) -> list[dict]:
@@ -63,18 +95,21 @@ class SavedQueryStore:
             # When an ontology id is given, only return that ontology's queries.
             if ontology_id and entry.get("ontologyId") != ontology_id:
                 continue
-            entries.append(entry)
+            entries.append(_with_mode(entry))
         # Most recently updated first, matching the UI's expectation.
         entries.sort(key=lambda e: e.get("updatedAt", ""), reverse=True)
         return entries
 
     def get(self, qid: str) -> Optional[dict]:
-        """One saved query by id, or None if missing/corrupt."""
-        path = self._path(qid)
+        """One saved query by id, or None if missing/corrupt/not an id."""
+        try:
+            path = self._path(qid)
+        except InvalidQueryId:
+            return None
         if not path.exists():
             return None
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            return _with_mode(json.loads(path.read_text(encoding="utf-8")))
         except Exception:
             return None
 
@@ -84,9 +119,10 @@ class SavedQueryStore:
         name: str,
         ontology_id: str,
         ontology_name: str,
-        state: dict,
+        state: Optional[dict],
         sparql: str,
         qid: Optional[str] = None,
+        mode: str = "visual",
     ) -> dict:
         """Create a new saved query, or update an existing one when qid is given.
 
@@ -94,6 +130,8 @@ class SavedQueryStore:
         is preserved and only updatedAt moves.
         """
         now = datetime.now(timezone.utc).isoformat()
+        if qid is not None:
+            self._path(qid)  # raises before anything is read or written
         with self._lock:
             # If updating, load the prior version so we can keep its createdAt.
             existing = self.get(qid) if qid else None
@@ -103,8 +141,12 @@ class SavedQueryStore:
                 "name": name.strip() or "Untitled query",
                 "ontologyId": ontology_id,
                 "ontologyName": ontology_name,
-                "state": state,   # full builder state, so it reopens visually
-                "sparql": sparql,  # the generated query text, for reference
+                "mode": mode,
+                # Visual: the builder state it reopens in. Text: the state it
+                # forked from, for "Back to the visual version", or None.
+                "state": state,
+                # Visual: the generated text, for reference. Text: the query.
+                "sparql": sparql,
                 "createdAt": existing["createdAt"] if existing else now,
                 "updatedAt": now,
             }
@@ -116,7 +158,10 @@ class SavedQueryStore:
 
     def delete(self, qid: str) -> bool:
         """Delete a saved query by id; return True if it existed."""
-        path = self._path(qid)
+        try:
+            path = self._path(qid)
+        except InvalidQueryId:
+            return False
         if not path.exists():
             return False
         try:

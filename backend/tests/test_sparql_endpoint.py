@@ -445,3 +445,53 @@ def test_ordinary_queries_still_run(ontology_id):
     response = client.post(f"/api/ontologies/{ontology_id}/sparql", json={"query": PLANETS})
     assert response.status_code == 200
     assert response.json()["rowCount"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Query text written by hand (sparql-text-and-query-files, AC-12). Text can now
+# be typed, pasted and opened from a file, so the endpoint caps its length, and
+# a hand-written SERVICE meets the same refusal the builder's text would.
+# ---------------------------------------------------------------------------
+
+MAX_QUERY_CHARS = 100 * 1024
+
+
+def test_query_text_over_100_kb_is_refused_before_parsing(ontology_id, monkeypatch):
+    from app.routers import ontologies
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("an oversized query reached the executor")
+
+    monkeypatch.setattr(ontologies, "execute_select", refuse)
+    padded = PLANETS + "\n#" + "x" * MAX_QUERY_CHARS
+    response = client.post(f"/api/ontologies/{ontology_id}/sparql", json={"query": padded})
+    assert response.status_code == 422
+
+
+def test_query_text_at_the_cap_still_runs(ontology_id):
+    # The boundary itself is allowed: a comment pads PLANETS to exactly 100 KB.
+    padding = MAX_QUERY_CHARS - len(PLANETS) - 2
+    query = PLANETS + "\n#" + "x" * padding
+    assert len(query) == MAX_QUERY_CHARS
+    response = client.post(f"/api/ontologies/{ontology_id}/sparql", json={"query": query})
+    assert response.status_code == 200, response.text
+
+
+def test_hand_written_service_gets_todays_sentence(ontology_id, sparql_recorder):
+    # A SERVICE call typed around a UNION the builder could never produce is
+    # refused with exactly the sentence the builder's path gets, and nothing
+    # reaches the endpoint. Stage 3 of external-access changes this; this
+    # spec does not.
+    endpoint = f"http://127.0.0.1:{sparql_recorder.server_address[1]}/sparql"
+    query = (
+        "# pasted from documentation\n"
+        "PREFIX ex: <http://example.org/>\n"
+        "SELECT ?s WHERE {\n"
+        "  { ?s a ex:Planet } UNION { ?s a ex:Moon }\n"
+        f"  SERVICE <{endpoint}> {{ ?s ex:name ?n }}\n"
+        "}\n"
+    )
+    response = client.post(f"/api/ontologies/{ontology_id}/sparql", json={"query": query})
+    assert sparql_recorder.requests == []
+    assert response.status_code == 400
+    assert response.json()["detail"] == sparql_exec.SERVICE_REFUSED_DETAIL

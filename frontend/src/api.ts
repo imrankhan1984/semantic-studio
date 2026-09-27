@@ -51,6 +51,7 @@ import type {
   QueryNodeInfo,
   QuerySchema,
   SavedQuery,
+  EmbeddedQueries,
   SparqlResults,
   VizGraph,
   VizNeighborhood,
@@ -173,6 +174,13 @@ async function handle<T>(response: Response): Promise<T> {
         // Reached only with no dialog registered: say what was needed.
         const hosts = (body.detail.requests as ApprovalRequest[]).map((r) => r.host);
         detail = `Semantic Studio needs your permission to connect to ${hosts.join(", ")}.`;
+      } else if (Array.isArray(body.detail)) {
+        // FastAPI's validation errors (422) are a list of objects, which
+        // String() would print as "[object Object]".
+        detail = body.detail
+          .map((d: { msg?: unknown }) => (typeof d?.msg === "string" ? d.msg : ""))
+          .filter(Boolean)
+          .join("; ") || detail;
       } else if (body.detail) detail = String(body.detail);
     } catch {
       /* keep statusText */
@@ -333,19 +341,29 @@ export function listSavedQueries(ontologyId: string): Promise<SavedQuery[]> {
   );
 }
 
-// Create or update a saved query (id present -> update).
+// Create or update a saved query (id present -> update). A text query sends
+// mode "text", its text as `sparql`, and the state it forked from or null.
 export function saveQuery(payload: {
   id?: string;
   name: string;
   ontologyId: string;
-  state: QueryState;
+  state: QueryState | null;
   sparql: string;
+  mode?: "visual" | "text";
 }): Promise<SavedQuery> {
   return send("/api/queries", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
     body: JSON.stringify(payload),
   }).then((r) => handle<SavedQuery>(r));
+}
+
+// The SPARQL the ontology stores in itself (sh:select, sp:text, ...). Read
+// only when the list is opened, so entering Query mode costs nothing more.
+export function getEmbeddedQueries(id: string, imports = false): Promise<EmbeddedQueries> {
+  return send(withImports(`/api/ontologies/${id}/embedded-queries`, imports)).then((r) =>
+    handle<EmbeddedQueries>(r),
+  );
 }
 
 // Delete a saved query by id.

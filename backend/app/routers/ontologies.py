@@ -40,7 +40,8 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - JSON responses (ontology summaries, graph, one entity's neighbourhood,
-      node details, search results, query schema, source text, SPARQL results)
+      node details, search results, query schema, the queries stored in the
+      file, source text, SPARQL results)
       and appropriate HTTP errors:
       400 for a blocked address or refused query, 413 for a body over the cap,
       504 for a parse that ran out of time. The broker's policy decisions are
@@ -61,12 +62,14 @@ from urllib.parse import urlparse
 # FastAPI request-shaping helpers: File/Form/UploadFile for uploads, Query for
 # query params, HTTPException for error responses, APIRouter to group endpoints.
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
-from pydantic import BaseModel  # declares/validates JSON request bodies
+from pydantic import BaseModel, Field  # declares/validates JSON request bodies
 from starlette.concurrency import run_in_threadpool
 
 # Delegate the real work to the domain modules.
 from .. import provenance
 from ..docs_export import DocsExportError, build_zip
+from ..embedded_queries import MAX_TEXT_CHARS as MAX_QUERY_CHARS
+from ..embedded_queries import list_embedded_queries
 from ..graph_builder import budget_viz, neighborhood_viz, node_details, search_nodes
 from .. import imports as imports_mod
 from ..imports import imports_service
@@ -237,9 +240,12 @@ class FetchRequest(BaseModel):
     name: Optional[str] = None
 
 
-# JSON body for POST /{oid}/sparql: the query text to run.
+# JSON body for POST /{oid}/sparql: the query text to run. Capped since queries
+# can be typed, pasted and opened from files (sparql-text-and-query-files): the
+# parser's cost grows with the text, and nothing a person writes by hand comes
+# near 100 KB. Refused by validation (422) before rdflib sees a character.
 class SparqlRequest(BaseModel):
-    query: str
+    query: str = Field(max_length=MAX_QUERY_CHARS)
 
 
 # The refusal for chosen import files over the closure's total. Here so the
@@ -694,6 +700,16 @@ def get_query_schema(oid: str, imports: bool = IMPORTS_PARAM) -> dict:
     if imports:
         return imports_mod.merged_query_schema(ontology, PARSE_TIMEOUT_SECONDS)
     return ontology.query_schema()
+
+
+@router.get("/{oid}/embedded-queries")
+def get_embedded_queries(oid: str, imports: bool = IMPORTS_PARAM) -> dict:
+    """SPARQL stored in the ontology itself (sh:select, sh:ask, sp:text, ...).
+
+    Read-only: listing a query never runs it. At most 200 rows with the true
+    total beside them, each text at most 100 KB and flagged when cut.
+    """
+    return list_embedded_queries(_graph(_get_or_404(oid), imports))
 
 
 @router.get("/{oid}/query-node")

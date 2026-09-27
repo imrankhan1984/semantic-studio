@@ -34,13 +34,22 @@ import QueryPanel, { queryScopeText } from "./QueryPanel";
 import type { useQueryBuilder } from "../sparql/useQueryBuilder";
 import type { QueryState } from "../sparql/types";
 
-const { runSparql, listSavedQueries, saveQuery, deleteSavedQuery } = vi.hoisted(() => ({
-  runSparql: vi.fn(),
-  listSavedQueries: vi.fn(),
-  saveQuery: vi.fn(),
-  deleteSavedQuery: vi.fn(),
+const { runSparql, listSavedQueries, saveQuery, deleteSavedQuery, getEmbeddedQueries } = vi.hoisted(
+  () => ({
+    runSparql: vi.fn(),
+    listSavedQueries: vi.fn(),
+    saveQuery: vi.fn(),
+    deleteSavedQuery: vi.fn(),
+    getEmbeddedQueries: vi.fn(),
+  }),
+);
+vi.mock("../api", () => ({
+  runSparql,
+  listSavedQueries,
+  saveQuery,
+  deleteSavedQuery,
+  getEmbeddedQueries,
 }));
-vi.mock("../api", () => ({ runSparql, listSavedQueries, saveQuery, deleteSavedQuery }));
 
 const STATE: QueryState = {
   steps: [{ classIri: "http://example.org/Bond", label: "Bond", props: [] }],
@@ -91,6 +100,15 @@ function builderStub() {
     openQuery: null,
     setOpenQuery: vi.fn(),
     loadState: vi.fn(),
+    // The text query, never started here: these tests are the builder's.
+    textQuery: null,
+    textRef: { current: "" },
+    forkToText: vi.fn(),
+    openTextQuery: vi.fn(),
+    setText: vi.fn(),
+    markTextSaved: vi.fn(),
+    leaveText: vi.fn(),
+    textIsDirty: () => false,
   } as unknown as ReturnType<typeof useQueryBuilder>;
 }
 
@@ -171,6 +189,70 @@ describe("QueryPanel result navigation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "View B1 in source" }));
     expect(onViewInSource).toHaveBeenCalledWith("http://example.org/b1", undefined);
+  });
+});
+
+const BUTTONS_BEFORE = [
+  "1Bond",
+  "✕",
+  "✕ Clear path",
+  "Auto",
+  "Paths",
+  "Distinct",
+  "Count",
+  "⧉ Copy",
+  "⌸ Save",
+  "▶ Execute",
+];
+
+describe("QueryPanel with the editor never opened (sparql-text-and-query-files, AC-1)", () => {
+  function renderPanel() {
+    render(
+      <QueryPanel
+        ontologyId="ont-1"
+        theme="light"
+        builder={builderStub()}
+        onPickIri={vi.fn()}
+        onViewInSource={vi.fn()}
+        ontologyTriples={0}
+      />,
+    );
+  }
+
+  it("shows today's controls plus exactly the two new buttons", async () => {
+    renderPanel();
+    await act(async () => undefined);
+    const names = screen.getAllByRole("button").map((b) => b.textContent?.trim());
+    const added = ["Edit as text", "New text query"];
+    // Every control the panel had on main at b176e60, in its order, read from
+    // that build with this stub...
+    expect(names.filter((n) => !added.includes(n ?? ""))).toEqual(BUTTONS_BEFORE);
+    // ...and the only additions are the two the spec names.
+    expect(names.filter((n) => added.includes(n ?? ""))).toEqual(added);
+    // Nothing of the editor is rendered, and the builder is not wrapped.
+    expect(screen.queryByRole("textbox", { name: "SPARQL query text" })).toBeNull();
+    expect(document.querySelector("fieldset")).toBeNull();
+    expect(screen.queryByText(/Queries in this file/)).toBeNull();
+    // The same generated text in the same preview.
+    expect(document.querySelector(".sparql-preview")?.textContent).toContain(
+      "SELECT ?s WHERE { ?s a <http://example.org/Bond> }",
+    );
+  });
+
+  it("makes the same requests as before: the saved list, and nothing else", async () => {
+    renderPanel();
+    await act(async () => undefined);
+    expect(listSavedQueries).toHaveBeenCalledTimes(1);
+    expect(getEmbeddedQueries).not.toHaveBeenCalled();
+    expect(runSparql).not.toHaveBeenCalled();
+    expect(saveQuery).not.toHaveBeenCalled();
+  });
+
+  it("the builder's controls are live, not disabled", () => {
+    renderPanel();
+    expect((screen.getByRole("button", { name: /Clear path/ }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
   });
 });
 
