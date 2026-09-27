@@ -85,6 +85,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
       sparql: "SELECT * WHERE { ?s ?p ?o }",
     }),
   deleteSavedQuery: () => api.deleteSavedQuery("q-1"),
+  getEmbeddedQueries: () => api.getEmbeddedQueries("ont-1"),
   downloadDocumentation: () => api.downloadDocumentation("ont-1"),
   getNetworkPolicy: () => api.getNetworkPolicy(),
   grantNetwork: () =>
@@ -159,6 +160,60 @@ describe("api client header (S-6)", () => {
     // Content-Type would drop it and the server could not read the file.
     await api.uploadOntology(new File(["x"], "x.ttl"));
     expect(recorded[0].headers).toEqual({ "X-Semantic-Studio": "1" });
+  });
+});
+
+describe("text queries (sparql-text-and-query-files, AC-9)", () => {
+  function captureBodies() {
+    const bodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        recorded.push({ url, method: (init?.method ?? "GET").toUpperCase(), headers: {} });
+        if (typeof init?.body === "string") bodies.push(JSON.parse(init.body));
+        return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+      }),
+    );
+    return bodies;
+  }
+
+  it("saveQuery sends the mode, and a text query may have no state", async () => {
+    const bodies = captureBodies();
+    await api.saveQuery({
+      name: "Union",
+      ontologyId: "ont-1",
+      state: null,
+      sparql: "SELECT * WHERE { { ?s ?p ?o } UNION { ?o ?p ?s } }",
+      mode: "text",
+    });
+    expect(bodies[0]).toMatchObject({ mode: "text", state: null, name: "Union" });
+  });
+
+  it("getEmbeddedQueries is a GET, with the imports switch when on", async () => {
+    await api.getEmbeddedQueries("ont-1");
+    await api.getEmbeddedQueries("ont-1", true);
+    expect(recorded.map((r) => [r.method, r.url])).toEqual([
+      ["GET", "/api/ontologies/ont-1/embedded-queries"],
+      ["GET", "/api/ontologies/ont-1/embedded-queries?imports=true"],
+    ]);
+  });
+
+  it("a validation error reads as its message, not [object Object]", async () => {
+    // The 100 KB cap is a 422 whose detail is FastAPI's list of objects.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            detail: [{ loc: ["body", "query"], msg: "String should have at most 102400 characters" }],
+          }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    await expect(api.runSparql("ont-1", "SELECT")).rejects.toThrow(
+      "String should have at most 102400 characters",
+    );
   });
 });
 

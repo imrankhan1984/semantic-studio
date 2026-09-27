@@ -49,14 +49,16 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 358 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 589 tests, vitest
+cd backend  && python -m pytest tests    # 397 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 643 tests, vitest
 ```
 
 Both suites must pass before any change is considered done.
 
-Seven backend tests carry `@pytest.mark.perf` and hold the graph and
-neighbourhood endpoints' performance budgets. Unlike `network`, they **run by default** — a budget nobody
+Eleven backend tests carry `@pytest.mark.perf` and hold the performance
+budgets of the graph, neighbourhood, hierarchy, imports, broker and
+stored-queries paths (the count said seven until 2026-09-27, three builds
+after it stopped being true). Unlike `network`, they **run by default** — a budget nobody
 enforces is a note in a document. Deselect them on a slow machine with
 `-m "not perf"`.
 
@@ -179,6 +181,7 @@ backend/app/
   graph_builder.py   RDF -> visualization nodes and edges, labels, node kinds
   query_schema.py    Class-level schema powering the visual query builder
   sparql_exec.py     SELECT-only execution, row cap, wall-clock timeout
+  embedded_queries.py  SPARQL stored in the file (sh:select, sp:text), listed never run
   queries_store.py   Saved visual queries, one JSON file each
   hierarchy.py       subClassOf / broader / subPropertyOf forests for the tree view
   docs_export.py     The documentation-site zip (with docs_assets/)
@@ -225,6 +228,38 @@ the uvicorn process, calls the API, and drives the real UI in headless Chrome.
 prove a change works in the application rather than in the test suite.
 
 ## Known state, so you do not rediscover it
+
+- **SPARQL can be written as text, beside a builder that did not change**
+  (2026-09-27, spec `sparql-text-and-query-files`, backlog Q-1 and CF-5,
+  decision D-071 accepting D-008). *Edit as text* and *New text query* open
+  `SparqlEditor.tsx` in the preview's place; the first change forks the query
+  to text, the builder sits in a disabled `fieldset`, and *Back to the visual
+  version* returns to it. Saved queries carry `mode`; `.rq` files open and
+  download in the browser; `embedded_queries.py` lists `sh:select`,
+  `sh:construct`, `sh:ask` and `sp:text`.
+
+  **Five things are load-bearing.** **The builder's state is never written
+  while the query is text**, which is why going back restores it: nothing
+  restores anything, and a test asserts identity, not equality. **The live
+  text is in a ref (`textRef`), not state**, so typing renders the editor and
+  not App or the graph; `keystroke_does_not_render_results` counts renders of
+  the hook's owner and goes red if the text moves into state. **The editor's
+  key is `editorSession`, the same before and after the fork** -- keyed
+  `"visual"` then by session, the first keystroke replaced the textarea and
+  every later one landed at the end (found in review; a browser pass that
+  replaced the whole text could not see it). **The stored-query count rides on
+  `query-schema`**, so entering Query mode makes exactly the requests it made
+  before; the list is fetched only when opened. And **the saved-query id is
+  checked twice** -- the request model's pattern and `_path` in the store,
+  which also covers get and delete, whose id comes from the URL where `\` is a
+  separator on Windows.
+
+  Two browser findings. `.query-pinned` gets `editing` and a 70% cap while the
+  editor is open: at 40% the action row was clipped into the block's own
+  scroll area once a note was shown, and a click on *Run* landed on the list
+  underneath. And *Insert prefixes* skips rdflib 7's 25 default bindings
+  unless the text uses them -- the schema carries a graph's bindings as they
+  are, and a file declaring 5 prefixes was offered 30.
 
 - **`owl:imports` resolve local first, into an opt-in merged view**
   (2026-09-27, spec `external-access` Stage 2, backlog X-5, decision D-068).

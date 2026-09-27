@@ -2872,6 +2872,127 @@ button.legend-row:hover {
   text-decoration: underline;
 }
 
+/* --- SPARQL as text (sparql-text-and-query-files) ---------------------- */
+
+/* The word "text" beside a saved text query, and a stored query's form. A
+   word rather than a colour, so it says the same thing to everyone. */
+.saved-mode {
+  flex: none;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+
+.embedded-toggle {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.sparql-preview-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.sparql-preview-actions button {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.sparql-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* While the editor is open the pinned block holds the notice, the name, a
+   note, the textarea and its action row, and the builder's 40% cap clipped
+   the action row into the block's own scroll area. Measured in headless
+   Chrome at 1600x1000 with an embedded SHACL query open: Run sat at y=784,
+   below the clip, and a click there landed on the list underneath. The
+   builder's toolbar is hidden while editing, so the room it frees is given
+   to the editor. */
+.query-pinned.editing {
+  max-height: 70%;
+}
+
+.sparql-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 8em;
+  resize: vertical;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  tab-size: 2;
+}
+
+.sparql-textarea[readonly] {
+  color: var(--text-dim);
+}
+
+.sparql-editor-name {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.fork-notice {
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid var(--accent-soft);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.fork-notice .link-btn {
+  font-size: 12px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+/* The builder while the query is text: still visible, so the user can see
+   what they forked from, but disabled as a group and saying why. A fieldset
+   because `disabled` on it reaches every control inside, including the ones
+   the chip menus render, without a flag threaded through each component. */
+.builder-dimmed {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Everything but the label. Disabled controls are exempt from the contrast
+   minimum; the sentence saying why they are disabled is not. */
+.builder-dimmed > :not(legend) {
+  opacity: 0.55;
+}
+
+.builder-dimmed-label {
+  padding: 0;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
 /* --- guided query start, next steps, plain English -------------------- */
 
 .query-start section {

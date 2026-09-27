@@ -17,6 +17,19 @@ BASIC IDEA
     declared on a broad ancestor (as FIBO does) is offered on the specific
     subclass the user actually picked.
 
+    Beside the builder state sits a text query (spec sparql-text-and-query-
+    files, D-071). While one is set, the query is text: graph clicks and
+    search picks no longer change anything, and the builder state is left
+    exactly as it was. That is the whole mechanism of "Back to the visual
+    version" -- nothing restores the builder, because nothing touched it; the
+    state a query forked from is only written back when a saved text query is
+    reopened, and then it is the saved state. There is no SPARQL parser, so
+    text never flows back into the builder (D-008).
+
+    The live text is held in a ref, not in state. Typing re-renders the editor
+    and nothing else: App, the graph and the results table are not rendered
+    per keystroke. State changes only when a text query starts or ends.
+
 INPUTS / INPUT SOURCES
     - ontologyId: which ontology to build against.
     - active: whether Query mode is on (the schema is only fetched then).
@@ -27,8 +40,8 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - A bag of state and callbacks consumed by App / GraphView / QueryPanel:
-      schema, current state, live sparql, candidate highlighting, and the
-      builder actions.
+      schema, current state, live sparql, candidate highlighting, the builder
+      actions, and the text query with its start / end actions.
     - Also exports pure helpers: makeAncestorResolver, linkOptionsBetween.
 ================================================================================
 */
@@ -150,6 +163,32 @@ export function linkOptionsBetween(
   );
 }
 
+/**
+ * A query being written as text. What it was started from decides what the
+ * editor offers: a fork has a visual version to go back to, a query from
+ * nothing, a file or the ontology itself does not.
+ */
+export interface TextQuery {
+  /** The builder state to go back to, or null when there is none. */
+  forkedFrom: QueryState | null;
+  /** Shown above the editor: a file's or an embedded query's name. */
+  name: string | null;
+  /** The text as last opened or saved, so leaving can tell whether work is lost. */
+  baseline: string;
+  /** Set for an embedded query that cannot run here: the editor is read-only
+   *  and Run is disabled with this sentence as its reason. */
+  runBlocked: string | null;
+  /** A one-line note shown above the editor, e.g. about $this. */
+  note: string | null;
+  /** Bumped for each new text query, so the editor starts afresh; a fork
+   *  keeps the number, so the editor the user is typing in is not replaced. */
+  session: number;
+  /** The saved query that was open behind this one. The builder still holds
+   *  its state, so leaving puts it back rather than leaving an Update that
+   *  would overwrite some other entry. */
+  resume: { id: string; name: string } | null;
+}
+
 /** The hook itself: owns the builder state and exposes state + actions. */
 export function useQueryBuilder(ontologyId: string | null, active: boolean, imports = false) {
   const [schema, setSchema] = useState<QuerySchema | null>(null);      // class-level schema
@@ -158,6 +197,13 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean, impo
   const [state, setState] = useState<QueryState>(emptyQueryState);     // the query being built
   const [hint, setHint] = useState<string | null>(null);               // transient user guidance
   const [openQuery, setOpenQuery] = useState<{ id: string; name: string } | null>(null); // saved query being edited
+  const [textQuery, setTextQuery] = useState<TextQuery | null>(null);  // set while the query is text
+  const textRef = useRef("");                        // the live text; a ref so typing renders nothing here
+  const textQueryRef = useRef(textQuery);            // read by addNode without re-binding it
+  textQueryRef.current = textQuery;
+  const openQueryRef = useRef(openQuery);
+  openQueryRef.current = openQuery;
+  const sessionRef = useRef(0);
   const requestedFor = useRef<string | null>(null);  // "ontology|imports" whose schema we already fetched
   // A ref mirror of state so async callbacks read the latest without re-binding.
   const stateRef = useRef(state);
@@ -170,6 +216,7 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean, impo
     setSchemaError(null);
     setHint(null);
     setOpenQuery(null);
+    setTextQuery(null);
     requestedFor.current = null;
   }, [ontologyId]);
 
@@ -337,7 +384,9 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean, impo
 
   const addNode = useCallback(
     async (nodeIri: string) => {
-      if (!ontologyId || !schema) return;
+      // A text query is not built by clicking: the graph stays explorable,
+      // but nothing it does reaches the text or the builder behind it.
+      if (!ontologyId || !schema || textQueryRef.current) return;
       setHint(null);
       let info: QueryNodeInfo;
       try {
@@ -490,6 +539,97 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean, impo
     setState({ ...emptyQueryState(), ...next });
     setOpenQuery(opened);
     setHint(null);
+    setTextQuery(null);
+  }, []);
+
+  /**
+   * The first change to the builder's text: the query becomes text. The
+   * session is kept, because the editor already holds what was typed.
+   */
+  const forkToText = useCallback((text: string, baseline: string) => {
+    textRef.current = text;
+    setTextQuery({
+      forkedFrom: stateRef.current,
+      name: null,
+      baseline,
+      runBlocked: null,
+      note: null,
+      session: sessionRef.current,
+      // A fork keeps the open saved query: it is the same query, now text,
+      // and Update stores it that way with the state to go back to.
+      resume: openQueryRef.current,
+    });
+  }, []);
+
+  /**
+   * A new text query: from nothing, a file, the ontology, or a saved text
+   * query. `forkedFrom`, when given, becomes the builder state only on the
+   * way back, never now.
+   */
+  const openTextQuery = useCallback(
+    (
+      text: string,
+      options: Partial<Pick<TextQuery, "forkedFrom" | "name" | "runBlocked" | "note">> & {
+        /** The saved text query being opened, if it is one. */
+        opened?: { id: string; name: string } | null;
+      } = {},
+    ) => {
+      textRef.current = text;
+      sessionRef.current += 1;
+      // From one text query to another, the query to resume is still the one
+      // behind the first: that is whose state the builder is holding.
+      const resume = textQueryRef.current ? textQueryRef.current.resume : openQueryRef.current;
+      setOpenQuery(options.opened ?? null);
+      setTextQuery({
+        forkedFrom: options.forkedFrom ?? null,
+        name: options.name ?? null,
+        baseline: text,
+        runBlocked: options.runBlocked ?? null,
+        note: options.note ?? null,
+        session: sessionRef.current,
+        resume,
+      });
+    },
+    [],
+  );
+
+  /** The editor reports each keystroke here; nothing renders. */
+  const setText = useCallback((text: string) => {
+    textRef.current = text;
+  }, []);
+
+  /**
+   * After a save, the saved text is what leaving without loss means. The text
+   * that was sent, not the live one: anything typed while the request was in
+   * flight never reached the server and must still count as unsaved.
+   */
+  const markTextSaved = useCallback((saved: string) => {
+    setTextQuery((prev) => (prev ? { ...prev, baseline: saved } : prev));
+  }, []);
+
+  /**
+   * Leave text mode. With a visual version to go back to, the builder shows
+   * it; for a fork made in this session that is the untouched state already,
+   * and for a saved text query it is the state stored with it. Without one,
+   * the builder is left as it was, and so is the saved query behind it.
+   */
+  const leaveText = useCallback(() => {
+    const current = textQueryRef.current;
+    if (!current) return;
+    if (!current.forkedFrom) setOpenQuery(current.resume);
+    // Identity, not equality: a fork from this session holds the builder's own
+    // state object, and handing back a copy would re-run everything keyed on it.
+    else if (current.forkedFrom !== stateRef.current) {
+      setState({ ...emptyQueryState(), ...current.forkedFrom });
+    }
+    textRef.current = "";
+    setTextQuery(null);
+  }, []);
+
+  /** Whether leaving now would lose typed text. */
+  const textIsDirty = useCallback(() => {
+    const current = textQueryRef.current;
+    return !!current && textRef.current !== current.baseline;
   }, []);
 
   // Everything the graph and the panel need, in one object.
@@ -517,5 +657,16 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean, impo
     openQuery,
     setOpenQuery,
     loadState,
+    textQuery,
+    // The editor's identity: the session a fork from here would keep, so the
+    // editor open on the builder's text is the same one after the fork.
+    editorSession: textQuery ? textQuery.session : sessionRef.current,
+    textRef,
+    forkToText,
+    openTextQuery,
+    setText,
+    markTextSaved,
+    leaveText,
+    textIsDirty,
   };
 }

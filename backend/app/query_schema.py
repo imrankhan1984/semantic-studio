@@ -29,8 +29,8 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - build_query_schema -> a JSON-ready dict with keys: classes, links,
-      superClasses, dataProperties, namespaces, truncated. Consumed by
-      frontend/src/sparql/useQueryBuilder.ts.
+      superClasses, dataProperties, namespaces, truncated, embeddedQueryCount.
+      Consumed by frontend/src/sparql/useQueryBuilder.ts.
     - describe_query_node -> how a clicked node maps to a steppable class (the
       class itself, or the types of an individual, best-shared type first).
 
@@ -53,6 +53,7 @@ from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 # Shared label/prefix helpers keep class and predicate labels consistent with
 # the graph view; subclass_parents is the one asserted subClassOf pass, shared
 # with the hierarchy view so both read the class hierarchy identically.
+from .embedded_queries import count_embedded_queries
 from .graph_builder import pick_label, prefixed, subclass_parents
 
 # Meta-classes: the RDF/OWL vocabulary terms themselves. These describe the
@@ -499,6 +500,12 @@ def build_query_schema(graph: Graph) -> dict:
         # for their own terms, and `PREFIX : <...>` / `:Term` is valid SPARQL.
         "namespaces": {prefix: str(ns) for prefix, ns in graph.namespaces()},
         "truncated": truncated,
+        # How many queries the file stores in itself (sh:select, sp:text, ...).
+        # Carried here rather than fetched by the panel, because Query mode
+        # already asks for the schema and a second request on entry would
+        # change what the builder costs for every user, including the ones
+        # whose files hold no queries at all.
+        "embeddedQueryCount": count_embedded_queries(graph),
     }
 
 
