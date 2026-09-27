@@ -86,7 +86,7 @@ export default function NetworkApprovalDialog({ requests, onAnswer }: Props) {
       <div className="modal-backdrop approval-backdrop" aria-hidden="true" onClick={decline} />
       <div
         ref={panelRef}
-        className="approval-dialog"
+        className={texts.length > 0 ? "approval-dialog approval-dialog-text" : "approval-dialog"}
         role="dialog"
         aria-modal="true"
         aria-labelledby="approval-heading"
@@ -102,7 +102,7 @@ export default function NetworkApprovalDialog({ requests, onAnswer }: Props) {
           {texts.length === 0 ? (
             <dd>{first.sends}</dd>
           ) : (
-            <dd>
+            <dd className="approval-sent">
               {texts.map((r, i) => (
                 <textarea
                   key={i}

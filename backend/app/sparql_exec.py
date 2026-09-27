@@ -58,7 +58,7 @@ from typing import Optional
 # be read from the parse tree before translation reorders it.
 from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.plugins.sparql.algebra import translateQuery
-from rdflib.plugins.sparql.parser import parseQuery
+from rdflib.plugins.sparql.parser import expandUnicodeEscapes, parseQuery
 
 # Reuse the shared label/prefix helpers so URI cells carry a readable label.
 from . import sparql_service
@@ -139,12 +139,19 @@ def _prepare(query: str):
     """Parse ``query``, refuse anything but a SELECT, and plan its SERVICE
     blocks. Returns (prepared query, ServicePlan or None)."""
     try:
-        sparql_service.refuse_nested(query)
+        # The SERVICE blocks are read from the text rdflib actually parses:
+        # parseQuery expands \uXXXX escapes first, so scanning the raw query
+        # would let an escape show one thing in the approval dialog and mean
+        # another to the endpoint. Expanded once, here, while parseQuery still
+        # gets the raw query -- expanding twice would let an escaped backslash
+        # followed by "u0022" become a quote the scanner never saw.
+        text = expandUnicodeEscapes(query)
+        sparql_service.refuse_nested(text)
         parsed = parseQuery(query)
         # Before translation: it rewrites the tree in place, and pairing the
         # SERVICE text with the SERVICE nodes needs the tree in text order and
         # each term as written.
-        matched = sparql_service.match_blocks(query, parsed)
+        matched = sparql_service.match_blocks(text, parsed)
         prepared = translateQuery(parsed)
     except sparql_service.ServiceRefused as exc:
         raise QueryError(str(exc)) from exc

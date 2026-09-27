@@ -3252,6 +3252,18 @@ button.legend-row:hover {
   width: 620px;
 }
 
+/* A SERVICE question shows query text, which is the whole point of it, so the
+   dialog widens and the text takes the full row under its label. In the
+   480px dialog's value column a box showed 319px of a 476px line, and what
+   the user was approving scrolled out of sight (browser pass, 2026-09-27). */
+.approval-dialog-text {
+  width: 640px;
+}
+
+.approval-facts .approval-sent {
+  grid-column: 1 / -1;
+}
+
 .approval-heading,
 .network-heading {
   margin: 0 0 16px;

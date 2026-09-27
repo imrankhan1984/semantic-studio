@@ -111,6 +111,12 @@ CALL_TIMEOUT_SECONDS = 20.0
 
 SERVICE_NODE_NAME = "ServiceGraphPattern"
 
+# Descriptive, with a way to reach the project, because public endpoints
+# require it: query.wikidata.org answered the bare name "SemanticStudio" with
+# 403 and a pointer to its robot policy, and this one with 200. Measured
+# 2026-09-27 in the browser pass; no test against a local server can see it.
+USER_AGENT = "SemanticStudio/0.2 (https://github.com/imrankhan1984/semantic-studio)"
+
 # The key under which the handler sits in CUSTOM_EVALS. A test asserts it is
 # there, and removing it is the mutation AC-31 runs.
 HANDLER_KEY = "semantic_studio_service"
@@ -135,6 +141,23 @@ UNMATCHED_DETAIL = (
 NOT_PUBLIC_DETAIL = (
     "The SERVICE endpoint {endpoint} is not a public web address, so the query "
     "was not run. Semantic Studio only calls public http or https endpoints."
+)
+
+# At run time, after the name was looked up. The broker's own sentences are
+# about loading a file ("use the Local file tab"), which is advice a SERVICE
+# endpoint cannot take.
+ENDPOINT_NOT_PUBLIC_DETAIL = (
+    "The SERVICE endpoint {host} leads to an address that is not public, so "
+    "Semantic Studio did not call it. Only public SPARQL endpoints can be used "
+    "in SERVICE."
+)
+ENDPOINT_REDIRECT_DETAIL = (
+    "The SERVICE endpoint {host} redirected the query to an address Semantic "
+    "Studio will not call, so it was not sent there."
+)
+ENDPOINT_UNRESOLVABLE_DETAIL = (
+    "The SERVICE endpoint {host} could not be looked up, so Semantic Studio did "
+    "not call it. Check the endpoint address for a typo."
 )
 
 SERVICE_REASON = "Your query asks this site to answer part of it."
@@ -611,7 +634,7 @@ class ServiceRun:
                 headers={
                     "Accept": "application/sparql-results+json",
                     "Content-Type": "application/x-www-form-urlencoded",
-                    "User-Agent": "SemanticStudio",
+                    "User-Agent": USER_AGENT,
                 },
                 # The form field is the protocol's; its value is the approved
                 # text and nothing else.
@@ -632,9 +655,19 @@ class ServiceRun:
             # A redirect to a host nobody approved. Asking is not a failure,
             # SILENT or not; the question goes back to the user.
             raise
-        except (ServiceFailed, NetworkDecision, net_guard.BlockedAddress) as exc:
+        except (ServiceFailed, NetworkDecision) as exc:
             entry["error"] = str(exc)
             return _Outcome([], exc)
+        except net_guard.BlockedAddress as exc:
+            # Told apart by the broker's sentence, the only thing that says
+            # which gate refused: the endpoint's own name, or a redirect hop.
+            detail = {
+                net_guard.UNRESOLVABLE_HOST_DETAIL: ENDPOINT_UNRESOLVABLE_DETAIL,
+                net_guard.BLOCKED_REDIRECT_DETAIL: ENDPOINT_REDIRECT_DETAIL,
+            }.get(str(exc), ENDPOINT_NOT_PUBLIC_DETAIL)
+            error = ServiceFailed(detail.format(host=block.host))
+            entry["error"] = str(error)
+            return _Outcome([], error)
         except TooLarge:
             error = ServiceFailed(
                 f"{block.host} sent more than {MAX_BYTES_PER_CALL // (1024 * 1024)} MB."

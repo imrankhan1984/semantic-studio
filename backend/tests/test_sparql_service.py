@@ -50,6 +50,9 @@ from app.network_broker import FetchFailed, broker
 from app.sparql_service import (
     HANDLER_KEY,
     MAX_SERVICE_BLOCKS,
+    ENDPOINT_NOT_PUBLIC_DETAIL,
+    ENDPOINT_REDIRECT_DETAIL,
+    ENDPOINT_UNRESOLVABLE_DETAIL,
     NESTED_DETAIL,
     NOT_PUBLIC_DETAIL,
     TOO_MANY_BLOCKS_DETAIL,
@@ -236,6 +239,57 @@ def test_non_public_and_non_http_endpoints_are_refused_by_name(ontology_id, http
     assert server.requests == []
 
 
+def test_a_name_resolving_inside_gets_the_endpoint_sentence(ontology_id, http_server, loopback_is_public):
+    """A public-looking name that resolves to an internal address is refused
+    when the call is made, with zero requests, in words about endpoints --
+    not the URL fetch's advice to use the Local file tab."""
+    import ipaddress
+
+    server = http_server(_json_route(_bindings_for_every_item()))
+    port = server.server_address[1]
+    loopback_is_public["inside.example.org"] = [ipaddress.ip_address("127.0.0.2")]
+    broker.policy.grant("sparql:service", "inside.example.org", "allow", remember=True)
+    url = f"http://inside.example.org:{port}/sparql"
+    response = _run(ontology_id, f"SELECT * WHERE {{ SERVICE <{url}> {{ ?s ?p ?o }} }}")
+    assert server.requests == []
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail == ENDPOINT_NOT_PUBLIC_DETAIL.format(host="inside.example.org")
+    assert "Local file" not in detail
+
+    # SILENT carries on, and the report says why in the same words.
+    silent = _run(ontology_id, f"SELECT * WHERE {{ SERVICE SILENT <{url}> {{ ?s ?p ?o }} }}").json()
+    assert silent["services"][0]["error"] == detail
+
+
+def test_a_refused_redirect_says_it_was_the_redirect(ontology_id, http_server, loopback_is_public):
+    """The endpoint is public; the hop it sent the query to is not. Saying the
+    endpoint is not public would be false and hide the one actionable fact."""
+    server = http_server(lambda _path: (302, {"Location": "file:///etc/passwd"}, b""))
+    url = f"http://127.0.0.1:{server.server_address[1]}/sparql"
+    _allow()
+    response = _run(ontology_id, f"SELECT * WHERE {{ SERVICE <{url}> {{ ?s ?p ?o }} }}")
+    assert response.status_code == 400
+    assert response.json()["detail"] == ENDPOINT_REDIRECT_DETAIL.format(host="127.0.0.1")
+    assert len(server.requests) == 1
+
+
+def test_an_unresolvable_name_gets_the_endpoint_sentence(ontology_id, loopback_is_public, monkeypatch):
+    from app import net_guard
+
+    def unresolvable(_host):
+        raise net_guard.BlockedAddress(net_guard.UNRESOLVABLE_HOST_DETAIL)
+
+    monkeypatch.setattr(net_guard, "resolve_host", unresolvable)
+    broker.policy.grant("sparql:service", "nowhere.example.org", "allow", remember=True)
+    response = _run(
+        ontology_id,
+        "SELECT * WHERE { SERVICE <https://nowhere.example.org/sparql> { ?s ?p ?o } }",
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == ENDPOINT_UNRESOLVABLE_DETAIL.format(host="nowhere.example.org")
+
+
 def test_nested_service_is_refused_with_a_sentence(ontology_id, endpoint):
     url, server = endpoint
     query = f"SELECT * WHERE {{ SERVICE <{url}> {{ SERVICE <{url}> {{ ?s ?p ?o }} }} }}"
@@ -261,6 +315,34 @@ def test_the_word_service_in_strings_and_comments_is_not_a_block(endpoint):
         "PREFIX ex: <http://example.org/>\nSELECT * WHERE {\n"
         '  ?s ex:name ?n FILTER(?n != "SERVICE <http://x.org/> { }")\n}'
     )
+
+
+def _esc(hexcode: str) -> str:
+    """A SPARQL backslash-u escape, built so the source holds no such sequence
+    for an editor or tool to decode on the way in."""
+    return chr(92) + "u" + hexcode
+
+
+def test_unicode_escapes_are_shown_as_the_endpoint_will_read_them(endpoint):
+    r"""rdflib expands \uXXXX before parsing; the approved text must be that
+    expanded text, or an escape could hide what a shared query really asks."""
+    url, _server = endpoint
+    query = f'SELECT * WHERE {{ SERVICE <{url}> {{ ?s ?p "{_esc("0041")}{_esc("0042")}" }} }}'
+    assert _esc("0041") in query
+    _prepared, plan = sparql_exec._prepare(query)
+    assert plan.blocks[0].text == 'SELECT * WHERE {\n  ?s ?p "AB"\n}'
+
+
+def test_escapes_cannot_move_a_block_boundary(endpoint):
+    r"""An escaped quote the raw text reads as data and the parser reads as a
+    string delimiter: scanned raw, the two disagree about where the block's
+    text ends. Scanned expanded, they agree, and what is shown is what the
+    endpoint receives."""
+    url, _server = endpoint
+    quote = _esc("0022")
+    query = f"SELECT * WHERE {{ SERVICE <{url}> {{ ?s ?p {quote}}}{quote} }} }}"
+    _prepared, plan = sparql_exec._prepare(query)
+    assert plan.blocks[0].text == 'SELECT * WHERE {\n  ?s ?p "}"\n}'
 
 
 def test_two_blocks_each_send_their_own_text(endpoint):
@@ -333,6 +415,16 @@ def test_request_carries_exactly_the_approved_text(ontology_id, endpoint):
     by_subject = {row[0]["value"]: row for row in rows}
     assert by_subject[MARKER_IRI][1]["value"] == MARKER_LITERAL
     assert by_subject[MARKER_IRI][2]["value"].startswith(REMOTE_ONLY)
+
+
+def test_calls_identify_the_application(ontology_id, endpoint):
+    """Public endpoints refuse an anonymous client; Wikidata's policy wants a
+    descriptive User-Agent with contact details."""
+    url, server = endpoint
+    _allow()
+    assert _run(ontology_id, _join_query(url)).status_code == 200
+    assert server.user_agents == [sparql_service.USER_AGENT]
+    assert "github.com" in sparql_service.USER_AGENT
 
 
 def test_handler_is_installed_at_import():
