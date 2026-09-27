@@ -186,7 +186,7 @@ describe("locating a target in the source", () => {
     expect(absent).toContain("Original and Formatted Turtle");
   });
 
-  it("locates a target within budget", () => {
+  it("[budget] locates a target within budget", () => {
     // Section 10, row 3. An absolute millisecond figure, which this project
     // otherwise avoids — and it is defensible here because it times a string
     // scan over a fixed array, with no DOM construction anywhere in the

@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:ci": "vitest run -t \"^(?!.*[[]budget])\"",
+    "test:budgets": "vitest run -t \"[[]budget]\""
   },
   "dependencies": {
     "@sigma/export-image": "^3.0.0",

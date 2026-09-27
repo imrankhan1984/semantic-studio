@@ -46,11 +46,14 @@ description: Checks the architecture document against the current code and repor
 
 ## Instructions
 
-Compare each block above with the matching part of `architecture.md`:
+Compare each block above with the matching part of `architecture.md`, which
+since 2026-09-28 describes the current state only. The decision log moved to
+`decisions.md` in the same specifications folder.
 
 | Block | Compare against |
 | --- | --- |
-| Routes and caps | Section 4, the interface table |
+| Routes | Section 4, the route table: every route in the code is in it, and nothing in it is gone from the code |
+| Limits and caps | Section 4, the caps: each constant's value as the document states it |
 | Test counts | Section 6 |
 | Raw HTML | Section 5, trust boundary 3 |
 | Dependencies | Section 5, and the stack table in Section 1 |
@@ -67,9 +70,14 @@ Report only differences. For each one, say which of these it is:
 
 - **A documentation gap.** The code was always like this and the document is
   wrong. Correct the document and say so.
-- **A real architectural change.** Something moved. It needs a numbered entry
-  in the decision log in Section 7, and the person who made the change should
-  say why.
+- **A real architectural change.** Something moved. Search `decisions.md` first:
+  a decision may already cover it, in which case cite its number and it is a
+  documentation gap after all. If none does, it needs a new numbered entry
+  appended to `decisions.md`, and the person who made the change should say
+  why.
+
+Record the result of the check as a row in `decisions.md`, Appendix A, where
+the past drift-check results are kept.
 
 Do not edit `architecture.md` without telling Imran what changed and why.
 Decisions already written are never edited; a reversal is a new entry that

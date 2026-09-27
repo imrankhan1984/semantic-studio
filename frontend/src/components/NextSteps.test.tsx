@@ -115,7 +115,7 @@ describe("NextSteps closed cost", () => {
     expect(document.querySelectorAll("button")).toHaveLength(1);
   });
 
-  it("closed render cost does not scale with option count", () => {
+  it("[budget] closed render cost does not scale with option count", () => {
     // AC-5. A ratio rather than a threshold, for the reason in D-021.
     //
     // Ten times the options must cost almost nothing extra while closed. The

@@ -527,7 +527,7 @@ describe("HomeScreen render budget", () => {
     expect(catalogueRenders.count).toBe(before);
   });
 
-  it("card grid cost per card does not grow with the library", () => {
+  it("[budget] card grid cost per card does not grow with the library", () => {
     // AC-11, and **the specification's Section 10 row 3 asks for something this
     // build does not do**. It sets 50 cards at no more than 3x the cost of 5.
     // Fifty cards is ten times the cards, so a 3x ratio is a claim that the
@@ -562,10 +562,32 @@ describe("HomeScreen render budget", () => {
     measure(5); // discarded: module init and the first JIT passes land here
     measure(50); // — the trap recorded in D-018 and met again in D-021
     // Medians rather than single shots, for D-024's reason: one sample measures
-    // whatever else happened to run during it.
-    const median = (runs: number[]) => runs.sort((a, b) => a - b)[1];
-    const five = median([measure(5), measure(5), measure(5)]) / 5;
-    const fifty = median([measure(50), measure(50), measure(50)]) / 50;
+    // whatever else happened to run during it. Seven, not three, since
+    // ci-and-housekeeping: a median of three still failed at 1.23 on a loaded
+    // machine, because one slow sample of three is a third of the vote. The
+    // two sizes are interleaved so a burst of load lands on both rather than
+    // on whichever was being measured when it arrived. jsdom gives no hold
+    // on the collector, so unlike the backend budgets GC is left running.
+    //
+    // The 1.2 limit stands, because the spread does not justify moving it.
+    // Measured 2026-09-27, ten runs in a row with the backend suite running
+    // beside them: the ratio ran 0.75 to 0.93, the fastest and slowest of the
+    // seven samples at fifty cards sat 9 to 14 ms apart, and the median never
+    // moved enough to matter. The mutation this exists for still turns it red:
+    // a hidden three-node row per card per library entry, an O(n^2) the size
+    // of a small card element, measured 1.81 to 1.94 in five of five runs.
+    // A quadratic of bare empty spans measured 1.18 to 1.26 and failed two of
+    // four, so read this as catching a quadratic with real per-pair cost, the
+    // same caveat DetailPanel's ratio carries.
+    const median = (runs: number[]) => runs.sort((a, b) => a - b)[3];
+    const fives: number[] = [];
+    const fifties: number[] = [];
+    for (let i = 0; i < 7; i++) {
+      fives.push(measure(5));
+      fifties.push(measure(50));
+    }
+    const five = median(fives) / 5;
+    const fifty = median(fifties) / 50;
 
     expect(
       fifty / five,

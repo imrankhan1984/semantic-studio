@@ -178,7 +178,7 @@ describe("DetailPanel", () => {
     expect(links[0].getAttribute("title")).toContain(LONG_PREDICATE.value);
   });
 
-  it("panel cost scales roughly linearly with statement count", async () => {
+  it("[budget] panel cost scales roughly linearly with statement count", async () => {
     // AC-13. 500 is the largest panel the application can produce, because
     // node_details caps outgoing and incoming rows at 500 each. What matters is
     // not how many milliseconds that takes on one machine but that the cost

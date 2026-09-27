@@ -292,7 +292,7 @@ describe("suggestion budgets", () => {
     return graphOf(nodes);
   }
 
-  it("ranks forty thousand nodes within budget", () => {
+  it("[budget] ranks forty thousand nodes within budget", () => {
     // AC-13. 20 ms. The number matters because this runs on every graph load,
     // and the memoization test in ExploreStart.test.tsx is what stops it running
     // on every render.
@@ -309,7 +309,7 @@ describe("suggestion budgets", () => {
     expect(elapsed).toBeLessThan(20);
   });
 
-  it("describes contents within budget", () => {
+  it("[budget] describes contents within budget", () => {
     // AC-13. 1 ms over eleven kinds. Trivial, and asserted anyway: this runs in
     // the same render as the ranking.
     const graph = largeGraph();

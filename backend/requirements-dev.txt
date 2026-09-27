@@ -1,0 +1,23 @@
+# ==============================================================================
+# FILE: backend/requirements-dev.txt
+# ==============================================================================
+#
+# SUMMARY
+#     What the backend test suite needs on top of the runtime: the runtime
+#     itself, pytest, and PyYAML for test_deployment_binding.py, which reads
+#     docker-compose.yml. Both were needed long before they were written down.
+#
+# BASIC IDEA
+#     Test-only, so it never reaches the Docker image, which installs
+#     requirements.txt alone. Unpinned like the runtime list: until a release
+#     needs a reproducible build, CI meeting upstream breakage early is useful.
+#
+# INPUTS / INPUT SOURCES
+#     - requirements.txt, included whole.
+#
+# EXPECTED OUTPUT
+#     - An environment in which `python -m pytest tests` runs from backend/.
+# ==============================================================================
+-r requirements.txt
+pytest
+pyyaml
