@@ -40,6 +40,13 @@ BASIC IDEA
     finite; its name is fixed, never taken from the client. Export and
     duplicate copy it with the rest of the folder.
 
+    Every write of the file -- the browser's PUT, a rename moving an entry,
+    the prune on open -- increases its `generation`, which the server alone
+    sets. The browser compares it with its own last successful save, so a
+    response that read the file before that save cannot put an older
+    position back, whatever order the responses arrive in (PR #47
+    re-review).
+
 INPUTS / INPUT SOURCES
     - The data directory from the ontology store (SEMANTIC_STUDIO_DATA_DIR).
     - Templates in app/templates/.
@@ -55,6 +62,7 @@ EXPECTED OUTPUT
 
 from __future__ import annotations
 
+import copy
 import io
 import json
 import math
@@ -132,7 +140,7 @@ def _replace(tmp: Path, path: Path, attempts: int = 5) -> None:
 
 
 def empty_layout() -> dict:
-    return {"version": LAYOUT_VERSION, "positions": {}, "shown": None, "viewport": None}
+    return {"version": LAYOUT_VERSION, "generation": 0, "positions": {}, "shown": None, "viewport": None}
 
 
 def _finite(value) -> bool:
@@ -148,7 +156,9 @@ def validate_layout(data) -> dict:
     """A layout from the browser, checked and normalised, or ProjectError.
 
     {version: 1, positions: {iri: [x, y]}, shown: [iri, ...] | null,
-    viewport: {x, y, zoom} | null}. Nothing else is kept.
+    viewport: {x, y, zoom} | null}. Nothing else is kept. A `generation`
+    is kept when it is a whole number, which is how the file's own counter
+    is read back; one sent by the browser is replaced by write_layout.
     """
     if not isinstance(data, dict):
         raise ProjectError("A layout is an object with positions, shown and viewport.")
@@ -175,7 +185,16 @@ def validate_layout(data) -> dict:
         if not (isinstance(viewport, dict) and all(_finite(viewport.get(k)) for k in ("x", "y", "zoom"))):
             raise ProjectError("A layout's viewport is {x, y, zoom}, three finite numbers, or null.")
         viewport = {k: float(viewport[k]) for k in ("x", "y", "zoom")}
-    return {"version": LAYOUT_VERSION, "positions": clean, "shown": shown, "viewport": viewport}
+    generation = data.get("generation", 0)
+    if not (isinstance(generation, int) and not isinstance(generation, bool) and generation >= 0):
+        generation = 0
+    return {
+        "version": LAYOUT_VERSION,
+        "generation": generation,
+        "positions": clean,
+        "shown": shown,
+        "viewport": viewport,
+    }
 
 
 class ProjectError(ValueError):
@@ -280,6 +299,11 @@ class ProjectStore:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.trash = self.dir / TRASH_DIR
         self._lock = threading.Lock()
+        # Each layout as last read or written, by file. Opening a file just
+        # replaced costs about 130 ms on Windows while a scanner looks at it
+        # (measured when every write began reading the old generation), so
+        # a layout is read from disk once and served from here after that.
+        self._layouts: dict[Path, dict] = {}
 
     # --- identity ------------------------------------------------------------
 
@@ -320,17 +344,27 @@ class ProjectStore:
         layout (edited by hand, cut short) is treated as none rather than
         refusing to draw the canvas."""
         path = self.layout_path(pid, doc)
-        try:
-            return validate_layout(json.loads(path.read_text(encoding="utf-8")))
-        except (OSError, ValueError):
-            return empty_layout()
+        held = self._layouts.get(path)
+        if held is None:
+            try:
+                held = validate_layout(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                held = empty_layout()
+            self._layouts[path] = held
+        # A copy: callers change what they are given before writing it back.
+        return copy.deepcopy(held)
 
     def write_layout(self, pid: str, doc: str, layout: dict) -> dict:
+        """Validate and write, one generation after the file's own. The
+        caller holds the document's lock, so reading the old generation and
+        writing the new one cannot interleave with another write."""
         layout = validate_layout(layout)
+        layout["generation"] = self.read_layout(pid, doc)["generation"] + 1
         path = self.layout_path(pid, doc)
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(layout, ensure_ascii=False), encoding="utf-8")
         _replace(tmp, path)
+        self._layouts[path] = copy.deepcopy(layout)
         return layout
 
     # --- manifests -------------------------------------------------------------

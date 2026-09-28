@@ -772,6 +772,10 @@ export interface LanguageReport {
 // model: writing it moves no revision and makes nothing dirty.
 export interface CanvasLayout {
   version: 1;
+  // Increased by the server on every write of the file, and set by it
+  // alone: a response carrying an older one read the file before a save
+  // this browser has already seen succeed (PR #47 re-review).
+  generation: number;
   positions: Record<string, [number, number]>;
   // The chosen boxes past 300 (5.6); null draws everything.
   shown: string[] | null;

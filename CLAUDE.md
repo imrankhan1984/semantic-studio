@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 646 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 891 tests, vitest
+cd backend  && python -m pytest tests    # 648 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 893 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -275,6 +275,8 @@ leaves one behind.
 - The canvas view's cache is keyed on the imports view as well as the revision. [modeling canvas]
 - A position leaves the canvas's unsaved set only when its save has succeeded; `place()` marks it too. [lost drop point]
 - `projectStore.close()` awaits every registered flush; the canvas registers its layout save. [lost drop point]
+- The layout's `generation` is the server's alone; a response older than the last successful save gives no positions. [layout generation]
+- `ProjectStore` serves layouts from memory after the first read: opening a just-replaced file costs ~130 ms on Windows. [layout generation]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

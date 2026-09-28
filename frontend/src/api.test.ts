@@ -128,7 +128,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   getCanvas: () => api.getCanvas("prj-1", "model"),
   getLayout: () => api.getLayout("prj-1", "model"),
   putLayout: () =>
-    api.putLayout("prj-1", "model", { version: 1, positions: {}, shown: null, viewport: null }),
+    api.putLayout("prj-1", "model", { version: 1, generation: 0, positions: {}, shown: null, viewport: null }),
   // Not requests: the approval plumbing and the display language. Listed so
   // the export check holds.
   setApprovalHandler: async () => api.setApprovalHandler(null),

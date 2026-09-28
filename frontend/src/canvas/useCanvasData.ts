@@ -30,6 +30,16 @@ BASIC IDEA
     succeeded and the box has not moved again since. A failed save keeps
     everything pending and says so; the next move or flush tries again.
 
+    That alone still depended on the order responses arrive in: a refetch
+    could read the file just before the save wrote it, the save's answer
+    arrive first and settle the box, and the older refetch then arrive
+    without it (PR #47 re-review, 4 of 10 drops). So the file carries a
+    generation the server increases on every write, and this remembers the
+    generation of its last successful save: a response older than that
+    brings its boxes and lines, but none of its positions or shown set,
+    which the browser already knows better. A rename's move is a write
+    after the save, so a newer generation, and is taken as before.
+
     Positions of IRIs that are no longer drawn stay in the copy and in the
     file: undoing a delete then finds the box's old place. The server prunes
     them when the project is next opened.
@@ -88,6 +98,11 @@ export function useCanvasData(projectId: string, doc: ProjectDocName, revision: 
   // The save in flight, so flush() can wait for it and a second save waits
   // its turn rather than racing the first.
   const inFlight = useRef<Promise<void> | null>(null);
+  // The generation of this browser's last successful write of the layout.
+  const savedGeneration = useRef(0);
+  const settle = (generation: number | undefined) => {
+    if (typeof generation === "number") savedGeneration.current = Math.max(savedGeneration.current, generation);
+  };
 
   const save = useCallback((): Promise<void> => {
     if (timer.current !== null) window.clearTimeout(timer.current);
@@ -102,7 +117,7 @@ export function useCanvasData(projectId: string, doc: ProjectDocName, revision: 
       const sentIris = [...unsaved.current];
       const sentViewport = viewportUnsaved.current;
       try {
-        await putLayout(projectId, doc, sent);
+        settle((await putLayout(projectId, doc, sent))?.generation);
       } catch (e) {
         setSaveError(`The canvas layout could not be saved: ${message(e)} Your boxes stay where they are.`);
         return;
@@ -147,6 +162,7 @@ export function useCanvasData(projectId: string, doc: ProjectDocName, revision: 
     layout.current = null;
     unsaved.current = new Set();
     viewportUnsaved.current = false;
+    savedGeneration.current = 0;
   }, [projectId, doc]);
 
   useEffect(() => {
@@ -156,8 +172,13 @@ export function useCanvasData(projectId: string, doc: ProjectDocName, revision: 
       .then((fetched) => {
         if (cancelled) return;
         const local = layout.current;
-        const current: CanvasLayout = { ...fetched.layout, positions: { ...fetched.layout.positions } };
-        if (local) {
+        // Read before a save this browser has seen succeed: its boxes and
+        // lines are current, its positions are not.
+        const stale = local !== null && fetched.layout.generation < savedGeneration.current;
+        const current: CanvasLayout = stale
+          ? { ...local, positions: { ...local.positions } }
+          : { ...fetched.layout, positions: { ...fetched.layout.positions } };
+        if (local && !stale) {
           for (const iri of unsaved.current) {
             if (local.positions[iri]) current.positions[iri] = local.positions[iri];
           }
@@ -215,7 +236,7 @@ export function useCanvasData(projectId: string, doc: ProjectDocName, revision: 
       const before = current.shown;
       try {
         await flush();
-        await putLayout(projectId, doc, { ...current, positions: { ...current.positions }, shown: next });
+        settle((await putLayout(projectId, doc, { ...current, positions: { ...current.positions }, shown: next }))?.generation);
       } catch (e) {
         current.shown = before;
         setShownState(before);

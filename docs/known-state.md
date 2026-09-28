@@ -1062,3 +1062,31 @@ EXPECTED OUTPUT
   runs; Tidy up is `aria-disabled`. `renderCanvas` in the tests waits for the
   boxes, not only the canvas, which is what failed about 1 run in 6 on CI.
 
+- **The layout generation: order-proof drop points** (2026-09-28, the
+  re-review of PR #47). The unsaved-until-success rule above still lost 4 of
+  10 drops in Chrome, because it depended on the order responses arrived in:
+  the create's refetch read the layout on the server just before the drop's
+  save wrote it, the save's answer arrived first and settled the box, and the
+  older refetch then arrived without its position, so the box was laid out
+  again and that was saved.
+
+  **The layout file carries a `generation`**, which the server increases on
+  every write (the browser's PUT, a rename moving an entry and its undo and
+  redo, the prune on open) and which the browser cannot set. PUT layout and
+  GET canvas both return it. The canvas remembers the generation of its last
+  successful save, and a response older than that brings its boxes and
+  lines but none of its positions or shown set. A rename's move is a later
+  write, so it is still taken. `ModelCanvas.test.tsx` forces that exact
+  order (GET reads, PUT resolves, GET resolves); it fails without the check.
+  Chrome after the fix: 10 of 10 drops kept, twice, and the screen and the
+  file agree for all ten.
+
+  **Layouts are served from memory after the first read.** Reading the old
+  generation before each write made a 300-position PUT take about 95 ms
+  against its 20 ms budget. The cost was all in opening the file: about
+  130 ms on Windows to open a file just replaced, while a scanner looks at
+  it (profiled; no retries fired). `ProjectStore` keeps each layout as last
+  read or written and hands out copies, so the file is read once per
+  document: 1.2 ms per write again, and GET canvas no longer pays for a
+  fresh file either.
+

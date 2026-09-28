@@ -224,7 +224,7 @@ def test_a_layout_round_trips_and_never_changes_the_model(pid):
     after = state(pid)
     assert after == before, "no revision, no dirty flag, no undo step"
     got = client.get(f"/api/projects/{pid}/documents/model/layout").json()
-    assert got == {"version": 1, "positions": {EX + "Invoice": [12.5, -40.0]}, "shown": None,
+    assert got == {"version": 1, "generation": 1, "positions": {EX + "Invoice": [12.5, -40.0]}, "shown": None,
                    "viewport": {"x": 1.0, "y": 2.0, "zoom": 0.8}}
     assert canvas(pid)["layout"] == got
     # On disk, beside the document, under a fixed name.
@@ -421,3 +421,26 @@ shop:age a owl:DatatypeProperty ; rdfs:label "age"@en ; rdfs:domain foaf:Person 
     assert [a["label"] for a in agent["attributes"]] == ["nick"]
     # foaf:Person is not drawn, so its attribute is listed.
     assert {(u["label"], u["missing"]) for u in view["undrawn"]} == {("age", "outside")}
+
+
+# --- PR #47 re-review: the layout's generation ---------------------------------------------
+
+
+def test_every_write_of_the_layout_increases_its_generation_which_the_server_alone_sets(pid):
+    first = put_layout(pid, {"positions": {EX + "Invoice": [1, 1]}}).json()
+    assert first["generation"] == 1
+    # A generation sent by the browser is not believed.
+    second = put_layout(pid, {"generation": 99, "positions": {EX + "Invoice": [2, 2]}}).json()
+    assert second["generation"] == 2
+    # A rename moving the entry is a write too, and so are its undo and redo.
+    run(pid, "RenameIri", old="shop:Invoice", new="shop:Bill")
+    assert canvas(pid)["layout"]["generation"] == 3
+    client.post(f"/api/projects/{pid}/documents/model/undo")
+    assert client.get(f"/api/projects/{pid}/documents/model/layout").json()["generation"] == 4
+
+
+def test_the_canvas_answers_with_the_generation_it_read(pid):
+    assert canvas(pid)["layout"]["generation"] == 0
+    put_layout(pid, {"positions": {EX + "Invoice": [1, 1]}})
+    assert canvas(pid)["layout"]["generation"] == 1
+

@@ -32,7 +32,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import type { ComponentType, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { projectStore } from "../state/projectStore";
-import type { CanvasView } from "../types";
+import type { CanvasLayout, CanvasView } from "../types";
 
 const { openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails } = vi.hoisted(() => ({
   openProject: vi.fn(),
@@ -119,7 +119,7 @@ function viewOf(changes: Partial<CanvasView> = {}): CanvasView {
     revision: 2,
     total: 4,
     limited: false,
-    layout: { version: 1, positions: { [EX + "Document"]: [0, 0] }, shown: null, viewport: null },
+    layout: { version: 1, generation: 0, positions: { [EX + "Document"]: [0, 0] }, shown: null, viewport: null },
     nodes: [
       { iri: EX + "Document", kind: "class", label: "Document", fallback: false, attributes: [] },
       {
@@ -195,7 +195,9 @@ beforeEach(async () => {
     recovery: { available: false, draftTime: null },
   });
   await projectStore.open(PID);
-  putLayout.mockImplementation(async (_p, _d, layout) => layout);
+  // As the server does: every write one generation on.
+  let generation = 0;
+  putLayout.mockImplementation(async (_p, _d, layout) => ({ ...layout, generation: ++generation }));
   closeProject.mockResolvedValue({ closed: PID });
   getNodeDetails.mockResolvedValue({ iri: EX + "Invoice", kind: "class" });
   runCommand.mockImplementation(async (_p, _d, command: string) => ({ revision: 3, label: command, state: STATE }));
@@ -590,6 +592,7 @@ describe("found in the browser pass", () => {
       viewOf({
         layout: {
           version: 1,
+          generation: 0,
           shown: null,
           viewport: null,
           positions: {
@@ -626,13 +629,15 @@ describe("found in the code review of the branch", () => {
   it("a rename's moved entry is taken from the server, not overwritten by a stale copy", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const placed = { [EX + "Document"]: [0, 0], [EX + "Invoice"]: [5, 5], [EX + "Paid"]: [0, 300], [EX + "Status"]: [0, 500], "http://xmlns.com/foaf/0.1/Agent": [400, 0] } as Record<string, [number, number]>;
-    const { rerender } = await renderCanvas(viewOf({ layout: { version: 1, positions: placed, shown: null, viewport: null } }));
+    const { rerender } = await renderCanvas(viewOf({ layout: { version: 1, generation: 0, positions: placed, shown: null, viewport: null } }));
     const renamed = viewOf({
       revision: 3,
       nodes: viewOf().nodes.map((n) => (n.iri === EX + "Invoice" ? { ...n, iri: EX + "Bill", label: "Bill" } : n)),
       edges: [],
       layout: {
         version: 1,
+        // The rename's write: newer than any save this test made.
+        generation: 99,
         positions: { ...Object.fromEntries(Object.entries(placed).filter(([k]) => k !== EX + "Invoice")), [EX + "Bill"]: [5, 5] },
         shown: null,
         viewport: null,
@@ -688,7 +693,7 @@ describe("found in the code review of the branch", () => {
 
   it("an emptied chosen set stays empty, and a selected property is not shown as a box", async () => {
     await renderCanvas(
-      viewOf({ limited: true, nodes: [], edges: [], layout: { version: 1, positions: {}, shown: [], viewport: null } }),
+      viewOf({ limited: true, nodes: [], edges: [], layout: { version: 1, generation: 0, positions: {}, shown: [], viewport: null } }),
       EX + "Invoice",
     );
     await act(async () => undefined);
@@ -884,7 +889,7 @@ describe("PR #47 review", () => {
   });
 
   it("7: a failed Show on canvas changes nothing, rejects nothing, and says so", async () => {
-    await renderCanvas(viewOf({ limited: true, nodes: [], edges: [], layout: { version: 1, positions: {}, shown: [], viewport: null } }));
+    await renderCanvas(viewOf({ limited: true, nodes: [], edges: [], layout: { version: 1, generation: 0, positions: {}, shown: [], viewport: null } }));
     const set = onCanvasSet.mock.calls[onCanvasSet.mock.calls.length - 1][0];
     putLayout.mockRejectedValueOnce(new Error("Refused."));
     getCanvas.mockClear();
@@ -917,5 +922,74 @@ describe("PR #47 review", () => {
     await renderCanvas(viewOf({ limited: true, nodes: [], edges: [] }), EX + "Paid");
     await waitFor(() => expect(putLayout).toHaveBeenCalled());
     expect(putLayout.mock.calls[0][2].shown).toEqual([EX + "Paid"]);
+  });
+});
+
+describe("PR #47 re-review: responses in any order", () => {
+  function later<T>() {
+    let resolve: (value: T) => void = () => {};
+    const promise = new Promise<T>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
+  it("a refetch that read the layout before the drop's save cannot move the new box", async () => {
+    runCommand.mockResolvedValueOnce({ revision: 3, label: "Created class Receipt", state: STATE, created: EX + "Receipt" });
+    const { rerender } = await renderCanvas();
+    // The next GET and PUT are held, to be answered in the order that lost
+    // the drop point in Chrome.
+    const get = later<CanvasView>();
+    const put = later<CanvasLayout>();
+    getCanvas.mockImplementationOnce(() => get.promise);
+    putLayout.mockImplementationOnce(() => put.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Class" }));
+    const field = screen.getByRole("textbox", { name: "Name of the new class" });
+    fireEvent.change(field, { target: { value: "Receipt" } });
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+    const sent = putLayout.mock.calls[putLayout.mock.calls.length - 1][2];
+    const dropped = sent.positions[EX + "Receipt"];
+    // The create's refetch goes out and reads the layout on the server now,
+    // before the PUT has written it: generation 0, and no Receipt.
+    await act(async () => {
+      rerender(<ModelCanvas projectId={PID} doc="model" revision={3} language="en" primaryLanguage="en" selected={null} onSelect={onSelect} onDeleted={onDeleted} />);
+    });
+    // The PUT is answered first: generation 1, the box settled.
+    await act(async () => put.resolve({ ...sent, generation: 1 }));
+    // Then the older GET arrives, without the box's position.
+    await act(async () =>
+      get.resolve(
+        viewOf({
+          revision: 3,
+          nodes: [...viewOf().nodes, { iri: EX + "Receipt", kind: "class", label: "Receipt", fallback: false, attributes: [] }],
+        }),
+      ),
+    );
+    await waitFor(() => expect(box("Receipt")).toBeTruthy());
+    const receipt = (flow.props.nodes as { id: string; position: { x: number; y: number } }[]).find((n) => n.id === EX + "Receipt")!;
+    expect([receipt.position.x, receipt.position.y]).toEqual(dropped);
+    // And nothing re-placed it and saved that instead.
+    for (const call of putLayout.mock.calls.slice(putLayout.mock.calls.indexOf(putLayout.mock.calls.find((c) => c[2] === sent)!) + 1)) {
+      expect(call[2].positions[EX + "Receipt"]).toEqual(dropped);
+    }
+  });
+
+  it("a newer layout, such as a rename's move, is still taken", async () => {
+    const { rerender } = await renderCanvas();
+    getCanvas.mockResolvedValue(
+      viewOf({
+        revision: 3,
+        nodes: viewOf().nodes.map((n) => (n.iri === EX + "Paid" ? { ...n, iri: EX + "Settled", label: "Settled" } : n)),
+        layout: { version: 1, generation: 50, positions: { [EX + "Settled"]: [321, 123] }, shown: null, viewport: null },
+      }),
+    );
+    await act(async () => {
+      rerender(<ModelCanvas projectId={PID} doc="model" revision={3} language="en" primaryLanguage="en" selected={null} onSelect={onSelect} onDeleted={onDeleted} />);
+    });
+    await waitFor(() => expect(box("Settled")).toBeTruthy());
+    const settled = (flow.props.nodes as { id: string; position: { x: number; y: number } }[]).find((n) => n.id === EX + "Settled")!;
+    expect(settled.position).toEqual({ x: 321, y: 123 });
   });
 });

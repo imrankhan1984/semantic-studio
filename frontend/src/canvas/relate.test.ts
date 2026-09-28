@@ -28,7 +28,7 @@ const view: CanvasView = {
   revision: 1,
   total: 6,
   limited: false,
-  layout: { version: 1, positions: {}, shown: null, viewport: null },
+  layout: { version: 1, generation: 0, positions: {}, shown: null, viewport: null },
   nodes: [
     { iri: "Doc", kind: "class", label: "Document", fallback: false, attributes: [] },
     { iri: "Inv", kind: "class", label: "Invoice", fallback: false, attributes: [] },
