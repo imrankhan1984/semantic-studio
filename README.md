@@ -86,6 +86,16 @@ them by clicking, without writing SPARQL by hand.
 - **Persistent library**: every loaded ontology is saved on your machine and
   reappears in the dropdown the next time you start the app — see
   [Where your ontologies are stored](#where-your-ontologies-are-stored).
+- **Projects — your own ontologies, editable.** The home screen's first section,
+  *My projects*, holds your own work; the library below it is read-only. Start a
+  project from a template (empty, a small SKOS vocabulary, a small ontology) or
+  from any library ontology (*Start a project from this* copies it). In a
+  project, *View* becomes a **Turtle editor**: edit the text, *Apply*
+  (`Ctrl+Enter`) and every view updates. **Undo and Redo** (`Ctrl+Z`, `Ctrl+Y`),
+  **Save** (`Ctrl+S`) and *Save a copy* are in the header, changes are autosaved
+  to a draft, and a crash offers to recover them. Names can be kept in several
+  languages, with a switch for which one the views show. See
+  [Projects](#projects).
 
 ## Quick start (Docker)
 
@@ -331,6 +341,31 @@ controls below with it. Nothing is hidden silently.
 
 Raise `SEMANTIC_STUDIO_GRAPH_NODE_BUDGET` if your machine copes with more.
 
+## Projects
+
+A project is a folder of your own work, stored beside the library (below).
+Projects are listed on the home screen from their manifests alone, so a hundred
+of them open as fast as none.
+
+- **Saving writes a Turtle file you can open anywhere.** While every change
+  since the last save came from the Turtle editor, the file gets exactly the
+  text you applied, comments and layout included. After an undo, a redo or any
+  other change it gets clean, sorted Turtle that diffs well in Git. The first
+  time that would remove comments from a file, you are asked once and the file
+  is kept as `model.original.ttl`.
+- **Nothing is lost if the app stops.** Two seconds after a change the draft is
+  written to `.draft/` in the project folder; opening the project later offers
+  to recover it. The undo history itself is not recovered.
+- **Deleting a project moves its folder to `projects/.trash/`.** Nothing is
+  destroyed; empty the trash by hand when you are sure. *Export as zip* packs a
+  project to share it.
+- **Names in several languages.** A project has a primary language (English,
+  `en`, by default), in which every name is required, and any number of
+  additional ones. The *Language* menu chooses which the graph, tree, detail
+  panel and search show, falling back to the primary name marked *(en)*, and
+  says how many entities still lack a name in each language.
+- Queries saved while a project is open are kept in its `queries/` folder.
+
 ## Where your ontologies are stored
 
 Every ontology you load (uploaded file or URL fetch) is persisted so it is
@@ -347,7 +382,7 @@ a small metadata file are written to a per-user data directory:
 Set the `SEMANTIC_STUDIO_DATA_DIR` environment variable to store the files
 somewhere else. Saved visual queries live beside them, in a `queries`
 subfolder of the same directory; removing an ontology also removes its
-saved queries.
+saved queries. Projects live in a `projects` subfolder, one folder each.
 
 If you used the app under its old name, an existing `semantic-viewer`
 library folder is moved to `semantic-studio` automatically on first start,

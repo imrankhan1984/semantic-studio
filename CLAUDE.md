@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 429 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 650 tests, vitest
+cd backend  && python -m pytest tests    # 578 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 702 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -62,7 +62,7 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Eleven backend tests carry
+**Timing budgets are separated, not deleted.** Sixteen backend tests carry
 `@pytest.mark.perf`; nine frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
@@ -146,7 +146,13 @@ backend/app/
   imports.py         owl:imports: resolution chain, closure, cache, MergedView
   sparql_service.py  SERVICE blocks found, approved, and sent through the broker
   vocab/             Bundled vocabularies, pinned by SHA-256 in manifest.json
-  store.py           In-memory ontology store, disk persistence, lazy parsing
+  store.py           In-memory ontology store, disk persistence, lazy parsing;
+                     every derived view keyed on the revision (D-081)
+  projects.py        Project folders and manifests: create, list, rename,
+                     duplicate, trash, export; per-project saved queries
+  editing.py         The only mutator of a project document: commands, undo,
+                     Turtle apply, save rule, autosave, recovery
+  templates/         The three New project templates, Turtle with placeholders
   graph_builder.py   RDF -> visualization nodes and edges, labels, node kinds
   query_schema.py    Class-level schema powering the visual query builder
   sparql_exec.py     SELECT-only execution, row cap, wall-clock timeout
@@ -161,16 +167,19 @@ frontend/src/
   App.tsx            Top-level state: ontologies, mode, selection, theme
   api.ts             Every backend call, typed
   components/        One component per file
+  state/             projectStore.ts, the useSyncExternalStore store for
+                     authoring state (D-084); App's own state is not in it
   sparql/            Pure query-building logic
   explore/           Pure Explore-mode logic: the suggestion ranking and the
                      ontology summary sentence
   home/              Pure home-screen logic: the card thumbnail's layout and
                      the composition bar's bands
+  projects/          Pure New project form logic: defaults and validation
 
 docs/known-state.md  Why each load-bearing rule below exists
 ```
 
-`sparql/`, `explore/` and `home/` are the same idea three times: logic a
+`sparql/`, `explore/`, `home/` and `projects/` are the same idea four times: logic a
 component needs, kept out of the component so it can be tested without
 rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts` and
 `catalogue.ts` are the same idea for one function and one constant. Prefer this
@@ -215,6 +224,15 @@ leaves one behind.
 - `selectFromOutsideGraph` serves search and results; no `builder.addNode` in it. [leads somewhere]
 - `.query-pinned` keeps `flex: none` and a background; `.next-steps-panel` is bounded in `vh`. [keeps the query]
 
+**Authoring**
+- Every `Ontology` cache is `(key, value)` keyed on the revision; the library stays at revision 0. [authoring foundations]
+- Only `editing.py` mutates a project document; `test_no_direct_mutation.py` enforces it. [authoring foundations]
+- A project id or document name is `fullmatch`ed before it is a path; one not issued is 404 on every route. [authoring foundations]
+- The editor's unapplied text lives in the project store; App asks before any exit. [authoring foundations]
+- The project store is module state: a test rendering App calls `cleanup()`. [authoring foundations]
+- Authoring controls are `aria-disabled`, not `disabled`, so focus is never dropped. [authoring foundations]
+- `pick_label` tests the exact `en` tag before the prefix match. [authoring foundations]
+
 **Graph**
 - Both reducers go through `focusTarget`; `ErrorBoundary` stays around `<App />`. [used to blank]
 - `kindCounts` counts the whole ontology, not what is drawn (D-017). [graph endpoint is capped]
@@ -231,7 +249,7 @@ leaves one behind.
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]
-- Mount makes exactly one request; the home screen makes none to `/graph`. [card grid]
+- Mount makes two requests, the ontology list and the project list; the home screen makes none to `/graph`. [card grid, authoring foundations]
 - `CatalogueList` is shared by Home and the Load dialog; its `memo` sits at Home's import. [card grid]
 - The catalogue order is deliberate; read the comment above `CATALOGUE`. [leads with FOAF]
 - Explore's ranking and sentence stay behind `useMemo`; the ranking never sorts every node. [starting panel]
