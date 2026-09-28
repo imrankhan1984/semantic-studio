@@ -972,3 +972,59 @@ EXPECTED OUTPUT
   cannot hold an invalid date, in jsdom as in a browser, so a test of "invalid
   value refused before sending" uses an integer.
 
+- **The modeling canvas** (2026-09-28, spec `visual-modeling-canvas` Stage 2,
+  backlog E-7, decisions D-086 and D-087). In a project's Hierarchy view the
+  canvas sits between the tree and the form (`canvas/ModelCanvas.tsx`), on
+  React Flow 12.12.0, pinned exactly and loaded with `React.lazy`: its code
+  and React Flow are a chunk of their own (68 KB compressed, plus 2 KB of
+  CSS), fetched from the local server the first time a canvas opens. The
+  main bundle grew 2.1 KB. A project now opens in this view.
+
+  What it draws is `backend/app/canvas.py`'s view, served by
+  `GET …/documents/{doc}/canvas` and cached by revision, language and the
+  imports view; where it draws it is `<doc>.layout.json`, written by
+  `PUT …/layout` (1 MB, declared and while reading; at most 20,000 entries,
+  keys of at most 2,048 characters, finite numbers). Past
+  `CANVAS_MAX_BOXES` (300) classes and concepts it draws only the shown set
+  and its direct links. Measured: 300 boxes and 400 lines drawn 360 ms after
+  the click with the code fetched, about 170 ms cached; the view builds in
+  36 ms on 10,000 triples.
+
+  **The canvas imports React Flow's `base.css`, not `style.css`.** The full
+  theme sets `outline: none` on a focused node, and every box lost the one
+  global focus ring (measured with the accessibility tree: `outline: none`).
+  `base.css` suppresses it only on React Flow's built-in node types, which
+  the canvas does not use. No second focus rule was needed.
+
+  **One handle per side, and `ConnectionMode.Loose`.** A source and a target
+  handle stacked on each side left the pointer on whichever was on top, and
+  a line started on a target handle comes back reversed: *Invoice item to
+  Invoice* opened a menu for *Invoice to Invoice item* (the browser pass).
+  In loose mode any handle starts or ends a line, and it runs from where it
+  started. Lines leave and enter by the sides facing each other; with one
+  top and one bottom handle, a relationship between two boxes in a row
+  looped round both.
+
+  **Lines are not Tab stops** (`edgesFocusable={false}`): React Flow puts
+  lines before boxes in the page, so Tab reached every line first. Each box's
+  name already says what its lines say, and the form removes a link by
+  keyboard. **Focus on a box selects it**, so the form follows the keyboard;
+  a box just deleted is still drawn until the refetch and the delete dialog
+  gives focus back to it, so its focus is ignored until the view drops it,
+  or it re-selected the entity the delete had cleared.
+
+  **The browser's layout is merged, not kept.** Every fetch takes the
+  server's layout as the base and lays over it only the moves not yet
+  written: a rename moves its entry on the server (and its undo and redo
+  move it back), and a copy read once would have lost that and then written
+  itself back over it (code review). A deleted box's position stays in the
+  file until the next open, so an undone delete returns to its place.
+
+  Found in the code review and fixed with a test each: the canvas cache
+  ignored newly resolved imports; the rename field kept the first name it
+  saw and stripped any "(…)"; Enter on a button in a box renamed the box;
+  an emptied shown set refilled itself; an end written as `owl:unionOf` was
+  offered to "complete"; an attribute of a class outside the model vanished.
+  And on Windows, replacing the layout file many times a second now and
+  then meets "access denied" from a scanner holding it: the write retries a
+  few times 20 ms apart (`projects._replace`).

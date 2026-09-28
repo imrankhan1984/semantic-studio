@@ -16,7 +16,7 @@ than typing.
 | Layer | Technology |
 | --- | --- |
 | Frontend | React 18 + TypeScript, built with Vite |
-| Rendering | Sigma.js over WebGL, graphology, ForceAtlas2 |
+| Rendering | Sigma.js over WebGL, graphology, ForceAtlas2; the modeling canvas on React Flow, lazily loaded (D-086) |
 | Backend | FastAPI |
 | RDF | rdflib, graphs held in memory |
 | Packaging | Docker and Docker Compose |
@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 608 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 804 tests, vitest
+cd backend  && python -m pytest tests    # 646 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 882 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -124,7 +124,7 @@ EXPECTED OUTPUT
 **2. Comments explain why, not what.** Read `sparql_exec.py` or
 `query_schema.py` before writing any. The density is deliberate. Match it.
 
-**3. Do not add dependencies casually.** `frontend/package.json` carries seven
+**3. Do not add dependencies casually.** `frontend/package.json` carries eight
 runtime dependencies and `backend/requirements.txt` carries five. Adding one is
 a decision that belongs in a spec, not in a commit.
 
@@ -183,6 +183,9 @@ frontend/src/
   modeling/          Pure editing-form logic: an entity's blocks read out of
                      its statements, and annotation value types and checks
   links.ts           linkTarget: the one gate an IRI passes to become a link
+  canvas/            The modeling canvas (D-086): ModelCanvas on React Flow,
+                     its boxes and relate menu, and the pure layered layout
+                     and relate rule; loaded only through React.lazy in App
 
 docs/known-state.md  Why each load-bearing rule below exists
 ```
@@ -262,6 +265,14 @@ leaves one behind.
 - The selection ring is drawn in the hover overlay, keyed on a `selected` flag checked before hover. [pastel]
 - Node-reducer performance tests are counts, not timings. [pastel]
 - Zoom's disabled state is a three-value edge; the camera listener is removed on cleanup. [zoom controls]
+
+**Modeling canvas**
+- Only `canvas/` imports `@xyflow/react`, and App reaches `canvas/` only through `React.lazy` (D-086). [modeling canvas]
+- The canvas imports React Flow's `base.css`, never `style.css`: the full theme hides the focus ring on a box. [modeling canvas]
+- One handle per side and `ConnectionMode.Loose`: stacked source and target handles reversed a drawn line. [modeling canvas]
+- Every fetch takes the server's layout as the base, with only unsaved moves on top: a rename moves its entry there (D-087). [modeling canvas]
+- A layout write is never a model change: no revision, no dirty flag, no undo step. [modeling canvas]
+- The canvas view's cache is keyed on the imports view as well as the revision. [modeling canvas]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]
