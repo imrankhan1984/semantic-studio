@@ -34,6 +34,10 @@ INPUTS / INPUT SOURCES (props)
     - imports: describe the entity from the merged view (external-access
       Stage 2). An entity defined only in an import says so, in text, under
       its name: "Imported from FOAF (read-only)".
+    - revision: a project document's revision (authoring-foundations); the
+      details are fetched again when it moves, so an edit shows at once. A
+      project document's details also carry `names`, shown as a Names block
+      listing each project language and its name, or "missing" in text.
 
 EXPECTED OUTPUT
     - The rendered detail panel (or nothing when no node is selected).
@@ -61,6 +65,10 @@ interface Props {
   expanding?: boolean;
   /** Read the entity from the ontology together with its resolved imports. */
   imports?: boolean;
+  /** A project document's revision; 0 for the library, which never moves. */
+  revision?: number;
+  /** The display language, which names the title; refetched when it moves. */
+  language?: string | null;
 }
 
 /** The heading id, so the panel can be named by it and focus can be sent to it. */
@@ -105,6 +113,8 @@ export default function DetailPanel({
   onExpand,
   expanding = false,
   imports = false,
+  revision = 0,
+  language = null,
 }: Props) {
   const [details, setDetails] = useState<NodeDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -124,7 +134,7 @@ export default function DetailPanel({
     return () => {
       cancelled = true;
     };
-  }, [ontologyId, iri, imports]);
+  }, [ontologyId, iri, imports, revision, language]);
 
   // Take focus when this selection asked for it, rather than when the details
   // arrive, because the wait is a request: keystrokes made in between would go
@@ -203,6 +213,24 @@ export default function DetailPanel({
 
       {details && (
         <>
+          {details.names && (
+            // Each project language and its name. "missing" is written, not
+            // shown by colour: a translation still to do is a normal state of
+            // work, and it has to be readable as one (5.4.2).
+            <section>
+              <h3>Names</h3>
+              <dl className="detail-names">
+                {details.names.map((name) => (
+                  <div key={name.lang}>
+                    <dt>{name.lang}</dt>
+                    <dd className={name.value === null ? "detail-name-missing" : undefined}>
+                      {name.value ?? "missing"}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          )}
           <section>
             <h3>
               Statements <span className="count">{details.outgoingTotal}</span>

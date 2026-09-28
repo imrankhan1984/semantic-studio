@@ -104,9 +104,30 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   cancelImports: () => api.cancelImports("ont-1"),
   mapImport: () => api.mapImport("ont-1", "http://example.org/i", "ont-2"),
   chooseImportFiles: () => api.chooseImportFiles("ont-1", [new File(["x"], "x.ttl")]),
-  // Not requests: the approval plumbing. Listed so the export check holds.
+  // authoring-foundations: projects and editing.
+  listProjects: () => api.listProjects(),
+  createProject: () => api.createProject({ name: "p", template: "small" }),
+  updateProject: () => api.updateProject("prj-1", { name: "q" }),
+  duplicateProject: () => api.duplicateProject("prj-1"),
+  deleteProject: () => api.deleteProject("prj-1"),
+  exportProject: () => api.exportProject("prj-1"),
+  openProject: () => api.openProject("prj-1"),
+  closeProject: () => api.closeProject("prj-1"),
+  addShapesDocument: () => api.addShapesDocument("prj-1"),
+  runCommand: () => api.runCommand("prj-1", "model", "CreateClass", { label: "A" }),
+  getDocumentSource: () => api.getDocumentSource("prj-1", "model"),
+  applyDocumentSource: () => api.applyDocumentSource("prj-1", "model", "@prefix : <x#> ."),
+  undoChange: () => api.undoChange("prj-1", "model"),
+  redoChange: () => api.redoChange("prj-1", "model"),
+  saveDocument: () => api.saveDocument("prj-1", "model"),
+  downloadDocumentCopy: () => api.downloadDocumentCopy("prj-1", "model"),
+  recoverProject: () => api.recoverProject("prj-1", "discard"),
+  getLanguageReport: () => api.getLanguageReport("prj-1", "model"),
+  // Not requests: the approval plumbing and the display language. Listed so
+  // the export check holds.
   setApprovalHandler: async () => api.setApprovalHandler(null),
   declinedMessage: async () => api.declinedMessage([]),
+  setDisplayLanguage: async () => api.setDisplayLanguage(null),
 };
 
 describe("api client header (S-6)", () => {
@@ -124,22 +145,16 @@ describe("api client header (S-6)", () => {
     }
     const mutating = recorded.filter((r) => r.method !== "GET");
     // Assert the loop really exercised the writes before trusting the check.
-    expect(mutating.map((r) => r.method).sort()).toEqual([
-      "DELETE",
-      "DELETE",
-      "DELETE",
-      "POST",
-      "POST",
-      "POST",
-      "POST",
-      "POST",
-      "POST",
-      "POST",
-      "POST",
-      "POST",
-      "POST",
+    // Ten POSTs and three DELETEs before projects; projects add ten POSTs,
+    // a DELETE, a PATCH (rename, languages) and a PUT (the Turtle apply).
+    const expected = [
+      ...Array(4).fill("DELETE"),
+      "PATCH",
+      ...Array(20).fill("POST"),
       "PUT",
-    ]);
+      "PUT",
+    ];
+    expect(mutating.map((r) => r.method).sort()).toEqual(expected);
     for (const request of mutating) {
       expect(request.headers, `${request.method} ${request.url}`).toMatchObject({
         "X-Semantic-Studio": "1",
@@ -323,5 +338,61 @@ describe("the merged-view flag (external-access Stage 2)", () => {
       "/api/ontologies/ont-1/search?q=ab&imports=true",
       "/api/ontologies/ont-1/sparql?imports=true",
     ]);
+  });
+});
+
+describe("projects in the client (authoring-foundations)", () => {
+  afterEach(() => api.setDisplayLanguage(null));
+
+  it("sends the display language on the five name-showing reads only while one is set", async () => {
+    const reads = () => [
+      api.getGraph("prj-1-model"),
+      api.getNeighborhood("prj-1-model", "http://x/a"),
+      api.fetchHierarchy("prj-1-model"),
+      api.getNodeDetails("prj-1-model", "http://x/a"),
+      api.searchNodes("prj-1-model", "ab"),
+    ];
+    await Promise.all(reads());
+    expect(recorded.every((r) => !r.url.includes("lang="))).toBe(true);
+    recorded = [];
+    api.setDisplayLanguage("fr");
+    await Promise.all([...reads(), api.getQuerySchema("prj-1-model"), api.getSource("prj-1-model")]);
+    const withLang = recorded.filter((r) => r.url.includes("lang=fr"));
+    expect(withLang).toHaveLength(5);
+    expect(recorded.find((r) => r.url.includes("/query-schema"))!.url).not.toContain("lang=");
+  });
+
+  it("an invalid Turtle apply throws a TurtleError carrying line, column and rdflib's message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            detail: { line: 3, column: 5, message: "Line 3, column 5: expected '.'", detail: "Bad syntax at ^" },
+          }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    const error = await api.applyDocumentSource("prj-1", "model", "bad").catch((e) => e);
+    expect(error).toBeInstanceOf(api.TurtleError);
+    expect(error).toBeInstanceOf(api.ApiError);
+    expect([error.line, error.column, error.status]).toEqual([3, 5, 422]);
+    expect(error.message).toBe("Line 3, column 5: expected '.'");
+    expect(error.detail).toBe("Bad syntax at ^");
+  });
+
+  it("a refused command reads as its sentence", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ detail: '"4.5" is not a valid integer (expected a whole number such as 42).' }), {
+          status: 422,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    const error = await api.runCommand("prj-1", "model", "AddAnnotation", {}).catch((e) => e);
+    expect(error.message).toBe('"4.5" is not a valid integer (expected a whole number such as 42).');
   });
 });

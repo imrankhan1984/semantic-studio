@@ -29,6 +29,13 @@ BASIC IDEA
     means any action that can reach the network -- including a GET whose lazy
     parse needs a JSON-LD context -- asks the same way.
 
+    Projects (authoring-foundations) add their own calls at the foot. An open
+    project document is read through the same ontology calls under its
+    prj-<hex>-<doc> id; the five that show names also carry the project's
+    display language, set here once by the project store (setDisplayLanguage)
+    rather than threaded through every component, and sent only while a
+    project has one, so every library request is unchanged.
+
 INPUTS / INPUT SOURCES
     - Arguments from the components (ids, IRIs, query text, files, payloads).
     - HTTP responses from the FastAPI backend.
@@ -41,7 +48,14 @@ EXPECTED OUTPUT
 import type { QueryState } from "./sparql/types";
 import type {
   ApprovalRequest,
+  ChangeResult,
   Hierarchy,
+  LanguageReport,
+  OpenedProject,
+  ProjectDocName,
+  ProjectSummary,
+  ProjectTemplate,
+  SaveResult,
   ImportFilesResult,
   ImportsListing,
   NodeDetails,
@@ -200,6 +214,21 @@ function withImports(url: string, imports: boolean): string {
   return url + (url.includes("?") ? "&" : "?") + "imports=true";
 }
 
+// The open project's display language, or null (D-085). Module state rather
+// than a parameter: five calls read it and a dozen components make them, and
+// none of those components has any other reason to know about languages.
+let displayLanguage: string | null = null;
+
+/** The project store sets this when a project opens, closes or switches. */
+export function setDisplayLanguage(lang: string | null): void {
+  displayLanguage = lang;
+}
+
+function withLang(url: string): string {
+  if (!displayLanguage) return url;
+  return url + (url.includes("?") ? "&" : "?") + `lang=${encodeURIComponent(displayLanguage)}`;
+}
+
 // List loaded ontologies (dropdown summaries).
 export function listOntologies(): Promise<OntologySummary[]> {
   return send("/api/ontologies").then((r) => handle<OntologySummary[]>(r));
@@ -247,7 +276,7 @@ export function deleteOntology(id: string): Promise<OntologyDeletion> {
  */
 export function getGraph(id: string, limit?: number, imports = false): Promise<VizGraph> {
   const query = limit === undefined ? "" : `?limit=${limit}`;
-  return send(withImports(`/api/ontologies/${id}/graph${query}`, imports)).then((r) =>
+  return send(withLang(withImports(`/api/ontologies/${id}/graph${query}`, imports))).then((r) =>
     handle<VizGraph>(r),
   );
 }
@@ -268,9 +297,11 @@ export function getNeighborhood(
 ): Promise<VizNeighborhood> {
   const extra = limit === undefined ? "" : `&limit=${limit}`;
   return send(
-    withImports(
-      `/api/ontologies/${id}/neighborhood?iri=${encodeURIComponent(iri)}${extra}`,
-      imports,
+    withLang(
+      withImports(
+        `/api/ontologies/${id}/neighborhood?iri=${encodeURIComponent(iri)}${extra}`,
+        imports,
+      ),
     ),
   ).then((r) => handle<VizNeighborhood>(r));
 }
@@ -283,7 +314,7 @@ export function getNeighborhood(
  * server caches it on the ontology, so re-opening the tab is cheap.
  */
 export function fetchHierarchy(id: string, imports = false): Promise<Hierarchy> {
-  return send(withImports(`/api/ontologies/${id}/hierarchy`, imports)).then((r) =>
+  return send(withLang(withImports(`/api/ontologies/${id}/hierarchy`, imports))).then((r) =>
     handle<Hierarchy>(r),
   );
 }
@@ -291,14 +322,14 @@ export function fetchHierarchy(id: string, imports = false): Promise<Hierarchy> 
 // Every statement about one entity, for the detail panel.
 export function getNodeDetails(id: string, iri: string, imports = false): Promise<NodeDetails> {
   return send(
-    withImports(`/api/ontologies/${id}/node?iri=${encodeURIComponent(iri)}`, imports),
+    withLang(withImports(`/api/ontologies/${id}/node?iri=${encodeURIComponent(iri)}`, imports)),
   ).then((r) => handle<NodeDetails>(r));
 }
 
 // Label/IRI search for the search box.
 export function searchNodes(id: string, q: string, imports = false): Promise<VizNode[]> {
   return send(
-    withImports(`/api/ontologies/${id}/search?q=${encodeURIComponent(q)}`, imports),
+    withLang(withImports(`/api/ontologies/${id}/search?q=${encodeURIComponent(q)}`, imports)),
   ).then((r) => handle<VizNode[]>(r));
 }
 
@@ -525,4 +556,228 @@ export function chooseImportFiles(
     headers: { ...CLIENT_HEADER },
     body: form,
   }).then((r) => handle<ImportFilesResult>(r));
+}
+
+/* --- projects and editing (authoring-foundations) --------------------------- */
+
+const JSON_WRITE = { "Content-Type": "application/json", ...CLIENT_HEADER };
+
+/**
+ * Invalid Turtle from the editor. The server answers 422 with the line and
+ * column rdflib stopped at and its own message, which the editor shows behind
+ * a disclosure; the shape is kept rather than flattened into a sentence.
+ */
+export class TurtleError extends ApiError {
+  readonly line: number | null;
+  readonly column: number | null;
+  readonly detail: string;
+
+  constructor(message: string, line: number | null, column: number | null, detail: string) {
+    super(message, 422);
+    this.name = "TurtleError";
+    this.line = line;
+    this.column = column;
+    this.detail = detail;
+  }
+}
+
+function projectUrl(pid: string, rest = ""): string {
+  return `/api/projects/${encodeURIComponent(pid)}${rest}`;
+}
+
+function documentUrl(pid: string, doc: ProjectDocName, rest: string): string {
+  return projectUrl(pid, `/documents/${doc}${rest}`);
+}
+
+/** A byte download (zip or Turtle), unwrapped the way downloadDocumentation is. */
+async function bytes(url: string): Promise<{ blob: Blob; filename: string }> {
+  const response = await send(url);
+  if (!response.ok) await handle(response);
+  const blob = await response.blob();
+  const filename =
+    filenameFromDisposition(response.headers.get("content-disposition")) ?? "download";
+  return { blob, filename };
+}
+
+// Every project, from manifests alone.
+export function listProjects(): Promise<ProjectSummary[]> {
+  return send("/api/projects").then((r) => handle<ProjectSummary[]>(r));
+}
+
+// A new project from a template, or from a library ontology (fromOntologyId).
+export function createProject(payload: {
+  name: string;
+  template?: ProjectTemplate;
+  fromOntologyId?: string;
+  baseIri?: string;
+  prefix?: string;
+  primaryLanguage?: string;
+}): Promise<ProjectSummary> {
+  return send("/api/projects", {
+    method: "POST",
+    headers: JSON_WRITE,
+    body: JSON.stringify(payload),
+  }).then((r) => handle<ProjectSummary>(r));
+}
+
+// Rename, or change the additional languages. The manifest only.
+export function updateProject(
+  pid: string,
+  changes: { name?: string; languages?: string[] },
+): Promise<ProjectSummary> {
+  return send(projectUrl(pid), {
+    method: "PATCH",
+    headers: JSON_WRITE,
+    body: JSON.stringify(changes),
+  }).then((r) => handle<ProjectSummary>(r));
+}
+
+export function duplicateProject(pid: string): Promise<ProjectSummary> {
+  return send(projectUrl(pid, "/duplicate"), {
+    method: "POST",
+    headers: { ...CLIENT_HEADER },
+  }).then((r) => handle<ProjectSummary>(r));
+}
+
+// Moves the folder to projects/.trash/; `location` is where, for the notice.
+export function deleteProject(pid: string): Promise<{ trashed: string; location: string }> {
+  return send(projectUrl(pid), { method: "DELETE", headers: { ...CLIENT_HEADER } }).then((r) =>
+    handle<{ trashed: string; location: string }>(r),
+  );
+}
+
+export function exportProject(pid: string): Promise<{ blob: Blob; filename: string }> {
+  return bytes(projectUrl(pid, "/export"));
+}
+
+export function openProject(pid: string): Promise<OpenedProject> {
+  return send(projectUrl(pid, "/open"), {
+    method: "POST",
+    headers: { ...CLIENT_HEADER },
+  }).then((r) => handle<OpenedProject>(r));
+}
+
+// 409 when there are unsaved changes, unless `discard` says to drop them.
+export function closeProject(pid: string, discard = false): Promise<{ closed: string }> {
+  return send(projectUrl(pid, "/close"), {
+    method: "POST",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ discard }),
+  }).then((r) => handle<{ closed: string }>(r));
+}
+
+export function addShapesDocument(pid: string): Promise<ProjectSummary> {
+  return send(projectUrl(pid, "/documents"), {
+    method: "POST",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ role: "shapes" }),
+  }).then((r) => handle<ProjectSummary>(r));
+}
+
+// One typed command (5.4). The canvas (E-7) is its main caller.
+export function runCommand(
+  pid: string,
+  doc: ProjectDocName,
+  command: string,
+  args: Record<string, unknown>,
+): Promise<ChangeResult> {
+  return send(documentUrl(pid, doc, "/commands"), {
+    method: "POST",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ command, args }),
+  }).then((r) => handle<ChangeResult>(r));
+}
+
+// The editor's text: the text last applied, or clean Turtle.
+export function getDocumentSource(
+  pid: string,
+  doc: ProjectDocName,
+): Promise<{ text: string; revision: number; fromEditor: boolean }> {
+  return send(documentUrl(pid, doc, "/source")).then((r) =>
+    handle<{ text: string; revision: number; fromEditor: boolean }>(r),
+  );
+}
+
+// Parse and replace the document. Invalid Turtle throws a TurtleError.
+export async function applyDocumentSource(
+  pid: string,
+  doc: ProjectDocName,
+  text: string,
+): Promise<ChangeResult> {
+  const response = await send(documentUrl(pid, doc, "/source"), {
+    method: "PUT",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ text }),
+  });
+  if (response.status === 422) {
+    let body: { detail?: unknown } = {};
+    try {
+      body = await response.clone().json();
+    } catch {
+      /* not JSON: the generic path below says what it can */
+    }
+    const detail = body.detail as
+      | { line?: number | null; column?: number | null; message?: string; detail?: string }
+      | undefined;
+    if (detail && typeof detail === "object" && typeof detail.message === "string") {
+      throw new TurtleError(
+        detail.message,
+        detail.line ?? null,
+        detail.column ?? null,
+        detail.detail ?? "",
+      );
+    }
+  }
+  return handle<ChangeResult>(response);
+}
+
+export function undoChange(pid: string, doc: ProjectDocName): Promise<ChangeResult> {
+  return send(documentUrl(pid, doc, "/undo"), {
+    method: "POST",
+    headers: { ...CLIENT_HEADER },
+  }).then((r) => handle<ChangeResult>(r));
+}
+
+export function redoChange(pid: string, doc: ProjectDocName): Promise<ChangeResult> {
+  return send(documentUrl(pid, doc, "/redo"), {
+    method: "POST",
+    headers: { ...CLIENT_HEADER },
+  }).then((r) => handle<ChangeResult>(r));
+}
+
+// Answers needsCommentsWarning, writing nothing, until confirmRewrite.
+export function saveDocument(
+  pid: string,
+  doc: ProjectDocName,
+  confirmRewrite = false,
+): Promise<SaveResult> {
+  return send(documentUrl(pid, doc, "/save"), {
+    method: "POST",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ confirmRewrite }),
+  }).then((r) => handle<SaveResult>(r));
+}
+
+// Save a copy as Turtle: the save format rule, the project untouched.
+export function downloadDocumentCopy(
+  pid: string,
+  doc: ProjectDocName,
+): Promise<{ blob: Blob; filename: string }> {
+  return bytes(documentUrl(pid, doc, "/download"));
+}
+
+export function recoverProject(
+  pid: string,
+  action: "recover" | "discard",
+): Promise<{ documents: OpenedProject["documents"] }> {
+  return send(projectUrl(pid, "/recover"), {
+    method: "POST",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ action }),
+  }).then((r) => handle<{ documents: OpenedProject["documents"] }>(r));
+}
+
+// How many entities lack a name in each project language.
+export function getLanguageReport(pid: string, doc: ProjectDocName): Promise<LanguageReport> {
+  return send(documentUrl(pid, doc, "/languages")).then((r) => handle<LanguageReport>(r));
 }

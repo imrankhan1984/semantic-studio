@@ -230,7 +230,25 @@ describe("HomeScreen library", () => {
 
     document.body.innerHTML = "";
     renderScreen();
-    expect(screen.getByRole("heading", { name: "Your library" })).toBeTruthy();
+    // authoring-foundations: the library is marked read-only, because a
+    // project is now where things change (Section 7).
+    expect(screen.getByRole("heading", { name: "Library (read-only)" })).toBeTruthy();
+  });
+
+  it("puts the projects section first, above the library (AC-3)", () => {
+    renderScreen({ projects: <section aria-label="My projects stand-in"><h2>My projects</h2></section> });
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(headings.indexOf("My projects")).toBeGreaterThanOrEqual(0);
+    expect(headings.indexOf("My projects")).toBeLessThan(headings.indexOf("Library (read-only)"));
+  });
+
+  it("offers Start a project from this on a library card, and hands over its id (AC-2)", async () => {
+    const onStartProject = vi.fn();
+    renderScreen({ onStartProject });
+    fireEvent.click(screen.getAllByRole("button", { name: /more actions for/i })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Start a project from this" }));
+    expect(onStartProject).toHaveBeenCalledTimes(1);
+    expect(onStartProject.mock.calls[0][0]).toMatch(/.+/);
   });
 });
 
