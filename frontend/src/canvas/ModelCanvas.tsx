@@ -75,7 +75,9 @@ import {
 import "@xyflow/react/dist/base.css";
 import ConfirmDialog from "../components/ConfirmDialog";
 import DeleteDialog from "../components/DeleteDialog";
+import { getNodeDetails } from "../api";
 import { useRunner } from "../components/EditParts";
+import { projectStore } from "../state/projectStore";
 import type { CanvasSet, CanvasView, ProjectDocName } from "../types";
 import ClassNode, { type BoxData, type BoxNode } from "./ClassNode";
 import ConceptNode from "./ConceptNode";
@@ -331,12 +333,29 @@ function Canvas(props: ModelCanvasProps) {
 
   // --- selection made elsewhere pans here (D-047) ------------------------------------
 
+  // Once per selection: positions change on every refetch, and the canvas
+  // re-centred on the selected box after each form edit (PR #47 review). It
+  // still pans when a newly selected box only gets its place a moment later.
+  const panned = useRef<string | null>(null);
   useEffect(() => {
-    if (!selected || madeHere.current === selected) return;
+    if (!selected) {
+      panned.current = null;
+      return;
+    }
+    if (panned.current === selected) return;
+    if (madeHere.current === selected) {
+      panned.current = selected;
+      return;
+    }
     const at = positions[selected];
     if (!at) return;
+    panned.current = selected;
     void flow.setCenter(at[0] + 95, at[1] + BOX_HEIGHT / 2, { zoom: flow.getZoom(), duration: reduced ? 0 : 300 });
   }, [selected, positions, flow, reduced]);
+
+  // A move made just before Close must not be lost: the project store waits
+  // for this before it closes the project (PR #47 review).
+  useEffect(() => projectStore.registerFlush(data.flush), [data.flush]);
 
   // --- 5.6: lend the shown set to the tree and the form ------------------------------
 
@@ -348,15 +367,24 @@ function Canvas(props: ModelCanvasProps) {
   // Past 300 with nothing ever chosen: start on the selected entity (5.6).
   // Only while `shown` is null, never after the user emptied the set: hiding
   // the last box re-added it at once (found in review). And only a class or
-  // concept: a property selected from the not-drawn list is not a box.
+  // concept: a property or an individual is not a box, and past 300 the
+  // selection is usually not drawn, so its kind is asked for (PR #47
+  // review; before, anything selected was added).
   const selectedKind = useRef<string | null>(null);
   useEffect(() => {
     if (!view?.limited || data.shown !== null || !selected) return;
-    if (view.undrawn.some((u) => u.iri === selected)) return;
     if (selectedKind.current === selected) return;
     selectedKind.current = selected;
-    void data.show(selected);
-  }, [view, data.shown, selected, data.show]);
+    let cancelled = false;
+    getNodeDetails(`${projectId}-${doc}`, selected)
+      .then((details) => {
+        if (!cancelled && (details.kind === "class" || details.kind === "concept")) void data.show(selected);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [view, data.shown, selected, data.show, projectId, doc]);
   // The deleted box is gone from the view: its focus counts again, so an
   // undo that restores it can select it (found in review).
   useEffect(() => {
@@ -465,6 +493,7 @@ function Canvas(props: ModelCanvasProps) {
       setDeleting({ iri: node.iri, label: node.label });
     } else if (!node && selectedEdge && (e.key === "Delete" || e.key === "Backspace")) {
       e.preventDefault();
+      setHint("");
       void removeEdge(selectedEdge);
     } else if (e.key === "+" || e.key === "=") {
       e.preventDefault();
@@ -500,7 +529,7 @@ function Canvas(props: ModelCanvasProps) {
   const empty = view.total === 0;
   const draftNode = draft ? flow.flowToScreenPosition({ x: draft.at[0], y: draft.at[1] }) : null;
   const origin = wrapper.current?.getBoundingClientRect();
-  const refused = errors.draft || errors.rename || errors.attribute || errors.edge || "";
+  const refused = errors.draft || errors.rename || errors.attribute || errors.edge || data.saveError || "";
 
   return (
     <section className="model-canvas" aria-label="Modeling canvas" aria-busy={busy} ref={section} tabIndex={-1}>
@@ -539,7 +568,14 @@ function Canvas(props: ModelCanvasProps) {
         <button type="button" className="ghost" onClick={() => void flow.fitView({ duration: reduced ? 0 : 200, maxZoom: 1 })}>
           Fit
         </button>
-        <button type="button" className="ghost" onClick={() => setTidying(true)} disabled={nodes.length === 0}>
+        <button
+          type="button"
+          className="ghost"
+          // aria-disabled, not disabled: disabling the focused control drops
+          // its focus (CLAUDE.md, authoring foundations).
+          aria-disabled={nodes.length === 0}
+          onClick={() => nodes.length > 0 && setTidying(true)}
+        >
           Tidy up
         </button>
         {undrawn.length > 0 && (
@@ -571,6 +607,8 @@ function Canvas(props: ModelCanvasProps) {
       <div
         className="canvas-surface"
         ref={wrapper}
+        // Script-focusable only, for a selected line's Delete key.
+        tabIndex={-1}
         onDragOver={onDragOver}
         onDragLeave={() => setDropTarget(null)}
         onDrop={onDrop}
@@ -603,7 +641,14 @@ function Canvas(props: ModelCanvasProps) {
             setAnchor({ x: point.clientX - (box?.left ?? 0), y: point.clientY - (box?.top ?? 0) });
           }}
           onNodeClick={(_, node) => selectHere(node.id)}
-          onEdgeClick={(_, edge) => setSelectedEdge(edge.id)}
+          onEdgeClick={(_, edge) => {
+            // A click on a line focuses nothing, so the Delete key went to the
+            // page and never reached this canvas (PR #47 review): focus the
+            // surface, where the key handler is, and say what Delete will do.
+            setSelectedEdge(edge.id);
+            setHint(`${edge.ariaLabel ?? "Line"} selected. Delete removes it.`);
+            wrapper.current?.focus();
+          }}
           onEdgeMouseEnter={(_, edge) => setHover(edge.id)}
           onEdgeMouseLeave={() => setHover(null)}
           onPaneClick={() => {

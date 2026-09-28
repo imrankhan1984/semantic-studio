@@ -687,8 +687,11 @@ describe("HierarchyView, Stage 2 follow-ups (visual-modeling 5.8)", () => {
       fireEvent.click(screen.getByRole("button", { name: "Create" }));
     });
     expect(document.querySelector(".hierarchy-view .edit-status")!.textContent).toBe("Saving change…");
+    // And to assistive technology (PR #47 review, item 8).
+    expect(document.querySelector(".hierarchy-view")!.getAttribute("aria-busy")).toBe("true");
     await act(async () => finish({ revision: 3, label: "Created", state: STATE }));
     expect(document.querySelector(".hierarchy-view .edit-status")!.textContent).toBe("");
+    expect(document.querySelector(".hierarchy-view")!.getAttribute("aria-busy")).toBe("false");
   });
 
   it("item 4: a create does not select the new entity once the selection moved", async () => {

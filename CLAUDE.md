@@ -50,7 +50,7 @@ app writes into the real per-user ontology library.
 
 ```bash
 cd backend  && python -m pytest tests    # 646 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 882 tests, vitest
+cd frontend && npm run test              # 891 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -273,6 +273,8 @@ leaves one behind.
 - Every fetch takes the server's layout as the base, with only unsaved moves on top: a rename moves its entry there (D-087). [modeling canvas]
 - A layout write is never a model change: no revision, no dirty flag, no undo step. [modeling canvas]
 - The canvas view's cache is keyed on the imports view as well as the revision. [modeling canvas]
+- A position leaves the canvas's unsaved set only when its save has succeeded; `place()` marks it too. [lost drop point]
+- `projectStore.close()` awaits every registered flush; the canvas registers its layout save. [lost drop point]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

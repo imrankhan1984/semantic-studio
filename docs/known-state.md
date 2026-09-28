@@ -1028,3 +1028,37 @@ EXPECTED OUTPUT
   And on Windows, replacing the layout file many times a second now and
   then meets "access denied" from a scanner holding it: the write retries a
   few times 20 ms apart (`projects._replace`).
+
+- **The canvas's lost drop point, lost last move and deaf Delete** (2026-09-28,
+  the review of PR #47). Three defects the suite and the first browser pass
+  missed, each reproduced in Chrome by the reviewer and now held by a test
+  that fails without its fix.
+
+  **A position leaves the unsaved set only when its save has succeeded.** A
+  box made on the canvas is saved at its drop point at once, and the create's
+  refetch could read the layout before that save landed: the box was taken
+  for unplaced, laid out again, and that was saved instead (4 of 8 drops on a
+  280-class model). `place()` now marks its box unsaved like any move, and a
+  save records what it sent and settles an IRI only if the box has not moved
+  again since. A failed save keeps everything pending and says so in the
+  canvas's status line. Measured after the fix: 8 of 8 drops kept.
+
+  **`projectStore.close()` awaits every registered flush.** A move made less
+  than a second before *Close project* was lost: the project closed, and the
+  layout write then met a closed project. The canvas registers its flush
+  (`useCanvasData.flush`), and close waits for it before the server is told.
+
+  **A clicked line focuses the canvas surface.** A click on a line focuses
+  nothing, so the Delete key went to the page and never reached the canvas's
+  key handler; the jsdom test had sent the key to an element inside the
+  canvas and so passed. The surface is now script-focusable, the click
+  focuses it and says *… selected. Delete removes it.*, and the test sends
+  the key to whatever holds focus.
+
+  Also from that review: the canvas pans to a selection once, not after every
+  form edit; Show and Hide on canvas revert and say so when the write fails;
+  past 300 boxes only a class or a concept joins the shown set (its kind is
+  asked for when it is not drawn); the tree is `aria-busy` while a command
+  runs; Tidy up is `aria-disabled`. `renderCanvas` in the tests waits for the
+  boxes, not only the canvas, which is what failed about 1 run in 6 on CI.
+

@@ -753,6 +753,15 @@ describe("Stage 2 follow-ups (visual-modeling 5.8)", () => {
     expect(hide).toHaveBeenCalledWith(EX + "Invoice");
     rerender(<EditSection {...props} canvas={{ limited: false, shown: [], show, hide }} />);
     expect(screen.queryByRole("button", { name: "Show on canvas" })).toBeNull();
+    // Only a class or a concept is a box (PR #47 review, item 9).
+    rerender(
+      <EditSection
+        {...props}
+        details={details("billedTo", "objectProperty", [[P.type, uri(OWL + "ObjectProperty")]])}
+        canvas={{ limited: true, shown: [], show, hide }}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Show on canvas" })).toBeNull();
   });
 });
 

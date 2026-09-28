@@ -532,7 +532,13 @@ export default function HierarchyView({
   if (!ontologyId) return null;
 
   return (
-    <section className="hierarchy-view" aria-labelledby={HEADING_ID} ref={sectionRef}>
+    <section
+      className="hierarchy-view"
+      aria-labelledby={HEADING_ID}
+      ref={sectionRef}
+      // A command in flight, as the form's section says it (PR #47 review).
+      aria-busy={busy}
+    >
       <div className="hierarchy-toolbar">
         <h2 id={HEADING_ID} tabIndex={-1}>
           Hierarchy

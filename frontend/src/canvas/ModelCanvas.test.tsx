@@ -34,16 +34,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { projectStore } from "../state/projectStore";
 import type { CanvasView } from "../types";
 
-const { openProject, runCommand, getCanvas, putLayout, previewDelete } = vi.hoisted(() => ({
+const { openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails } = vi.hoisted(() => ({
   openProject: vi.fn(),
+  closeProject: vi.fn(),
   runCommand: vi.fn(),
   getCanvas: vi.fn(),
   putLayout: vi.fn(),
   previewDelete: vi.fn(),
+  getNodeDetails: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, openProject, runCommand, getCanvas, putLayout, previewDelete };
+  return { ...actual, openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails };
 });
 
 // The stub: nodes through the canvas's own node types, and every prop kept.
@@ -162,7 +164,13 @@ async function renderCanvas(view: CanvasView = viewOf(), selected: string | null
       onCanvasSet={onCanvasSet}
     />,
   );
-  await waitFor(() => expect(document.querySelector(".react-flow")).toBeTruthy());
+  // Every box drawn, not only the canvas: the boxes come one render after the
+  // view, and a test that looked for one then failed about 1 run in 6 on CI
+  // (PR #47 review).
+  await waitFor(() => {
+    expect(document.querySelector(".react-flow")).toBeTruthy();
+    expect(document.querySelectorAll(".react-flow__node")).toHaveLength(view.nodes.length);
+  });
   return result;
 }
 
@@ -174,7 +182,7 @@ const lastCommand = () => runCommand.mock.calls[runCommand.mock.calls.length - 1
 
 beforeEach(async () => {
   projectStore._reset();
-  for (const mock of [openProject, runCommand, getCanvas, putLayout, previewDelete, onSelect, onDeleted, onCanvasSet]) {
+  for (const mock of [openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails, onSelect, onDeleted, onCanvasSet]) {
     mock.mockReset();
   }
   flow.api.setCenter.mockReset();
@@ -188,6 +196,8 @@ beforeEach(async () => {
   });
   await projectStore.open(PID);
   putLayout.mockImplementation(async (_p, _d, layout) => layout);
+  closeProject.mockResolvedValue({ closed: PID });
+  getNodeDetails.mockResolvedValue({ iri: EX + "Invoice", kind: "class" });
   runCommand.mockImplementation(async (_p, _d, command: string) => ({ revision: 3, label: command, state: STATE }));
 });
 
@@ -684,6 +694,7 @@ describe("found in the code review of the branch", () => {
     await act(async () => undefined);
     expect(putLayout).not.toHaveBeenCalled();
     cleanup();
+    getNodeDetails.mockResolvedValue({ iri: EX + "mentions", kind: "objectProperty" });
     await renderCanvas(viewOf({ limited: true, nodes: [], edges: [] }), EX + "mentions");
     await act(async () => undefined);
     expect(putLayout).not.toHaveBeenCalled();
@@ -728,5 +739,183 @@ describe("found in the code review of the branch", () => {
     onSelect.mockClear();
     fireEvent.focus(box("Paid"));
     expect(onSelect).toHaveBeenCalledWith(EX + "Paid");
+  });
+});
+
+describe("PR #47 review", () => {
+  function later<T>() {
+    let resolve: (value: T) => void = () => {};
+    let reject: (e: unknown) => void = () => {};
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  it("1: a box made on the canvas keeps its drop point through a refetch that beats its save", async () => {
+    runCommand.mockResolvedValueOnce({ revision: 3, label: "Created class Receipt", state: STATE, created: EX + "Receipt" });
+    const { rerender } = await renderCanvas();
+    const pending = later<unknown>();
+    putLayout.mockImplementation(() => pending.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Class" }));
+    const field = screen.getByRole("textbox", { name: "Name of the new class" });
+    fireEvent.change(field, { target: { value: "Receipt" } });
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+    const dropped = putLayout.mock.calls[putLayout.mock.calls.length - 1][2].positions[EX + "Receipt"];
+    // The refetch reads the layout before the save has landed: no Receipt.
+    getCanvas.mockResolvedValue(
+      viewOf({
+        revision: 3,
+        nodes: [...viewOf().nodes, { iri: EX + "Receipt", kind: "class", label: "Receipt", fallback: false, attributes: [] }],
+      }),
+    );
+    await act(async () => {
+      rerender(<ModelCanvas projectId={PID} doc="model" revision={3} language="en" primaryLanguage="en" selected={null} onSelect={onSelect} onDeleted={onDeleted} />);
+    });
+    await waitFor(() => expect(box("Receipt")).toBeTruthy());
+    const receipt = (flow.props.nodes as { id: string; position: { x: number; y: number } }[]).find((n) => n.id === EX + "Receipt")!;
+    expect([receipt.position.x, receipt.position.y]).toEqual(dropped);
+    await act(async () => pending.resolve({}));
+  });
+
+  it("2: closing the project waits for a move's pending save", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await renderCanvas();
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    putLayout.mockClear();
+    const order: string[] = [];
+    putLayout.mockImplementation(async (_p, _d, layout) => {
+      order.push("layout");
+      return layout;
+    });
+    closeProject.mockImplementation(async () => {
+      order.push("close");
+      return { closed: PID };
+    });
+    await act(async () => {
+      flow.props.onNodesChange([{ type: "position", id: EX + "Document", position: { x: 42, y: 7 }, dragging: false }]);
+    });
+    // Less than a second later: Close.
+    await act(async () => projectStore.close());
+    expect(order).toEqual(["layout", "close"]);
+    expect(putLayout.mock.calls[0][2].positions[EX + "Document"]).toEqual([42, 7]);
+  });
+
+  it("3: Delete reaches a selected line: the click puts focus where the key is handled", async () => {
+    await renderCanvas();
+    const edges = flow.props.edges as { id: string; ariaLabel: string }[];
+    await act(async () => flow.props.onEdgeClick({}, edges[0]));
+    expect(document.activeElement?.classList.contains("canvas-surface")).toBe(true);
+    expect(screen.getByText("Invoice (en) is a kind of Document selected. Delete removes it.")).toBeTruthy();
+    await act(async () => {
+      fireEvent.keyDown(document.activeElement!, { key: "Delete" });
+    });
+    expect(lastCommand()).toEqual(["RemoveSubClassOf", { child: EX + "Invoice", parent: EX + "Document" }]);
+  });
+
+  it("3: Delete on a selected relationship line opens the delete flow for its property", async () => {
+    previewDelete.mockResolvedValue({
+      dryRun: true, revision: 2,
+      impact: { iri: EX + "billedTo", label: "billed to", kind: "object property", statements: 4, strategy: "reparent",
+        children: [], reparentedTo: [], properties: [], individuals: [], importMentions: 0 },
+    });
+    await renderCanvas();
+    const edges = flow.props.edges as { id: string }[];
+    await act(async () => flow.props.onEdgeClick({}, edges[2]));
+    await act(async () => {
+      fireEvent.keyDown(document.activeElement!, { key: "Delete" });
+    });
+    expect(screen.getByRole("dialog", { name: "Delete billed to?" })).toBeTruthy();
+    expect(previewDelete).toHaveBeenCalledWith(PID, "model", EX + "billedTo", "reparent");
+  });
+
+  it("5: a move stays unsaved until a save succeeds, and a failed save says so", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { rerender } = await renderCanvas();
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    putLayout.mockRejectedValueOnce(new Error("The disk is full."));
+    await act(async () => {
+      flow.props.onNodesChange([{ type: "position", id: EX + "Paid", position: { x: 900, y: 9 }, dragging: false }]);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    expect(screen.getByText(/The canvas layout could not be saved: The disk is full\./)).toBeTruthy();
+    // A refetch that does not know the move keeps it.
+    getCanvas.mockResolvedValue(viewOf({ revision: 3 }));
+    await act(async () => {
+      rerender(<ModelCanvas projectId={PID} doc="model" revision={3} language="en" primaryLanguage="en" selected={null} onSelect={onSelect} onDeleted={onDeleted} />);
+    });
+    await waitFor(() => expect(getCanvas).toHaveBeenCalledTimes(2));
+    const paid = (flow.props.nodes as { id: string; position: { x: number; y: number } }[]).find((n) => n.id === EX + "Paid")!;
+    expect(paid.position).toEqual({ x: 900, y: 9 });
+    // The next save carries it, and the sentence goes.
+    putLayout.mockClear();
+    await act(async () => projectStore.flushAll());
+    expect(putLayout.mock.calls[0][2].positions[EX + "Paid"]).toEqual([900, 9]);
+    expect(screen.queryByText(/could not be saved/)).toBeNull();
+  });
+
+  it("6: a form edit does not re-centre the canvas; a new selection does", async () => {
+    const { rerender } = await renderCanvas();
+    const props = { projectId: PID, doc: "model" as const, language: "en", primaryLanguage: "en", onSelect, onDeleted };
+    await act(async () => {
+      rerender(<ModelCanvas {...props} revision={2} selected={EX + "Status"} />);
+    });
+    expect(flow.api.setCenter).toHaveBeenCalledTimes(1);
+    // An edit in the form: a new revision, positions rebuilt, same selection.
+    getCanvas.mockResolvedValue(viewOf({ revision: 3 }));
+    await act(async () => {
+      rerender(<ModelCanvas {...props} revision={3} selected={EX + "Status"} />);
+    });
+    await waitFor(() => expect(getCanvas).toHaveBeenCalledTimes(2));
+    expect(flow.api.setCenter).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      rerender(<ModelCanvas {...props} revision={3} selected={EX + "Paid"} />);
+    });
+    expect(flow.api.setCenter).toHaveBeenCalledTimes(2);
+  });
+
+  it("7: a failed Show on canvas changes nothing, rejects nothing, and says so", async () => {
+    await renderCanvas(viewOf({ limited: true, nodes: [], edges: [], layout: { version: 1, positions: {}, shown: [], viewport: null } }));
+    const set = onCanvasSet.mock.calls[onCanvasSet.mock.calls.length - 1][0];
+    putLayout.mockRejectedValueOnce(new Error("Refused."));
+    getCanvas.mockClear();
+    await act(async () => {
+      await expect(set.show(EX + "Invoice")).resolves.toBeUndefined();
+    });
+    expect(screen.getByText("The canvas could not change what it shows: Refused.")).toBeTruthy();
+    const after = onCanvasSet.mock.calls[onCanvasSet.mock.calls.length - 1][0];
+    expect(after.shown).toEqual([]);
+    expect(getCanvas).not.toHaveBeenCalled();
+  });
+
+  it("8: Tidy up is aria-disabled, not disabled, with nothing to tidy", async () => {
+    await renderCanvas(viewOf({ nodes: [], edges: [], undrawn: [], total: 0 }));
+    const tidy = screen.getByRole("button", { name: "Tidy up" }) as HTMLButtonElement;
+    expect(tidy.disabled).toBe(false);
+    expect(tidy.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(tidy);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("9: past 300 boxes only a class or a concept is added to the shown set", async () => {
+    getNodeDetails.mockResolvedValue({ iri: EX + "billedTo", kind: "objectProperty" });
+    await renderCanvas(viewOf({ limited: true, nodes: [], edges: [] }), EX + "billedTo");
+    await act(async () => undefined);
+    expect(getNodeDetails).toHaveBeenCalledWith(`${PID}-model`, EX + "billedTo");
+    expect(putLayout).not.toHaveBeenCalled();
+    cleanup();
+    getNodeDetails.mockResolvedValue({ iri: EX + "Paid", kind: "concept" });
+    await renderCanvas(viewOf({ limited: true, nodes: [], edges: [] }), EX + "Paid");
+    await waitFor(() => expect(putLayout).toHaveBeenCalled());
+    expect(putLayout.mock.calls[0][2].shown).toEqual([EX + "Paid"]);
   });
 });

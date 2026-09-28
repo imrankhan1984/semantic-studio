@@ -24,6 +24,11 @@ BASIC IDEA
     `command` is the editing form's and the tree's one way to change the
     model (visual-modeling 5.1, 5.2): the same bookkeeping as an undo.
 
+    Something holding writes for the open project -- the canvas, which saves
+    its layout a second after a move -- registers a flush, and close() awaits
+    every one before the server closes the project. A closed project refuses
+    the write, and a move made just before Close was lost (PR #47 review).
+
     The editor's unapplied text lives here rather than in the editor, because
     leaving it is App's business: switching mode, switching document or
     closing the project each has to ask "Apply, discard, or stay?", and only
@@ -92,6 +97,14 @@ const EMPTY: ProjectSnapshot = {
 
 let snapshot: ProjectSnapshot = EMPTY;
 const listeners = new Set<() => void>();
+// Pending writes to wait for before the project closes (the canvas layout).
+const flushes = new Set<() => Promise<void>>();
+
+/** Wait for every registered flush; one failing does not stop the others,
+ *  nor the close: its own status line has already said so. */
+async function flushAll(): Promise<void> {
+  await Promise.all([...flushes].map((flush) => flush().catch(() => undefined)));
+}
 
 function set(changes: Partial<ProjectSnapshot>): void {
   snapshot = { ...snapshot, ...changes };
@@ -201,6 +214,7 @@ export const projectStore = {
    *  409 when there are unsaved changes and `discard` is false. */
   async close(discard = false): Promise<void> {
     const project = snapshot.project;
+    await flushAll();
     if (project) await closeProject(project.id, discard);
     set({ ...EMPTY, announcement: snapshot.announcement });
   },
@@ -350,6 +364,18 @@ export const projectStore = {
         : updated.primaryLanguage;
     set({ project: updated, displayLanguage: display });
   },
+
+  /** Register a pending-write flush, awaited before the project closes.
+   *  Returns the function that removes it. */
+  registerFlush(flush: () => Promise<void>): () => void {
+    flushes.add(flush);
+    return () => {
+      flushes.delete(flush);
+    };
+  },
+
+  /** Wait for every registered flush, as close() does. */
+  flushAll,
 
   /** For tests: back to nothing open. */
   _reset(): void {

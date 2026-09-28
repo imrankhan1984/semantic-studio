@@ -188,7 +188,7 @@ export default function EditSection({
       <p className="detail-note edit-status" role="status">
         {busy ? "Saving change…" : ""}
       </p>
-      {canvas?.limited && (
+      {canvas?.limited && (model.kind === "class" || model.kind === "concept") && (
         // 5.6: past 300 boxes the canvas draws what the user chooses.
         <div className="edit-actions">
           {canvas.shown.includes(iri) ? (
