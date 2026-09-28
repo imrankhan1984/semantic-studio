@@ -59,7 +59,7 @@ EXPECTED OUTPUT
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Optional
+from typing import Callable, Optional, Sequence
 
 from rdflib import Graph, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS
@@ -74,7 +74,7 @@ from .graph_builder import (
     KIND_DATATYPE_PROPERTY,
     KIND_OBJECT_PROPERTY,
     TYPE_TO_KIND,
-    pick_label,
+    labeler,
     prefixed,
     subclass_parents,
 )
@@ -222,7 +222,7 @@ def _mark_cycles(
     return cyclic, roots + promoted
 
 
-def _build_class_forest(graph: Graph) -> tuple[dict, int]:
+def _build_class_forest(graph: Graph, label: Callable[[URIRef], str]) -> tuple[dict, int]:
     """The forest over asserted rdfs:subClassOf.
 
     A node is any named class: a resource typed owl:Class / rdfs:Class, or either
@@ -258,11 +258,11 @@ def _build_class_forest(graph: Graph) -> tuple[dict, int]:
         if effective:
             parents[child] = effective
 
-    labels = {n: (pick_label(graph, n), prefixed(graph, n)) for n in node_ids}
+    labels = {n: (label(n), prefixed(graph, n)) for n in node_ids}
     return _forest(node_ids, parents, labels, KIND_CLASS)
 
 
-def _build_concept_forest(graph: Graph) -> tuple[dict, int]:
+def _build_concept_forest(graph: Graph, label: Callable[[URIRef], str]) -> tuple[dict, int]:
     """The forest over asserted skos:broader, rooted at concept schemes.
 
     A scheme holds its top concepts (skos:hasTopConcept, or the inverse of
@@ -312,7 +312,7 @@ def _build_concept_forest(graph: Graph) -> tuple[dict, int]:
         if child in schemes:
             del parents[child]
 
-    labels = {n: (pick_label(graph, n), prefixed(graph, n)) for n in node_ids}
+    labels = {n: (label(n), prefixed(graph, n)) for n in node_ids}
     kind_of = {n: (KIND_SCHEME if n in schemes else KIND_CONCEPT) for n in node_ids}
     parents_plain = {c: ps for c, ps in parents.items() if ps}
     return _forest(node_ids, parents_plain, labels, KIND_CONCEPT, kind_of=kind_of)
@@ -339,7 +339,7 @@ def _property_kind(graph: Graph, node: URIRef) -> str:
     return KIND_OBJECT_PROPERTY
 
 
-def _build_property_forests(graph: Graph) -> dict[str, tuple[dict, int]]:
+def _build_property_forests(graph: Graph, label: Callable[[URIRef], str]) -> dict[str, tuple[dict, int]]:
     """One forest per property kind over asserted rdfs:subPropertyOf (v0.3).
 
     `P subPropertyOf Q` makes `P` a child of `Q`, exactly as subClassOf builds
@@ -375,7 +375,7 @@ def _build_property_forests(graph: Graph) -> dict[str, tuple[dict, int]]:
         return {}
 
     kind_of = {n: _property_kind(graph, n) for n in members}
-    labels = {n: (pick_label(graph, n), prefixed(graph, n)) for n in members}
+    labels = {n: (label(n), prefixed(graph, n)) for n in members}
 
     result: dict[str, tuple[dict, int]] = {}
     for kind, key in _PROPERTY_FORESTS:
@@ -422,7 +422,9 @@ def _truncate(forest: dict, keep: int) -> dict:
     return {"nodes": nodes_out, "children": children_out, "roots": roots_out}
 
 
-def build_hierarchy(graph: Graph, *, max_nodes: int = HIERARCHY_MAX_NODES) -> dict:
+def build_hierarchy(
+    graph: Graph, *, max_nodes: int = HIERARCHY_MAX_NODES, langs: Optional[Sequence[str]] = None
+) -> dict:
     """Build the hierarchy forests from an rdflib graph.
 
     The class forest, the concept forest, and one property forest per property
@@ -439,12 +441,16 @@ def build_hierarchy(graph: Graph, *, max_nodes: int = HIERARCHY_MAX_NODES) -> di
     `max_nodes` caps the combined node count; over it the least-connected nodes
     are dropped and `truncated` is set. `counts` reports the true totals so the
     interface can say how much was dropped.
+
+    `langs` names a project document's rows in its display language (D-085);
+    None keeps the library's label rule.
     """
-    classes, class_total = _build_class_forest(graph)
-    concepts, concept_total = _build_concept_forest(graph)
+    label = labeler(graph, langs)
+    classes, class_total = _build_class_forest(graph, label)
+    concepts, concept_total = _build_concept_forest(graph, label)
     # Property forests (v0.3): one per property kind the ontology declares in a
     # subPropertyOf relationship, so most ontologies add nothing here.
-    properties = _build_property_forests(graph)
+    properties = _build_property_forests(graph, label)
 
     # Every forest present, in emission order, as key -> (forest, node count).
     # classes and concepts are always present (empty when the ontology has none);

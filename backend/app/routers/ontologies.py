@@ -15,6 +15,11 @@ BASIC IDEA
     over the ontology plus its resolved imports (imports.py). Off is the
     default and answers exactly as before.
 
+    An open project document is served here too, under its prj-<hex>-<doc> id
+    (D-081). The views that show names take ?lang=, the project's display
+    language (D-085); a library ontology ignores it. Nothing here changes a
+    document: that is routers/projects.py's command and apply routes only.
+
     This is the thin HTTP layer: it validates and shapes requests, delegates
     the real work to the store and the builder modules, and maps their
     exceptions to the right HTTP status codes. It also implements URL fetching
@@ -263,10 +268,15 @@ class ImportMapping(BaseModel):
 # rather than a second set of routes, so every view the toggle covers takes it
 # the same way and the file-only answer stays the default.
 IMPORTS_PARAM = Query(default=False, description="Include resolved owl:imports")
+# A project document's display language. Validated by the ontology, which
+# falls back to the primary language for one it does not carry.
+LANG_PARAM = Query(default=None, max_length=35, description="Display language (projects only)")
 
 
-def _viz(ontology, imports: bool) -> dict:
-    return imports_mod.merged_viz(ontology, PARSE_TIMEOUT_SECONDS) if imports else ontology.viz()
+def _viz(ontology, imports: bool, lang: Optional[str] = None) -> dict:
+    if imports:
+        return imports_mod.merged_viz(ontology, PARSE_TIMEOUT_SECONDS, lang)
+    return ontology.viz(lang)
 
 
 def _graph(ontology, imports: bool):
@@ -471,7 +481,10 @@ def delete_ontology(oid: str) -> dict:
 
 @router.get("/{oid}/graph")
 def get_graph(
-    oid: str, limit: Optional[int] = Query(default=None, ge=1), imports: bool = IMPORTS_PARAM
+    oid: str,
+    limit: Optional[int] = Query(default=None, ge=1),
+    imports: bool = IMPORTS_PARAM,
+    lang: Optional[str] = LANG_PARAM,
 ) -> dict:
     """GET /{oid}/graph?limit=N -> the highest-degree N nodes and their edges.
 
@@ -486,7 +499,7 @@ def get_graph(
     response reports the clamped `budget` so the interface can say so.
     """
     budget = min(DEFAULT_GRAPH_NODE_BUDGET if limit is None else limit, MAX_GRAPH_NODE_BUDGET)
-    return budget_viz(_viz(_get_or_404(oid), imports), budget)
+    return budget_viz(_viz(_get_or_404(oid), imports, lang), budget)
 
 
 @router.get("/{oid}/neighborhood")
@@ -495,6 +508,7 @@ def get_neighborhood(
     iri: str = Query(...),
     limit: Optional[int] = Query(default=None, ge=1),
     imports: bool = IMPORTS_PARAM,
+    lang: Optional[str] = LANG_PARAM,
 ) -> dict:
     """GET /{oid}/neighborhood?iri=... -> one entity and its top neighbours.
 
@@ -512,7 +526,7 @@ def get_neighborhood(
         DEFAULT_NEIGHBORHOOD_LIMIT if limit is None else limit,
         MAX_NEIGHBORHOOD_LIMIT,
     )
-    result = neighborhood_viz(_viz(ontology, imports), iri, budget)
+    result = neighborhood_viz(_viz(ontology, imports, lang), iri, budget)
     if result is None:
         # Blank nodes are excluded from the viz graph by build_viz_graph, so
         # this is also the expected answer for one, and for a predicate that
@@ -525,7 +539,9 @@ def get_neighborhood(
 
 
 @router.get("/{oid}/node")
-def get_node(oid: str, iri: str = Query(...), imports: bool = IMPORTS_PARAM) -> dict:
+def get_node(
+    oid: str, iri: str = Query(...), imports: bool = IMPORTS_PARAM, lang: Optional[str] = LANG_PARAM
+) -> dict:
     """GET /{oid}/node?iri=... -> every statement about one entity (detail panel).
 
     With imports on, the statements come from the merged view, and an entity
@@ -533,7 +549,14 @@ def get_node(oid: str, iri: str = Query(...), imports: bool = IMPORTS_PARAM) -> 
     imported and read-only (AC-21).
     """
     ontology = _get_or_404(oid)
-    details = node_details(_graph(ontology, imports), iri)
+    # A project document's title is in the display language, and `names`
+    # lists each project language with its value or None (5.4.2).
+    details = node_details(
+        _graph(ontology, imports),
+        iri,
+        langs=ontology.label_langs(lang),
+        languages=ontology.languages,
+    )
     if details is None:
         raise HTTPException(status_code=404, detail=f"No triples found for {iri}")
     if imports:
@@ -549,10 +572,13 @@ def search(
     q: str = Query(...),
     limit: int = Query(default=25, le=100),
     imports: bool = IMPORTS_PARAM,
+    lang: Optional[str] = LANG_PARAM,
 ) -> list[dict]:
-    """GET /{oid}/search?q=... -> ranked label/IRI matches for the search box."""
+    """GET /{oid}/search?q=... -> ranked label/IRI matches for the search box.
+
+    In a project every name matches, whatever the display language."""
     ontology = _get_or_404(oid)
-    return search_nodes(_viz(ontology, imports), q, limit)
+    return search_nodes(_viz(ontology, imports, lang), q, limit)
 
 
 @router.get("/{oid}/source")
@@ -572,9 +598,10 @@ def get_source(
         text = ontology.pretty_turtle()
         fmt = "turtle"
     else:
-        # "Original" view: the exact bytes as loaded.
+        # "Original" view: the exact bytes as loaded, or for a project
+        # document its current text.
         try:
-            raw = ontology.data_path.read_bytes()
+            raw = ontology.source_bytes()
         except OSError as exc:
             raise HTTPException(
                 status_code=404, detail="The stored source file is no longer available."
@@ -665,7 +692,9 @@ def get_documentation(oid: str, include_individuals: str = Query("false")) -> Re
 
 
 @router.get("/{oid}/hierarchy")
-def get_hierarchy(oid: str, imports: bool = IMPORTS_PARAM) -> dict:
+def get_hierarchy(
+    oid: str, imports: bool = IMPORTS_PARAM, lang: Optional[str] = LANG_PARAM
+) -> dict:
     """GET /{oid}/hierarchy -> the subClassOf, broader and subPropertyOf forests.
 
     A class hierarchy over rdfs:subClassOf, a concept hierarchy over skos:broader
@@ -689,8 +718,8 @@ def get_hierarchy(oid: str, imports: bool = IMPORTS_PARAM) -> dict:
     if imports:
         # Imported rows carry `importedFrom`, and the edge to each one the
         # origin "imported" -- D-046's seam with a new value (AC-21).
-        return imports_mod.merged_hierarchy(ontology, PARSE_TIMEOUT_SECONDS)
-    return ontology.hierarchy()
+        return imports_mod.merged_hierarchy(ontology, PARSE_TIMEOUT_SECONDS, lang)
+    return ontology.hierarchy(lang)
 
 
 @router.get("/{oid}/query-schema")

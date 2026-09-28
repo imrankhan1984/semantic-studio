@@ -125,6 +125,13 @@ def test_route_discovery_finds_the_known_mutating_routes():
         ("POST", "/api/ontologies/x/sparql"),
         ("POST", "/api/queries"),
         ("DELETE", "/api/queries/x"),
+        # authoring-foundations: the project routes are found the same way.
+        ("POST", "/api/projects"),
+        ("PATCH", "/api/projects/x"),
+        ("DELETE", "/api/projects/x"),
+        ("POST", "/api/projects/x/documents/x/commands"),
+        ("PUT", "/api/projects/x/documents/x/source"),
+        ("POST", "/api/projects/x/documents/x/save"),
     ]:
         assert expected in routes
 
