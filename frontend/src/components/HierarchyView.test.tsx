@@ -613,7 +613,8 @@ describe("HierarchyView in a project (visual-modeling 5.2, AC-5)", () => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
     });
     const dialog = screen.getByRole("dialog", { name: "Delete Alpha?" });
-    expect(within(dialog).getByRole("radio", { name: "Move them up to the top level" })).toBeTruthy();
+    // One child is "it" (5.8 item 7).
+    expect(within(dialog).getByRole("radio", { name: "Move it up to the top level" })).toBeTruthy();
     expect(runCommand).not.toHaveBeenCalled();
     await act(async () => {
       fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
@@ -640,3 +641,104 @@ describe("HierarchyView in a project (visual-modeling 5.2, AC-5)", () => {
     expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Add subclass"]);
   });
 });
+
+describe("HierarchyView, Stage 2 follow-ups (visual-modeling 5.8)", () => {
+  const PID = "prj-0123456789ab";
+  const STATE = {
+    doc: "model" as const, ontologyId: `${PID}-model`, revision: 2, dirty: true,
+    canUndo: true, undoLabel: "x", canRedo: false, redoLabel: null, triples: 10,
+  };
+
+  beforeEach(async () => {
+    projectStore._reset();
+    for (const mock of [openProject, runCommand]) mock.mockReset();
+    openProject.mockResolvedValue({
+      project: {
+        id: PID, name: "Shop", createdAt: "", updatedAt: "", baseIri: EX, prefix: "ex",
+        primaryLanguage: "en", languages: [], documents: [{ file: "model.ttl", role: "model" }], counts: {},
+      },
+      documents: [STATE],
+      recovery: { available: false, draftTime: null },
+    });
+    await projectStore.open(PID);
+  });
+
+  afterEach(() => projectStore._reset());
+
+  const view = (props: Partial<React.ComponentProps<typeof HierarchyView>> = {}) => (
+    <HierarchyView
+      ontologyId="o1"
+      theme="dark"
+      selected={null}
+      onSelect={vi.fn()}
+      editing={{ primaryLanguage: "en" }}
+      {...props}
+    />
+  );
+
+  it("item 1: a create in flight shows the view busy", async () => {
+    let finish: (value: unknown) => void = () => {};
+    runCommand.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    fetchHierarchy.mockResolvedValue(mixed());
+    render(view());
+    fireEvent.click(await screen.findByRole("button", { name: "New class" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name (en)" }), { target: { value: "Late" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    });
+    expect(document.querySelector(".hierarchy-view .edit-status")!.textContent).toBe("Saving change…");
+    await act(async () => finish({ revision: 3, label: "Created", state: STATE }));
+    expect(document.querySelector(".hierarchy-view .edit-status")!.textContent).toBe("");
+  });
+
+  it("item 4: a create does not select the new entity once the selection moved", async () => {
+    let finish: (value: unknown) => void = () => {};
+    runCommand.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    fetchHierarchy.mockResolvedValue(mixed());
+    const onSelect = vi.fn();
+    const { rerender } = render(view({ onSelect }));
+    fireEvent.click(await screen.findByRole("button", { name: "New class" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name (en)" }), { target: { value: "Late" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    });
+    rerender(view({ onSelect, selected: EX + "Alpha" }));
+    await act(async () => finish({ revision: 3, label: "Created", state: STATE, created: EX + "Late" }));
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("item 6: the tree's forms and menu close when the document changes", async () => {
+    fetchHierarchy.mockResolvedValue(mixed());
+    const { rerender } = render(view());
+    fireEvent.click(await screen.findByRole("button", { name: "New class" }));
+    expect(screen.getByRole("textbox", { name: "Name (en)" })).toBeTruthy();
+    await act(async () => {
+      rerender(view({ ontologyId: "o2" }));
+    });
+    expect(screen.queryByRole("textbox", { name: "Name (en)" })).toBeNull();
+  });
+
+  it("5.6: past 300 boxes the row menu offers Show on canvas and Hide from canvas", async () => {
+    fetchHierarchy.mockResolvedValue(mixed());
+    const show = vi.fn();
+    render(view({ canvas: { limited: true, shown: [], show, hide: vi.fn() } }));
+    await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
+    fireEvent.click(itemByLabel("Alpha")!.querySelector(".hierarchy-menu-btn")!);
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "Add subclass", "Rename", "Delete…", "Show on canvas",
+    ]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Show on canvas" }));
+    expect(show).toHaveBeenCalledWith(EX + "Alpha");
+  });
+
+  it("5.4: the Canvas switch is a pressed-state button in the toolbar", async () => {
+    fetchHierarchy.mockResolvedValue(mixed());
+    const onToggle = vi.fn();
+    render(view({ canvasSwitch: { on: true, onToggle } }));
+    const toggle = await screen.findByRole("button", { name: "Canvas" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalled();
+  });
+});
+

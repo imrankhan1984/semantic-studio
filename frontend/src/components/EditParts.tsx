@@ -16,6 +16,17 @@ BASIC IDEA
     change…" while it is set. A second command while one is in flight is
     not sent at all.
 
+    The runner is shared (visual-modeling 5.8 item 1): the annotation adder,
+    the delete dialog and the tree's forms take the one their section made,
+    so any command in flight shows as busy everywhere in it. `alive()` says
+    whether the form that started a command is still on screen when it
+    answers, so a create does not move the selection away from something the
+    user picked meanwhile (item 4).
+
+    useReturnFocus gives focus back to the control that opened a small form
+    once the form has gone (item 2). useCopy copies and says "Copied" in a
+    polite live region it renders itself (item 11).
+
     InlineText shows a value with an Edit button. Editing shows a field with
     Save and Cancel; Enter saves (Ctrl+Enter in a text area), Escape cancels,
     and focus returns to Edit either way, so a keyboard user is never left on
@@ -25,11 +36,11 @@ INPUTS / INPUT SOURCES
     - The project store, for commands.
 
 EXPECTED OUTPUT
-    - useRunner, Runner, Block, InlineText.
+    - useRunner, Runner, useReturnFocus, useCopy, Block, InlineText.
 ================================================================================
 */
 
-import { useCallback, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { projectStore } from "../state/projectStore";
 import type { ChangeResult } from "../types";
 
@@ -37,8 +48,15 @@ import type { ChangeResult } from "../types";
 export interface Runner {
   busy: boolean;
   errors: Record<string, string>;
-  run: (field: string, command: string, args: Record<string, unknown>) => Promise<ChangeResult | null>;
+  run: (
+    field: string,
+    command: string,
+    args: Record<string, unknown>,
+    announcement?: (result: ChangeResult) => string,
+  ) => Promise<ChangeResult | null>;
   clear: (field: string) => void;
+  /** The form that made this runner is still mounted. */
+  alive: () => boolean;
 }
 
 export function useRunner(): Runner {
@@ -47,23 +65,69 @@ export function useRunner(): Runner {
   // A ref as well as the state: two submits in one tick both see busy as
   // false, and the second command would be sent (found in review).
   const inFlight = useRef(false);
-  const run = useCallback(async (field: string, command: string, args: Record<string, unknown>) => {
-    if (inFlight.current) return null;
-    inFlight.current = true;
-    setBusy(true);
-    setErrors((e) => ({ ...e, [field]: "" }));
-    try {
-      return await projectStore.command(command, args);
-    } catch (e) {
-      setErrors((prev) => ({ ...prev, [field]: e instanceof Error ? e.message : String(e) }));
-      return null;
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
-    }
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
   }, []);
+  const run = useCallback(
+    async (
+      field: string,
+      command: string,
+      args: Record<string, unknown>,
+      announcement?: (result: ChangeResult) => string,
+    ) => {
+      if (inFlight.current) return null;
+      inFlight.current = true;
+      setBusy(true);
+      setErrors((e) => ({ ...e, [field]: "" }));
+      try {
+        return await projectStore.command(command, args, announcement);
+      } catch (e) {
+        if (mounted.current) {
+          setErrors((prev) => ({ ...prev, [field]: e instanceof Error ? e.message : String(e) }));
+        }
+        return null;
+      } finally {
+        inFlight.current = false;
+        if (mounted.current) setBusy(false);
+      }
+    },
+    [],
+  );
   const clear = useCallback((field: string) => setErrors((e) => ({ ...e, [field]: "" })), []);
-  return { busy, errors, run, clear };
+  const alive = useCallback(() => mounted.current, []);
+  return { busy, errors, run, clear, alive };
+}
+
+/** A ref for the control that opens a small form, and a function that gives
+ *  it focus back once the form has closed and the control is drawn again. */
+export function useReturnFocus<T extends HTMLElement = HTMLButtonElement>() {
+  const ref = useRef<T>(null);
+  const restore = useCallback(() => {
+    window.setTimeout(() => ref.current?.focus(), 0);
+  }, []);
+  return [ref, restore] as const;
+}
+
+/** Copy to the clipboard, and say so in a polite live region: the button
+ *  gave no sign it had done anything (5.8 item 11). The region is rendered
+ *  while empty, because one added with its text is not reliably read. */
+export function useCopy() {
+  const [said, setSaid] = useState("");
+  const copy = useCallback((text: string) => {
+    void Promise.resolve(navigator.clipboard?.writeText(text))
+      .then(() => setSaid(`Copied ${text}.`))
+      .catch(() => setSaid("It could not be copied."));
+  }, []);
+  const region = (
+    <span className="visually-hidden" role="status">
+      {said}
+    </span>
+  );
+  return [copy, region] as const;
 }
 
 // ---------------------------------------------------------------------------

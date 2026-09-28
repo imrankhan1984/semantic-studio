@@ -47,6 +47,8 @@ INPUTS / INPUT SOURCES (props)
     - readOnlyNote: why there is no Edit section (a library ontology,
       shapes.ttl), said in one line of text (AC-4).
     - onDeleted: the entity was deleted from the form.
+    - canvas: past 300 boxes, the form's Show on canvas and Hide from canvas
+      (visual-modeling 5.6).
 
     The IRI under the title is a link only when linkTarget allows it (D-088):
     http and https. Any other scheme is shown as text, with Copy beside it.
@@ -59,7 +61,7 @@ EXPECTED OUTPUT
 import { useEffect, useRef, useState } from "react";
 import { getNodeDetails } from "../api";
 import { linkTarget } from "../links";
-import type { NodeDetails, TermRef } from "../types";
+import type { CanvasSet, NodeDetails, TermRef } from "../types";
 import EditSection from "./EditSection";
 
 interface Props {
@@ -88,6 +90,7 @@ interface Props {
   /** Why the entity cannot be edited here, when that is the document's fault. */
   readOnlyNote?: string | null;
   onDeleted?: (iri: string) => void;
+  canvas?: CanvasSet | null;
 }
 
 /** The heading id, so the panel can be named by it and focus can be sent to it. */
@@ -137,6 +140,7 @@ export default function DetailPanel({
   editing = null,
   readOnlyNote = null,
   onDeleted,
+  canvas = null,
 }: Props) {
   const [details, setDetails] = useState<NodeDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -268,6 +272,7 @@ export default function DetailPanel({
               languages={editing.languages}
               onSelect={onNavigate}
               onDeleted={(deleted) => (onDeleted ? onDeleted(deleted) : onClose())}
+              canvas={canvas}
             />
           )}
           {details.names && !editing && (

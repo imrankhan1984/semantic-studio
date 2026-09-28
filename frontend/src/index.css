@@ -20,6 +20,8 @@
   --error-border: #5a2e34;
   --literal: #a8d08d;
   --shadow: rgba(0, 0, 0, 0.45);
+  --canvas-concept: #b79bf0;
+  --canvas-grid: #232a36;
   color-scheme: dark;
 }
 
@@ -44,6 +46,8 @@
   --error-border: #f2c4c9;
   --literal: #3f7d20;
   --shadow: rgba(30, 40, 60, 0.18);
+  --canvas-concept: #7d54c4;
+  --canvas-grid: #e5e9f0;
   color-scheme: light;
 }
 
@@ -4194,4 +4198,296 @@ kbd {
    which the read-only block's 56px column was never sized for. */
 .edit-section .detail-names > div {
   grid-template-columns: 110px 1fr;
+}
+
+/* --- the modeling canvas (visual-modeling Stage 2) ------------------------- */
+
+/* Three columns: the tree, the canvas, the form (5.4). The tree narrows to
+   make room; the detail panel keeps its width. */
+.main.with-canvas .hierarchy-view {
+  flex: 0 0 300px;
+  border-right: 1px solid var(--border-soft);
+}
+
+.model-canvas {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.model-canvas.canvas-message {
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+
+.canvas-toolbar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+}
+
+.canvas-toolbar-gap {
+  flex: 1;
+}
+
+.canvas-palette-label {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.canvas-palette-item {
+  cursor: grab;
+  border-style: dashed;
+}
+
+.canvas-hint {
+  flex: none;
+  margin: 0;
+  padding: 2px 10px;
+  min-height: 1.4em;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.canvas-limited {
+  flex: none;
+  margin: 0;
+  padding: 0 10px 4px;
+}
+
+.canvas-undrawn {
+  flex: none;
+  list-style: none;
+  margin: 0;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.canvas-surface {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.canvas-surface .react-flow {
+  background: var(--bg);
+  background-image: radial-gradient(var(--canvas-grid) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.canvas-box {
+  width: 190px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: 0 1px 3px var(--shadow);
+}
+
+/* A concept is rounded and in the concept colour, and says "concept" in text
+   as well (5.4): nothing is told by colour alone. */
+.canvas-concept {
+  border-radius: 16px;
+  border-color: var(--canvas-concept);
+}
+
+.canvas-box-marker {
+  display: block;
+  font-size: 11px;
+  color: var(--canvas-concept);
+}
+
+.canvas-box.imported {
+  border-style: dashed;
+  background: var(--bg-panel);
+}
+
+.canvas-box.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.canvas-box.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: 3px;
+}
+
+.canvas-box-name {
+  display: block;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.canvas-box-from {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.canvas-attributes {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 6px 0 0;
+  border-top: 1px solid var(--border-soft);
+  font-size: 12px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.canvas-add-attr {
+  margin-top: 6px;
+  padding: 1px 6px;
+  font-size: 11px;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+}
+
+.canvas-attr-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.canvas-rename,
+.canvas-draft input,
+.canvas-attr-form input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  font-size: 13px;
+}
+
+.canvas-draft {
+  position: absolute;
+  z-index: 5;
+}
+
+.canvas-edge-label {
+  position: absolute;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-soft);
+  font-size: 11px;
+  color: var(--text);
+  pointer-events: none;
+}
+
+.canvas-hollow {
+  fill: var(--bg);
+  stroke: var(--text-dim);
+  stroke-width: 1.2;
+}
+
+.canvas-surface .react-flow__edge-path {
+  stroke: var(--text-dim);
+  stroke-width: 1.4;
+}
+
+.canvas-surface .react-flow__edge.selected .react-flow__edge-path,
+.canvas-surface .react-flow__edge:focus-visible .react-flow__edge-path {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.canvas-surface .react-flow__handle {
+  width: 9px;
+  height: 9px;
+  background: var(--accent);
+  border: 1px solid var(--bg);
+  opacity: 0;
+}
+
+/* Handles appear where they can be used: on the box under the pointer or
+   holding focus, and on every box while a line is being drawn. */
+.canvas-surface .react-flow__node:hover .react-flow__handle,
+.canvas-surface .react-flow__node:focus-visible .react-flow__handle,
+.canvas-surface .react-flow.connecting .react-flow__handle,
+.canvas-surface .react-flow__handle.connectingto {
+  opacity: 1;
+}
+
+.relate-menu {
+  position: absolute;
+  z-index: 10;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  box-shadow: 0 6px 18px var(--shadow);
+}
+
+.relate-menu ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.relate-menu [role="menuitem"] {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 5px 8px;
+}
+
+.relate-menu [role="menuitem"]:hover,
+.relate-menu [role="menuitem"]:focus-visible {
+  background: var(--bg-subhead);
+}
+
+.relate-title {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.model-canvas button[aria-disabled="true"],
+.relate-menu button[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
+/* The tree column is narrow beside the canvas: its toolbar wraps rather than
+   hiding Expand all, Collapse all and the Canvas switch past the edge. */
+.main.with-canvas .hierarchy-toolbar {
+  flex-wrap: wrap;
+}
+
+.main.with-canvas .hierarchy-filter {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.hierarchy-toolbar button[aria-pressed="true"] {
+  border-color: var(--accent);
 }

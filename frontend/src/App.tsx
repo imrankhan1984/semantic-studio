@@ -119,7 +119,7 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ApiError,
   createProject,
@@ -186,6 +186,7 @@ import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type {
   AppMode,
   ApprovalRequest,
+  CanvasSet,
   ImportsListing,
   MergeResult,
   OntologySummary,
@@ -195,6 +196,49 @@ import type {
   VizGraph,
   VizNeighborhood,
 } from "./types";
+
+// The modeling canvas (visual-modeling 5.4, D-086): its own chunk, React Flow
+// with it, fetched from the local server the first time a canvas opens in a
+// session and from the browser's cache after that -- never before, and never
+// from the internet. A factory, because React.lazy keeps a failed import: a
+// retry needs a new one.
+const loadCanvas = () => lazy(() => import("./canvas/ModelCanvas"));
+
+/** A canvas that could not load leaves the tree and the form working. */
+class CanvasBoundary extends Component<{ onRetry: () => void; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <section className="model-canvas canvas-message" aria-label="Modeling canvas">
+        <p>The canvas could not load. The tree and the form still work.</p>
+        <button
+          type="button"
+          className="ghost"
+          onClick={() => {
+            this.setState({ failed: false });
+            this.props.onRetry();
+          }}
+        >
+          Retry
+        </button>
+      </section>
+    );
+  }
+}
+
+// The Canvas / Tree only switch, per browser (5.4). Storage can be refused.
+const CANVAS_KEY = "semantic-studio-canvas";
+function canvasPreference(): boolean {
+  try {
+    return localStorage.getItem(CANVAS_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
 
 /** The 5.6 warning, word for word, before a commented file is rewritten. */
 const COMMENTS_WARNING =
@@ -491,6 +535,24 @@ export default function App() {
         : null,
     [openProjectSummary, openDocName],
   );
+  // The canvas beside the tree (visual-modeling 5.4): its lazily loaded
+  // component, the per-browser switch, and the shown set it lends the tree
+  // and the form past 300 boxes (5.6).
+  const [ModelCanvas, setModelCanvas] = useState(loadCanvas);
+  const [canvasOn, setCanvasOn] = useState(canvasPreference);
+  const [canvasSet, setCanvasSet] = useState<CanvasSet | null>(null);
+  const toggleCanvas = useCallback(() => {
+    setCanvasOn((on) => {
+      try {
+        localStorage.setItem(CANVAS_KEY, on ? "off" : "on");
+      } catch {
+        /* the choice lasts this session only */
+      }
+      return !on;
+    });
+  }, []);
+  const showCanvas = editingModel !== null && canvasOn;
+  const canvasLent = showCanvas ? canvasSet : null;
   // Why there is no Edit section, when the document is the reason (AC-4).
   const readOnlyNote = !activeId
     ? null
@@ -1200,7 +1262,9 @@ export default function App() {
         setProjectBusyId(pid);
         try {
           const oid = await projectStore.open(pid);
-          enterMode(oid, "explore");
+          // A project opens on its model: the tree, the canvas and the form
+          // (5.4), so a learner starts where the building is done.
+          enterMode(oid, "hierarchy");
         } catch (e: unknown) {
           failed(e);
         } finally {
@@ -1209,7 +1273,7 @@ export default function App() {
       };
       const current = projectStore.getSnapshot().project;
       if (current?.id === pid) {
-        enterMode(projectStore.getSnapshot().documents[0].ontologyId, "explore");
+        enterMode(projectStore.getSnapshot().documents[0].ontologyId, "hierarchy");
         return;
       }
       if (current) exitProject(() => void go());
@@ -1684,7 +1748,7 @@ export default function App() {
         // through selectFromOutsideGraph too, so following a connection behaves
         // exactly like clicking a tree row (AC-16), and the tree highlights the
         // new selection wherever it is drawn.
-        <main className="main">
+        <main className={showCanvas ? "main with-canvas" : "main"}>
           <HierarchyView
             ontologyId={activeId}
             theme={theme}
@@ -1695,7 +1759,32 @@ export default function App() {
             language={displayLanguage}
             editing={editingModel}
             onDeleted={onEntityDeleted}
+            canvas={canvasLent}
+            canvasSwitch={editingModel ? { on: canvasOn, onToggle: toggleCanvas } : null}
           />
+          {showCanvas && openProjectSummary && editingModel && (
+            <CanvasBoundary onRetry={() => setModelCanvas(loadCanvas)}>
+              <Suspense
+                fallback={
+                  <section className="model-canvas canvas-message" aria-label="Modeling canvas" aria-busy="true">
+                    <p role="status">Loading the canvas…</p>
+                  </section>
+                }
+              >
+                <ModelCanvas
+                  projectId={openProjectSummary.id}
+                  doc="model"
+                  revision={revision}
+                  language={displayLanguage}
+                  primaryLanguage={editingModel.primaryLanguage}
+                  selected={selected}
+                  onSelect={selectFromOutsideGraph}
+                  onDeleted={onEntityDeleted}
+                  onCanvasSet={setCanvasSet}
+                />
+              </Suspense>
+            </CanvasBoundary>
+          )}
           {selected === null ? (
             <aside className="detail-panel detail-empty" aria-label="Entity details">
               <p className="detail-note">
@@ -1717,6 +1806,7 @@ export default function App() {
               editing={editingModel}
               readOnlyNote={readOnlyNote}
               onDeleted={onEntityDeleted}
+              canvas={canvasLent}
             />
           )}
         </main>

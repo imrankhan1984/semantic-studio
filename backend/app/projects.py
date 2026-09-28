@@ -32,6 +32,14 @@ BASIC IDEA
     Delete never destroys: the folder moves into projects/.trash/, and the
     trash is emptied by hand (open question 3, closed as recommended).
 
+    Each document may have a layout file beside it, <doc>.layout.json, holding
+    where the modeling canvas draws each box (visual-modeling 5.5, D-087). It
+    is not the model: writing it touches neither the revision nor the dirty
+    flag nor the undo history. It arrives from the browser, so it is refused
+    past a size, an entry count and a key length, and every number must be
+    finite; its name is fixed, never taken from the client. Export and
+    duplicate copy it with the rest of the folder.
+
 INPUTS / INPUT SOURCES
     - The data directory from the ontology store (SEMANTIC_STUDIO_DATA_DIR).
     - Templates in app/templates/.
@@ -39,6 +47,7 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - Project folders and manifests on disk, and manifest dicts for the API.
+    - <doc>.layout.json, read, validated and written atomically.
     - Raises ProjectError (400, a sentence), UnknownProject and UnknownDocument
       (404).
 ================================================================================
@@ -48,9 +57,11 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import re
 import shutil
 import threading
+import time
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -92,6 +103,79 @@ LANG_TAG = re.compile(
 )
 
 NAME_MAX = 120
+
+
+# The layout file (visual-modeling Section 9). The byte cap is enforced twice,
+# as the upload's is: declared, in main.py's middleware, and while reading.
+LAYOUT_MAX_BYTES = 1024 * 1024
+LAYOUT_MAX_ENTRIES = 20_000
+LAYOUT_KEY_MAX = 2048
+LAYOUT_VERSION = 1
+
+
+def _replace(tmp: Path, path: Path, attempts: int = 5) -> None:
+    """os.replace, retried briefly on Windows's transient "access denied".
+
+    Measured in test_layout_budget: replacing the same file many times a
+    second fails now and then while another process (a virus scanner, the
+    indexer) holds it for a moment. The canvas writes its layout a second
+    after every move, so a user would meet it; a few tries 20 ms apart do not.
+    """
+    for attempt in range(attempts):
+        try:
+            tmp.replace(path)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.02)
+
+
+def empty_layout() -> dict:
+    return {"version": LAYOUT_VERSION, "positions": {}, "shown": None, "viewport": None}
+
+
+def _finite(value) -> bool:
+    # bool is an int to Python; true is not a coordinate.
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _key(value) -> bool:
+    return isinstance(value, str) and 0 < len(value) <= LAYOUT_KEY_MAX
+
+
+def validate_layout(data) -> dict:
+    """A layout from the browser, checked and normalised, or ProjectError.
+
+    {version: 1, positions: {iri: [x, y]}, shown: [iri, ...] | null,
+    viewport: {x, y, zoom} | null}. Nothing else is kept.
+    """
+    if not isinstance(data, dict):
+        raise ProjectError("A layout is an object with positions, shown and viewport.")
+    positions = data.get("positions", {})
+    if not isinstance(positions, dict):
+        raise ProjectError("A layout's positions are an object of IRI to [x, y].")
+    shown = data.get("shown")
+    count = len(positions) + (len(shown) if isinstance(shown, list) else 0)
+    if count > LAYOUT_MAX_ENTRIES:
+        raise ProjectError(f"A layout holds at most {LAYOUT_MAX_ENTRIES:,} entries.")
+    clean: dict = {}
+    for iri, point in positions.items():
+        if not _key(iri):
+            raise ProjectError(f"A layout key is an IRI of at most {LAYOUT_KEY_MAX:,} characters.")
+        if not (isinstance(point, list) and len(point) == 2 and all(_finite(v) for v in point)):
+            raise ProjectError("A position is [x, y], two finite numbers.")
+        clean[iri] = [float(point[0]), float(point[1])]
+    if shown is not None:
+        if not (isinstance(shown, list) and all(_key(i) for i in shown)):
+            raise ProjectError("A layout's shown set is a list of IRIs, or null.")
+        shown = list(dict.fromkeys(shown))
+    viewport = data.get("viewport")
+    if viewport is not None:
+        if not (isinstance(viewport, dict) and all(_finite(viewport.get(k)) for k in ("x", "y", "zoom"))):
+            raise ProjectError("A layout's viewport is {x, y, zoom}, three finite numbers, or null.")
+        viewport = {k: float(viewport[k]) for k in ("x", "y", "zoom")}
+    return {"version": LAYOUT_VERSION, "positions": clean, "shown": shown, "viewport": viewport}
 
 
 class ProjectError(ValueError):
@@ -223,6 +307,31 @@ class ProjectStore:
         if not path.is_file():
             raise UnknownDocument(doc)
         return path
+
+    # --- layouts (visual-modeling 5.5) ------------------------------------------
+
+    def layout_path(self, pid: str, doc: str) -> Path:
+        """<doc>.layout.json beside the document: a fixed name, a known doc."""
+        self.document_file(doc)  # UnknownDocument for a name not issued
+        return self.folder(pid) / f"{doc}.layout.json"
+
+    def read_layout(self, pid: str, doc: str) -> dict:
+        """The saved layout, or an empty one. A file that is not a valid
+        layout (edited by hand, cut short) is treated as none rather than
+        refusing to draw the canvas."""
+        path = self.layout_path(pid, doc)
+        try:
+            return validate_layout(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            return empty_layout()
+
+    def write_layout(self, pid: str, doc: str, layout: dict) -> dict:
+        layout = validate_layout(layout)
+        path = self.layout_path(pid, doc)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(layout, ensure_ascii=False), encoding="utf-8")
+        _replace(tmp, path)
+        return layout
 
     # --- manifests -------------------------------------------------------------
 

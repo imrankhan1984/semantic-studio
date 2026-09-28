@@ -125,6 +125,10 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   getLanguageReport: () => api.getLanguageReport("prj-1", "model"),
   previewDelete: () => api.previewDelete("prj-1", "model", "http://example.org/A"),
   getAnnotationProperties: () => api.getAnnotationProperties("prj-1", "model"),
+  getCanvas: () => api.getCanvas("prj-1", "model"),
+  getLayout: () => api.getLayout("prj-1", "model"),
+  putLayout: () =>
+    api.putLayout("prj-1", "model", { version: 1, positions: {}, shown: null, viewport: null }),
   // Not requests: the approval plumbing and the display language. Listed so
   // the export check holds.
   setApprovalHandler: async () => api.setApprovalHandler(null),
@@ -149,11 +153,13 @@ describe("api client header (S-6)", () => {
     // Assert the loop really exercised the writes before trusting the check.
     // Ten POSTs and three DELETEs before projects; projects add ten POSTs,
     // a DELETE, a PATCH (rename, languages) and a PUT (the Turtle apply);
-    // the editing form adds one POST (the delete's dry run).
+    // the editing form adds one POST (the delete's dry run); the canvas one
+    // PUT (its layout).
     const expected = [
       ...Array(4).fill("DELETE"),
       "PATCH",
       ...Array(21).fill("POST"),
+      "PUT",
       "PUT",
       "PUT",
     ];

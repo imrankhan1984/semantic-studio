@@ -750,7 +750,8 @@ export interface DeleteImpact {
   strategy: "reparent" | "orphan";
   children: { iri: string; label: string }[];
   reparentedTo: { iri: string; label: string }[];
-  properties: { iri: string; label: string; role: "domain" | "range" }[];
+  // kind: "object property", "datatype property", ... (5.8 item 7).
+  properties: { iri: string; label: string; role: "domain" | "range"; kind?: string }[];
   individuals: { iri: string; label: string }[];
   importMentions: number;
 }
@@ -764,3 +765,64 @@ export interface LanguageReport {
   languages: string[];
   missing: Record<string, number>;
 }
+
+/* --- the modeling canvas (visual-modeling Stage 2) ------------------------ */
+
+// Where the canvas draws each box, saved beside the document (D-087). Not the
+// model: writing it moves no revision and makes nothing dirty.
+export interface CanvasLayout {
+  version: 1;
+  positions: Record<string, [number, number]>;
+  // The chosen boxes past 300 (5.6); null draws everything.
+  shown: string[] | null;
+  viewport: { x: number; y: number; zoom: number } | null;
+}
+
+export interface CanvasNode {
+  iri: string;
+  kind: "class" | "concept";
+  label: string;
+  // The name is the primary language's, marked "(en)" in the label (5.4).
+  fallback: boolean;
+  // Outside this document: the import it comes from, or "outside". Read-only.
+  imported?: string;
+  attributes: { iri: string; label: string; datatype: string | null }[];
+}
+
+export interface CanvasEdge {
+  kind: "subClassOf" | "broader" | "relationship";
+  source: string;
+  target: string;
+  property?: string;
+  label?: string;
+}
+
+export interface CanvasView {
+  revision: number;
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  undrawn: {
+    iri: string;
+    label: string;
+    kind: string;
+    missing: "domain" | "range" | "both";
+    // The end it has, if any: a line can complete it (5.4, Relating).
+    domain: string | null;
+    range: string | null;
+  }[];
+  // Classes and concepts in the document, drawn or not.
+  total: number;
+  // Past 300 boxes: only the shown set and its direct links came back.
+  limited: boolean;
+  layout: CanvasLayout;
+}
+
+// What the canvas lends the tree and the form past 300 boxes (5.6): whether
+// it is drawing a chosen set, which, and how to change it.
+export interface CanvasSet {
+  limited: boolean;
+  shown: string[];
+  show: (iri: string) => Promise<void> | void;
+  hide: (iri: string) => Promise<void> | void;
+}
+

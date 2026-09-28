@@ -108,7 +108,8 @@ async def refuse_oversized_bodies(request: Request, call_next):
     body (D-015).
 
     The Turtle editor's apply (authoring-foundations) is a third: typed Turtle
-    is the same input as an uploaded file and keeps the upload cap.
+    is the same input as an uploaded file and keeps the upload cap. The canvas
+    layout (visual-modeling Stage 2) is a fourth, at 1 MB.
     """
     if request.method not in ("POST", "PUT"):
         return await call_next(request)
@@ -119,6 +120,11 @@ async def refuse_oversized_bodies(request: Request, call_next):
         if _SOURCE_PATH.match(path):
             limit = ontologies.MAX_UPLOAD_BYTES
             detail = ontologies.too_large_detail(limit, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES")
+        elif _LAYOUT_PATH.match(path):
+            # A JSON body has no multipart framing, so the exact cap applies;
+            # the CHUNK_BYTES allowance below is for the upload envelopes.
+            if _declared(request) > projects.LAYOUT_MAX_BYTES:
+                return JSONResponse(status_code=413, content={"detail": projects.LAYOUT_TOO_LARGE})
     elif path == "/api/ontologies/upload":
         limit = ontologies.MAX_UPLOAD_BYTES
         detail = ontologies.too_large_detail(limit, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES")
@@ -139,6 +145,12 @@ async def refuse_oversized_bodies(request: Request, call_next):
 # the ontology id is in the path.
 _IMPORT_FILES_PATH = re.compile(r"^/api/ontologies/[^/]+/imports/files$")
 _SOURCE_PATH = re.compile(r"^/api/projects/[^/]+/documents/[^/]+/source$")
+_LAYOUT_PATH = re.compile(r"^/api/projects/[^/]+/documents/[^/]+/layout$")
+
+
+def _declared(request: Request) -> int:
+    declared = request.headers.get("content-length")
+    return int(declared) if declared and declared.isdigit() else 0
 
 
 # Carries a just-once grant from the X-Semantic-Studio-Grant header to the

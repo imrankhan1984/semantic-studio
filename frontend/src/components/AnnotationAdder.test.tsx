@@ -27,6 +27,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { projectStore } from "../state/projectStore";
 import AnnotationAdder from "./AnnotationAdder";
+import { useRunner } from "./EditParts";
 
 const { openProject, runCommand, getAnnotationProperties } = vi.hoisted(() => ({
   openProject: vi.fn(),
@@ -62,9 +63,15 @@ const LIST = [
 
 const onDone = vi.fn();
 
+/** The adder with a runner of its own, as EditSection lends it one. */
+function Adder() {
+  const runner = useRunner();
+  return <AnnotationAdder iri={EX + "Invoice"} primaryLanguage="en" languages={["fr"]} runner={runner} onDone={onDone} />;
+}
+
 async function renderAdder() {
   await act(async () => {
-    render(<AnnotationAdder iri={EX + "Invoice"} primaryLanguage="en" languages={["fr"]} onDone={onDone} />);
+    render(<Adder />);
   });
 }
 

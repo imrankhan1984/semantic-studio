@@ -408,7 +408,7 @@ def test_delete_dry_run_returns_the_impact_and_changes_nothing(tree):
     assert impact["kind"] == "class"
     assert [c["label"] for c in impact["children"]] == ["Cat", "Dog"]
     assert [p["label"] for p in impact["reparentedTo"]] == ["Animal"]
-    assert impact["properties"] == [{"iri": EX + "feeds", "label": "feeds", "role": "range"}]
+    assert impact["properties"] == [{"iri": EX + "feeds", "label": "feeds", "role": "range", "kind": "object property"}]
     assert [i["label"] for i in impact["individuals"]] == ["Rex"]
     # label, type, subClassOf x2 (Animal and the restriction), the restriction's
     # three triples, Dog and Cat's subClassOf, feeds' range, Rex's type.
@@ -1089,3 +1089,11 @@ def test_project_details_carry_the_kind_of_the_entity_and_its_terms(pid):
     assert details["kind"] == "class"
     kinds = {row["subject"]["value"]: row["subject"]["kind"] for row in details["incoming"]}
     assert kinds == {EX + "total": "datatypeProperty", EX + "billedTo": "objectProperty"}
+
+
+def test_the_delete_impact_names_each_property_kind(pid):
+    """visual-modeling 5.8 item 7: the dialog words a relationship as one."""
+    ok(pid, "CreateDatatypeProperty", label="age", domain="shop:Person")
+    impact = run(pid, "DeleteEntity", dry_run=True, iri="shop:Person").json()["impact"]
+    kinds = {p["label"]: (p["kind"], p["role"]) for p in impact["properties"]}
+    assert kinds == {"member of": ("object property", "domain"), "age": ("datatype property", "domain")}

@@ -231,6 +231,17 @@ const ALL_API = {
 // App re-rendering on every keystroke in the Turtle editor.
 const graphRenders = vi.hoisted(() => ({ count: 0 }));
 
+// The modeling canvas (visual-modeling Stage 2) is stubbed as GraphView is:
+// React Flow is ModelCanvas.test.tsx's business, and what App owns is where
+// the canvas goes, when it is there, and what it is handed.
+const canvasProps = vi.hoisted(() => ({ last: null as Record<string, unknown> | null }));
+vi.mock("./canvas/ModelCanvas", () => ({
+  default: (props: Record<string, unknown>) => {
+    canvasProps.last = props;
+    return <section aria-label="Modeling canvas" data-testid="canvas" />;
+  },
+}));
+
 vi.mock("./components/GraphView", () => ({
   default: ({
     data,
@@ -2840,6 +2851,10 @@ describe("App projects, found in code review", () => {
 
   it("an edit refreshes the graph without blanking it first", async () => {
     await renderProject({ canUndo: true, undoLabel: "Created class A", dirty: true });
+    // A project opens in Hierarchy now (visual-modeling 5.4); the graph is Explore's.
+    await act(async () => {
+      fireEvent.click(tab("Explore"));
+    });
     await waitFor(() => expect(screen.getByTestId("graph").dataset.hasGraph).toBe("yes"));
     let resolve: (g: VizGraph) => void = () => undefined;
     getGraph.mockImplementation(() => new Promise<VizGraph>((r) => (resolve = r)));
@@ -2852,3 +2867,66 @@ describe("App projects, found in code review", () => {
     await act(async () => resolve(TRUNCATED));
   });
 });
+
+describe("App and the modeling canvas (visual-modeling Stage 2)", () => {
+  beforeEach(() => {
+    canvasProps.last = null;
+    try {
+      localStorage.removeItem("semantic-studio-canvas");
+    } catch {
+      /* jsdom has storage; the guard is the app's */
+    }
+  });
+
+  it("opens a project on its model: tree, canvas, then the form (AC-10)", async () => {
+    await renderProject();
+    expect(tab("Hierarchy").getAttribute("aria-selected")).toBe("true");
+    const canvas = await screen.findByTestId("canvas");
+    const tree = document.querySelector(".hierarchy-view")!;
+    const panel = document.querySelector(".detail-panel")!;
+    // Document order is reading order: tree, canvas, form.
+    expect(tree.compareDocumentPosition(canvas) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(canvas.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(canvasProps.last).toMatchObject({ projectId: PROJECT.id, doc: "model", revision: 0 });
+  });
+
+  it("the Canvas switch collapses it, and the choice is remembered", async () => {
+    await renderProject();
+    await screen.findByTestId("canvas");
+    const toggle = screen.getByRole("button", { name: "Canvas" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+    expect(screen.queryByTestId("canvas")).toBeNull();
+    expect(localStorage.getItem("semantic-studio-canvas")).toBe("off");
+    cleanup();
+    projectStore._reset();
+    await renderProject();
+    expect(screen.queryByTestId("canvas")).toBeNull();
+    expect(screen.getByRole("button", { name: "Canvas" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("a library ontology's Hierarchy has no canvas and no switch", async () => {
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: /^Explore/ })[0]);
+    });
+    await act(async () => {
+      fireEvent.click(tab("Hierarchy"));
+    });
+    expect(screen.queryByTestId("canvas")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Canvas" })).toBeNull();
+  });
+
+  it("selection is shared: the canvas selects through App, and is handed App's selection (AC-14)", async () => {
+    await renderProject();
+    await screen.findByTestId("canvas");
+    const onSelect = canvasProps.last!.onSelect as (iri: string) => void;
+    await act(async () => onSelect("http://x#Invoice"));
+    expect(canvasProps.last!.selected).toBe("http://x#Invoice");
+    // The form opens on it.
+    expect(getNodeDetails).toHaveBeenCalledWith(OID, "http://x#Invoice", false);
+  });
+});
+

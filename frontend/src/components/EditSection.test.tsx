@@ -566,3 +566,193 @@ describe("found in review", () => {
     expect(screen.queryByText(/more statements than the panel loads/)).toBeNull();
   });
 });
+
+describe("Stage 2 follow-ups (visual-modeling 5.8)", () => {
+  it("item 1: a command from the annotation adder shows the whole section busy", async () => {
+    getAnnotationProperties.mockResolvedValue([
+      { iri: P.definition, prefixed: "skos:definition", defaultType: { kind: "text" }, source: "suggested" },
+    ]);
+    let finish: (value: unknown) => void = () => {};
+    runCommand.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    await renderForm(invoice());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add annotation" }));
+    });
+    const property = screen.getByRole("combobox", { name: "Property" });
+    fireEvent.change(property, { target: { value: P.definition } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Value" }), { target: { value: "A bill." } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    });
+    expect(document.querySelector(".edit-status")!.textContent).toBe("Saving change…");
+    expect(screen.getByRole("region", { name: "Edit" }).getAttribute("aria-busy")).toBe("true");
+    // A select is aria-disabled, not disabled, and deaf to changes meanwhile.
+    expect(property.getAttribute("aria-disabled")).toBe("true");
+    expect((property as HTMLSelectElement).disabled).toBe(false);
+    await act(async () => finish(changed("Added")));
+  });
+
+  it("item 2: closing a small form gives focus back to what opened it", async () => {
+    getAnnotationProperties.mockResolvedValue([]);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await renderForm(invoice());
+    for (const [opener, close] of [
+      ["Add subclass", () => fireEvent.click(screen.getByRole("button", { name: "Cancel" }))],
+      ["Change identifier…", () => fireEvent.click(screen.getByRole("button", { name: "Cancel" }))],
+      ["Add annotation", () => fireEvent.click(screen.getByRole("button", { name: "Cancel" }))],
+    ] as const) {
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: opener }));
+      });
+      await act(async () => {
+        close();
+      });
+      // Separately: the button is drawn again when the close is rendered.
+      await act(async () => {
+        vi.advanceTimersByTime(10);
+      });
+      expect(document.activeElement, opener).toBe(screen.getByRole("button", { name: opener }));
+    }
+    vi.useRealTimers();
+  });
+
+  it("item 3: a refusal stays under its own statement when the list re-orders", async () => {
+    runCommand.mockRejectedValueOnce(new Error("Refused for the date."));
+    const first = invoice();
+    first.outgoing.push({ predicate: uri(EX + "code"), object: lit("A-1", "en") });
+    const view = await (async () => {
+      let rerender: (ui: React.ReactElement) => void = () => {};
+      await act(async () => {
+        rerender = render(
+          <EditSection ontologyId={OID} details={first} primaryLanguage="en" languages={["fr"]} onSelect={onSelect} onDeleted={onDeleted} />,
+        ).rerender;
+      });
+      return rerender;
+    })();
+    const dateRow = () => screen.getByText("2026-09-01").closest("li")!;
+    await act(async () => {
+      fireEvent.click(within(dateRow()).getByRole("button", { name: /^Remove/ }));
+    });
+    expect(within(dateRow()).getByText("Refused for the date.")).toBeTruthy();
+    // The same statements, the other way round (a refetch may re-order them).
+    const reordered = { ...first, outgoing: [...first.outgoing].reverse() };
+    await act(async () => {
+      view(<EditSection ontologyId={OID} details={reordered} primaryLanguage="en" languages={["fr"]} onSelect={onSelect} onDeleted={onDeleted} />);
+    });
+    expect(within(dateRow()).getByText("Refused for the date.")).toBeTruthy();
+    expect(within(screen.getByText("A-1").closest("li")!).queryByText("Refused for the date.")).toBeNull();
+  });
+
+  it("item 4: a create does not move the selection once the user went elsewhere", async () => {
+    let finish: (value: unknown) => void = () => {};
+    runCommand.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    const { unmount } = render(
+      <EditSection ontologyId={OID} details={invoice()} primaryLanguage="en" languages={["fr"]} onSelect={onSelect} onDeleted={onDeleted} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add subclass" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name (en)" }), { target: { value: "Late" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    });
+    // The user selected another entity: this form is gone.
+    unmount();
+    await act(async () => finish(changed("Created", EX + "Late")));
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("item 7: the dialog says relationship, and it or them to match the count", async () => {
+    previewDelete.mockResolvedValue({
+      dryRun: true, revision: 2,
+      impact: {
+        iri: EX + "Invoice", label: "Invoice", kind: "class", statements: 5, strategy: "reparent",
+        children: [{ iri: EX + "SalesInvoice", label: "Sales Invoice" }],
+        reparentedTo: [{ iri: EX + "Document", label: "Document" }],
+        properties: [{ iri: EX + "belongsTo", label: "belongs to", role: "range", kind: "object property" }],
+        individuals: [], importMentions: 0,
+      },
+    });
+    await renderForm(invoice());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Delete Invoice…" }));
+    });
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Its 1 subclass (Sales Invoice):")).toBeTruthy();
+    expect(within(dialog).getByRole("radio", { name: "Move it up to Document" })).toBeTruthy();
+    expect(within(dialog).getByRole("radio", { name: "Leave it without a parent" })).toBeTruthy();
+    expect(dialog.textContent).toContain("1 relationship points to it (belongs to, as its range). It is kept, without a range.");
+  });
+
+  it("item 8: a dry run that cannot run says so, and offers only Cancel", async () => {
+    previewDelete.mockRejectedValue(new Error("Service unavailable"));
+    await renderForm(invoice());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Delete Invoice…" }));
+    });
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      "What deleting Invoice would take could not be worked out: Service unavailable",
+    );
+    expect(within(dialog).queryByText(/Working out/)).toBeNull();
+    expect(within(dialog).getAllByRole("button").map((b) => b.textContent)).toEqual(["Cancel"]);
+  });
+
+  it("item 9: Change range starts on the range the attribute has", async () => {
+    await renderForm(
+      details("total", "datatypeProperty", [
+        [P.type, uri(OWL + "DatatypeProperty")],
+        [P.range, uri("http://www.w3.org/2001/XMLSchema#decimal")],
+      ]),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Change range" }));
+    expect((screen.getByRole("combobox", { name: "Type of value" }) as HTMLSelectElement).value).toBe("xsd:decimal");
+  });
+
+  it("item 10: Add relationship waits for a range", async () => {
+    await renderForm(invoice());
+    fireEvent.click(screen.getByRole("button", { name: "Add relationship" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name (en)" }), { target: { value: "billed to" } });
+    expect(screen.getByText("Choose the class it points to.")).toBeTruthy();
+    const create = screen.getByRole("button", { name: "Create" });
+    expect(create.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => {
+      fireEvent.click(create);
+    });
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("item 11: Copy says Copied; a web link value is a link, any other link value has Copy", async () => {
+    const d = invoice();
+    d.outgoing.push({ predicate: uri("http://www.w3.org/2000/01/rdf-schema#seeAlso"), object: uri("https://example.org/spec") });
+    d.outgoing.push({ predicate: uri("http://www.w3.org/2000/01/rdf-schema#seeAlso"), object: uri("urn:isbn:0451450523") });
+    await renderForm(d);
+    const web = screen.getByRole("link", { name: "https://example.org/spec" });
+    expect(web.getAttribute("href")).toBe("https://example.org/spec");
+    expect(screen.queryByRole("link", { name: "urn:isbn:0451450523" })).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy urn:isbn:0451450523" }));
+    });
+    const regions = [...document.querySelectorAll('.edit-section [role="status"]')].map((r) => r.textContent);
+    expect(regions).toContain("Copied urn:isbn:0451450523.");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    });
+    expect([...document.querySelectorAll('.edit-section [role="status"]')].map((r) => r.textContent)).toContain(
+      `Copied ${EX}Invoice.`,
+    );
+  });
+
+  it("past 300 boxes the form offers Show on canvas and Hide from canvas (5.6)", async () => {
+    const show = vi.fn();
+    const hide = vi.fn();
+    const props = { ontologyId: OID, details: invoice(), primaryLanguage: "en", languages: ["fr"], onSelect, onDeleted };
+    const { rerender } = render(<EditSection {...props} canvas={{ limited: true, shown: [], show, hide }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show on canvas" }));
+    expect(show).toHaveBeenCalledWith(EX + "Invoice");
+    rerender(<EditSection {...props} canvas={{ limited: true, shown: [EX + "Invoice"], show, hide }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Hide from canvas" }));
+    expect(hide).toHaveBeenCalledWith(EX + "Invoice");
+    rerender(<EditSection {...props} canvas={{ limited: false, shown: [], show, hide }} />);
+    expect(screen.queryByRole("button", { name: "Show on canvas" })).toBeNull();
+  });
+});
+
