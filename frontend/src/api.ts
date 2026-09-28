@@ -48,6 +48,8 @@ EXPECTED OUTPUT
 import type { QueryState } from "./sparql/types";
 import type {
   AnnotationPropertyOption,
+  CanvasLayout,
+  CanvasView,
   ApprovalRequest,
   ChangeResult,
   DeleteImpact,
@@ -722,6 +724,24 @@ export function getAnnotationProperties(
   return send(documentUrl(pid, doc, "/annotation-properties")).then((r) =>
     handle<AnnotationPropertyOption[]>(r),
   );
+}
+
+// What the modeling canvas draws, in the display language, with its layout.
+export function getCanvas(pid: string, doc: ProjectDocName): Promise<CanvasView> {
+  return send(withLang(documentUrl(pid, doc, "/canvas"))).then((r) => handle<CanvasView>(r));
+}
+
+export function getLayout(pid: string, doc: ProjectDocName): Promise<CanvasLayout> {
+  return send(documentUrl(pid, doc, "/layout")).then((r) => handle<CanvasLayout>(r));
+}
+
+// Box positions and the shown set. Not a change to the model (D-087).
+export function putLayout(pid: string, doc: ProjectDocName, layout: CanvasLayout): Promise<CanvasLayout> {
+  return send(documentUrl(pid, doc, "/layout"), {
+    method: "PUT",
+    headers: JSON_WRITE,
+    body: JSON.stringify(layout),
+  }).then((r) => handle<CanvasLayout>(r));
 }
 
 // The editor's text: the text last applied, or clean Turtle.

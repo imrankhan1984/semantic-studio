@@ -6,7 +6,8 @@ FILE: backend/app/routers/projects.py
 SUMMARY
     The HTTP surface for projects and editing (authoring-foundations): list,
     create, rename, duplicate, trash and export projects; open and close them;
-    run commands, apply Turtle, undo, redo, save and recover a document.
+    run commands, apply Turtle, undo, redo, save and recover a document; and
+    the modeling canvas's view and layout (visual-modeling Stage 2).
 
 BASIC IDEA
     Thin, like the other routers: shape the request, call projects.py or
@@ -22,6 +23,8 @@ BASIC IDEA
     The apply route reads its body in chunks under the upload cap, as the
     upload does, because typed Turtle is the same input as an uploaded file;
     main.py refuses a declared oversize before this runs (D-015 pattern).
+    The layout PUT is read the same way under its own 1 MB cap: a layout is
+    positions, not Turtle, and has no reason to be large.
 
 INPUTS / INPUT SOURCES
     - HTTP requests from the frontend, every mutating one carrying the client
@@ -54,7 +57,7 @@ from ..editing import (
     editing_service,
     project_store,
 )
-from ..projects import ProjectError, UnknownDocument, UnknownProject
+from ..projects import LAYOUT_MAX_BYTES, ProjectError, UnknownDocument, UnknownProject
 from ..store import ParseError, ParseTimeout, store
 from . import ontologies
 
@@ -263,6 +266,46 @@ async def put_source(pid: str, doc: str, request: Request) -> dict:
         return await run_in_threadpool(
             editing_service.apply_text, pid, doc, text, ontologies.PARSE_TIMEOUT_SECONDS
         )
+
+
+async def _read_json_capped(request: Request, limit: int, detail: str):
+    """The body as JSON, refused while reading once past `limit`."""
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(status_code=413, detail=detail)
+        chunks.append(chunk)
+    try:
+        return json.loads(b"".join(chunks) or b"null")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="The body must be JSON.") from exc
+
+
+LAYOUT_TOO_LARGE = f"A layout is at most {LAYOUT_MAX_BYTES // (1024 * 1024)} MB."
+
+
+@router.get("/{pid}/documents/{doc}/canvas")
+def get_canvas(pid: str, doc: str, lang: Optional[str] = ontologies.LANG_PARAM) -> dict:
+    """What the modeling canvas draws, with the saved layout (5.4 to 5.6)."""
+    with _errors():
+        return editing_service.canvas_view(pid, doc, lang)
+
+
+@router.get("/{pid}/documents/{doc}/layout")
+def get_layout(pid: str, doc: str) -> dict:
+    with _errors():
+        return editing_service.get_layout(pid, doc)
+
+
+@router.put("/{pid}/documents/{doc}/layout")
+async def put_layout(pid: str, doc: str, request: Request) -> dict:
+    """Replace the canvas layout. Not a model change: no revision, no dirty
+    flag, no undo step (D-087). Validated in projects.validate_layout."""
+    payload = await _read_json_capped(request, LAYOUT_MAX_BYTES, LAYOUT_TOO_LARGE)
+    with _errors():
+        return editing_service.put_layout(pid, doc, payload)
 
 
 @router.post("/{pid}/documents/{doc}/undo")

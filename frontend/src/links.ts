@@ -21,7 +21,7 @@ BASIC IDEA
     javascript:, while a prefix test alone would trust a string the parser
     reads some other way. Requiring both to agree leaves nothing between them.
 
-    Every `href={…}` in the source goes through here; links.test.ts scans the
+    Every href in the source goes through here; links.test.ts scans the
     source and fails on one that does not.
 
 INPUTS / INPUT SOURCES

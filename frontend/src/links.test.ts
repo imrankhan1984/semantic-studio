@@ -26,13 +26,30 @@ EXPECTED OUTPUT
 import { describe, expect, it } from "vitest";
 import { linkTarget } from "./links";
 
-const SOURCES = import.meta.glob("./**/*.tsx", {
+// .ts as well as .tsx (5.8 item 5): props built in a helper file can carry
+// an href as well as JSX can.
+const SOURCES = import.meta.glob("./**/*.{ts,tsx}", {
   query: "?raw",
   import: "default",
   eager: true,
 }) as Record<string, string>;
 
-const PRODUCTION = Object.entries(SOURCES).filter(([path]) => !/\.test\.tsx$/.test(path));
+const PRODUCTION = Object.entries(SOURCES).filter(
+  ([path]) => !/\.test\.(ts|tsx)$/.test(path) && !/\.d\.ts$/.test(path),
+);
+
+/** `linkTarget(...)` and nothing else. `linkTarget(x) || x` is a way round
+ *  the helper, not through it (5.8 item 5). */
+const ALONE = /^linkTarget\([^()]*\)$/;
+
+/** Whether `href={expression}` in `source` goes through the helper: the call
+ *  itself, or a name whose assignment is the call and ends there. */
+function throughHelper(expression: string, source: string): boolean {
+  if (ALONE.test(expression)) return true;
+  if (!/^[A-Za-z_$][\w$]*$/.test(expression)) return false;
+  const call = String.raw`\b${expression}\s*=\s*linkTarget\([^()]*\)`;
+  return new RegExp(`${call}\\s*;`).test(source) && !new RegExp(`${call}\\s*(\\|\\||\\?)`).test(source);
+}
 
 describe("linkTarget", () => {
   it("links http and https IRIs unchanged", () => {
@@ -75,13 +92,27 @@ describe("the source scan", () => {
     for (const [path, text] of PRODUCTION) {
       for (const match of text.matchAll(/href=\{\s*([^}]*)\}/g)) {
         const expression = match[1].trim();
-        if (expression.startsWith("linkTarget(")) continue;
-        const name = /^[A-Za-z_$][\w$]*$/.test(expression) ? expression : null;
-        const assigned =
-          name !== null && new RegExp(String.raw`\b${name}\s*=\s*linkTarget\(`).test(text);
-        if (!assigned) offenders.push(`${path}: href={${expression}}`);
+        if (!throughHelper(expression, text)) offenders.push(`${path}: href={${expression}}`);
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  it("refuses a fallback around the helper, inline or assigned", () => {
+    expect(throughHelper("linkTarget(iri) || iri", "")).toBe(false);
+    expect(throughHelper("linkTarget(iri) ?? iri", "")).toBe(false);
+    expect(throughHelper("href", "const href = linkTarget(iri) || iri;")).toBe(false);
+    expect(throughHelper("href", "const href = linkTarget(iri) ?? iri;")).toBe(false);
+    expect(throughHelper("href", "const href = iri;")).toBe(false);
+  });
+
+  it("accepts the helper alone, inline or assigned", () => {
+    expect(throughHelper("linkTarget(row.iri)", "")).toBe(true);
+    expect(throughHelper("href", "const href = linkTarget(row.iri);")).toBe(true);
+  });
+
+  it("reads .ts files as well as .tsx", () => {
+    expect(PRODUCTION.some(([path]) => path.endsWith("api.ts"))).toBe(true);
+    expect(PRODUCTION.some(([path]) => path.endsWith(".test.ts"))).toBe(false);
   });
 });

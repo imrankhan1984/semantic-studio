@@ -38,6 +38,14 @@ INPUTS / INPUT SOURCES (props)
     - primaryLanguage, languages: the project's.
     - onSelect: select another entity (a created one, a renamed one, a link).
     - onDeleted: the entity is gone; the caller clears the selection.
+    - canvas: past 300 boxes, *Show on canvas* and *Hide from canvas* (5.6).
+
+    Stage 2's follow-ups (5.8) are here too: one runner for the section, the
+    annotation adder and the delete dialog; focus back to whatever opened a
+    small form; a refusal kept under its own statement, not its place in the
+    list; a create that does not move the selection if the section has gone;
+    *Copy* that says *Copied*; and a link value that is a link only when it is
+    http or https, with *Copy* when it is not (D-088).
 
 EXPECTED OUTPUT
     - Commands through the project store; the section's markup.
@@ -45,12 +53,13 @@ EXPECTED OUTPUT
 */
 
 import { useMemo, useState } from "react";
+import { linkTarget } from "../links";
 import { entityModel, type Annotation } from "../modeling/entity";
 import { describeValue, typeOfValue, valueProblem, toValue } from "../modeling/values";
-import type { NodeDetails } from "../types";
+import type { CanvasSet, NodeDetails } from "../types";
 import AnnotationAdder, { ValueInput } from "./AnnotationAdder";
 import DeleteDialog from "./DeleteDialog";
-import { Block, InlineText, useRunner, type Runner } from "./EditParts";
+import { Block, InlineText, useCopy, useReturnFocus, useRunner, type Runner } from "./EditParts";
 import EditStructure from "./EditStructure";
 import NewEntityForm from "./NewEntityForm";
 
@@ -61,15 +70,39 @@ interface Props {
   languages: string[];
   onSelect: (iri: string) => void;
   onDeleted: (iri: string) => void;
+  canvas?: CanvasSet | null;
 }
 
-export default function EditSection({ ontologyId, details, primaryLanguage, languages, onSelect, onDeleted }: Props) {
+/** The key a refusal is kept under: the statement, which survives the list
+ *  re-ordering after a refetch, where a position does not (5.8 item 3). */
+export function annotationKey(a: Annotation): string {
+  const v = a.value;
+  return `annotation:${a.property.iri}|${v.kind}|${v.datatype ?? ""}|${v.lang ?? ""}|${v.value}`;
+}
+
+export default function EditSection({
+  ontologyId,
+  details,
+  primaryLanguage,
+  languages,
+  onSelect,
+  onDeleted,
+  canvas = null,
+}: Props) {
   const model = useMemo(
     () => entityModel(details, primaryLanguage, languages),
     [details, primaryLanguage, languages],
   );
   const runner = useRunner();
-  const { busy, errors, run } = runner;
+  const { busy, errors, run, alive } = runner;
+  const [copy, copied] = useCopy();
+  const [addRef, returnToAdd] = useReturnFocus();
+  const [renameRef, returnToRename] = useReturnFocus();
+  const [importRef, returnToImport] = useReturnFocus();
+  /** Select what a command made, unless the user went elsewhere meanwhile. */
+  const follow = (created: string | undefined) => {
+    if (created && alive()) onSelect(created);
+  };
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -93,14 +126,17 @@ export default function EditSection({ ontologyId, details, primaryLanguage, lang
               primaryLanguage={primaryLanguage}
               busy={busy}
               error={errors.importSub}
-              onCancel={() => setSubclassOfImport(false)}
+              onCancel={() => {
+                setSubclassOfImport(false);
+                returnToImport();
+              }}
               onSubmit={async ({ name: label, iri: chosen }) => {
                 const result = await run("importSub", "CreateClass", { label, parent: iri, iri: chosen });
-                if (result?.created) onSelect(result.created);
+                follow(result?.created);
               }}
             />
           ) : (
-            <button type="button" className="ghost" onClick={() => setSubclassOfImport(true)}>
+            <button ref={importRef} type="button" className="ghost" onClick={() => setSubclassOfImport(true)}>
               Add a subclass in this project
             </button>
           ))}
@@ -152,6 +188,20 @@ export default function EditSection({ ontologyId, details, primaryLanguage, lang
       <p className="detail-note edit-status" role="status">
         {busy ? "Saving change…" : ""}
       </p>
+      {canvas?.limited && (model.kind === "class" || model.kind === "concept") && (
+        // 5.6: past 300 boxes the canvas draws what the user chooses.
+        <div className="edit-actions">
+          {canvas.shown.includes(iri) ? (
+            <button type="button" className="ghost" onClick={() => void canvas.hide(iri)}>
+              Hide from canvas
+            </button>
+          ) : (
+            <button type="button" className="ghost" onClick={() => void canvas.show(iri)}>
+              Show on canvas
+            </button>
+          )}
+        </div>
+      )}
       {model.partial && (
         // The house rule: a truncated view says it is truncated (found in review).
         <p className="detail-note">
@@ -197,8 +247,15 @@ export default function EditSection({ ontologyId, details, primaryLanguage, lang
       <Block title="Annotations">
         {model.annotations.length === 0 && <p className="detail-note">No other annotations.</p>}
         <ul className="edit-list">
-          {model.annotations.map((a, i) => (
-            <AnnotationRow key={`${a.property.iri}|${i}|${a.value.value}`} annotation={a} iri={iri} languages={langs} runner={runner} index={i} />
+          {model.annotations.map((a) => (
+            <AnnotationRow
+              key={annotationKey(a)}
+              annotation={a}
+              iri={iri}
+              languages={langs}
+              runner={runner}
+              copy={copy}
+            />
           ))}
         </ul>
         {adding ? (
@@ -206,10 +263,14 @@ export default function EditSection({ ontologyId, details, primaryLanguage, lang
             iri={iri}
             primaryLanguage={primaryLanguage}
             languages={languages}
-            onDone={() => setAdding(false)}
+            runner={runner}
+            onDone={() => {
+              setAdding(false);
+              returnToAdd();
+            }}
           />
         ) : (
-          <button type="button" className="ghost" onClick={() => setAdding(true)}>
+          <button ref={addRef} type="button" className="ghost" onClick={() => setAdding(true)}>
             Add annotation
           </button>
         )}
@@ -223,17 +284,19 @@ export default function EditSection({ ontologyId, details, primaryLanguage, lang
         primaryLanguage={primaryLanguage}
         runner={runner}
         onSelect={onSelect}
+        follow={follow}
       />
 
       <Block title="Identifier">
         <div className="edit-value">
           <code className="edit-iri">{iri}</code>
-          <button type="button" className="ghost" onClick={() => navigator.clipboard?.writeText(iri)}>
+          <button type="button" className="ghost" onClick={() => copy(iri)}>
             Copy
           </button>
+          {copied}
         </div>
         {renaming === null ? (
-          <button type="button" className="ghost" onClick={() => setRenaming(iri)}>
+          <button ref={renameRef} type="button" className="ghost" onClick={() => setRenaming(iri)}>
             Change identifier…
           </button>
         ) : (
@@ -245,7 +308,7 @@ export default function EditSection({ ontologyId, details, primaryLanguage, lang
               const result = await run("identifier", "RenameIri", { old: iri, new: renaming.trim() });
               if (result) {
                 setRenaming(null);
-                onSelect(result.created ?? renaming.trim());
+                follow(result.created ?? renaming.trim());
               }
             }}
             onKeyDown={(e) => {
@@ -253,6 +316,7 @@ export default function EditSection({ ontologyId, details, primaryLanguage, lang
                 e.preventDefault();
                 e.stopPropagation();
                 setRenaming(null);
+                returnToRename();
               }
             }}
           >
@@ -273,7 +337,14 @@ export default function EditSection({ ontologyId, details, primaryLanguage, lang
               <button type="submit" className="primary" aria-disabled={busy || !renaming.trim()}>
                 Change identifier
               </button>
-              <button type="button" className="ghost" onClick={() => setRenaming(null)}>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  setRenaming(null);
+                  returnToRename();
+                }}
+              >
                 Cancel
               </button>
             </div>
@@ -290,6 +361,7 @@ export default function EditSection({ ontologyId, details, primaryLanguage, lang
         <DeleteDialog
           iri={iri}
           label={name}
+          runner={runner}
           onDone={(deleted) => {
             setDeleting(false);
             if (deleted) onDeleted(iri);
@@ -309,16 +381,24 @@ function AnnotationRow({
   iri,
   languages,
   runner,
-  index,
+  copy,
 }: {
   annotation: Annotation;
   iri: string;
   languages: string[];
   runner: Runner;
-  index: number;
+  copy: (text: string) => void;
 }) {
   const { busy, errors, run } = runner;
-  const field = `annotation:${index}`;
+  const field = annotationKey(annotation);
+  const [editRef, returnToEdit] = useReturnFocus();
+  const close = () => {
+    setDraft(null);
+    returnToEdit();
+  };
+  // A link value is a link only when it is a web address (D-088); anything
+  // else is text, with Copy (5.8 item 11).
+  const href = linkTarget(annotation.value.kind === "link" ? annotation.value.value : null);
   const type = typeOfValue(annotation.value);
   const [draft, setDraft] = useState<{ value: string; lang: string } | null>(null);
   const problem = draft && draft.value !== "" ? valueProblem(type, draft.value, draft.lang) : null;
@@ -328,11 +408,28 @@ function AnnotationRow({
     return (
       <li className="edit-annotation">
         <span className="edit-annotation-property">{annotation.property.prefixed}</span>{" "}
-        <span className="edit-annotation-value">{annotation.value.value}</span>{" "}
+        {href ? (
+          <a className="edit-annotation-value" href={href} target="_blank" rel="noreferrer">
+            {annotation.value.value}
+          </a>
+        ) : (
+          <span className="edit-annotation-value">{annotation.value.value}</span>
+        )}{" "}
         <span className="edit-annotation-kind">({describeValue(annotation.value)})</span>
+        {annotation.value.kind === "link" && !href && (
+          <button
+            type="button"
+            className="ghost edit-btn"
+            aria-label={`Copy ${annotation.value.value}`}
+            onClick={() => copy(annotation.value.value)}
+          >
+            Copy
+          </button>
+        )}
         {annotation.editable ? (
           <>
             <button
+              ref={editRef}
               type="button"
               className="ghost edit-btn"
               aria-label={`Edit ${words}`}
@@ -372,13 +469,13 @@ function AnnotationRow({
             oldValue: annotation.value,
             newValue,
           });
-          if (result) setDraft(null);
+          if (result) close();
         }}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             e.preventDefault();
             e.stopPropagation();
-            setDraft(null);
+            close();
           }
         }}
       >
@@ -398,7 +495,7 @@ function AnnotationRow({
           <button type="submit" className="primary" aria-disabled={blocked}>
             Save
           </button>
-          <button type="button" className="ghost" onClick={() => setDraft(null)}>
+          <button type="button" className="ghost" onClick={close}>
             Cancel
           </button>
         </div>

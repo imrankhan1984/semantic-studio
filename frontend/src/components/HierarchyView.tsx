@@ -57,6 +57,15 @@ INPUTS / INPUT SOURCES (props)
       A new entity is selected, its parent expanded, and focus moved to its
       row once the refreshed tree holds it.
     - onDeleted: an entity was deleted from the tree.
+    - canvas: past 300 boxes, the row menu's *Show on canvas* and *Hide from
+      canvas* (visual-modeling 5.6).
+    - canvasSwitch: the *Canvas* toggle in the toolbar (5.4), shown with the
+      canvas beside the tree; the choice itself is App's to keep.
+
+    The tree's forms and its delete run through one command runner, so a
+    command in flight shows the view busy (5.8 item 1); they close when the
+    document changes (item 6); and a new entity is selected only if the
+    selection has not moved while it was being made (item 4).
 
 EXPECTED OUTPUT
     - The rendered tree(s), an empty state, or the loading / error treatments.
@@ -75,10 +84,10 @@ import {
   type ReactNode,
 } from "react";
 import { ApiError, fetchHierarchy } from "../api";
-import { projectStore } from "../state/projectStore";
-import type { Hierarchy, HierarchyForest, HierarchyOrigin, Theme } from "../types";
+import type { CanvasSet, Hierarchy, HierarchyForest, HierarchyOrigin, Theme } from "../types";
 import { KIND_LABELS, kindColor } from "../types";
 import DeleteDialog from "./DeleteDialog";
+import { useRunner } from "./EditParts";
 import { RowMenu, rowActions, type RowAction } from "./HierarchyActions";
 import NewEntityForm, { type NewEntity } from "./NewEntityForm";
 
@@ -96,6 +105,8 @@ interface Props {
   /** The open project's model.ttl: New buttons and the row menu (5.2). */
   editing?: { primaryLanguage: string } | null;
   onDeleted?: (iri: string) => void;
+  canvas?: CanvasSet | null;
+  canvasSwitch?: { on: boolean; onToggle: () => void } | null;
 }
 
 /** A "New ..." form open at the top of a section. */
@@ -314,6 +325,8 @@ export default function HierarchyView({
   language = null,
   editing = null,
   onDeleted,
+  canvas = null,
+  canvasSwitch = null,
 }: Props) {
   const [data, setData] = useState<Hierarchy | null>(null);
   const [loading, setLoading] = useState(false);
@@ -383,8 +396,23 @@ export default function HierarchyView({
   const [deleting, setDeleting] = useState<{ iri: string; label: string } | null>(null);
   const [menu, setMenu] = useState<{ row: Row; anchor: { top: number; left: number } } | null>(null);
   const [reveal, setReveal] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const runner = useRunner();
+  const { busy, run, clear } = runner;
+  const actionError = runner.errors.tree || null;
+  const setActionError = (_: null) => clear("tree");
+  // The selection as it is now, for a create that answers after it moved.
+  const selectedNow = useRef(selected);
+  selectedNow.current = selected;
+
+  // Another document: whatever was open in the tree was about the old one.
+  useEffect(() => {
+    setCreating(null);
+    setRenaming(null);
+    setDeleting(null);
+    setMenu(null);
+    setReveal(null);
+    clear("tree");
+  }, [ontologyId, clear]);
 
   const focusRow = useCallback((id: string) => {
     window.setTimeout(() => {
@@ -412,6 +440,9 @@ export default function HierarchyView({
       });
     } else if (action === "rename") {
       setRenaming(row.id);
+    } else if (action === "show" || action === "hide") {
+      focusRow(row.id);
+      void (action === "show" ? canvas?.show(row.id) : canvas?.hide(row.id));
     } else {
       // The dialog gives focus back to what held it when it opened.
       focusRow(row.id);
@@ -427,20 +458,15 @@ export default function HierarchyView({
       section === "class"
         ? { label: name, iri, parent: parent?.iri }
         : { prefLabel: name, iri, ...(parent ? { broader: parent.iri } : scheme ? { scheme } : {}) };
-    setBusy(true);
-    setActionError(null);
-    try {
-      const result = await projectStore.command(section === "class" ? "CreateClass" : "CreateConcept", args);
-      setCreating(null);
-      if (parent) setExpanded((prev) => new Set(prev).add(parent.iri));
-      if (result.created) {
-        onSelect(result.created);
-        setReveal(result.created);
-      }
-    } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
+    const before = selectedNow.current;
+    const result = await run("tree", section === "class" ? "CreateClass" : "CreateConcept", args);
+    if (!result || !runner.alive()) return;
+    setCreating(null);
+    if (parent) setExpanded((prev) => new Set(prev).add(parent.iri));
+    // Only if nothing else was selected while the command ran (5.8 item 4).
+    if (result.created && selectedNow.current === before) {
+      onSelect(result.created);
+      setReveal(result.created);
     }
   };
 
@@ -458,16 +484,9 @@ export default function HierarchyView({
       focusRow(row.id);
       return;
     }
-    setBusy(true);
-    try {
-      await projectStore.command("SetLabel", { iri: row.id, value: value.trim(), lang: editing.primaryLanguage });
+    if (await run("tree", "SetLabel", { iri: row.id, value: value.trim(), lang: editing.primaryLanguage })) {
       setRenaming(null);
-      setActionError(null);
       focusRow(row.id);
-    } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -513,7 +532,13 @@ export default function HierarchyView({
   if (!ontologyId) return null;
 
   return (
-    <section className="hierarchy-view" aria-labelledby={HEADING_ID} ref={sectionRef}>
+    <section
+      className="hierarchy-view"
+      aria-labelledby={HEADING_ID}
+      ref={sectionRef}
+      // A command in flight, as the form's section says it (PR #47 review).
+      aria-busy={busy}
+    >
       <div className="hierarchy-toolbar">
         <h2 id={HEADING_ID} tabIndex={-1}>
           Hierarchy
@@ -532,7 +557,25 @@ export default function HierarchyView({
         <button className="ghost" onClick={collapseAll} disabled={!data}>
           Collapse all
         </button>
+        {canvasSwitch && (
+          <button
+            type="button"
+            className="ghost"
+            aria-pressed={canvasSwitch.on}
+            onClick={canvasSwitch.onToggle}
+            title={canvasSwitch.on ? "Show the tree only" : "Show the canvas beside the tree"}
+          >
+            {/* The state in sight as well as in aria-pressed; not by colour alone. */}
+            <span aria-hidden="true">{canvasSwitch.on ? "✓ " : ""}</span>
+            Canvas
+          </button>
+        )}
       </div>
+      {editing && (
+        <p className="detail-note edit-status" role="status">
+          {busy ? "Saving change…" : ""}
+        </p>
+      )}
       {/* Not colour-only: aria-expanded carries expansion and the note is text,
           so nothing here depends on a triangle glyph being seen. */}
       <p className="hierarchy-note">
@@ -596,7 +639,11 @@ export default function HierarchyView({
       {menu && (
         <RowMenu
           label={menu.row.label}
-          items={rowActions(menu.row.kind, Boolean(menu.row.importedFrom))}
+          items={rowActions(
+            menu.row.kind,
+            Boolean(menu.row.importedFrom),
+            canvas ? { limited: canvas.limited, shown: canvas.shown.includes(menu.row.id) } : null,
+          )}
           anchor={menu.anchor}
           onChoose={(action) => choose(menu.row, action)}
           onClose={closeMenu}
@@ -606,6 +653,7 @@ export default function HierarchyView({
         <DeleteDialog
           iri={deleting.iri}
           label={deleting.label}
+          runner={runner}
           onDone={(deleted) => {
             setDeleting(null);
             if (deleted) {

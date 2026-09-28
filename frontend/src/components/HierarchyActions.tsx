@@ -25,7 +25,9 @@ BASIC IDEA
     Delete…; a concept, Add narrower concept instead; any other entity of the
     document, Rename and Delete…; an imported class, Add subclass only, since
     making a subclass of FOAF's Person is this project's own change; anything
-    else imported, nothing.
+    else imported, nothing. Past 300 boxes the canvas draws a chosen set
+    (visual-modeling 5.6), and a class or concept row then also offers *Show
+    on canvas* or *Hide from canvas*.
 
 INPUTS / INPUT SOURCES (props)
     - label: the row's name, for the menu's accessible name.
@@ -39,7 +41,7 @@ EXPECTED OUTPUT
 
 import { useEffect, useRef } from "react";
 
-export type RowAction = "addChild" | "rename" | "delete";
+export type RowAction = "addChild" | "rename" | "delete" | "show" | "hide";
 
 export interface MenuItem {
   action: RowAction;
@@ -47,7 +49,20 @@ export interface MenuItem {
 }
 
 /** What a row offers, by its kind and whether it comes from an import. */
-export function rowActions(kind: string, imported: boolean): MenuItem[] {
+export function rowActions(
+  kind: string,
+  imported: boolean,
+  canvas: { limited: boolean; shown: boolean } | null = null,
+): MenuItem[] {
+  const drawable = kind === "class" || kind === "concept";
+  const onCanvas: MenuItem[] =
+    canvas?.limited && drawable
+      ? [canvas.shown ? { action: "hide", label: "Hide from canvas" } : { action: "show", label: "Show on canvas" }]
+      : [];
+  return [...ownActions(kind, imported), ...onCanvas];
+}
+
+function ownActions(kind: string, imported: boolean): MenuItem[] {
   if (imported) return kind === "class" ? [{ action: "addChild", label: "Add subclass" }] : [];
   const rest: MenuItem[] = [
     { action: "rename", label: "Rename" },

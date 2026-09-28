@@ -38,6 +38,15 @@ BASIC IDEA
     file that has comments, the caller is told once, and on confirmation the
     file is copied to <doc>.original.ttl.
 
+    The modeling canvas reads the document through canvas_view: canvas.py's
+    boxes and lines, cached by revision and display language like every other
+    view, then cut to the shown set and given the saved layout on each
+    request. The layout itself is projects.py's file, outside the model: a
+    rename is the one command that touches it, moving the entry to the new
+    IRI, and its undo and redo move it back and forth (D-087). A position
+    whose IRI is gone is kept until the project is next opened, so undoing a
+    delete puts the box back where it was.
+
     Autosave never runs on the request path. A change arms a timer (two seconds,
     reset by every later change); the timer thread snapshots the document under
     its lock and writes .draft/<doc>.ttl outside it. Recovery reads that draft
@@ -57,6 +66,7 @@ EXPECTED OUTPUT
       can select it.
     - Files: <doc>.ttl on save, <doc>.original.ttl once, .draft/<doc>.ttl and
       .draft/<doc>.json while unsaved.
+    - The canvas view, and layout entries moved by a rename or pruned on open.
     - CommandError (422, a sentence), TurtleSyntaxError (422, line and column),
       NotOpen and Dirty (409).
 ================================================================================
@@ -93,6 +103,7 @@ from .projects import (
     graph_counts,
     valid_lang,
 )
+from .canvas import build_canvas, restrict
 from .imports import imports_service, load_state
 from .store import Ontology, OntologyStore, ParseTimeout
 from .store import store as _default_store
@@ -451,6 +462,8 @@ class Step:
     removed: list
     before: tuple = (None, True)
     after: tuple = (None, True)
+    # (old, new) for a RenameIri: undo and redo move the layout entry too.
+    renamed: Optional[tuple] = None
 
 
 @dataclass
@@ -463,6 +476,7 @@ class Change:
     # The IRI a create command minted, or a rename moved the entity to, so
     # the interface can select it.
     created: Optional[URIRef] = None
+    renamed: Optional[tuple] = None
 
 
 class Context:
@@ -882,7 +896,9 @@ def cmd_rename_iri(ctx: Context, a: dict) -> Change:
     touched |= set(ctx.graph.triples((None, old, None)))
     touched |= set(ctx.graph.triples((None, None, old)))
     adds = [(swap(s), swap(p), swap(o)) for s, p, o in touched]
-    return _created(_change(ctx.graph, f"Renamed {ctx.short(old)} to {ctx.short(new)}", adds, touched), new)
+    change = _created(_change(ctx.graph, f"Renamed {ctx.short(old)} to {ctx.short(new)}", adds, touched), new)
+    change.renamed = (str(old), str(new))
+    return change
 
 
 # --- delete, with its impact summary (5.5) -----------------------------------
@@ -989,7 +1005,9 @@ def delete_plan(ctx: Context, a: dict) -> tuple[Change, dict]:
 
     ref = lambda node: {"iri": str(node), "label": ctx.name(node)}  # noqa: E731
     properties = [
-        {**ref(p), "role": "domain" if pred == RDFS.domain else "range"}
+        # The kind lets the dialog say "relationship" for an object property
+        # and "attribute" for a datatype one, as 5.3 words it.
+        {**ref(p), "role": "domain" if pred == RDFS.domain else "range", "kind": ctx.kind(p)}
         for p, pred in sorted(
             {(s, p) for s, p in g.subject_predicates(iri) if p in (RDFS.domain, RDFS.range)},
         )
@@ -1077,6 +1095,9 @@ class OpenDocument:
     save_point: object = None
     saved_text: Optional[str] = None
     _clean: Optional[tuple] = None
+    # (revision and langs, view, the imports view it was built with): the
+    # canvas's boxes and lines (D-081).
+    _canvas: Optional[tuple] = None
 
     @property
     def graph(self) -> Graph:
@@ -1179,6 +1200,7 @@ class EditingService:
                 for entry in manifest["documents"]:
                     doc = entry["role"]
                     documents[doc] = self._load(pid, doc, manifest)
+                    self._prune_layout(documents[doc])
                 self._open[pid] = documents
                 for document in documents.values():
                     self.store.register_document(document.ontology)
@@ -1311,6 +1333,8 @@ class EditingService:
             before = document.editor_state()
             self._apply(document, change, origin="command")
             self._push(document, change, before)
+            if change.renamed:
+                self._move_layout(document, *change.renamed)
             result = {
                 "revision": document.ontology.revision,
                 "label": change.label,
@@ -1346,7 +1370,9 @@ class EditingService:
     @staticmethod
     def _push(document: OpenDocument, change: Change, before: tuple) -> None:
         """Record a new change as an undo step, dropping the redo branch."""
-        document.undo.append(Step(change.label, change.added, change.removed, before, document.editor_state()))
+        document.undo.append(
+            Step(change.label, change.added, change.removed, before, document.editor_state(), change.renamed)
+        )
         dropped = document.undo[:-UNDO_LIMIT]
         del document.undo[:-UNDO_LIMIT]
         point = document.save_point
@@ -1381,6 +1407,8 @@ class EditingService:
             step = document.undo.pop()
             self._apply(document, Change(step.label, step.removed, step.added), origin="undo")
             document.last_text, document.visual_since_save = step.before
+            if step.renamed:
+                self._move_layout(document, step.renamed[1], step.renamed[0])
             document.redo.append(step)
             self._settle(document)
             return {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
@@ -1393,6 +1421,8 @@ class EditingService:
             step = document.redo.pop()
             self._apply(document, Change(step.label, step.added, step.removed), origin="redo")
             document.last_text, document.visual_since_save = step.after
+            if step.renamed:
+                self._move_layout(document, *step.renamed)
             document.undo.append(step)
             self._settle(document)
             return {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
@@ -1541,6 +1571,84 @@ class EditingService:
                 document.last_text = text if meta.get("fromEditor") else None
                 document.visual_since_save = bool(meta.get("visualSinceSave", not meta.get("fromEditor")))
         return {"documents": [d.state() for d in documents.values()]}
+
+    # --- the modeling canvas (visual-modeling 5.4 to 5.6) ---------------------------
+
+    def canvas_view(self, pid: str, doc: str, lang: Optional[str] = None) -> dict:
+        """Boxes, lines, undrawn relationships and the saved layout.
+
+        The boxes and lines are cached by revision and language: dragging a
+        box writes the layout, not the model, and must not rebuild them. The
+        shown-set cut and the layout are applied per request on top.
+        """
+        document = self.document(pid, doc)
+        ontology = document.ontology
+        langs = ontology.label_langs(lang)
+        with document.lock:
+            # Keyed on the imports view as well: resolving imports saves new
+            # import state without moving the revision, and an imported box
+            # kept "outside this model" until an unrelated edit (found in
+            # review). merged() is itself cached, so the same view is the
+            # same object until the imports change.
+            merged = imports_service.merged(ontology) if load_state(ontology) else None
+            key = (ontology.revision, langs)
+            held = document._canvas
+            # The view itself is kept and compared by identity, not by id(),
+            # which a freed view's successor can be given.
+            if held is None or held[0] != key or held[2] is not merged:
+                view = build_canvas(
+                    document.graph,
+                    langs,
+                    merged["graph"] if merged else None,
+                    merged["importedFrom"] if merged else None,
+                )
+                document._canvas = (key, view, merged)
+            view = document._canvas[1]
+            layout = self.projects.read_layout(pid, doc)
+            revision = ontology.revision
+        return {"revision": revision, **restrict(view, layout["shown"]), "layout": layout}
+
+    def get_layout(self, pid: str, doc: str) -> dict:
+        document = self.document(pid, doc)
+        with document.lock:
+            return self.projects.read_layout(pid, doc)
+
+    def put_layout(self, pid: str, doc: str, layout) -> dict:
+        """Replace the layout. Not a change to the model: no revision, no
+        dirty flag, no undo step, no Save needed (5.5)."""
+        document = self.document(pid, doc)
+        with document.lock:
+            return self.projects.write_layout(pid, doc, layout)
+
+    def _move_layout(self, document: OpenDocument, old: str, new: str) -> None:
+        """Positions follow the IRI: a rename, its undo and its redo."""
+        layout = self.projects.read_layout(document.pid, document.doc)
+        moved = False
+        if old in layout["positions"]:
+            layout["positions"][new] = layout["positions"].pop(old)
+            moved = True
+        if layout["shown"] and old in layout["shown"]:
+            layout["shown"] = [new if i == old else i for i in layout["shown"]]
+            moved = True
+        if moved:
+            self.projects.write_layout(document.pid, document.doc, layout)
+
+    def _prune_layout(self, document: OpenDocument) -> None:
+        """On open only: drop positions of IRIs the document no longer
+        mentions. Not on delete, so an undone delete finds its box's place."""
+        path = self.projects.layout_path(document.pid, document.doc)
+        if not path.exists():
+            return
+        layout = self.projects.read_layout(document.pid, document.doc)
+        g = document.graph
+        mentioned = lambda iri: (URIRef(iri), None, None) in g or (None, None, URIRef(iri)) in g  # noqa: E731
+        kept = {iri: p for iri, p in layout["positions"].items() if mentioned(iri)}
+        shown = [iri for iri in layout["shown"]] if layout["shown"] is not None else None
+        if shown is not None:
+            shown = [iri for iri in shown if mentioned(iri)]
+        if kept != layout["positions"] or shown != layout["shown"]:
+            layout["positions"], layout["shown"] = kept, shown
+            self.projects.write_layout(document.pid, document.doc, layout)
 
     # --- what the forms and the language menu read --------------------------------
 

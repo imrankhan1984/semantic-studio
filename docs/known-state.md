@@ -972,3 +972,121 @@ EXPECTED OUTPUT
   cannot hold an invalid date, in jsdom as in a browser, so a test of "invalid
   value refused before sending" uses an integer.
 
+- **The modeling canvas** (2026-09-28, spec `visual-modeling-canvas` Stage 2,
+  backlog E-7, decisions D-086 and D-087). In a project's Hierarchy view the
+  canvas sits between the tree and the form (`canvas/ModelCanvas.tsx`), on
+  React Flow 12.12.0, pinned exactly and loaded with `React.lazy`: its code
+  and React Flow are a chunk of their own (68 KB compressed, plus 2 KB of
+  CSS), fetched from the local server the first time a canvas opens. The
+  main bundle grew 2.1 KB. A project now opens in this view.
+
+  What it draws is `backend/app/canvas.py`'s view, served by
+  `GET …/documents/{doc}/canvas` and cached by revision, language and the
+  imports view; where it draws it is `<doc>.layout.json`, written by
+  `PUT …/layout` (1 MB, declared and while reading; at most 20,000 entries,
+  keys of at most 2,048 characters, finite numbers). Past
+  `CANVAS_MAX_BOXES` (300) classes and concepts it draws only the shown set
+  and its direct links. Measured: 300 boxes and 400 lines drawn 360 ms after
+  the click with the code fetched, about 170 ms cached; the view builds in
+  36 ms on 10,000 triples.
+
+  **The canvas imports React Flow's `base.css`, not `style.css`.** The full
+  theme sets `outline: none` on a focused node, and every box lost the one
+  global focus ring (measured with the accessibility tree: `outline: none`).
+  `base.css` suppresses it only on React Flow's built-in node types, which
+  the canvas does not use. No second focus rule was needed.
+
+  **One handle per side, and `ConnectionMode.Loose`.** A source and a target
+  handle stacked on each side left the pointer on whichever was on top, and
+  a line started on a target handle comes back reversed: *Invoice item to
+  Invoice* opened a menu for *Invoice to Invoice item* (the browser pass).
+  In loose mode any handle starts or ends a line, and it runs from where it
+  started. Lines leave and enter by the sides facing each other; with one
+  top and one bottom handle, a relationship between two boxes in a row
+  looped round both.
+
+  **Lines are not Tab stops** (`edgesFocusable={false}`): React Flow puts
+  lines before boxes in the page, so Tab reached every line first. Each box's
+  name already says what its lines say, and the form removes a link by
+  keyboard. **Focus on a box selects it**, so the form follows the keyboard;
+  a box just deleted is still drawn until the refetch and the delete dialog
+  gives focus back to it, so its focus is ignored until the view drops it,
+  or it re-selected the entity the delete had cleared.
+
+  **The browser's layout is merged, not kept.** Every fetch takes the
+  server's layout as the base and lays over it only the moves not yet
+  written: a rename moves its entry on the server (and its undo and redo
+  move it back), and a copy read once would have lost that and then written
+  itself back over it (code review). A deleted box's position stays in the
+  file until the next open, so an undone delete returns to its place.
+
+  Found in the code review and fixed with a test each: the canvas cache
+  ignored newly resolved imports; the rename field kept the first name it
+  saw and stripped any "(…)"; Enter on a button in a box renamed the box;
+  an emptied shown set refilled itself; an end written as `owl:unionOf` was
+  offered to "complete"; an attribute of a class outside the model vanished.
+  And on Windows, replacing the layout file many times a second now and
+  then meets "access denied" from a scanner holding it: the write retries a
+  few times 20 ms apart (`projects._replace`).
+
+- **The canvas's lost drop point, lost last move and deaf Delete** (2026-09-28,
+  the review of PR #47). Three defects the suite and the first browser pass
+  missed, each reproduced in Chrome by the reviewer and now held by a test
+  that fails without its fix.
+
+  **A position leaves the unsaved set only when its save has succeeded.** A
+  box made on the canvas is saved at its drop point at once, and the create's
+  refetch could read the layout before that save landed: the box was taken
+  for unplaced, laid out again, and that was saved instead (4 of 8 drops on a
+  280-class model). `place()` now marks its box unsaved like any move, and a
+  save records what it sent and settles an IRI only if the box has not moved
+  again since. A failed save keeps everything pending and says so in the
+  canvas's status line. Measured after the fix: 8 of 8 drops kept.
+
+  **`projectStore.close()` awaits every registered flush.** A move made less
+  than a second before *Close project* was lost: the project closed, and the
+  layout write then met a closed project. The canvas registers its flush
+  (`useCanvasData.flush`), and close waits for it before the server is told.
+
+  **A clicked line focuses the canvas surface.** A click on a line focuses
+  nothing, so the Delete key went to the page and never reached the canvas's
+  key handler; the jsdom test had sent the key to an element inside the
+  canvas and so passed. The surface is now script-focusable, the click
+  focuses it and says *… selected. Delete removes it.*, and the test sends
+  the key to whatever holds focus.
+
+  Also from that review: the canvas pans to a selection once, not after every
+  form edit; Show and Hide on canvas revert and say so when the write fails;
+  past 300 boxes only a class or a concept joins the shown set (its kind is
+  asked for when it is not drawn); the tree is `aria-busy` while a command
+  runs; Tidy up is `aria-disabled`. `renderCanvas` in the tests waits for the
+  boxes, not only the canvas, which is what failed about 1 run in 6 on CI.
+
+- **The layout generation: order-proof drop points** (2026-09-28, the
+  re-review of PR #47). The unsaved-until-success rule above still lost 4 of
+  10 drops in Chrome, because it depended on the order responses arrived in:
+  the create's refetch read the layout on the server just before the drop's
+  save wrote it, the save's answer arrived first and settled the box, and the
+  older refetch then arrived without its position, so the box was laid out
+  again and that was saved.
+
+  **The layout file carries a `generation`**, which the server increases on
+  every write (the browser's PUT, a rename moving an entry and its undo and
+  redo, the prune on open) and which the browser cannot set. PUT layout and
+  GET canvas both return it. The canvas remembers the generation of its last
+  successful save, and a response older than that brings its boxes and
+  lines but none of its positions or shown set. A rename's move is a later
+  write, so it is still taken. `ModelCanvas.test.tsx` forces that exact
+  order (GET reads, PUT resolves, GET resolves); it fails without the check.
+  Chrome after the fix: 10 of 10 drops kept, twice, and the screen and the
+  file agree for all ten.
+
+  **Layouts are served from memory after the first read.** Reading the old
+  generation before each write made a 300-position PUT take about 95 ms
+  against its 20 ms budget. The cost was all in opening the file: about
+  130 ms on Windows to open a file just replaced, while a scanner looks at
+  it (profiled; no retries fired). `ProjectStore` keeps each layout as last
+  read or written and hands out copies, so the file is read once per
+  document: 1.2 ms per write again, and GET canvas no longer pays for a
+  fresh file either.
+

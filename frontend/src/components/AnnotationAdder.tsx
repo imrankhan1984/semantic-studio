@@ -26,8 +26,13 @@ BASIC IDEA
 INPUTS / INPUT SOURCES (props)
     - iri: the entity annotated.
     - primaryLanguage, languages: offered first in the language menu.
+    - runner: the section's command runner, so a command in flight shows
+      the whole section busy (5.8 item 1).
     - onDone: the adder closes (after Add, or Cancel).
-    Plus api.ts for the list, and the project store for the commands.
+    Plus api.ts for the list.
+
+    While busy, every field is read-only and every select aria-disabled and
+    deaf to changes: a disabled select would drop the focus it holds.
 
 EXPECTED OUTPUT
     - AddAnnotation, and CreateAnnotationProperty for a new property.
@@ -38,6 +43,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { getAnnotationProperties } from "../api";
 import { typeFromKey, typeKey, valueProblem, VALUE_TYPES, toValue } from "../modeling/values";
 import { projectStore } from "../state/projectStore";
+import type { Runner } from "./EditParts";
 import type { AnnotationPropertyOption, AnnotationValue, ValueType } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -138,8 +144,9 @@ export function ValueInput({
           <select
             id={`${id}-lang`}
             value={other ? "__other" : lang}
-            disabled={busy}
+            aria-disabled={busy}
             onChange={(e) => {
+              if (busy) return;
               if (e.target.value === "__other") {
                 setOther(true);
               } else {
@@ -177,12 +184,14 @@ interface Props {
   iri: string;
   primaryLanguage: string;
   languages: string[];
+  runner: Runner;
   onDone: () => void;
 }
 
 const NEW = "__new";
+const FIELD = "adder";
 
-export default function AnnotationAdder({ iri, primaryLanguage, languages, onDone }: Props) {
+export default function AnnotationAdder({ iri, primaryLanguage, languages, runner, onDone }: Props) {
   const id = useId();
   const langs = [primaryLanguage, ...languages.filter((l) => l !== primaryLanguage)];
   const [options, setOptions] = useState<AnnotationPropertyOption[] | null>(null);
@@ -190,8 +199,13 @@ export default function AnnotationAdder({ iri, primaryLanguage, languages, onDon
   const [type, setType] = useState<ValueType>({ kind: "text" });
   const [value, setValue] = useState("");
   const [lang, setLang] = useState(primaryLanguage);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, errors, run, clear } = runner;
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const error = loadError || errors[FIELD] || null;
+  const setError = (_: null) => {
+    setLoadError(null);
+    clear(FIELD);
+  };
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState<ValueType>({ kind: "text" });
   const propertyRef = useRef<HTMLSelectElement>(null);
@@ -204,7 +218,7 @@ export default function AnnotationAdder({ iri, primaryLanguage, languages, onDon
         setOptions(list);
         if (select) choose(select, list);
       })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+      .catch((e: unknown) => setLoadError(e instanceof Error ? e.message : String(e)));
   };
 
   useEffect(() => {
@@ -233,25 +247,15 @@ export default function AnnotationAdder({ iri, primaryLanguage, languages, onDon
 
   const add = async () => {
     if (blocked) return;
-    setBusy(true);
-    setError(null);
-    try {
-      if (creating) {
-        const result = await projectStore.command("CreateAnnotationProperty", {
-          label: newName.trim(),
-          valueType: newType,
-        });
+    if (creating) {
+      const result = await run(FIELD, "CreateAnnotationProperty", { label: newName.trim(), valueType: newType });
+      if (result) {
         setNewName("");
         load(result.created);
-      } else {
-        const sent: AnnotationValue = toValue(type, value, type.kind === "text" ? lang : undefined);
-        await projectStore.command("AddAnnotation", { iri, property, value: sent });
-        onDone();
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
+    } else {
+      const sent: AnnotationValue = toValue(type, value, type.kind === "text" ? lang : undefined);
+      if (await run(FIELD, "AddAnnotation", { iri, property, value: sent })) onDone();
     }
   };
 
@@ -284,7 +288,8 @@ export default function AnnotationAdder({ iri, primaryLanguage, languages, onDon
         id={`${id}-property`}
         ref={propertyRef}
         value={property}
-        onChange={(e) => choose(e.target.value)}
+        aria-disabled={busy}
+        onChange={(e) => !busy && choose(e.target.value)}
       >
         <option value="" disabled>
           {options ? "Choose a property…" : "Loading…"}
@@ -316,7 +321,8 @@ export default function AnnotationAdder({ iri, primaryLanguage, languages, onDon
           <select
             id={`${id}-new-type`}
             value={typeKey(newType)}
-            onChange={(e) => setNewType(typeFromKey(e.target.value))}
+            aria-disabled={busy}
+            onChange={(e) => !busy && setNewType(typeFromKey(e.target.value))}
           >
             {VALUE_TYPES.map((t) => (
               <option key={t.key} value={t.key}>
@@ -334,7 +340,9 @@ export default function AnnotationAdder({ iri, primaryLanguage, languages, onDon
             <select
               id={`${id}-type`}
               value={typeKey(type)}
+              aria-disabled={busy}
               onChange={(e) => {
+                if (busy) return;
                 const next = typeFromKey(e.target.value);
                 setType(next);
                 setValue(next.kind === "typed" && next.datatype === "xsd:boolean" ? "true" : "");

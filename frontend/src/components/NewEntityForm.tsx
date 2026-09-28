@@ -25,6 +25,8 @@ INPUTS / INPUT SOURCES (props)
     - primaryLanguage: named in the field's label.
     - datatypes: offer a datatype under More options (an attribute).
     - busy, error: the command in flight, and its refusal.
+    - missing: what else Create waits for, said beside it (a relationship's
+      range, 5.8 item 10); null when nothing.
     - onSubmit({name, iri?, datatype?}), onCancel.
 
 EXPECTED OUTPUT
@@ -48,6 +50,7 @@ interface Props {
   busy?: boolean;
   error?: string | null;
   submitLabel?: string;
+  missing?: string | null;
   children?: ReactNode;
   onSubmit: (entity: NewEntity) => void;
   onCancel: () => void;
@@ -60,6 +63,7 @@ export default function NewEntityForm({
   busy = false,
   error = null,
   submitLabel = "Create",
+  missing = null,
   children,
   onSubmit,
   onCancel,
@@ -75,7 +79,7 @@ export default function NewEntityForm({
     nameRef.current?.focus();
   }, []);
 
-  const blocked = busy || !name.trim();
+  const blocked = busy || !name.trim() || missing !== null;
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (blocked) return;
@@ -145,7 +149,12 @@ export default function NewEntityForm({
             <label htmlFor={`${id}-datatype`} className="edit-field-label">
               Type of value
             </label>
-            <select id={`${id}-datatype`} value={datatype} onChange={(e) => setDatatype(e.target.value)}>
+            <select
+              id={`${id}-datatype`}
+              value={datatype}
+              aria-disabled={busy}
+              onChange={(e) => !busy && setDatatype(e.target.value)}
+            >
               {DATATYPES.map((d) => (
                 <option key={d} value={`xsd:${d}`}>
                   xsd:{d}
@@ -155,6 +164,7 @@ export default function NewEntityForm({
           </>
         )}
       </div>
+      {missing && <p className="detail-note">{missing}</p>}
       <div className="edit-actions">
         <button type="submit" className="primary" aria-disabled={blocked}>
           {busy ? "Saving change…" : submitLabel}

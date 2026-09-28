@@ -373,6 +373,16 @@ of them open as fast as none.
   and range, or a concept's broader concepts. You type names; the identifiers
   are made for you, and *Change identifier…* is there when you want your own.
   Every change is one step of Undo.
+- **Or draw it.** A project opens on its **modeling canvas**, between the
+  tree and the form: drag a *Class* or a *Concept* onto it and type a name,
+  drop one onto a box to make a kind of it, draw a line from one box to
+  another to say *is a kind of*, *narrower than* or a new relationship, and
+  double-click a name (or press Enter on a box) to rename it. Boxes stay
+  where you put them, saved beside the model in `model.layout.json`; moving
+  one is not a change to the model. A model of more than 300 classes and
+  concepts draws the ones you choose (*Show on canvas*). The *Canvas* switch
+  above the tree hides it; everything it does can be done from the tree and
+  the form.
 - **The Hierarchy tree builds too.** *New class* and *New concept* sit at the
   top of their sections, and each row's menu (the `⋯` button, or `Shift+F10`
   on the focused row) adds a subclass or a narrower concept, renames, or
@@ -485,6 +495,8 @@ The image stores ontologies in the `/data` volume:
 | `GET  /api/ontologies/{id}/query-schema` | Class-level schema for the builder |
 | `GET  /api/ontologies/{id}/query-node`   | `?iri=` — class/type of a clicked node |
 | `POST /api/ontologies/{id}/sparql`  | `{query}` — run a SELECT             |
+| `GET  /api/projects/{pid}/documents/{doc}/canvas` | The modeling canvas: boxes, lines, the layout |
+| `GET/PUT /api/projects/{pid}/documents/{doc}/layout` | Box positions and the shown set (not the model) |
 | `GET/POST /api/queries`             | List / save visual queries           |
 | `DELETE /api/queries/{id}`          | Delete a saved query                 |
 
@@ -507,6 +519,7 @@ All dependencies are permissive open source:
 | Library | License |
 | --- | --- |
 | React, Vite, Sigma.js, graphology, ForceAtlas2 layout | MIT |
+| React Flow (`@xyflow/react`), the modeling canvas | MIT |
 | FastAPI | MIT |
 | rdflib | BSD-3-Clause |
 | uvicorn | BSD-3-Clause |

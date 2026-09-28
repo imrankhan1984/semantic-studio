@@ -25,7 +25,12 @@ INPUTS / INPUT SOURCES (props)
     - ontologyId, iri, name, model: the entity and its blocks.
     - primaryLanguage: for the names-first forms.
     - runner: EditSection's command runner, so busy and refusals are shared.
-    - onSelect: select an entity.
+    - onSelect: select an entity; follow: select what a command made, unless
+      the user went elsewhere while it ran (5.8 item 4).
+
+    A closed form gives focus back to the button that opened it (5.8 item
+    2). *Change range* on an attribute starts on the range it has (item 9),
+    and *Add relationship* waits for a range, as 5.1 says (item 10).
 
 EXPECTED OUTPUT
     - Commands through the runner; the block's markup (or nothing for a kind
@@ -33,7 +38,7 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { structureOf, type EntityModel, type Ref } from "../modeling/entity";
 import { DATATYPES } from "../modeling/values";
 import type { SearchKind } from "../types";
@@ -49,6 +54,7 @@ interface Props {
   primaryLanguage: string;
   runner: Runner;
   onSelect: (iri: string) => void;
+  follow: (created: string | undefined) => void;
 }
 
 /** Which small form is open: at most one at a time. */
@@ -99,22 +105,42 @@ function Links({
   );
 }
 
-export default function EditStructure({ ontologyId, iri, name, model, primaryLanguage, runner, onSelect }: Props) {
+export default function EditStructure({
+  ontologyId,
+  iri,
+  name,
+  model,
+  primaryLanguage,
+  runner,
+  onSelect,
+  follow,
+}: Props) {
   const { busy, errors, run, clear } = runner;
   const [open, setOpen] = useState<Open>(null);
+  // The button each form was opened from, to give focus back to.
+  const openers = useRef<Record<string, HTMLButtonElement | null>>({});
   const [range, setRange] = useState<Ref | null>(null);
   const [pickingRange, setPickingRange] = useState(false);
   const shape = structureOf(model.kind);
   if (!shape) return null;
 
   const close = () => {
-    if (open) clear(open);
+    const was = open;
+    if (was) clear(was);
     setOpen(null);
     setRange(null);
     setPickingRange(false);
+    if (was) window.setTimeout(() => openers.current[was]?.focus(), 0);
   };
   const button = (which: Open, label: string) => (
-    <button type="button" className="ghost" onClick={() => setOpen(which)}>
+    <button
+      ref={(el) => {
+        if (which) openers.current[which] = el;
+      }}
+      type="button"
+      className="ghost"
+      onClick={() => setOpen(which)}
+    >
       {label}
     </button>
   );
@@ -136,7 +162,7 @@ export default function EditStructure({ ontologyId, iri, name, model, primaryLan
     const result = await run(which, command, args);
     if (result) {
       close();
-      if (result.created) onSelect(result.created);
+      follow(result.created);
     }
   };
 
@@ -204,12 +230,13 @@ export default function EditStructure({ ontologyId, iri, name, model, primaryLan
             primaryLanguage={primaryLanguage}
             busy={busy}
             error={errors.relationship}
+            missing={range ? null : "Choose the class it points to."}
             onCancel={close}
             onSubmit={({ name: label, iri: chosen }) =>
-              void create("relationship", "CreateObjectProperty", {
+              range && void create("relationship", "CreateObjectProperty", {
                 label,
                 domain: iri,
-                ...(range ? { range: range.iri } : {}),
+                range: range.iri,
                 iri: chosen,
               })
             }
@@ -228,7 +255,7 @@ export default function EditStructure({ ontologyId, iri, name, model, primaryLan
                 />
               ) : (
                 <p className="detail-note">
-                  It points to: {range ? range.label : "not chosen yet (optional)"}{" "}
+                  It points to: {range ? range.label : "not chosen yet (required)"}{" "}
                   <button type="button" className="link-btn" onClick={() => setPickingRange(true)}>
                     {range ? "Change" : "Choose a class"}
                   </button>
@@ -245,6 +272,10 @@ export default function EditStructure({ ontologyId, iri, name, model, primaryLan
 
   if (shape === "property") {
     const datatypeProperty = model.kind === "datatypeProperty";
+    // Start on the range it has (5.8 item 9), as xsd:local.
+    const XSD = "http://www.w3.org/2001/XMLSchema#";
+    const currentDatatype =
+      model.range && model.range.iri.startsWith(XSD) ? `xsd:${model.range.iri.slice(XSD.length)}` : "xsd:string";
     return (
       <Block title="Structure">
         <h5>Domain (what it describes)</h5>
@@ -272,7 +303,7 @@ export default function EditStructure({ ontologyId, iri, name, model, primaryLan
               <label className="edit-field-label" htmlFor="edit-range-datatype">
                 Type of value
               </label>
-              <select id="edit-range-datatype" name="datatype" autoFocus defaultValue="xsd:string">
+              <select id="edit-range-datatype" name="datatype" autoFocus defaultValue={currentDatatype}>
                 {DATATYPES.map((d) => (
                   <option key={d} value={`xsd:${d}`}>
                     xsd:{d}
