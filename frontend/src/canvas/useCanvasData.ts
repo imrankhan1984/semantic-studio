@@ -11,9 +11,12 @@ SUMMARY
 
 BASIC IDEA
     The server's layout file is where positions live (D-087); this holds the
-    browser's copy. It is read once per document, and from then on the
-    browser's copy is the truth: a refetch after a command brings new boxes
-    and lines, and every box keeps where it was. A box with no position gets
+    browser's copy. Every fetch brings the server's layout with it, and it
+    is taken as the base, with only the moves not yet written laid over it:
+    a rename moves its box's entry on the server, and a copy read once and
+    kept would have lost that move and then written the stale copy back over
+    it (found in review). So every box keeps where it was across a command's
+    refetch, and follows its IRI across a rename. A box with no position gets
     one from layered.ts -- below its parent, or below everything -- and that
     position is saved too, so the next open draws the same diagram.
 
@@ -58,13 +61,18 @@ export function useCanvasData(projectId: string, doc: ProjectDocName, revision: 
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [positions, setPositions] = useState<Positions>({});
-  // The browser's copy of the layout file, read once per document.
+  // The browser's copy of the layout file, and the boxes moved since it was
+  // last written: those are the only ones the browser knows better about.
   const layout = useRef<CanvasLayout | null>(null);
+  const unsaved = useRef(new Set<string>());
+  const viewportUnsaved = useRef(false);
   const timer = useRef<number | null>(null);
 
   const save = useCallback(() => {
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = null;
+    unsaved.current = new Set();
+    viewportUnsaved.current = false;
     if (layout.current) void putLayout(projectId, doc, layout.current).catch(() => undefined);
   }, [projectId, doc]);
 
@@ -80,6 +88,7 @@ export function useCanvasData(projectId: string, doc: ProjectDocName, revision: 
 
   useEffect(() => {
     layout.current = null;
+    unsaved.current = new Set();
   }, [projectId, doc]);
 
   useEffect(() => {
@@ -88,9 +97,15 @@ export function useCanvasData(projectId: string, doc: ProjectDocName, revision: 
     getCanvas(projectId, doc)
       .then((fetched) => {
         if (cancelled) return;
-        const first = layout.current === null;
-        if (first) layout.current = fetched.layout;
-        const current = layout.current!;
+        const local = layout.current;
+        const current: CanvasLayout = { ...fetched.layout, positions: { ...fetched.layout.positions } };
+        if (local) {
+          for (const iri of unsaved.current) {
+            if (local.positions[iri]) current.positions[iri] = local.positions[iri];
+          }
+          if (viewportUnsaved.current) current.viewport = local.viewport;
+        }
+        layout.current = current;
         const placed = placeMissing(boxes(fetched), links(fetched), current.positions);
         const added = Object.keys(placed).some((iri) => !current.positions[iri]);
         // Keep positions of boxes not drawn now: an undone delete returns.
@@ -110,6 +125,7 @@ export function useCanvasData(projectId: string, doc: ProjectDocName, revision: 
     (iri: string, at: [number, number]) => {
       if (!layout.current) return;
       layout.current.positions = { ...layout.current.positions, [iri]: at };
+      unsaved.current.add(iri);
       setPositions({ ...layout.current.positions });
       scheduleSave();
     },
@@ -163,6 +179,7 @@ export function useCanvasData(projectId: string, doc: ProjectDocName, revision: 
     (viewport: { x: number; y: number; zoom: number }) => {
       if (!layout.current) return;
       layout.current.viewport = viewport;
+      viewportUnsaved.current = true;
       scheduleSave();
     },
     [scheduleSave],

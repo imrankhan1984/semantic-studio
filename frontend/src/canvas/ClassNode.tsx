@@ -76,16 +76,25 @@ export function Sides() {
 export const keep = (e: React.KeyboardEvent) => e.stopPropagation();
 
 export function NameLine({ data }: { data: BoxData }) {
-  const { node, renaming, busy, onRenameDone } = data;
-  const [value, setValue] = useState(node.label.replace(/ \([^)]*\)$/, ""));
-  if (!renaming) {
-    return <span className="canvas-box-name">{node.label}</span>;
-  }
+  if (!data.renaming) return <span className="canvas-box-name">{data.node.label}</span>;
+  // Mounted when a rename starts, so it begins on the name the box has now,
+  // not the one it had when first drawn (found in review).
+  return <RenameField data={data} />;
+}
+
+function RenameField({ data }: { data: BoxData }) {
+  const { node, busy, onRenameDone } = data;
+  // A fallback name is the primary language's, marked "(en)": this language
+  // has no name yet, so the field starts empty rather than on text that
+  // Enter would then save as a translation. Any other name, "(draft)" and
+  // all, is the name (found in review).
+  const [value, setValue] = useState(node.fallback ? "" : node.label);
   return (
     <input
       className="canvas-rename nodrag"
       aria-label={`New name for ${node.label}`}
       autoFocus
+      placeholder={node.fallback ? node.label : undefined}
       value={value}
       readOnly={busy}
       onChange={(e) => setValue(e.target.value)}

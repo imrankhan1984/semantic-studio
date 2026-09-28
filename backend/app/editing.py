@@ -1095,7 +1095,8 @@ class OpenDocument:
     save_point: object = None
     saved_text: Optional[str] = None
     _clean: Optional[tuple] = None
-    # (revision, langs, view): the canvas's boxes and lines (D-081).
+    # (revision and langs, view, the imports view it was built with): the
+    # canvas's boxes and lines (D-081).
     _canvas: Optional[tuple] = None
 
     @property
@@ -1584,16 +1585,24 @@ class EditingService:
         ontology = document.ontology
         langs = ontology.label_langs(lang)
         with document.lock:
+            # Keyed on the imports view as well: resolving imports saves new
+            # import state without moving the revision, and an imported box
+            # kept "outside this model" until an unrelated edit (found in
+            # review). merged() is itself cached, so the same view is the
+            # same object until the imports change.
+            merged = imports_service.merged(ontology) if load_state(ontology) else None
             key = (ontology.revision, langs)
-            if document._canvas is None or document._canvas[0] != key:
-                merged = imports_service.merged(ontology) if load_state(ontology) else None
+            held = document._canvas
+            # The view itself is kept and compared by identity, not by id(),
+            # which a freed view's successor can be given.
+            if held is None or held[0] != key or held[2] is not merged:
                 view = build_canvas(
                     document.graph,
                     langs,
                     merged["graph"] if merged else None,
                     merged["importedFrom"] if merged else None,
                 )
-                document._canvas = (key, view)
+                document._canvas = (key, view, merged)
             view = document._canvas[1]
             layout = self.projects.read_layout(pid, doc)
             revision = ontology.revision

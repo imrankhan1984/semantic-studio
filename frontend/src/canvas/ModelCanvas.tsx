@@ -190,14 +190,15 @@ function Canvas(props: ModelCanvasProps) {
         focusBox(iri);
         return;
       }
+      // A refusal is the runner's errors.rename, which the status line shows;
+      // an older hint would stand in front of it (found in review).
+      setHint("");
       if (await run("rename", "SetLabel", { iri, value, lang: language ?? primaryLanguage })) {
         setRenaming(null);
         focusBox(iri);
-      } else {
-        setHint(errors.rename ?? "");
       }
     },
-    [run, language, primaryLanguage, focusBox, errors.rename],
+    [run, language, primaryLanguage, focusBox],
   );
 
   const onAddAttribute = useCallback(
@@ -344,10 +345,25 @@ function Canvas(props: ModelCanvasProps) {
     onCanvasSet?.({ limited: view.limited, shown: data.shown ?? [], show: data.show, hide: data.hide });
   }, [view, data.shown, data.show, data.hide, onCanvasSet]);
   useEffect(() => () => onCanvasSet?.(null), [onCanvasSet]);
-  // Past 300 with nothing chosen: start on the selected entity (5.6).
+  // Past 300 with nothing ever chosen: start on the selected entity (5.6).
+  // Only while `shown` is null, never after the user emptied the set: hiding
+  // the last box re-added it at once (found in review). And only a class or
+  // concept: a property selected from the not-drawn list is not a box.
+  const selectedKind = useRef<string | null>(null);
   useEffect(() => {
-    if (view?.limited && (data.shown ?? []).length === 0 && selected) void data.show(selected);
-  }, [view?.limited, data.shown, selected, data.show]);
+    if (!view?.limited || data.shown !== null || !selected) return;
+    if (view.undrawn.some((u) => u.iri === selected)) return;
+    if (selectedKind.current === selected) return;
+    selectedKind.current = selected;
+    void data.show(selected);
+  }, [view, data.shown, selected, data.show]);
+  // The deleted box is gone from the view: its focus counts again, so an
+  // undo that restores it can select it (found in review).
+  useEffect(() => {
+    if (justDeleted.current && view && !view.nodes.some((n) => n.iri === justDeleted.current)) {
+      justDeleted.current = null;
+    }
+  }, [view]);
 
   // --- handlers ----------------------------------------------------------------
 
@@ -431,7 +447,10 @@ function Canvas(props: ModelCanvasProps) {
 
   const onKeyDownCapture = (e: React.KeyboardEvent) => {
     const target = e.target as HTMLElement;
-    if (target.closest("input, textarea, select")) return;
+    // A control inside a box keeps its own keys: Enter on "+ attribute" is
+    // a press, not a rename, and Backspace there deletes nothing (found in
+    // review).
+    if (target.closest("input, textarea, select, button")) return;
     const box = target.closest<HTMLElement>(".react-flow__node");
     const id = box?.dataset.id;
     const node = id ? view?.nodes.find((n) => n.iri === id) : undefined;
@@ -536,7 +555,7 @@ function Canvas(props: ModelCanvasProps) {
               <button type="button" className="term-link" onClick={() => onSelect(u.iri)}>
                 {u.label}
               </button>{" "}
-              <span className="detail-note">no {u.missing === "both" ? "domain or range" : u.missing}</span>
+              <span className="detail-note">{UNDRAWN_WHY[u.missing]}</span>
             </li>
           ))}
         </ul>
@@ -701,6 +720,14 @@ function sides(from?: [number, number], to?: [number, number]): ["t" | "r" | "b"
   if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? ["r", "l"] : ["l", "r"];
   return dy > 0 ? ["b", "t"] : ["t", "b"];
 }
+
+const UNDRAWN_WHY: Record<CanvasView["undrawn"][number]["missing"], string> = {
+  domain: "no domain",
+  range: "no range",
+  both: "no domain or range",
+  expression: "an end written as an expression; edit it in Turtle",
+  outside: "of a class outside this model",
+};
 
 function edgeId(e: CanvasView["edges"][number]): string {
   return `${e.kind}|${e.source}|${e.target}|${e.property ?? ""}`;

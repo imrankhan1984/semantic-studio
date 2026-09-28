@@ -370,3 +370,54 @@ def test_layout_budget(pid):
     put_layout(pid, layout)
     median = _median_ms(lambda: put_layout(pid, layout))
     assert median <= limit_ms(20), f"a 300-position layout took {median:.1f} ms (median of 5)"
+
+
+# --- found in the code review of the branch ---------------------------------------------
+
+
+def test_resolving_imports_refreshes_the_view_without_an_edit():
+    lib = client.post(
+        "/api/ontologies/upload",
+        files={"file": ("agents.ttl", b"""@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+<http://example.org/agents> a owl:Ontology .
+<http://example.org/agents#Agent> a owl:Class ; rdfs:label "Agent"@en .
+""")},
+    ).json()["id"]
+    pid = _project(PREFIXES + """
+<http://example.org/shop> a owl:Ontology ; owl:imports <http://example.org/agents> .
+shop:Customer a owl:Class ; rdfs:label "Customer"@en ; rdfs:subClassOf <http://example.org/agents#Agent> .
+""", languages=())
+    before = {n["iri"]: n for n in canvas(pid)["nodes"]}["http://example.org/agents#Agent"]
+    assert before["imported"] == "outside"
+    revision = state(pid)["revision"]
+    client.post(f"/api/ontologies/{pid}-model/imports/mapping", json={"iri": "http://example.org/agents", "ontologyId": lib})
+    assert state(pid)["revision"] == revision, "the mapping is not an edit"
+    after = {n["iri"]: n for n in canvas(pid)["nodes"]}["http://example.org/agents#Agent"]
+    assert after["imported"] != "outside" and after["label"] == "Agent"
+
+
+def test_an_end_written_as_an_expression_is_listed_never_offered_to_complete():
+    pid = _project(PREFIXES + """
+shop:A a owl:Class . shop:B a owl:Class .
+shop:either a owl:ObjectProperty ; rdfs:label "either"@en ;
+    rdfs:domain [ owl:unionOf ( shop:A shop:B ) ] ; rdfs:range shop:B .
+shop:size a owl:DatatypeProperty ; rdfs:label "size"@en ; rdfs:domain [ owl:unionOf ( shop:A shop:B ) ] .
+""", languages=())
+    undrawn = {u["label"]: u for u in canvas(pid)["undrawn"]}
+    assert undrawn["either"]["missing"] == "expression"
+    assert undrawn["size"]["missing"] == "expression"
+
+
+def test_an_attribute_of_a_class_outside_the_model_is_listed_or_drawn_never_lost():
+    pid = _project(PREFIXES + """
+shop:Customer a owl:Class ; rdfs:subClassOf foaf:Agent .
+shop:nick a owl:DatatypeProperty ; rdfs:label "nick"@en ; rdfs:domain foaf:Agent .
+shop:age a owl:DatatypeProperty ; rdfs:label "age"@en ; rdfs:domain foaf:Person .
+""", languages=())
+    view = canvas(pid)
+    agent = {n["iri"]: n for n in view["nodes"]}["http://xmlns.com/foaf/0.1/Agent"]
+    # foaf:Agent is drawn (a line reaches it), so its attribute is in its box.
+    assert [a["label"] for a in agent["attributes"]] == ["nick"]
+    # foaf:Person is not drawn, so its attribute is listed.
+    assert {(u["label"], u["missing"]) for u in view["undrawn"]} == {("age", "outside")}

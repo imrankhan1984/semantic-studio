@@ -108,3 +108,15 @@ describe("boxName", () => {
     expect(boxName(view, "Agent")).toBe("Agent, class, from FOAF, read-only");
   });
 });
+
+describe("relateChoices, found in review", () => {
+  it("never offers to complete a relationship whose end is an expression", () => {
+    const withExpression: CanvasView = {
+      ...view,
+      undrawn: [{ iri: "either", label: "either", kind: "objectProperty", missing: "expression", domain: null, range: null }],
+    };
+    const result = relateChoices(withExpression, "Order", "Inv");
+    if ("refusal" in result) throw new Error(result.refusal);
+    expect(result.choices.some((c) => c.label === "either")).toBe(false);
+  });
+});

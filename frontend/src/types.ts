@@ -805,7 +805,10 @@ export interface CanvasView {
     iri: string;
     label: string;
     kind: string;
-    missing: "domain" | "range" | "both";
+    // "expression": an end written as owl:unionOf and the like, drawn by
+    // neither a line nor a box; "outside": an attribute of a class the canvas
+    // does not draw.
+    missing: "domain" | "range" | "both" | "expression" | "outside";
     // The end it has, if any: a line can complete it (5.4, Relating).
     domain: string | null;
     range: string | null;

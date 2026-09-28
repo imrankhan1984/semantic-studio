@@ -25,7 +25,11 @@ BASIC IDEA
     A relationship is drawn only with both ends: an arrow needs a start and a
     finish, and inventing one would draw something the model does not say.
     The rest are listed in `undrawn`, so the canvas can say how many and the
-    form can show them.
+    form can show them. An end written as an expression (`owl:unionOf` ...)
+    is not missing: it is listed as `expression`, never offered for a line
+    to complete, because setting it would change what the property means.
+    An attribute of a class outside the model is listed too, as `outside`,
+    rather than vanishing (both found in review).
 
     The shown-set filter runs per request on the cached view, not inside it:
     choosing what to show changes the layout file, not the model, and must
@@ -86,20 +90,29 @@ def build_canvas(
         _, tag = pick_label_in(graph, node, langs)
         return bool(tag) and not lang_matches(tag, display)
 
+    def ends(prop: URIRef) -> tuple:
+        """(domain, range, written as an expression): the first named end of
+        each, and whether either is an anonymous expression instead."""
+        domains = list(graph.objects(prop, RDFS.domain))
+        ranges = list(graph.objects(prop, RDFS.range))
+        named = lambda values: next((v for v in values if isinstance(v, URIRef)), None)  # noqa: E731
+        expression = any(not isinstance(v, URIRef) for v in domains + ranges)
+        return named(domains), named(ranges), expression
+
     # Attributes: datatype properties, listed inside the box of their domain.
     attributes: dict[URIRef, list] = {}
     undrawn: list[dict] = []
     for prop in sorted(_typed(graph, (OWL.DatatypeProperty,))):
-        domain = next((d for d in graph.objects(prop, RDFS.domain) if isinstance(d, URIRef)), None)
-        rng = next((r for r in graph.objects(prop, RDFS.range) if isinstance(r, URIRef)), None)
+        domain, rng, expression = ends(prop)
         entry = {
             "iri": str(prop),
             "label": label(prop),
             "datatype": prefixed(graph, rng) if rng is not None else None,
         }
-        if domain is None:
+        if expression or domain is None:
             undrawn.append({
-                "iri": str(prop), "label": entry["label"], "kind": "datatypeProperty", "missing": "domain",
+                "iri": str(prop), "label": entry["label"], "kind": "datatypeProperty",
+                "missing": "expression" if expression else "domain",
                 "domain": None, "range": str(rng) if rng is not None else None,
             })
         else:
@@ -136,9 +149,14 @@ def build_canvas(
             edges.append({"kind": "broader", "source": str(narrow), "target": str(broad)})
 
     for prop in sorted(_typed(graph, (OWL.ObjectProperty,))):
-        domain = next((d for d in graph.objects(prop, RDFS.domain) if isinstance(d, URIRef)), None)
-        rng = next((r for r in graph.objects(prop, RDFS.range) if isinstance(r, URIRef)), None)
-        missing = "both" if domain is None and rng is None else "domain" if domain is None else "range" if rng is None else None
+        domain, rng, expression = ends(prop)
+        missing = (
+            "expression" if expression
+            else "both" if domain is None and rng is None
+            else "domain" if domain is None
+            else "range" if rng is None
+            else None
+        )
         if missing:
             # The end it has, so drawing a line can offer to complete it
             # rather than bend it to a new meaning (5.4, Relating).
@@ -155,6 +173,18 @@ def build_canvas(
                 "target": str(rng),
                 "property": str(prop),
                 "label": label(prop),
+            })
+
+    # An attribute is drawn in its class's box; a class outside the model is
+    # drawn only when a line reaches it, and otherwise the attribute is
+    # listed, not lost.
+    for domain, entries in attributes.items():
+        if domain in classes or domain in outside:
+            continue
+        for entry in entries:
+            undrawn.append({
+                "iri": entry["iri"], "label": entry["label"], "kind": "datatypeProperty",
+                "missing": "outside", "domain": str(domain), "range": None,
             })
 
     nodes = [
@@ -176,7 +206,7 @@ def build_canvas(
             # The import it comes from, or "outside" for a name no resolved
             # import defines: either way, not this document's to change.
             "imported": imported_from.get(str(iri), "outside"),
-            "attributes": [],
+            "attributes": attributes.get(iri, []),
         })
     return {"nodes": nodes, "edges": edges, "undrawn": undrawn, "total": len(classes | concepts)}
 

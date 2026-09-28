@@ -603,3 +603,130 @@ describe("found in the browser pass", () => {
   });
 });
 
+
+describe("found in the code review of the branch", () => {
+  function remount(rerender: (ui: React.ReactElement) => void, revision: number, selected: string | null = null) {
+    return act(async () => {
+      rerender(
+        <ModelCanvas projectId={PID} doc="model" revision={revision} language="en" primaryLanguage="en" selected={selected} onSelect={onSelect} onDeleted={onDeleted} />,
+      );
+    });
+  }
+
+  it("a rename's moved entry is taken from the server, not overwritten by a stale copy", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const placed = { [EX + "Document"]: [0, 0], [EX + "Invoice"]: [5, 5], [EX + "Paid"]: [0, 300], [EX + "Status"]: [0, 500], "http://xmlns.com/foaf/0.1/Agent": [400, 0] } as Record<string, [number, number]>;
+    const { rerender } = await renderCanvas(viewOf({ layout: { version: 1, positions: placed, shown: null, viewport: null } }));
+    const renamed = viewOf({
+      revision: 3,
+      nodes: viewOf().nodes.map((n) => (n.iri === EX + "Invoice" ? { ...n, iri: EX + "Bill", label: "Bill" } : n)),
+      edges: [],
+      layout: {
+        version: 1,
+        positions: { ...Object.fromEntries(Object.entries(placed).filter(([k]) => k !== EX + "Invoice")), [EX + "Bill"]: [5, 5] },
+        shown: null,
+        viewport: null,
+      },
+    });
+    getCanvas.mockResolvedValue(renamed);
+    putLayout.mockClear();
+    await remount(rerender, 3);
+    await waitFor(() => expect(box("Bill")).toBeTruthy());
+    const bill = (flow.props.nodes as { id: string; position: { x: number; y: number } }[]).find((n) => n.id === EX + "Bill")!;
+    expect(bill.position).toEqual({ x: 5, y: 5 });
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    // Nothing to write: every box had its place, and no stale Invoice entry.
+    for (const call of putLayout.mock.calls) expect(call[2].positions[EX + "Invoice"]).toBeUndefined();
+  });
+
+  it("the rename field starts on the name the box has now", async () => {
+    const { rerender } = await renderCanvas();
+    getCanvas.mockResolvedValue(viewOf({ revision: 3, nodes: viewOf().nodes.map((n) => (n.iri === EX + "Document" ? { ...n, label: "Paper" } : n)) }));
+    await remount(rerender, 3);
+    await waitFor(() => expect(box("Paper")).toBeTruthy());
+    fireEvent.keyDown(box("Paper"), { key: "Enter" });
+    expect((screen.getByRole("textbox", { name: "New name for Paper" }) as HTMLInputElement).value).toBe("Paper");
+  });
+
+  it("only a fallback's marker is taken off; a fallback starts empty", async () => {
+    await renderCanvas(
+      viewOf({ nodes: [{ iri: EX + "Draft", kind: "class", label: "Invoice (draft)", fallback: false, attributes: [] }, ...viewOf().nodes] }),
+    );
+    fireEvent.keyDown(box("Invoice (draft)"), { key: "Enter" });
+    expect((screen.getByRole("textbox", { name: "New name for Invoice (draft)" }) as HTMLInputElement).value).toBe("Invoice (draft)");
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "New name for Invoice (draft)" }), { key: "Escape" });
+    fireEvent.keyDown(box("Invoice (en)"), { key: "Enter" });
+    const field = screen.getByRole("textbox", { name: "New name for Invoice (en)" }) as HTMLInputElement;
+    expect(field.value).toBe("");
+    expect(field.placeholder).toBe("Invoice (en)");
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("a button inside a box keeps its own keys", async () => {
+    await renderCanvas();
+    const add = within(box("Document")).getByRole("button", { name: "Add an attribute to Document" });
+    fireEvent.keyDown(add, { key: "Enter" });
+    expect(screen.queryByRole("textbox", { name: "New name for Document" })).toBeNull();
+    fireEvent.keyDown(add, { key: "Backspace" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("an emptied chosen set stays empty, and a selected property is not shown as a box", async () => {
+    await renderCanvas(
+      viewOf({ limited: true, nodes: [], edges: [], layout: { version: 1, positions: {}, shown: [], viewport: null } }),
+      EX + "Invoice",
+    );
+    await act(async () => undefined);
+    expect(putLayout).not.toHaveBeenCalled();
+    cleanup();
+    await renderCanvas(viewOf({ limited: true, nodes: [], edges: [] }), EX + "mentions");
+    await act(async () => undefined);
+    expect(putLayout).not.toHaveBeenCalled();
+  });
+
+  it("a second refused rename shows its own sentence, not the first", async () => {
+    runCommand.mockRejectedValueOnce(new Error("First refusal.")).mockRejectedValueOnce(new Error("Second refusal."));
+    await renderCanvas();
+    fireEvent.keyDown(box("Document"), { key: "Enter" });
+    const field = screen.getByRole("textbox", { name: "New name for Document" });
+    fireEvent.change(field, { target: { value: "X" } });
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+    expect(screen.getByText("First refusal.")).toBeTruthy();
+    fireEvent.change(field, { target: { value: "Y" } });
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+    expect(screen.getByText("Second refusal.")).toBeTruthy();
+  });
+
+  it("a box restored by undo can be selected by focus again", async () => {
+    previewDelete.mockResolvedValue({
+      dryRun: true, revision: 2,
+      impact: { iri: EX + "Paid", label: "Paid", kind: "concept", statements: 3, strategy: "reparent",
+        children: [], reparentedTo: [], properties: [], individuals: [], importMentions: 0 },
+    });
+    const { rerender } = await renderCanvas();
+    await act(async () => {
+      fireEvent.keyDown(box("Paid"), { key: "Delete" });
+    });
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }));
+    });
+    getCanvas.mockResolvedValue(viewOf({ revision: 3, nodes: viewOf().nodes.filter((n) => n.iri !== EX + "Paid"), edges: [] }));
+    await remount(rerender, 3);
+    await waitFor(() => expect(box("Paid")).toBeUndefined());
+    getCanvas.mockResolvedValue(viewOf({ revision: 4 }));
+    await remount(rerender, 4);
+    await waitFor(() => expect(box("Paid")).toBeTruthy());
+    onSelect.mockClear();
+    fireEvent.focus(box("Paid"));
+    expect(onSelect).toHaveBeenCalledWith(EX + "Paid");
+  });
+});

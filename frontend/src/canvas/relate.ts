@@ -83,7 +83,9 @@ export function relateChoices(view: CanvasView, fromIri: string, toIri: string):
   if (!has("subClassOf")) choices.push({ kind: "subClassOf", label: "is a kind of" });
   choices.push({ kind: "newRelationship", label: "new relationship…" });
   for (const u of view.undrawn) {
-    if (u.kind !== "objectProperty") continue;
+    // An end that is an expression is set, not missing: completing it would
+    // replace what it says.
+    if (u.kind !== "objectProperty" || u.missing === "expression") continue;
     const domainFits = u.domain === null || u.domain === from.iri;
     const rangeFits = u.range === null || u.range === to.iri;
     if (!domainFits || !rangeFits) continue;
