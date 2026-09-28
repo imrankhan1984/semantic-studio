@@ -416,3 +416,22 @@ describe("DetailPanel links and editing (visual-modeling Stage 1)", () => {
     expect(screen.getByRole("heading", { level: 2, name: "BOND MATCH" })).toBeTruthy();
   });
 });
+
+describe("DetailPanel after a failed refetch (found in review)", () => {
+  it("drops the kept details when the entity is gone", async () => {
+    getNodeDetails.mockResolvedValue(detailsWith(1));
+    const view = render(
+      <DetailPanel ontologyId="o1" iri={SUBJECT} onNavigate={vi.fn()} onClose={vi.fn()} revision={1} />,
+    );
+    await act(async () => undefined);
+    expect(screen.getByRole("heading", { level: 2, name: "BONDMATCH" })).toBeTruthy();
+    getNodeDetails.mockRejectedValueOnce(new Error(`No triples found for ${SUBJECT}`));
+    await act(async () => {
+      view.rerender(
+        <DetailPanel ontologyId="o1" iri={SUBJECT} onNavigate={vi.fn()} onClose={vi.fn()} revision={2} />,
+      );
+    });
+    expect(screen.getByText(`No triples found for ${SUBJECT}`)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: /Statements/ })).toBeNull();
+  });
+});

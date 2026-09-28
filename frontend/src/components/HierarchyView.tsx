@@ -919,7 +919,9 @@ function RenameField({
         e.stopPropagation();
         if (e.key === "Enter") {
           e.preventDefault();
-          if (!busy) onDone(value);
+          // Unchanged is a cancel: the server would refuse "That would
+          // change nothing" (found in review).
+          if (!busy) onDone(value.trim() === initial.trim() ? null : value);
         } else if (e.key === "Escape") {
           e.preventDefault();
           onDone(null);

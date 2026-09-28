@@ -171,3 +171,12 @@ describe("entityModel", () => {
     expect(mentioned.kind).toBe("class");
   });
 });
+
+describe("entityModel, found in review", () => {
+  it("marks the model partial when the panel loaded only some statements", () => {
+    const d = details([[P.type, OWL_CLASS]]);
+    expect(entityModel(d, "en", []).partial).toBe(false);
+    expect(entityModel({ ...d, incomingTotal: 501 }, "en", []).partial).toBe(true);
+    expect(entityModel({ ...d, outgoingTotal: 501 }, "en", []).partial).toBe(true);
+  });
+});

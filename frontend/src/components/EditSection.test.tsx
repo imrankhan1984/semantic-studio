@@ -531,3 +531,38 @@ describe("while a command is in flight", () => {
     expect(document.querySelector(".edit-status")!.textContent).toBe("");
   });
 });
+
+describe("found in review", () => {
+  it("sends one SetRange for a double submit while the first is in flight", async () => {
+    let finish: (value: unknown) => void = () => {};
+    runCommand.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    await renderForm(details("total", "datatypeProperty", [[P.type, uri(OWL + "DatatypeProperty")]]));
+    fireEvent.click(screen.getByRole("button", { name: "Set range" }));
+    const form = screen.getByRole("combobox", { name: "Type of value" }).closest("form")!;
+    await act(async () => {
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+    });
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    await act(async () => finish(changed("Set range")));
+  });
+
+  it("edits a date with a timezone without blanking it", async () => {
+    const d = invoice();
+    d.outgoing.push({ predicate: uri(EX + "reviewed"), object: lit("2024-01-01Z", undefined, "xsd:date") });
+    await renderForm(d);
+    const row = screen.getByText("2024-01-01Z").closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: /^Edit/ }));
+    const field = document.querySelector<HTMLInputElement>(".edit-annotation.editing input")!;
+    expect(field.value).toBe("2024-01-01Z");
+    expect(field.placeholder).toBe("YYYY-MM-DD");
+  });
+
+  it("says so when the lists are read from a capped set of statements", async () => {
+    await renderForm({ ...invoice(), incomingTotal: 900 });
+    expect(screen.getByText(/more statements than the panel loads/)).toBeTruthy();
+    cleanup();
+    await renderForm(invoice());
+    expect(screen.queryByText(/more statements than the panel loads/)).toBeNull();
+  });
+});

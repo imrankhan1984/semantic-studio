@@ -152,6 +152,13 @@ export default function EditSection({ ontologyId, details, primaryLanguage, lang
       <p className="detail-note edit-status" role="status">
         {busy ? "Saving change…" : ""}
       </p>
+      {model.partial && (
+        // The house rule: a truncated view says it is truncated (found in review).
+        <p className="detail-note">
+          This entity has more statements than the panel loads, so the lists below may be
+          incomplete. The Turtle editor (View) shows them all.
+        </p>
+      )}
 
       <Block title="Names">
         <dl className="detail-names">

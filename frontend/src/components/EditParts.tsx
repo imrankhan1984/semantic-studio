@@ -13,7 +13,8 @@ BASIC IDEA
     refuses, so the sentence appears under the field that caused it. One busy
     flag for the whole form, because the commands of one document are applied
     one at a time on the server anyway, and the status line says "Saving
-    change…" while it is set.
+    change…" while it is set. A second command while one is in flight is
+    not sent at all.
 
     InlineText shows a value with an Edit button. Editing shows a field with
     Save and Cancel; Enter saves (Ctrl+Enter in a text area), Escape cancels,
@@ -43,7 +44,12 @@ export interface Runner {
 export function useRunner(): Runner {
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // A ref as well as the state: two submits in one tick both see busy as
+  // false, and the second command would be sent (found in review).
+  const inFlight = useRef(false);
   const run = useCallback(async (field: string, command: string, args: Record<string, unknown>) => {
+    if (inFlight.current) return null;
+    inFlight.current = true;
     setBusy(true);
     setErrors((e) => ({ ...e, [field]: "" }));
     try {
@@ -52,6 +58,7 @@ export function useRunner(): Runner {
       setErrors((prev) => ({ ...prev, [field]: e instanceof Error ? e.message : String(e) }));
       return null;
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }, []);

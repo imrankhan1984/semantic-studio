@@ -112,7 +112,10 @@ describe("AnnotationAdder", () => {
 
     fireEvent.change(property(), { target: { value: LIST[1].iri } });
     expect(valueType().value).toBe("xsd:date");
-    expect((document.querySelector(".value-input input") as HTMLInputElement).type).toBe("date");
+    // Typed, not a date picker, which blanks 2024-01-01Z (found in review).
+    const date = document.querySelector(".value-input input") as HTMLInputElement;
+    expect(date.type).toBe("text");
+    expect(date.placeholder).toBe("YYYY-MM-DD");
 
     fireEvent.change(property(), { target: { value: LIST[2].iri } });
     expect(valueType().value).toBe("link");
@@ -207,5 +210,16 @@ describe("AnnotationAdder", () => {
     });
     expect(property().value).toBe(EX + "approvedBy");
     expect(valueType().value).toBe("link");
+  });
+});
+
+describe("AnnotationAdder, found in review", () => {
+  it("does not carry a yes-or-no value over to the next property", async () => {
+    await renderAdder();
+    fireEvent.change(property(), { target: { value: LIST[3].iri } });
+    expect(screen.getByRole("switch", { name: "Value" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.change(property(), { target: { value: LIST[1].iri } });
+    expect((screen.getByRole("textbox", { name: "Value" }) as HTMLInputElement).value).toBe("");
+    expect(document.querySelector(".edit-error")).toBeNull();
   });
 });

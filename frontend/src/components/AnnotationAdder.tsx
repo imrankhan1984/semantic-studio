@@ -111,7 +111,11 @@ export function ValueInput({
     input = (
       <input
         {...common}
-        type={datatype === "xsd:date" ? "date" : type.kind === "link" ? "url" : "text"}
+        // Not type="date": it blanks what it cannot represent, and xsd:date
+        // allows a timezone (2024-01-01Z) and years outside 1-9999, so an
+        // existing value would open empty (found in review). The pattern in
+        // the placeholder and the check under the field do the job instead.
+        type={type.kind === "link" ? "url" : "text"}
         inputMode={datatype === "xsd:integer" || datatype === "xsd:decimal" ? "decimal" : undefined}
         placeholder={placeholder}
         value={value}
@@ -214,7 +218,9 @@ export default function AnnotationAdder({ iri, primaryLanguage, languages, onDon
     const option = list.find((o) => o.iri === iri);
     if (option) {
       setType(option.defaultType);
-      if (option.defaultType.kind === "typed" && option.defaultType.datatype === "xsd:boolean") setValue("true");
+      // A yes-or-no starts on yes; any other type starts empty, not on the
+      // "true" a boolean property left behind (found in review).
+      setValue(option.defaultType.kind === "typed" && option.defaultType.datatype === "xsd:boolean" ? "true" : "");
     }
   }
 

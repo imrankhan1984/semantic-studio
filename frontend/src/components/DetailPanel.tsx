@@ -158,7 +158,14 @@ export default function DetailPanel({
     let cancelled = false;
     getNodeDetails(ontologyId, iri, imports)
       .then((d) => !cancelled && setDetails(d))
-      .catch((e) => !cancelled && setError(String(e.message ?? e)))
+      .catch((e) => {
+        if (cancelled) return;
+        // Kept details are only for a refetch that succeeds: after an undo
+        // of the entity's creation the refetch is a 404, and a form left on
+        // screen would edit an entity that no longer exists (found in review).
+        setDetails(null);
+        setError(String(e.message ?? e));
+      })
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;

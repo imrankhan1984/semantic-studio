@@ -114,6 +114,9 @@ export interface EntityModel {
   broader: Ref[];
   narrower: Ref[];
   schemes: Ref[];
+  /** The panel loads at most 500 statements each way; past that the lists
+   *  above are read from part of them, and the form has to say so. */
+  partial: boolean;
 }
 
 /** A tag matches a language by prefix, as the server's lang_matches does. */
@@ -242,6 +245,7 @@ export function entityModel(details: NodeDetails, primary: string, languages: st
     broader: uniq([...objects(P.broader), ...subjects(P.narrower)]),
     narrower: uniq([...subjects(P.broader), ...objects(P.narrower)]),
     schemes: uniq([...objects(P.inScheme), ...objects(P.topConceptOf)]),
+    partial: details.outgoingTotal > out.length || details.incomingTotal > inc.length,
   };
 }
 

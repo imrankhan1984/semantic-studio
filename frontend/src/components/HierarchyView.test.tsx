@@ -583,6 +583,20 @@ describe("HierarchyView in a project (visual-modeling 5.2, AC-5)", () => {
     expect(runCommand).toHaveBeenCalledWith(PID, "model", "SetLabel", { iri: EX + "Alpha", value: "First", lang: "en" });
   });
 
+  it("treats Enter on an unchanged name as a cancel (found in review)", async () => {
+    renderProject(mixed());
+    await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
+    fireEvent.click(menuOf("Alpha"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+    const field = screen.getByRole("textbox", { name: "New name for Alpha" });
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(screen.queryByRole("textbox", { name: "New name for Alpha" })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("deletes from the menu only after the impact is confirmed", async () => {
     previewDelete.mockResolvedValue({
       dryRun: true,

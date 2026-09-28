@@ -263,6 +263,8 @@ export default function EditStructure({ ontologyId, iri, name, model, primaryLan
               className="edit-range"
               onSubmit={async (e) => {
                 e.preventDefault();
+                // aria-disabled does not stop a second Enter (found in review).
+                if (busy) return;
                 const target = new FormData(e.currentTarget).get("datatype");
                 if (await run("range", "SetRange", { property: iri, target })) close();
               }}
