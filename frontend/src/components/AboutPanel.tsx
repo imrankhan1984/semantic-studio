@@ -42,6 +42,7 @@ EXPECTED OUTPUT
 */
 
 import { useEffect, useRef } from "react";
+import { linkTarget } from "../links";
 
 /**
  * Everything the panel says.
@@ -179,7 +180,7 @@ export default function AboutPanel({ onClose }: Props) {
               link in DetailPanel. */}
           <a
             className="about-link"
-            href={ABOUT.repository}
+            href={linkTarget(ABOUT.repository)}
             target="_blank"
             rel="noreferrer"
           >

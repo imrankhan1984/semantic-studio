@@ -920,3 +920,55 @@ EXPECTED OUTPUT
   not in the document; Undo, Redo and Save ask about unapplied Turtle first;
   saving every document leaves the active one where it was; and switching
   document empties the editor until the new text arrives.
+
+- **Visual modeling, Stage 1: the editing form, the tree's actions, safe links**
+  (2026-09-28, spec `visual-modeling-canvas` Stage 1, backlog E-7 and CF-7,
+  decision D-088). For an entity of a project's `model.ttl` the detail panel
+  carries an Edit section (`EditSection.tsx`, with `EditStructure.tsx`,
+  `AnnotationAdder.tsx`, `EntityPicker.tsx`, `NewEntityForm.tsx`,
+  `DeleteDialog.tsx` and `EditParts.tsx`), read out of the panel's own
+  statements by `modeling/entity.ts`; the Hierarchy view has New class, New
+  concept and a row menu (`HierarchyActions.tsx`). Every change is one E-6
+  command through `projectStore.command`. No dependency, no canvas: that is
+  Stage 2.
+
+  **Every `href` goes through `linkTarget`** (`links.ts`, D-088): only
+  `http:` and `https:` become links, and `links.test.ts` scans every `.tsx` for
+  an `href={…}` that is neither `linkTarget(…)` nor a name assigned from it. The
+  helper checks the raw text and the parsed protocol both, because the URL
+  parser reads ` javascript:` (a leading space) as `javascript:`. Proved live
+  with a file whose entity, `seeAlso` and import are `javascript:` IRIs.
+
+  **The save point is a step, compared by identity.** `Step` is a dataclass
+  with `eq=False`: two steps with the same label and delta are two points in
+  the history, and a value comparison would call the wrong one saved. `BASE`
+  stands for an empty stack; the 200-step cap moves a save point on the step
+  it drops to `BASE`, and drops any older one. **Each step keeps the editor
+  text and the save rule's flag on both sides**: undo restores `before`, redo
+  `after`, so apply-undo-save writes the file byte for byte, and landing on the
+  save point puts back the saved text and removes the draft.
+
+  **`DetailPanel` keeps its details while a new revision is fetched.** It used
+  to clear them on every refetch, which unmounted the form field the user had
+  just pressed Enter in and dropped focus to the body. It clears only when the
+  entity, the ontology or the imports switch changes.
+
+  **A tree row's `⋯` button is `aria-hidden` and out of the tab order.** A
+  treeitem is named by its contents, and Chrome read "Person Class More actions
+  for Person" (measured with `Accessibility.getFullAXTree`). The row declares
+  `aria-keyshortcuts="Shift+F10"`, which opens the same menu; the visible note
+  above the tree says so too.
+
+  **Timed budgets multiply their millisecond limit by `BUDGET_FACTOR`**
+  (`frontend/src/budget.ts`, `backend/tests/budget.py`), 1 by default and 2 in
+  the CI `budgets` job, because `miniature.test.ts` measured 2.40 ms there
+  against a 2 ms limit on every pull request. Ratios and byte counts are not
+  multiplied: a ratio is taken on one machine and cancels it out.
+
+  Two facts worth not rediscovering. A plain literal (`"1.0"` in Turtle) and
+  `"1.0"^^xsd:string` are different terms to rdflib, and the form sends every
+  untagged text as `xsd:string`, so `ReplaceAnnotation` and `RemoveAnnotation`
+  look the plain spelling up too (`_stored` in `editing.py`). And a date field
+  cannot hold an invalid date, in jsdom as in a browser, so a test of "invalid
+  value refused before sending" uses an integer.
+

@@ -3622,7 +3622,9 @@ button.legend-row:hover {
 .project-header button[aria-disabled="true"],
 .turtle-editor button[aria-disabled="true"],
 .confirm-dialog button[aria-disabled="true"],
-.project-card button[aria-disabled="true"] {
+.project-card button[aria-disabled="true"],
+.edit-section button[aria-disabled="true"],
+.hierarchy-view button[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -3934,4 +3936,262 @@ button.legend-row:hover {
 .detail-name-missing {
   color: var(--text-dim);
   font-style: italic;
+}
+
+/* --- the editing form and the tree's actions (visual-modeling Stage 1) ---- */
+
+.edit-section {
+  margin: 10px 0 14px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.edit-section h3 {
+  margin: 0 0 4px;
+}
+
+.edit-status:empty {
+  display: none;
+}
+
+.edit-block {
+  margin: 10px 0;
+}
+
+.edit-block h4 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.edit-block h5 {
+  margin: 8px 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.edit-value {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+
+.edit-value.editing {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.edit-value textarea,
+.value-input textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  resize: vertical;
+}
+
+.edit-btn {
+  padding: 1px 8px;
+  font-size: 12px;
+}
+
+.edit-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+/* A refusal: the server's sentence, under the field that caused it. Text in
+   the error colour and weight, so it does not rest on colour alone. */
+.edit-error {
+  margin: 4px 0 0;
+  color: var(--error-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.edit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.edit-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.edit-annotation-property {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.edit-annotation-value {
+  overflow-wrap: anywhere;
+}
+
+.edit-annotation-kind,
+.entity-picker-from {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.edit-iri {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.edit-delete {
+  margin-top: 12px;
+}
+
+.edit-field-label {
+  display: block;
+  margin: 6px 0 2px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.new-entity-form,
+.annotation-adder,
+.edit-rename,
+.entity-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+}
+
+.new-entity-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.entity-picker-row {
+  display: flex;
+  gap: 6px;
+}
+
+.entity-picker-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.entity-picker-list {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 2px 0;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+}
+
+.entity-picker-list li {
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+/* The active option: a ring as well as a fill, so it is not told by a tint. */
+.entity-picker-list li.active {
+  background: var(--bg-raised);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.value-switch[aria-checked="true"] {
+  border-color: var(--accent);
+}
+
+.delete-strategy {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-iri-text {
+  overflow-wrap: anywhere;
+}
+
+.hierarchy-actions {
+  margin: 0 12px 6px;
+}
+
+.hierarchy-rename {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 6px;
+  font-size: 13px;
+}
+
+.hierarchy-menu-btn {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 0 6px;
+}
+
+.hierarchy-menu-btn:hover {
+  color: var(--text);
+}
+
+.row-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 200px;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  box-shadow: 0 6px 18px var(--shadow);
+}
+
+.row-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 6px 12px;
+}
+
+.row-menu button:hover,
+.row-menu button:focus-visible {
+  background: var(--bg-subhead);
+}
+
+kbd {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 0 3px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+
+/* The form's Names block says "(required)" beside the primary language,
+   which the read-only block's 56px column was never sized for. */
+.edit-section .detail-names > div {
+  grid-template-columns: 110px 1fr;
 }

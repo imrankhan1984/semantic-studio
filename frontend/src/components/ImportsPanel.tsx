@@ -23,9 +23,10 @@ BASIC IDEA
     Only RDF files from a chosen folder are sent, so pointing at a Downloads
     folder does not upload its spreadsheets.
 
-    A link is rendered only for an http(s) IRI. The IRIs come from the loaded
-    file, which is untrusted, and a `javascript:` import would otherwise be a
-    link the user is invited to press.
+    A link is rendered only for an http(s) IRI, through linkTarget (D-088).
+    The IRIs come from the loaded file, which is untrusted, and a
+    `javascript:` import would otherwise be a link the user is invited to
+    press.
 
     Resolving is one request, so while it runs the panel polls the listing for
     "Resolving 2 of 3…", announced in a polite live region, and offers Cancel,
@@ -58,6 +59,7 @@ import {
   resolveImports,
 } from "../api";
 import type { ImportFilesResult, ImportRow, ImportsListing } from "../types";
+import { linkTarget } from "../links";
 
 interface Props {
   ontologyId: string;
@@ -74,10 +76,6 @@ const RDF_EXTENSIONS = /\.(ttl|turtle|owl|rdf|rdfs|xml|jsonld|json|nt|n3|trig|nq
 // How often the listing is re-read while a resolution runs. Slow enough to be
 // negligible next to a download, quick enough that the count visibly moves.
 const PROGRESS_POLL_MS = 500;
-
-function isWebLink(iri: string): boolean {
-  return /^https?:\/\//i.test(iri);
-}
 
 function day(iso: string | null): string {
   if (!iso) return "";
@@ -414,6 +412,8 @@ export default function ImportsPanel({
               row.status === "failed" ||
               row.status === "blocked" ||
               (row.status === "unresolved" && row.error !== null);
+            // Only an http(s) IRI is offered as a link (D-088).
+            const href = linkTarget(row.iri);
             return (
               <li key={row.iri} className={`imports-row ${row.status}`}>
                 <span className="imports-iri" style={{ paddingLeft: `${(row.depth - 1) * 14}px` }}>
@@ -426,8 +426,8 @@ export default function ImportsPanel({
                     <button className="ghost" onClick={() => void resolve("resolve")}>
                       Retry
                     </button>
-                    {isWebLink(row.iri) && (
-                      <a href={row.iri} target="_blank" rel="noopener noreferrer">
+                    {href && (
+                      <a href={href} target="_blank" rel="noopener noreferrer">
                         Open the link in my browser
                       </a>
                     )}

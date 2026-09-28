@@ -59,6 +59,8 @@ from app.network_broker import (
 from app.net_guard import BlockedAddress
 from app.store import store
 
+from budget import limit_ms
+
 client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
 LOCAL = ipaddress.ip_address("127.0.0.1")
@@ -537,7 +539,7 @@ def test_decision_overhead():
         if gc_was_enabled:
             gc.enable()
     median_ms = statistics.median(samples)
-    assert median_ms <= 1.0, f"{median_ms:.4f} ms per decision"
+    assert median_ms <= limit_ms(1.0), f"{median_ms:.4f} ms per decision"
 
 
 def test_policy_decisions_are_typed_exceptions():

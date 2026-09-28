@@ -50,17 +50,37 @@ INPUTS / INPUT SOURCES (props)
     - imports: fetch the forests over the ontology plus its resolved imports.
     - revision, language: a project document's revision and display language;
       either moving refetches the forests and keeps expansion and filter.
+    - editing: the open project's model.ttl (visual-modeling 5.2). The class
+      section then always shows, with New class; the concept section has New
+      concept; and each row has a menu (HierarchyActions.tsx) to add a child,
+      rename in place in the primary language, or delete with its impact.
+      A new entity is selected, its parent expanded, and focus moved to its
+      row once the refreshed tree holds it.
+    - onDeleted: an entity was deleted from the tree.
 
 EXPECTED OUTPUT
     - The rendered tree(s), an empty state, or the loading / error treatments.
     - onSelect(iri) when a row is activated by click, Enter or Space.
+    - In a project, commands through the project store.
 ================================================================================
 */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { ApiError, fetchHierarchy } from "../api";
+import { projectStore } from "../state/projectStore";
 import type { Hierarchy, HierarchyForest, HierarchyOrigin, Theme } from "../types";
 import { KIND_LABELS, kindColor } from "../types";
+import DeleteDialog from "./DeleteDialog";
+import { RowMenu, rowActions, type RowAction } from "./HierarchyActions";
+import NewEntityForm, { type NewEntity } from "./NewEntityForm";
 
 interface Props {
   ontologyId: string | null;
@@ -73,6 +93,17 @@ interface Props {
    *  expanded and typed, so an edit does not collapse the tree. */
   revision?: number;
   language?: string | null;
+  /** The open project's model.ttl: New buttons and the row menu (5.2). */
+  editing?: { primaryLanguage: string } | null;
+  onDeleted?: (iri: string) => void;
+}
+
+/** A "New ..." form open at the top of a section. */
+interface Creating {
+  section: "class" | "concept";
+  parent?: { iri: string; label: string };
+  /** The row the menu was opened on, for focus when the form is cancelled. */
+  from?: string;
 }
 
 /** Fixed row height, in pixels, shared by the CSS and the windowing maths. */
@@ -253,7 +284,7 @@ function internalIds(forest: HierarchyForest): string[] {
  *  matching the spec's layout. `objectProperties` and friends are absent from the
  *  payload unless the ontology has that kind, so the optional chaining stands in
  *  for a missing key. */
-function sectionsOf(data: Hierarchy): { title: string; forest: HierarchyForest }[] {
+function sectionsOf(data: Hierarchy, keepClasses = false): { title: string; forest: HierarchyForest }[] {
   const candidates: { title: string; forest: HierarchyForest | undefined }[] = [
     { title: "Class hierarchy", forest: data.classes },
     { title: "Object properties", forest: data.objectProperties },
@@ -261,11 +292,17 @@ function sectionsOf(data: Hierarchy): { title: string; forest: HierarchyForest }
     { title: "Annotation properties", forest: data.annotationProperties },
     { title: "Concept hierarchy", forest: data.concepts },
   ];
+  // In a project the class section stays, empty or not: it is where New
+  // class lives, and an empty model has to start somewhere.
   return candidates.filter(
     (c): c is { title: string; forest: HierarchyForest } =>
-      c.forest !== undefined && Object.keys(c.forest.nodes).length > 0,
+      c.forest !== undefined &&
+      (Object.keys(c.forest.nodes).length > 0 || (keepClasses && c.title === CLASS_SECTION)),
   );
 }
+
+const CLASS_SECTION = "Class hierarchy";
+const CONCEPT_SECTION = "Concept hierarchy";
 
 export default function HierarchyView({
   ontologyId,
@@ -275,6 +312,8 @@ export default function HierarchyView({
   imports = false,
   revision = 0,
   language = null,
+  editing = null,
+  onDeleted,
 }: Props) {
   const [data, setData] = useState<Hierarchy | null>(null);
   const [loading, setLoading] = useState(false);
@@ -335,7 +374,134 @@ export default function HierarchyView({
 
   // Every forest currently present, in render order. Computed once and reused by
   // expand-all, the empty-state check and the render.
-  const sections = useMemo(() => (data ? sectionsOf(data) : []), [data]);
+  const sections = useMemo(() => (data ? sectionsOf(data, editing !== null) : []), [data, editing]);
+
+  // --- the project's actions (5.2) ------------------------------------------
+  const sectionRef = useRef<HTMLElement>(null);
+  const [creating, setCreating] = useState<Creating | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<{ iri: string; label: string } | null>(null);
+  const [menu, setMenu] = useState<{ row: Row; anchor: { top: number; left: number } } | null>(null);
+  const [reveal, setReveal] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const focusRow = useCallback((id: string) => {
+    window.setTimeout(() => {
+      sectionRef.current
+        ?.querySelector<HTMLElement>(`[role="treeitem"][data-id="${cssAttr(id)}"]`)
+        ?.focus();
+    }, 0);
+  }, []);
+
+  const closeMenu = useCallback(() => {
+    setMenu((open) => {
+      if (open) focusRow(open.row.id);
+      return null;
+    });
+  }, [focusRow]);
+
+  const choose = (row: Row, action: RowAction) => {
+    setMenu(null);
+    setActionError(null);
+    if (action === "addChild") {
+      setCreating({
+        section: row.kind === "concept" ? "concept" : "class",
+        parent: { iri: row.id, label: row.label },
+        from: row.id,
+      });
+    } else if (action === "rename") {
+      setRenaming(row.id);
+    } else {
+      // The dialog gives focus back to what held it when it opened.
+      focusRow(row.id);
+      setDeleting({ iri: row.id, label: row.label });
+    }
+  };
+
+  const create = async ({ name, iri }: NewEntity) => {
+    if (!creating || busy || !data) return;
+    const { section, parent } = creating;
+    const scheme = Object.entries(data.concepts.nodes).find(([, n]) => n.kind === "conceptScheme")?.[0];
+    const args =
+      section === "class"
+        ? { label: name, iri, parent: parent?.iri }
+        : { prefLabel: name, iri, ...(parent ? { broader: parent.iri } : scheme ? { scheme } : {}) };
+    setBusy(true);
+    setActionError(null);
+    try {
+      const result = await projectStore.command(section === "class" ? "CreateClass" : "CreateConcept", args);
+      setCreating(null);
+      if (parent) setExpanded((prev) => new Set(prev).add(parent.iri));
+      if (result.created) {
+        onSelect(result.created);
+        setReveal(result.created);
+      }
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelCreate = () => {
+    const from = creating?.from;
+    setCreating(null);
+    setActionError(null);
+    if (from) focusRow(from);
+  };
+
+  const rename = async (row: Row, value: string | null) => {
+    if (value === null || !value.trim() || !editing) {
+      setRenaming(null);
+      setActionError(null);
+      focusRow(row.id);
+      return;
+    }
+    setBusy(true);
+    try {
+      await projectStore.command("SetLabel", { iri: row.id, value: value.trim(), lang: editing.primaryLanguage });
+      setRenaming(null);
+      setActionError(null);
+      focusRow(row.id);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const header = (title: string): ReactNode => {
+    if (!editing) return null;
+    const section = title === CLASS_SECTION ? "class" : title === CONCEPT_SECTION ? "concept" : null;
+    if (!section) return null;
+    const open = creating?.section === section;
+    return (
+      <div className="hierarchy-actions">
+        {!open && (
+          <button type="button" className="ghost" onClick={() => setCreating({ section })}>
+            {section === "class" ? "New class" : "New concept"}
+          </button>
+        )}
+        {open && creating && (
+          <NewEntityForm
+            title={
+              creating.parent
+                ? `New ${section === "class" ? "subclass" : "narrower concept"} of ${creating.parent.label}`
+                : section === "class"
+                  ? "New class"
+                  : "New concept"
+            }
+            primaryLanguage={editing.primaryLanguage}
+            busy={busy}
+            error={actionError}
+            onSubmit={(entity) => void create(entity)}
+            onCancel={cancelCreate}
+          />
+        )}
+      </div>
+    );
+  };
 
   const expandAll = useCallback(() => {
     if (!data) return;
@@ -347,7 +513,7 @@ export default function HierarchyView({
   if (!ontologyId) return null;
 
   return (
-    <section className="hierarchy-view" aria-labelledby={HEADING_ID}>
+    <section className="hierarchy-view" aria-labelledby={HEADING_ID} ref={sectionRef}>
       <div className="hierarchy-toolbar">
         <h2 id={HEADING_ID} tabIndex={-1}>
           Hierarchy
@@ -373,7 +539,19 @@ export default function HierarchyView({
         Showing <strong>asserted</strong> {" "}
         <code>rdfs:subClassOf</code>, <code>skos:broader</code> and{" "}
         <code>rdfs:subPropertyOf</code>, not inferred relationships.
+        {editing && (
+          <>
+            {" "}
+            A row's actions open with its <kbd>⋯</kbd> button, or <kbd>Shift</kbd>+<kbd>F10</kbd>{" "}
+            on the focused row.
+          </>
+        )}
       </p>
+      {renaming && actionError && (
+        <p className="edit-error" role="alert">
+          {actionError}
+        </p>
+      )}
 
       {loading && <p className="hint hierarchy-status">Loading the hierarchy…</p>}
       {error && (
@@ -402,9 +580,41 @@ export default function HierarchyView({
               theme={theme}
               onToggle={toggle}
               onSelect={onSelect}
+              header={header(section.title)}
+              editable={editing !== null}
+              renaming={renaming}
+              renameValue={(row) => (language === null || language === editing?.primaryLanguage ? row.label : "")}
+              busy={busy}
+              onRename={(row, value) => void rename(row, value)}
+              onMenu={(row, anchor) => setMenu({ row, anchor })}
+              reveal={reveal}
+              onRevealed={() => setReveal(null)}
             />
           ))}
         </div>
+      )}
+      {menu && (
+        <RowMenu
+          label={menu.row.label}
+          items={rowActions(menu.row.kind, Boolean(menu.row.importedFrom))}
+          anchor={menu.anchor}
+          onChoose={(action) => choose(menu.row, action)}
+          onClose={closeMenu}
+        />
+      )}
+      {deleting && (
+        <DeleteDialog
+          iri={deleting.iri}
+          label={deleting.label}
+          onDone={(deleted) => {
+            setDeleting(null);
+            if (deleted) {
+              onDeleted?.(deleting.iri);
+              // Its row is gone; the view's heading is the nearest stable place.
+              window.setTimeout(() => document.getElementById(HEADING_ID)?.focus(), 0);
+            }
+          }}
+        />
       )}
     </section>
   );
@@ -419,6 +629,18 @@ interface ForestProps {
   theme: Theme;
   onToggle: (id: string, next: boolean) => void;
   onSelect: (iri: string) => void;
+  /** In a project: the New button and its form, above the tree. */
+  header?: ReactNode;
+  /** In a project: rows carry a menu, and one may be renamed in place. */
+  editable?: boolean;
+  renaming?: string | null;
+  renameValue?: (row: Row) => string;
+  busy?: boolean;
+  onRename?: (row: Row, value: string | null) => void;
+  onMenu?: (row: Row, anchor: { top: number; left: number }) => void;
+  /** A row to focus once it is in this forest (a new entity). */
+  reveal?: string | null;
+  onRevealed?: () => void;
 }
 
 /** One labelled forest: a WAI-ARIA `tree`, virtualized, with one tab stop and
@@ -432,6 +654,15 @@ function Forest({
   theme,
   onToggle,
   onSelect,
+  header = null,
+  editable = false,
+  renaming = null,
+  renameValue,
+  busy = false,
+  onRename,
+  onMenu,
+  reveal = null,
+  onRevealed,
 }: ForestProps) {
   const appears = useMemo(() => appearanceCounts(forest), [forest]);
   const keep = useMemo(() => keepForFilter(forest, filter), [forest, filter]);
@@ -502,9 +733,31 @@ function Forest({
     }
   };
 
+  // A new entity: focus its row once the refreshed forest holds it.
+  useEffect(() => {
+    if (!reveal) return;
+    const index = rows.findIndex((r) => r.id === reveal);
+    if (index >= 0) {
+      moveTo(index);
+      onRevealed?.();
+    }
+  }, [rows, reveal]);
+
+  /** Open the row menu beside a row, from its button or the keyboard. */
+  const openMenu = (row: Row, element: Element | null) => {
+    if (!onMenu || rowActions(row.kind, Boolean(row.importedFrom)).length === 0) return;
+    const rect = element?.getBoundingClientRect();
+    onMenu(row, { top: rect ? rect.bottom : 0, left: rect ? Math.max(0, rect.right - 200) : 0 });
+  };
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (focusIndex < 0) return;
     const row = rows[focusIndex];
+    if (editable && (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey))) {
+      e.preventDefault();
+      openMenu(row, e.target as Element);
+      return;
+    }
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
@@ -567,6 +820,7 @@ function Forest({
 
   const headingId = `hierarchy-${title.replace(/\s+/g, "-").toLowerCase()}`;
   const empty = rows.length === 0;
+  const filtering = filter.trim() !== "";
 
   return (
     <section className="hierarchy-section">
@@ -576,8 +830,11 @@ function Forest({
           <span className="hierarchy-match-count"> · {rows.length} shown</span>
         )}
       </h3>
+      {header}
       {empty ? (
-        <p className="hint hierarchy-status">No matches in this section.</p>
+        <p className="hint hierarchy-status">
+          {filtering ? "No matches in this section." : "No classes yet. New class makes the first."}
+        </p>
       ) : (
         <div
           className="hierarchy-tree"
@@ -602,6 +859,13 @@ function Forest({
                   isFocus={row.id === focusId}
                   onToggle={onToggle}
                   onSelect={onSelect}
+                  onFocus={setFocusId}
+                  menu={editable && rowActions(row.kind, Boolean(row.importedFrom)).length > 0 ? openMenu : undefined}
+                  rename={
+                    renaming === row.id && onRename
+                      ? { initial: renameValue?.(row) ?? row.label, busy, onDone: (v) => onRename(row, v) }
+                      : undefined
+                  }
                 />
               );
             })}
@@ -620,9 +884,64 @@ interface TreeRowProps {
   isFocus: boolean;
   onToggle: (id: string, next: boolean) => void;
   onSelect: (iri: string) => void;
+  /** Keeps the roving tab stop on a row focused by script or pointer. */
+  onFocus?: (id: string) => void;
+  /** In a project: open this row's menu. */
+  menu?: (row: Row, element: Element | null) => void;
+  /** This row is being renamed. `onDone(null)` cancels. */
+  rename?: { initial: string; busy: boolean; onDone: (value: string | null) => void };
 }
 
-function TreeRow({ row, index, theme, isSelected, isFocus, onToggle, onSelect }: TreeRowProps) {
+/** The name field of a row being renamed. Keys stay in it: the tree's own
+ *  arrow keys and type-ahead must not act while the user is typing. */
+function RenameField({
+  label,
+  initial,
+  busy,
+  onDone,
+}: {
+  label: string;
+  initial: string;
+  busy: boolean;
+  onDone: (value: string | null) => void;
+}) {
+  const [value, setValue] = useState(initial);
+  return (
+    <input
+      className="hierarchy-rename"
+      aria-label={`New name for ${label}`}
+      autoFocus
+      value={value}
+      readOnly={busy}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (!busy) onDone(value);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          onDone(null);
+        }
+      }}
+      onBlur={() => !busy && onDone(null)}
+    />
+  );
+}
+
+function TreeRow({
+  row,
+  index,
+  theme,
+  isSelected,
+  isFocus,
+  onToggle,
+  onSelect,
+  onFocus,
+  menu,
+  rename,
+}: TreeRowProps) {
   const level = row.depth + 1; // aria-level is 1-based
   const cappedDepth = Math.min(row.depth, MAX_VISUAL_DEPTH);
   const inferred = row.origin === "inferred";
@@ -636,6 +955,7 @@ function TreeRow({ row, index, theme, isSelected, isFocus, onToggle, onSelect }:
       aria-selected={isSelected}
       aria-expanded={row.expandable ? row.expanded : undefined}
       tabIndex={isFocus ? 0 : -1}
+      aria-keyshortcuts={menu ? "Shift+F10" : undefined}
       className={
         "hierarchy-row" +
         (isSelected ? " selected" : "") +
@@ -644,6 +964,7 @@ function TreeRow({ row, index, theme, isSelected, isFocus, onToggle, onSelect }:
       style={{ top: index * ROW_HEIGHT, height: ROW_HEIGHT }}
       title={row.prefixed || row.id}
       onClick={() => onSelect(row.id)}
+      onFocus={(e) => e.target === e.currentTarget && onFocus?.(row.id)}
     >
       <span className="hierarchy-indent" style={{ width: cappedDepth * INDENT }} aria-hidden="true" />
       {row.depth > MAX_VISUAL_DEPTH && (
@@ -674,7 +995,11 @@ function TreeRow({ row, index, theme, isSelected, isFocus, onToggle, onSelect }:
         aria-hidden="true"
         style={{ background: kindColor(row.kind, theme) }}
       />
-      <span className="hierarchy-label">{row.label}</span>
+      {rename ? (
+        <RenameField label={row.label} initial={rename.initial} busy={rename.busy} onDone={rename.onDone} />
+      ) : (
+        <span className="hierarchy-label">{row.label}</span>
+      )}
       <span className="hierarchy-kind">{KIND_LABELS[row.kind] ?? KIND_LABELS.other}</span>
       {row.importedFrom && (
         // Text, not a tint: imported and read-only has to survive being read
@@ -706,6 +1031,27 @@ function TreeRow({ row, index, theme, isSelected, isFocus, onToggle, onSelect }:
         >
           {row.childCount.toLocaleString()}
         </span>
+      )}
+      {menu && !rename && (
+        // For the pointer only. Out of the tab order, because the row is the
+        // tree's one stop, and out of the accessibility tree, because a
+        // treeitem is named by its contents and "Person Class More actions
+        // for Person" was what Chrome read (measured). The row declares
+        // Shift+F10, which opens the same menu (HierarchyActions.tsx).
+        <button
+          type="button"
+          className="hierarchy-menu-btn"
+          tabIndex={-1}
+          aria-hidden="true"
+          aria-haspopup="menu"
+          aria-label={`More actions for ${row.label}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            menu(row, e.currentTarget);
+          }}
+        >
+          ⋯
+        </button>
       )}
     </div>
   );

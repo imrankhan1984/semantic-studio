@@ -47,8 +47,11 @@ EXPECTED OUTPUT
 
 import type { QueryState } from "./sparql/types";
 import type {
+  AnnotationPropertyOption,
   ApprovalRequest,
   ChangeResult,
+  DeleteImpact,
+  SearchKind,
   Hierarchy,
   LanguageReport,
   OpenedProject,
@@ -326,10 +329,19 @@ export function getNodeDetails(id: string, iri: string, imports = false): Promis
   ).then((r) => handle<NodeDetails>(r));
 }
 
-// Label/IRI search for the search box.
-export function searchNodes(id: string, q: string, imports = false): Promise<VizNode[]> {
+// Label/IRI search for the search box. `kind` keeps one kind of entity,
+// applied by the server before its limit (the editing form's pickers).
+export function searchNodes(
+  id: string,
+  q: string,
+  imports = false,
+  kind?: SearchKind,
+): Promise<VizNode[]> {
+  const extra = kind ? `&kind=${kind}` : "";
   return send(
-    withLang(withImports(`/api/ontologies/${id}/search?q=${encodeURIComponent(q)}`, imports)),
+    withLang(
+      withImports(`/api/ontologies/${id}/search?q=${encodeURIComponent(q)}${extra}`, imports),
+    ),
   ).then((r) => handle<VizNode[]>(r));
 }
 
@@ -686,6 +698,30 @@ export function runCommand(
     headers: JSON_WRITE,
     body: JSON.stringify({ command, args }),
   }).then((r) => handle<ChangeResult>(r));
+}
+
+// DeleteEntity's dry run: what a delete would take, with nothing changed.
+export function previewDelete(
+  pid: string,
+  doc: ProjectDocName,
+  iri: string,
+  strategy: "reparent" | "orphan" = "reparent",
+): Promise<{ dryRun: true; impact: DeleteImpact; revision: number }> {
+  return send(documentUrl(pid, doc, "/commands"), {
+    method: "POST",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ command: "DeleteEntity", args: { iri, strategy }, dryRun: true }),
+  }).then((r) => handle<{ dryRun: true; impact: DeleteImpact; revision: number }>(r));
+}
+
+// The annotation properties the form offers, each with its default type.
+export function getAnnotationProperties(
+  pid: string,
+  doc: ProjectDocName,
+): Promise<AnnotationPropertyOption[]> {
+  return send(documentUrl(pid, doc, "/annotation-properties")).then((r) =>
+    handle<AnnotationPropertyOption[]>(r),
+  );
 }
 
 // The editor's text: the text last applied, or clean Turtle.

@@ -422,6 +422,9 @@ export interface TermRef {
   label?: string;
   lang?: string | null;
   datatype?: string | null;
+  // A project document's URI term: the kind its rdf:type gives, so the
+  // editing form can tell an attribute from a relationship (visual-modeling).
+  kind?: string;
 }
 
 // The detail-panel payload for one entity: its outgoing/incoming statements,
@@ -439,6 +442,8 @@ export interface NodeDetails {
   // A project document: each project language and the name in it, or null
   // where the translation is missing (5.4.2).
   names?: { lang: string; value: string | null }[];
+  // A project document: the entity's own kind, from its rdf:type.
+  kind?: string;
 }
 
 /* --- theme-aware palettes ------------------------------------------------ */
@@ -700,6 +705,54 @@ export interface ChangeResult {
   revision: number;
   label: string;
   state: ProjectDocumentState;
+  // A create or rename: the entity's IRI, as the server resolved it, so it
+  // can be selected.
+  created?: string;
+}
+
+// The kinds search can be narrowed to (the editing form's pickers).
+export type SearchKind =
+  | "class"
+  | "concept"
+  | "objectProperty"
+  | "datatypeProperty"
+  | "annotationProperty";
+
+// An annotation value as the command layer takes it (authoring-foundations
+// 5.4.1): text in a language, a value of one of seven datatypes, or a link.
+export interface AnnotationValue {
+  kind: "text" | "typed" | "link";
+  value: string;
+  lang?: string;
+  datatype?: string;
+}
+
+// The type a value is entered as; `datatype` only for "typed".
+export interface ValueType {
+  kind: "text" | "typed" | "link";
+  datatype?: string;
+}
+
+// One entry of the annotation-property list the form offers.
+export interface AnnotationPropertyOption {
+  iri: string;
+  prefixed: string;
+  defaultType: ValueType;
+  source: "suggested" | "document" | "import";
+}
+
+// What DeleteEntity's dry run says it would do (authoring-foundations 5.5).
+export interface DeleteImpact {
+  iri: string;
+  label: string;
+  kind: string;
+  statements: number;
+  strategy: "reparent" | "orphan";
+  children: { iri: string; label: string }[];
+  reparentedTo: { iri: string; label: string }[];
+  properties: { iri: string; label: string; role: "domain" | "range" }[];
+  individuals: { iri: string; label: string }[];
+  importMentions: number;
 }
 
 export type SaveResult =

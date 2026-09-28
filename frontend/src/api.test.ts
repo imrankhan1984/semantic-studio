@@ -123,6 +123,8 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   downloadDocumentCopy: () => api.downloadDocumentCopy("prj-1", "model"),
   recoverProject: () => api.recoverProject("prj-1", "discard"),
   getLanguageReport: () => api.getLanguageReport("prj-1", "model"),
+  previewDelete: () => api.previewDelete("prj-1", "model", "http://example.org/A"),
+  getAnnotationProperties: () => api.getAnnotationProperties("prj-1", "model"),
   // Not requests: the approval plumbing and the display language. Listed so
   // the export check holds.
   setApprovalHandler: async () => api.setApprovalHandler(null),
@@ -146,11 +148,12 @@ describe("api client header (S-6)", () => {
     const mutating = recorded.filter((r) => r.method !== "GET");
     // Assert the loop really exercised the writes before trusting the check.
     // Ten POSTs and three DELETEs before projects; projects add ten POSTs,
-    // a DELETE, a PATCH (rename, languages) and a PUT (the Turtle apply).
+    // a DELETE, a PATCH (rename, languages) and a PUT (the Turtle apply);
+    // the editing form adds one POST (the delete's dry run).
     const expected = [
       ...Array(4).fill("DELETE"),
       "PATCH",
-      ...Array(20).fill("POST"),
+      ...Array(21).fill("POST"),
       "PUT",
       "PUT",
     ];

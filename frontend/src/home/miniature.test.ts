@@ -31,6 +31,7 @@ EXPECTED OUTPUT
 import { describe, expect, it } from "vitest";
 import { CARD_MINIATURE, compositionSegments, layoutSketch } from "./miniature";
 import type { CardSketch } from "../types";
+import { limitMs } from "../budget";
 
 /** A star: one hub every spoke connects to, which is the shape a taxonomy's
  *  top concept makes and the easiest one to check by eye. */
@@ -178,7 +179,7 @@ describe("layoutSketch", () => {
     }
     const each = samples.sort((a, b) => a - b)[3];
 
-    expect(each, `layoutSketch took ${each.toFixed(3)} ms`).toBeLessThan(2);
+    expect(each, `layoutSketch took ${each.toFixed(3)} ms`).toBeLessThan(limitMs(2));
   });
 });
 

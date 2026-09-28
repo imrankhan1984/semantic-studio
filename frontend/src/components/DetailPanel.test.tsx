@@ -30,7 +30,9 @@ INPUTS / INPUT SOURCES
     - A mocked getNodeDetails from ../api.
 
 EXPECTED OUTPUT
-    - Pass/fail per assertion, covering AC-6 to AC-10 and AC-13.
+    - Pass/fail per assertion, covering AC-6 to AC-10 and AC-13; and for
+      visual-modeling-canvas.md, AC-7 (a javascript: IRI is text, never a
+      link) and AC-4 (a read-only document says why, in text).
 ================================================================================
 */
 
@@ -324,5 +326,93 @@ describe("DetailPanel names (authoring-foundations 5.4.2)", () => {
       );
     });
     expect(getNodeDetails.mock.calls.length).toBe(calls + 1);
+  });
+});
+
+describe("DetailPanel links and editing (visual-modeling Stage 1)", () => {
+  it("links an http IRI, and shows a javascript: IRI as text with Copy (AC-7)", async () => {
+    await renderPanel(detailsWith(1));
+    const link = screen.getByRole("link", { name: SUBJECT });
+    expect(link.getAttribute("href")).toBe(SUBJECT);
+    cleanup();
+
+    const hostile = "javascript:alert(document.domain)";
+    getNodeDetails.mockResolvedValue({ ...detailsWith(1), iri: hostile });
+    await act(async () => {
+      render(<DetailPanel ontologyId="o1" iri={hostile} onNavigate={vi.fn()} onClose={vi.fn()} />);
+    });
+    // The panel rendered (the assertion below is about an absence).
+    expect(screen.getByRole("heading", { level: 2, name: "BONDMATCH" })).toBeTruthy();
+    expect(screen.getByText(hostile).tagName).toBe("SPAN");
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(document.querySelector("a[href^='javascript']")).toBeNull();
+    expect(screen.getByRole("button", { name: "Copy IRI" })).toBeTruthy();
+  });
+
+  it("says in text why a document cannot be edited here (AC-4)", async () => {
+    getNodeDetails.mockResolvedValue(detailsWith(1));
+    await act(async () => {
+      render(
+        <DetailPanel
+          ontologyId="o1"
+          iri={SUBJECT}
+          onNavigate={vi.fn()}
+          onClose={vi.fn()}
+          readOnlyNote="From the library, read-only. Start a project from it to change it."
+        />,
+      );
+    });
+    expect(screen.getByText("From the library, read-only. Start a project from it to change it.")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Edit" })).toBeNull();
+  });
+
+  it("shows the Edit section above the statements for the project's model", async () => {
+    getNodeDetails.mockResolvedValue({
+      ...detailsWith(1),
+      kind: "class",
+      outgoing: [
+        {
+          predicate: { type: "uri", value: "http://www.w3.org/1999/02/22-rdf-syntax-ns#type", prefixed: "rdf:type" },
+          object: { type: "uri", value: "http://www.w3.org/2002/07/owl#Class", prefixed: "owl:Class" },
+        },
+      ],
+      names: [{ lang: "en", value: null }],
+    });
+    await act(async () => {
+      render(
+        <DetailPanel
+          ontologyId="o1"
+          iri={SUBJECT}
+          onNavigate={vi.fn()}
+          onClose={vi.fn()}
+          editing={{ primaryLanguage: "en", languages: [] }}
+        />,
+      );
+    });
+    const edit = screen.getByRole("region", { name: "Edit" });
+    const statements = screen.getByRole("heading", { name: /Statements/ });
+    expect(edit.compareDocumentPosition(statements) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The form's Names block replaces the read-only one: one Names heading.
+    expect(screen.getAllByRole("heading", { name: "Names" })).toHaveLength(1);
+  });
+
+  it("keeps the details on screen while a new revision is fetched", async () => {
+    getNodeDetails.mockResolvedValue(detailsWith(1));
+    const view = render(
+      <DetailPanel ontologyId="o1" iri={SUBJECT} onNavigate={vi.fn()} onClose={vi.fn()} revision={1} />,
+    );
+    await act(async () => undefined);
+    let finish: (d: NodeDetails) => void = () => {};
+    getNodeDetails.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    await act(async () => {
+      view.rerender(
+        <DetailPanel ontologyId="o1" iri={SUBJECT} onNavigate={vi.fn()} onClose={vi.fn()} revision={2} />,
+      );
+    });
+    // Still the old details, not "Loading…": the field the user was in stays.
+    expect(screen.getByRole("heading", { level: 2, name: "BONDMATCH" })).toBeTruthy();
+    expect(screen.queryByText("Loading…")).toBeNull();
+    await act(async () => finish({ ...detailsWith(1), label: "BOND MATCH" }));
+    expect(screen.getByRole("heading", { level: 2, name: "BOND MATCH" })).toBeTruthy();
   });
 });

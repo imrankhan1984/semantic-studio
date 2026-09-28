@@ -18,6 +18,13 @@ BASIC IDEA
     bump the revision -- which is what every cached view is keyed on -- and push
     the inverse onto the undo stack with a human label, capped at 200 steps.
 
+    Each step also remembers the editor text and the save rule's flag on both
+    of its sides, so undoing a Turtle apply puts the text back as it was and a
+    save after it writes the file byte for byte (visual-modeling 5.7). And the
+    document remembers which step it was saved at -- the save point -- so an
+    undo or redo that lands on it leaves the document clean: Saved, nothing to
+    recover, no question on close.
+
     A command is checked before anything moves: its IRIs are absolute (or a
     prefixed name the document or the well-known vocabularies define), its
     targets exist, a new IRI is not taken, a value is valid for its datatype.
@@ -45,7 +52,9 @@ INPUTS / INPUT SOURCES
       for the delete impact's import mentions.
 
 EXPECTED OUTPUT
-    - Mutated document graphs, new revisions, undo labels.
+    - Mutated document graphs, new revisions, undo labels; a create or rename
+      command's result names the entity's IRI (`created`), so the interface
+      can select it.
     - Files: <doc>.ttl on save, <doc>.original.ttl once, .draft/<doc>.ttl and
       .draft/<doc>.json while unsaved.
     - CommandError (422, a sentence), TurtleSyntaxError (422, line and column),
@@ -427,11 +436,21 @@ def clean_turtle(graph: Graph) -> str:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(eq=False)
 class Step:
+    """One undo step. Compared by identity: the save point is a step, and two
+    steps with the same label and delta are still two points in the history.
+
+    `before` and `after` are (editor text, visual since save) on each side of
+    the step. Undo restores `before` and redo `after`, so the text an apply
+    replaced comes back with its comments and layout, and the save rule
+    (D-083) holds across undo."""
+
     label: str
     added: list
     removed: list
+    before: tuple = (None, True)
+    after: tuple = (None, True)
 
 
 @dataclass
@@ -441,6 +460,9 @@ class Change:
     label: str
     added: list
     removed: list
+    # The IRI a create command minted, or a rename moved the entity to, so
+    # the interface can select it.
+    created: Optional[URIRef] = None
 
 
 class Context:
@@ -577,6 +599,11 @@ def _change(graph: Graph, label: str, adds: Iterable = (), removes: Iterable = (
     return Change(label, added, removed)
 
 
+def _created(change: Change, iri: URIRef) -> Change:
+    change.created = iri
+    return change
+
+
 def _label_triples(ctx: Context, iri: URIRef, predicate: URIRef, lang: str) -> list:
     return [
         (iri, predicate, o)
@@ -594,7 +621,7 @@ def cmd_create_class(ctx: Context, a: dict) -> Change:
         parent = ctx.iri(a["parent"], "parent class")
         ctx.require(parent, "class")
         adds.append((iri, RDFS.subClassOf, parent))
-    return _change(ctx.graph, f"Created class {label}", adds)
+    return _created(_change(ctx.graph, f"Created class {label}", adds), iri)
 
 
 def cmd_create_object_property(ctx: Context, a: dict) -> Change:
@@ -607,7 +634,7 @@ def cmd_create_object_property(ctx: Context, a: dict) -> Change:
             target = ctx.iri(a[key], key)
             ctx.require(target, "class")
             adds.append((iri, predicate, target))
-    return _change(ctx.graph, f"Created object property {label}", adds)
+    return _created(_change(ctx.graph, f"Created object property {label}", adds), iri)
 
 
 def cmd_create_datatype_property(ctx: Context, a: dict) -> Change:
@@ -624,7 +651,7 @@ def cmd_create_datatype_property(ctx: Context, a: dict) -> Change:
         if not str(datatype).startswith(str(XSD)) and datatype != RDF.langString:
             raise CommandError(f"{ctx.short(datatype)} is not an XML Schema datatype.")
         adds.append((iri, RDFS.range, datatype))
-    return _change(ctx.graph, f"Created datatype property {label}", adds)
+    return _created(_change(ctx.graph, f"Created datatype property {label}", adds), iri)
 
 
 def cmd_create_concept(ctx: Context, a: dict) -> Change:
@@ -648,7 +675,7 @@ def cmd_create_concept(ctx: Context, a: dict) -> Change:
         broader = ctx.iri(a["broader"], "broader concept")
         ctx.require(broader, "concept")
         adds.append((iri, SKOS.broader, broader))
-    return _change(ctx.graph, f"Created concept {label}", adds)
+    return _created(_change(ctx.graph, f"Created concept {label}", adds), iri)
 
 
 def _set_text(ctx: Context, a: dict, predicate_for: Callable[[URIRef], URIRef], what: str) -> Change:
@@ -715,9 +742,25 @@ def cmd_add_annotation(ctx: Context, a: dict) -> Change:
     return _change(ctx.graph, f"Added {ctx.short(prop)} to {ctx.name(iri)}", [(iri, prop, term)])
 
 
+def _stored(ctx: Context, iri: URIRef, prop: URIRef, term):
+    """The statement's object as the graph holds it.
+
+    Turtle's `"1.0"` is a plain literal, which rdflib keeps apart from
+    `"1.0"^^xsd:string` although RDF 1.1 says they are one value. The form
+    sends every untagged text as xsd:string, so an existing plain literal is
+    found under either spelling, or it could never be edited or removed.
+    """
+    if (iri, prop, term) not in ctx.graph and isinstance(term, Literal) and term.datatype == XSD.string:
+        plain = Literal(str(term))
+        if (iri, prop, plain) in ctx.graph:
+            return plain
+    return term
+
+
 def cmd_remove_annotation(ctx: Context, a: dict) -> Change:
     iri, prop = _annotation_target(ctx, a)
     term = parse_value(a.get("value"), ctx.primary, lambda v: ctx.iri(v, "link"))
+    term = _stored(ctx, iri, prop, term)
     if (iri, prop, term) not in ctx.graph:
         raise CommandError(f"{ctx.name(iri)} has no such {ctx.short(prop)} to remove.")
     return _change(ctx.graph, f"Removed {ctx.short(prop)} from {ctx.name(iri)}", removes=[(iri, prop, term)])
@@ -726,7 +769,7 @@ def cmd_remove_annotation(ctx: Context, a: dict) -> Change:
 def cmd_replace_annotation(ctx: Context, a: dict) -> Change:
     iri, prop = _annotation_target(ctx, a)
     resolve = lambda v: ctx.iri(v, "link")  # noqa: E731
-    old = parse_value(a.get("oldValue"), ctx.primary, resolve)
+    old = _stored(ctx, iri, prop, parse_value(a.get("oldValue"), ctx.primary, resolve))
     new = parse_value(a.get("newValue"), ctx.primary, resolve)
     if (iri, prop, old) not in ctx.graph:
         raise CommandError(f"{ctx.name(iri)} has no such {ctx.short(prop)} to replace.")
@@ -748,8 +791,9 @@ def cmd_create_annotation_property(ctx: Context, a: dict) -> Change:
     rng = range_for_value_type(a.get("valueType"))
     if rng is not None:
         adds.append((iri, RDFS.range, rng))
-    return _change(
-        ctx.graph, f"Created annotation property {(label or '').strip() or ctx.short(iri)}", adds
+    return _created(
+        _change(ctx.graph, f"Created annotation property {(label or '').strip() or ctx.short(iri)}", adds),
+        iri,
     )
 
 
@@ -838,7 +882,7 @@ def cmd_rename_iri(ctx: Context, a: dict) -> Change:
     touched |= set(ctx.graph.triples((None, old, None)))
     touched |= set(ctx.graph.triples((None, None, old)))
     adds = [(swap(s), swap(p), swap(o)) for s, p, o in touched]
-    return _change(ctx.graph, f"Renamed {ctx.short(old)} to {ctx.short(new)}", adds, touched)
+    return _created(_change(ctx.graph, f"Renamed {ctx.short(old)} to {ctx.short(new)}", adds, touched), new)
 
 
 # --- delete, with its impact summary (5.5) -----------------------------------
@@ -1027,6 +1071,11 @@ class OpenDocument:
     visual_since_save: bool = False
     timer: Optional[threading.Timer] = None
     generation: int = 0
+    # The step on top of the undo stack when the document was last saved (or
+    # opened): BASE for an empty stack, None once that state cannot be reached
+    # by undo or redo any more. `saved_text` is what the file holds.
+    save_point: object = None
+    saved_text: Optional[str] = None
     _clean: Optional[tuple] = None
 
     @property
@@ -1038,6 +1087,12 @@ class OpenDocument:
         if self._clean is None or self._clean[0] != self.ontology.revision:
             self._clean = (self.ontology.revision, clean_turtle(self.graph))
         return self._clean[1]
+
+    def top(self) -> object:
+        return self.undo[-1] if self.undo else BASE
+
+    def editor_state(self) -> tuple:
+        return (self.last_text, self.visual_since_save)
 
     def text(self) -> str:
         """What the editor shows and a draft holds."""
@@ -1058,6 +1113,10 @@ class OpenDocument:
             "redoLabel": self.redo[-1].label if self.redo else None,
             "triples": len(self.graph),
         }
+
+
+# The save point of a document saved (or opened) with nothing to undo.
+BASE = object()
 
 
 def _draft_paths(document: OpenDocument) -> tuple[Path, Path]:
@@ -1104,7 +1163,7 @@ class EditingService:
             editable=True,
             languages=languages,
         )
-        document = OpenDocument(pid, doc, path, ontology, last_text=text)
+        document = OpenDocument(pid, doc, path, ontology, last_text=text, save_point=BASE, saved_text=text)
         ontology.source_provider = lambda: document.text().encode("utf-8")
         # Every view reads under the same lock the edits take, so a build never
         # iterates a graph an apply is changing (found in review).
@@ -1249,10 +1308,9 @@ class EditingService:
                 impact = None
             if not change.added and not change.removed:
                 raise CommandError("That would change nothing.")
+            before = document.editor_state()
             self._apply(document, change, origin="command")
-            document.undo.append(Step(change.label, change.added, change.removed))
-            del document.undo[:-UNDO_LIMIT]
-            document.redo.clear()
+            self._push(document, change, before)
             result = {
                 "revision": document.ontology.revision,
                 "label": change.label,
@@ -1261,6 +1319,8 @@ class EditingService:
             }
             if impact is not None:
                 result["impact"] = impact
+            if change.created is not None:
+                result["created"] = str(change.created)
             return result
 
     def apply_text(self, pid: str, doc: str, text: str, timeout: Optional[float]) -> dict:
@@ -1272,17 +1332,46 @@ class EditingService:
             change = Change("Applied Turtle edits", list(new - old), list(old - new))
             for prefix, namespace in parsed.namespaces():
                 graph.bind(prefix, namespace, override=True, replace=True)
+            before = document.editor_state()
             document.last_text = text
             self._apply(document, change, origin="editor")
-            document.undo.append(Step(change.label, change.added, change.removed))
-            del document.undo[:-UNDO_LIMIT]
-            document.redo.clear()
+            self._push(document, change, before)
             return {
                 "revision": document.ontology.revision,
                 "label": change.label,
                 "delta": _delta_json(change),
                 "state": document.state(),
             }
+
+    @staticmethod
+    def _push(document: OpenDocument, change: Change, before: tuple) -> None:
+        """Record a new change as an undo step, dropping the redo branch."""
+        document.undo.append(Step(change.label, change.added, change.removed, before, document.editor_state()))
+        dropped = document.undo[:-UNDO_LIMIT]
+        del document.undo[:-UNDO_LIMIT]
+        point = document.save_point
+        if dropped:
+            # The state after the last dropped step is the new bottom of the
+            # stack; any state older than that can no longer be reached.
+            if point is dropped[-1]:
+                document.save_point = BASE
+            elif point is BASE or any(point is d for d in dropped):
+                document.save_point = None
+        # A save point on the redo branch goes with it (5.7).
+        if any(document.save_point is r for r in document.redo):
+            document.save_point = None
+        document.redo.clear()
+
+    def _settle(self, document: OpenDocument) -> None:
+        """After an undo or redo: back at the save point, the document is what
+        its file holds, so it is clean and there is no draft to offer."""
+        if document.save_point is None or document.top() is not document.save_point:
+            return
+        document.dirty = False
+        document.last_text = document.saved_text
+        document.visual_since_save = False
+        self._cancel(document)
+        self._remove_draft(document)
 
     def undo(self, pid: str, doc: str) -> dict:
         document = self.document(pid, doc)
@@ -1291,7 +1380,9 @@ class EditingService:
                 raise CommandError("There is nothing to undo.")
             step = document.undo.pop()
             self._apply(document, Change(step.label, step.removed, step.added), origin="undo")
+            document.last_text, document.visual_since_save = step.before
             document.redo.append(step)
+            self._settle(document)
             return {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
 
     def redo(self, pid: str, doc: str) -> dict:
@@ -1301,7 +1392,9 @@ class EditingService:
                 raise CommandError("There is nothing to redo.")
             step = document.redo.pop()
             self._apply(document, Change(step.label, step.added, step.removed), origin="redo")
+            document.last_text, document.visual_since_save = step.after
             document.undo.append(step)
+            self._settle(document)
             return {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
 
     def source(self, pid: str, doc: str) -> dict:
@@ -1336,6 +1429,8 @@ class EditingService:
             document.visual_since_save = False
             # What was written is now the text the editor holds.
             document.last_text = text
+            document.save_point = document.top()
+            document.saved_text = text
             saved_at = _now()
             manifest["updatedAt"] = saved_at
             if doc == "model":
@@ -1436,9 +1531,11 @@ class EditingService:
                     graph.add(t)
                 for prefix, namespace in parsed.namespaces():
                     graph.bind(prefix, namespace, override=True, replace=True)
-                # Content only: the undo history is not recovered (5.7).
+                # Content only: the undo history is not recovered (5.7), and
+                # no step leads back to what the file holds.
                 document.undo.clear()
                 document.redo.clear()
+                document.save_point = None
                 document.ontology.revision += 1
                 document.dirty = True
                 document.last_text = text if meta.get("fromEditor") else None

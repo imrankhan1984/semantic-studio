@@ -57,6 +57,8 @@ from app.main import app
 from app.network_broker import broker
 from app.store import store
 
+from budget import limit_ms
+
 client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
 LOCAL = ipaddress.ip_address("127.0.0.1")
@@ -740,7 +742,7 @@ def test_bundled_closure_budget(no_network):
     rows = imports_service.listing(ontology)["imports"]
     assert {r["status"] for r in rows} == {"resolved"}
     assert len(rows) == 11
-    assert elapsed <= 2000, f"{elapsed:.0f} ms"
+    assert elapsed <= limit_ms(2000), f"{elapsed:.0f} ms"
 
 
 @pytest.mark.perf

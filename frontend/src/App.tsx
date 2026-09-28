@@ -476,6 +476,29 @@ export default function App() {
   // beside a project ignores it, and must not refetch when it moves.
   const storeLanguage = useProjectSelector((s) => s.displayLanguage);
   const displayLanguage = editingProjectDoc ? storeLanguage : null;
+  // The editing form and the tree's actions (visual-modeling 5.1, 5.2) are
+  // for the open project's model.ttl only. Memoized: the form derives its
+  // blocks from the languages array, and a new array per render would
+  // redo that on every keystroke anywhere in App.
+  const openDocName = projectDocuments.find((d) => d.ontologyId === activeId)?.doc ?? null;
+  const editingModel = useMemo(
+    () =>
+      openProjectSummary && openDocName === "model"
+        ? {
+            primaryLanguage: openProjectSummary.primaryLanguage,
+            languages: openProjectSummary.languages,
+          }
+        : null,
+    [openProjectSummary, openDocName],
+  );
+  // Why there is no Edit section, when the document is the reason (AC-4).
+  const readOnlyNote = !activeId
+    ? null
+    : openDocName === null
+      ? "From the library, read-only. Start a project from it to change it."
+      : openDocName === "shapes"
+        ? "shapes.ttl is edited as Turtle, in View; this form edits model.ttl."
+        : null;
   // The project list, for the Home screen's first section.
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
@@ -488,6 +511,21 @@ export default function App() {
   const [leaveEditor, setLeaveEditor] = useState<(() => void) | null>(null);
   const [leaveProject, setLeaveProject] = useState<(() => void) | null>(null);
   const [promptBusy, setPromptBusy] = useState(false);
+
+  // An entity deleted from the form or the tree (visual-modeling 5.3). The
+  // panel describing it goes, and with it whatever held focus in it, so
+  // focus goes to the heading of what replaces it: the tree in Hierarchy,
+  // the starting panel in Explore.
+  const onEntityDeleted = useCallback((iri: string) => {
+    setSelected((current) => (current === iri ? null : current));
+    window.setTimeout(() => {
+      if (document.activeElement && document.activeElement !== document.body) return;
+      (
+        document.getElementById("hierarchy-view-heading") ??
+        document.getElementById("explore-start-heading")
+      )?.focus();
+    }, 0);
+  }, []);
 
   // The shared query-builder state; the schema is only fetched in Query mode.
   const builder = useQueryBuilder(activeId, mode === "query", includeImports, revision);
@@ -1655,6 +1693,8 @@ export default function App() {
             imports={includeImports}
             revision={revision}
             language={displayLanguage}
+            editing={editingModel}
+            onDeleted={onEntityDeleted}
           />
           {selected === null ? (
             <aside className="detail-panel detail-empty" aria-label="Entity details">
@@ -1674,6 +1714,9 @@ export default function App() {
               imports={includeImports}
               revision={revision}
               language={displayLanguage}
+              editing={editingModel}
+              readOnlyNote={readOnlyNote}
+              onDeleted={onEntityDeleted}
             />
           )}
         </main>
@@ -1776,6 +1819,9 @@ export default function App() {
                 imports={includeImports}
                 revision={revision}
                 language={displayLanguage}
+                editing={editingModel}
+                readOnlyNote={readOnlyNote}
+                onDeleted={onEntityDeleted}
               />
             )
           ) : null}

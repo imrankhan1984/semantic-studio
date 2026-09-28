@@ -43,6 +43,8 @@ from app import main
 from app.graph_builder import budget_viz, build_viz_graph
 from app.routers import ontologies
 
+from budget import limit_ms
+
 EX = "http://example.org/budget#"
 
 
@@ -375,4 +377,4 @@ def test_budget_cost_under_fifty_milliseconds(client, dense_oid):
         finally:
             gc.enable()
         elapsed_ms = sorted(samples)[2]
-        assert elapsed_ms <= 50, f"budget {budget} over 40,000 nodes took {elapsed_ms:.1f} ms"
+        assert elapsed_ms <= limit_ms(50), f"budget {budget} over 40,000 nodes took {elapsed_ms:.1f} ms"

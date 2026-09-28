@@ -61,7 +61,7 @@ import re
 import threading
 import time
 from collections import deque
-from typing import Optional
+from typing import Literal, Optional
 from urllib.parse import urlparse
 
 # FastAPI request-shaping helpers: File/Form/UploadFile for uploads, Query for
@@ -271,6 +271,9 @@ IMPORTS_PARAM = Query(default=False, description="Include resolved owl:imports")
 # A project document's display language. Validated by the ontology, which
 # falls back to the primary language for one it does not carry.
 LANG_PARAM = Query(default=None, max_length=35, description="Display language (projects only)")
+# The kinds search can be narrowed to; graph_builder.SEARCH_KINDS, spelled
+# out so FastAPI refuses anything else with a 422 rather than an empty list.
+SearchKind = Literal["class", "concept", "objectProperty", "datatypeProperty", "annotationProperty"]
 
 
 def _viz(ontology, imports: bool, lang: Optional[str] = None) -> dict:
@@ -575,12 +578,14 @@ def search(
     limit: int = Query(default=25, le=100),
     imports: bool = IMPORTS_PARAM,
     lang: Optional[str] = LANG_PARAM,
+    kind: Optional[SearchKind] = Query(default=None),
 ) -> list[dict]:
     """GET /{oid}/search?q=... -> ranked label/IRI matches for the search box.
 
-    In a project every name matches, whatever the display language."""
+    In a project every name matches, whatever the display language. `kind`
+    keeps one kind of entity, before the limit (the editing form's pickers)."""
     ontology = _get_or_404(oid)
-    return search_nodes(_viz(ontology, imports, lang), q, limit)
+    return search_nodes(_viz(ontology, imports, lang), q, limit, kind)
 
 
 @router.get("/{oid}/source")

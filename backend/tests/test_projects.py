@@ -45,6 +45,8 @@ from app.editing import editing_service, project_store
 from app.main import app
 from app.store import store
 
+from budget import limit_ms
+
 client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
 LIBRARY_TTL = b"""@prefix ex: <http://example.org/lib#> .
@@ -430,4 +432,4 @@ def test_list_budget():
         gc.enable()
     median = sorted(samples)[2]
     assert len(listed) >= 100
-    assert median <= 100, f"listing {len(listed)} projects took {median:.1f} ms (median of 5)"
+    assert median <= limit_ms(100), f"listing {len(listed)} projects took {median:.1f} ms (median of 5)"
