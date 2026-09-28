@@ -551,12 +551,14 @@ def get_node(
     ontology = _get_or_404(oid)
     # A project document's title is in the display language, and `names`
     # lists each project language with its value or None (5.4.2).
-    details = node_details(
-        _graph(ontology, imports),
-        iri,
-        langs=ontology.label_langs(lang),
-        languages=ontology.languages,
-    )
+    graph = _graph(ontology, imports)
+    with ontology.reading():
+        details = node_details(
+            graph,
+            iri,
+            langs=ontology.label_langs(lang),
+            languages=ontology.languages,
+        )
     if details is None:
         raise HTTPException(status_code=404, detail=f"No triples found for {iri}")
     if imports:
@@ -672,7 +674,8 @@ def get_documentation(oid: str, include_individuals: str = Query("false")) -> Re
     ontology = _get_or_404(oid)
     include = (include_individuals or "").lower() == "true"
     try:
-        data = build_zip(ontology, include_individuals=include)
+        with ontology.reading():
+            data = build_zip(ontology, include_individuals=include)
     except DocsExportError as exc:
         # A part of the export is over its limit; the message names the number.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -738,7 +741,10 @@ def get_embedded_queries(oid: str, imports: bool = IMPORTS_PARAM) -> dict:
     Read-only: listing a query never runs it. At most 200 rows with the true
     total beside them, each text at most 100 KB and flagged when cut.
     """
-    return list_embedded_queries(_graph(_get_or_404(oid), imports))
+    ontology = _get_or_404(oid)
+    graph = _graph(ontology, imports)
+    with ontology.reading():
+        return list_embedded_queries(graph)
 
 
 @router.get("/{oid}/query-node")
@@ -755,7 +761,9 @@ def get_query_node(oid: str, iri: str = Query(...), imports: bool = IMPORTS_PARA
         if imports
         else ontology.query_schema()
     )
-    described = describe_query_node(_graph(ontology, imports), iri, schema)
+    graph = _graph(ontology, imports)
+    with ontology.reading():
+        described = describe_query_node(graph, iri, schema)
     if described is None:
         raise HTTPException(
             status_code=404,
@@ -776,7 +784,8 @@ def run_sparql(oid: str, request: SparqlRequest, imports: bool = IMPORTS_PARAM) 
     ontology = _get_or_404(oid)
     graph = _graph(ontology, imports)
     try:
-        result = execute_select(graph, request.query)
+        with ontology.reading():
+            result = execute_select(graph, request.query)
         if imports:
             result["importDocuments"] = imports_service.merged(ontology)["documents"]
         return result

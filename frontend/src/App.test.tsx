@@ -227,24 +227,32 @@ const ALL_API = {
 // graphology and is asserted in GraphView.test.tsx; what App is responsible for
 // is what it does with the result, so the stub reports every node in the
 // expansion as newly added — the case where none of them were already drawn.
+// How often the stub rendered, which is how often App did: the review found
+// App re-rendering on every keystroke in the Turtle editor.
+const graphRenders = vi.hoisted(() => ({ count: 0 }));
+
 vi.mock("./components/GraphView", () => ({
   default: ({
+    data,
     leftRail,
     onSelect,
     expansion,
     onExpanded,
     focusTick,
   }: {
+    data: unknown;
     leftRail?: React.ReactNode;
     onSelect: (iri: string | null) => void;
     expansion?: { data: VizNeighborhood; token: number } | null;
     onExpanded?: (result: MergeResult) => void;
     focusTick: number;
-  }) => (
+  }) => {
+    graphRenders.count += 1;
+    return (
     // focusTick is surfaced because "the camera re-centres" is not otherwise
     // observable from here: the real GraphView watches this prop and moves. Its
     // guard against a target that is not on the canvas is GraphView.test.tsx's.
-    <div data-testid="graph" data-focus-tick={focusTick}>
+    <div data-testid="graph" data-focus-tick={focusTick} data-has-graph={data ? "yes" : "no"}>
       {leftRail}
       <button onClick={() => onSelect("http://x/issuedBy")}>fake node</button>
       {expansion && (
@@ -260,7 +268,8 @@ vi.mock("./components/GraphView", () => ({
         </button>
       )}
     </div>
-  ),
+    );
+  },
 }));
 
 /** Which entity the stubbed result row and search hit point at. Mutable so a
@@ -2787,5 +2796,59 @@ describe("App projects (authoring-foundations)", () => {
     });
     expect(saveDocument).toHaveBeenLastCalledWith(PROJECT.id, "model", true);
     expect(screen.getByText("Saved", { selector: ".project-status" })).toBeTruthy();
+  });
+});
+
+
+describe("App projects, found in code review", () => {
+  it("Undo with unapplied Turtle asks first, and Discard then undoes", async () => {
+    getDocumentSource.mockResolvedValue({ text: "@prefix : <x#> .\n", revision: 0, fromEditor: true });
+    undoChange.mockResolvedValue({ revision: 1, label: "Created class A", state: docState({ revision: 1 }) });
+    await renderProject({ canUndo: true, undoLabel: "Created class A", dirty: true });
+    await act(async () => {
+      fireEvent.click(tab("View"));
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Turtle source of model.ttl" }), {
+      target: { value: "typed but not applied" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Undo: Created class A" }));
+    });
+    expect(screen.getByRole("dialog", { name: "Apply your Turtle edits?" })).toBeTruthy();
+    expect(undoChange).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    });
+    expect(undoChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("typing in the Turtle editor does not re-render App", async () => {
+    getDocumentSource.mockResolvedValue({ text: "@prefix : <x#> .\n", revision: 0, fromEditor: true });
+    await renderProject();
+    await act(async () => {
+      fireEvent.click(tab("View"));
+    });
+    const editor = screen.getByRole("textbox", { name: "Turtle source of model.ttl" });
+    fireEvent.change(editor, { target: { value: "a" } });
+    const before = graphRenders.count;
+    for (const value of ["ab", "abc", "abcd", "abcde"]) {
+      fireEvent.change(editor, { target: { value } });
+    }
+    expect((editor as HTMLTextAreaElement).value).toBe("abcde");
+    expect(graphRenders.count).toBe(before);
+  });
+
+  it("an edit refreshes the graph without blanking it first", async () => {
+    await renderProject({ canUndo: true, undoLabel: "Created class A", dirty: true });
+    await waitFor(() => expect(screen.getByTestId("graph").dataset.hasGraph).toBe("yes"));
+    let resolve: (g: VizGraph) => void = () => undefined;
+    getGraph.mockImplementation(() => new Promise<VizGraph>((r) => (resolve = r)));
+    undoChange.mockResolvedValue({ revision: 1, label: "Created class A", state: docState({ revision: 1 }) });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Undo: Created class A" }));
+    });
+    expect(getGraph).toHaveBeenCalled();
+    expect(screen.getByTestId("graph").dataset.hasGraph).toBe("yes");
+    await act(async () => resolve(TRUNCATED));
   });
 });

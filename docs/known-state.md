@@ -901,3 +901,22 @@ EXPECTED OUTPUT
   typed. And a page with unsaved changes raises the browser's `beforeunload`
   question on purpose, so a headless driver navigating away must answer it
   (`Page.handleJavaScriptDialog`) or its `Page.navigate` times out.
+
+  **The code review of the branch found ten defects, all fixed with a test that
+  fails without the fix**, and four are rules now. **`_change` must leave a
+  triple that is in both adds and removes where it is**: the first version put
+  it in `removed` only, so `SetLabel` to the label a class already had deleted
+  the label. **Views read a project document under `Ontology.reading()`**, the
+  re-entrant lock `editing.py` takes, or a graph build iterates a graph an
+  apply is changing. **The autosave timer moves nothing on disk unless the
+  generation it started with is still current**, checked again after it
+  serialises: a save or a discard in between used to leave a draft that was
+  then offered for recovery. **App reads the project store by selector**: the
+  editor's text is in the store, and a whole-snapshot subscription re-rendered
+  all of App on every keystroke. The other six: a duplicate's saved queries
+  get their own ids and the copy's document id; deleting an entity takes whole
+  any anonymous expression that mentions it (a restriction on another class,
+  a list in a union); a command builds the imports view only when a target is
+  not in the document; Undo, Redo and Save ask about unapplied Turtle first;
+  saving every document leaves the active one where it was; and switching
+  document empties the editor until the new text arrives.

@@ -53,6 +53,10 @@ import {
 import type { LanguageReport, ProjectDocName } from "../types";
 
 interface Props {
+  /** Runs `then` once any unapplied Turtle has been applied or discarded:
+   *  Undo, Redo and Save change the document under the editor, so they ask
+   *  first, as every other exit does. */
+  guard?: (then: () => void) => void;
   onSwitchDocument: (doc: ProjectDocName) => void;
   onClose: () => void;
   onError: (message: string) => void;
@@ -72,7 +76,15 @@ function inTextField(target: EventTarget | null): boolean {
 
 const DOC_FILES: Record<ProjectDocName, string> = { model: "model.ttl", shapes: "shapes.ttl" };
 
-export default function ProjectHeader({ onSwitchDocument, onClose, onError, onSaveCopy }: Props) {
+const NO_GUARD = (then: () => void) => then();
+
+export default function ProjectHeader({
+  guard = NO_GUARD,
+  onSwitchDocument,
+  onClose,
+  onError,
+  onSaveCopy,
+}: Props) {
   const state = useProjectStore();
   const project = state.project!;
   const current = activeDocument(state);
@@ -91,9 +103,9 @@ export default function ProjectHeader({ onSwitchDocument, onClose, onError, onSa
 
   const canUndo = current?.canUndo ?? false;
   const canRedo = current?.canRedo ?? false;
-  const undo = () => canUndo && run(() => projectStore.undo());
-  const redo = () => canRedo && run(() => projectStore.redo());
-  const save = () => !state.saving && run(() => projectStore.save());
+  const undo = () => canUndo && guard(() => run(() => projectStore.undo()));
+  const redo = () => canRedo && guard(() => run(() => projectStore.redo()));
+  const save = () => !state.saving && guard(() => run(() => projectStore.save()));
 
   // The shortcuts, rebound when what they would do changes.
   const keys = useRef({ undo, redo, save });

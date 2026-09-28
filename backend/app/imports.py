@@ -1001,7 +1001,8 @@ class ImportsService:
                 docs.append((graph, row.get("sourceName") or row["iri"]))
         view = MergedView([own] + [g for g, _ in docs])
         imported: dict[str, str] = {}
-        subjects = view.subjects_by_document()
+        with ontology.reading():
+            subjects = view.subjects_by_document()
         own_subjects = subjects[0]
         for (_, name), held in zip(docs, subjects[1:]):
             for subject in held:
@@ -1036,7 +1037,8 @@ class ImportsService:
         view = self.merged(ontology)
         cache = ontology.merged_cache
         if name not in cache:
-            cache[name] = build(view["graph"])
+            with ontology.reading():
+                cache[name] = build(view["graph"])
         return cache[name]
 
 

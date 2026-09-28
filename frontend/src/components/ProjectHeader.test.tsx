@@ -258,3 +258,48 @@ describe("ProjectHeader", () => {
     expect(handlers.onError).toHaveBeenCalledWith("There is nothing to undo.");
   });
 });
+
+
+describe("ProjectHeader, found in code review", () => {
+  it("Undo, Redo and Save go through the guard, keyboard included", async () => {
+    await renderHeader({ canRedo: true, redoLabel: "x" });
+    cleanup();
+    const guard = vi.fn();
+    await act(async () => {
+      render(
+        <ProjectHeader guard={guard} onSwitchDocument={vi.fn()} onClose={vi.fn()} onError={vi.fn()} onSaveCopy={vi.fn()} />,
+      );
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Undo: Created class Invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Redo: x" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(guard).toHaveBeenCalledTimes(4);
+    expect(undoChange).not.toHaveBeenCalled();
+    expect(saveDocument).not.toHaveBeenCalled();
+  });
+
+  it("saving every document leaves the active one where it was", async () => {
+    openProject.mockResolvedValue({
+      project: { ...PROJECT, documents: [...PROJECT.documents, { file: "shapes.ttl", role: "shapes" as const }] },
+      documents: [doc(), { ...doc(), doc: "shapes" as const, ontologyId: "prj-0123456789ab-shapes" }],
+      recovery: { available: false, draftTime: null },
+    });
+    await projectStore.open(PROJECT.id);
+    saveDocument
+      .mockResolvedValueOnce({ savedAt: "now", state: doc({ dirty: false }) })
+      .mockResolvedValueOnce({ needsCommentsWarning: true, backup: "shapes.original.ttl" })
+      .mockResolvedValueOnce({
+        savedAt: "now",
+        state: { ...doc({ dirty: false }), doc: "shapes" as const, ontologyId: "prj-0123456789ab-shapes" },
+      });
+    expect(await projectStore.saveAll()).toBe("warning");
+    expect(projectStore.getSnapshot().activeDoc).toBe("model");
+    expect(projectStore.getSnapshot().commentsWarning).toEqual({ doc: "shapes", backup: "shapes.original.ttl" });
+    await projectStore.save(true);
+    expect(saveDocument).toHaveBeenLastCalledWith(PROJECT.id, "shapes", true);
+    expect(projectStore.getSnapshot().activeDoc).toBe("model");
+  });
+});

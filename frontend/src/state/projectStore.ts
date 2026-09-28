@@ -107,11 +107,22 @@ function getSnapshot(): ProjectSnapshot {
   return snapshot;
 }
 
-/** The whole snapshot. Components that need one field still re-render on any
- *  change; the store is small and changes at human speed, so that is cheaper
- *  than selectors to reason about. */
+/** The whole snapshot, for the small components that show most of it. */
 export function useProjectStore(): ProjectSnapshot {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+/** One slice of the snapshot, re-rendering only when that slice changes. The
+ *  selector must return a primitive or a reference the store already holds.
+ *  App reads through these: the editor's text changes on every keystroke, and
+ *  a whole-snapshot subscription re-rendered all of App per character (found
+ *  in review). */
+export function useProjectSelector<T>(select: (state: ProjectSnapshot) => T): T {
+  return useSyncExternalStore(
+    subscribe,
+    () => select(snapshot),
+    () => select(snapshot),
+  );
 }
 
 /** The status the header shows in text (never a coloured dot alone). */
@@ -127,13 +138,18 @@ export const STATUS_WORDS: Record<SaveStatus, string> = {
 };
 
 /** The document the header and the views are on. */
-export function activeDocument(state: ProjectSnapshot): ProjectDocumentState | null {
+export function activeDocument(
+  state: Pick<ProjectSnapshot, "documents" | "activeDoc">,
+): ProjectDocumentState | null {
   return state.documents.find((d) => d.doc === state.activeDoc) ?? null;
 }
 
 /** The revision of an ontology id, or 0 for anything that is not an open
  *  project document -- a library ontology never changes revision. */
-export function revisionOf(state: ProjectSnapshot, ontologyId: string | null): number {
+export function revisionOf(
+  state: Pick<ProjectSnapshot, "documents">,
+  ontologyId: string | null,
+): number {
   return state.documents.find((d) => d.ontologyId === ontologyId)?.revision ?? 0;
 }
 
@@ -205,15 +221,15 @@ export const projectStore = {
 
   async undo(): Promise<void> {
     const project = requireProject();
+    // The editor's unapplied text is not touched here: the header asks
+    // "Apply, discard, or stay?" before an undo, as every other exit does.
     const result = await undoChange(project.id, snapshot.activeDoc);
-    set({ editorDraft: null });
     afterChange(result, "Undid: ");
   },
 
   async redo(): Promise<void> {
     const project = requireProject();
     const result = await redoChange(project.id, snapshot.activeDoc);
-    set({ editorDraft: null });
     afterChange(result, "Redid: ");
   },
 
@@ -237,11 +253,12 @@ export const projectStore = {
     afterChange(result, "");
   },
 
-  /** Save the current document. Resolves "warning" when the one-time
-   *  comments question has to be asked first (nothing was written). */
-  async save(confirmRewrite = false): Promise<"saved" | "warning"> {
+  /** Save a document, the current one unless named. Resolves "warning" when
+   *  the one-time comments question has to be asked first (nothing was
+   *  written); confirming it saves the document the question was about. */
+  async save(confirmRewrite = false, doc?: ProjectDocName): Promise<"saved" | "warning"> {
     const project = requireProject();
-    const doc = snapshot.activeDoc;
+    doc = doc ?? (confirmRewrite ? snapshot.commentsWarning?.doc : undefined) ?? snapshot.activeDoc;
     set({ saving: true, commentsWarning: null });
     announce(STATUS_WORDS.saving);
     try {
@@ -263,13 +280,13 @@ export const projectStore = {
   },
 
   /** Save every document with unsaved changes, for "Save" in the close prompt. */
+  // Each document by name: moving activeDoc to save it left the header on a
+  // document the views were not showing when a save stopped part way (found
+  // in review).
   async saveAll(): Promise<"saved" | "warning"> {
-    const start = snapshot.activeDoc;
     for (const d of snapshot.documents.filter((x) => x.dirty)) {
-      set({ activeDoc: d.doc });
-      if ((await projectStore.save()) === "warning") return "warning";
+      if ((await projectStore.save(false, d.doc)) === "warning") return "warning";
     }
-    set({ activeDoc: start });
     return "saved";
   },
 

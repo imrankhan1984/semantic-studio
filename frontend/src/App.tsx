@@ -148,7 +148,7 @@ import {
   activeDocument,
   projectStore,
   revisionOf,
-  useProjectStore,
+  useProjectSelector,
 } from "./state/projectStore";
 import AboutPanel from "./components/AboutPanel";
 import DetailPanel from "./components/DetailPanel";
@@ -460,15 +460,22 @@ export default function App() {
   // The open project (authoring-foundations). Its revision and display
   // language are part of every fetch key below, so a change refreshes the
   // views; for a library ontology both are constant (0 and null).
-  const projectState = useProjectStore();
-  const openProjectSummary = projectState.project;
-  const projectDoc = activeDocument(projectState);
-  const revision = revisionOf(projectState, activeId);
+  // Read slice by slice: the editor's text is in the store too and changes on
+  // every keystroke, which must not re-render all of App.
+  const openProjectSummary = useProjectSelector((s) => s.project);
+  const projectDocuments = useProjectSelector((s) => s.documents);
+  const projectActiveDoc = useProjectSelector((s) => s.activeDoc);
+  const projectRecovery = useProjectSelector((s) => s.recovery);
+  const commentsWarning = useProjectSelector((s) => s.commentsWarning);
+  const projectSaving = useProjectSelector((s) => s.saving);
+  const projectDoc = activeDocument({ documents: projectDocuments, activeDoc: projectActiveDoc });
+  const revision = revisionOf({ documents: projectDocuments }, activeId);
   const editingProjectDoc =
-    openProjectSummary !== null && projectState.documents.some((d) => d.ontologyId === activeId);
+    openProjectSummary !== null && projectDocuments.some((d) => d.ontologyId === activeId);
   // Only a project document's views are named by it; a library ontology open
   // beside a project ignores it, and must not refetch when it moves.
-  const displayLanguage = editingProjectDoc ? projectState.displayLanguage : null;
+  const storeLanguage = useProjectSelector((s) => s.displayLanguage);
+  const displayLanguage = editingProjectDoc ? storeLanguage : null;
   // The project list, for the Home screen's first section.
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
@@ -521,7 +528,7 @@ export default function App() {
 
   // Unsaved changes survive a closed tab in the autosaved draft, but the
   // browser's own question is still worth asking before the tab goes.
-  const anyDirty = projectState.documents.some((d) => d.dirty);
+  const anyDirty = projectDocuments.some((d) => d.dirty);
   useEffect(() => {
     if (!anyDirty) return;
     const onUnload = (e: BeforeUnloadEvent) => {
@@ -569,8 +576,14 @@ export default function App() {
   // Fetch the graph whenever the ontology or the requested budget changes.
   // The `cancelled` flag ignores a stale response if the user switches again
   // before it arrives.
+  // What the graph on screen was fetched for, so a refetch caused only by an
+  // edit or a language switch keeps it up until the new one arrives rather
+  // than blanking the canvas on every change (found in review).
+  const graphFor = useRef<string | null>(null);
   useEffect(() => {
-    setGraphData(null);
+    const identity = `${activeId}|${graphBudget}|${includeImports}`;
+    if (graphFor.current !== identity) setGraphData(null);
+    graphFor.current = identity;
     // A new graph response replaces the canvas, so everything expansions added
     // to the old one is gone with it. That is the documented way to shrink the
     // view back: reloading returns to the budgeted graph. Reset here rather
@@ -706,10 +719,10 @@ export default function App() {
   // "close everything" — would make it dangerous to press and would duplicate
   // "Close this ontology", which already exists and says what it does. D-026.
   // Unapplied text in the Turtle editor: ask before whatever would unmount it.
-  const editorDraftRef = useRef(projectState.editorDraft);
-  editorDraftRef.current = projectState.editorDraft;
+  // Read from the store at the moment of asking, not subscribed to: App has no
+  // other reason to re-render while the user types.
   const guardEditor = useCallback((then: () => void) => {
-    if (editorDraftRef.current !== null) setLeaveEditor(() => then);
+    if (projectStore.getSnapshot().editorDraft !== null) setLeaveEditor(() => then);
     else then();
   }, []);
 
@@ -1437,6 +1450,7 @@ export default function App() {
               a select showing a blank row would look like a defect. */}
           {editingProjectDoc ? (
             <ProjectHeader
+              guard={guardEditor}
               onSwitchDocument={onSwitchDocument}
               onClose={onCloseProject}
               onError={(message) => setError(message)}
@@ -1809,7 +1823,7 @@ export default function App() {
         />
       )}
 
-      {projectState.recovery && (
+      {projectRecovery && (
         <ConfirmDialog
           title="Recover unsaved changes?"
           escape="later"
@@ -1831,18 +1845,18 @@ export default function App() {
           }}
         >
           <p>
-            This project has changes from {when(projectState.recovery.draftTime)} that were
+            This project has changes from {when(projectRecovery.draftTime)} that were
             never saved. Recovering loads them as unsaved changes; the undo history is not
             recovered.
           </p>
         </ConfirmDialog>
       )}
 
-      {projectState.commentsWarning && (
+      {commentsWarning && (
         <ConfirmDialog
           title="Save and remove the comments?"
           escape="cancel"
-          busy={projectState.saving}
+          busy={projectSaving}
           actions={[
             { id: "cancel", label: "Don't save" },
             { id: "save", label: "Save and keep a backup", primary: true },
@@ -1854,7 +1868,7 @@ export default function App() {
         >
           <p>
             {COMMENTS_WARNING} The current file will be kept as{" "}
-            <code>{projectState.commentsWarning.backup}</code>.
+            <code>{commentsWarning.backup}</code>.
           </p>
         </ConfirmDialog>
       )}

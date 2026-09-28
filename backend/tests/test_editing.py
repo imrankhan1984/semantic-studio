@@ -808,3 +808,110 @@ def test_autosave_off_path(big, monkeypatch):
     ok(big, "CreateClass", label="Big draft")
     assert editing_service.drafts_written == written
     assert _wait_for(lambda: editing_service.drafts_written == written + 1, 15)
+
+
+# --- found in code review -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command,args",
+    [
+        ("SetLabel", {"iri": "shop:Person", "value": "Person"}),
+        ("SetComment", {"iri": "shop:Person", "value": "A human being."}),
+        ("SetDomain", {"property": "shop:memberOf", "target": "shop:Person"}),
+        ("SetRange", {"property": "shop:memberOf", "target": "shop:Organization"}),
+    ],
+)
+def test_setting_a_value_to_what_it_already_is_deletes_nothing(pid, command, args):
+    """The first _change dropped a triple that was in both adds and removes."""
+    before, before_rev = graph_copy(pid), revision(pid)
+    response = run(pid, command, **args)
+    assert response.status_code == 422 and "change nothing" in response.json()["detail"]
+    assert revision(pid) == before_rev and isomorphic(doc(pid).graph, before)
+
+
+def test_replacing_an_annotation_with_itself_keeps_it(pid):
+    value = {"kind": "text", "value": "A human being.", "lang": "en"}
+    response = run(pid, "ReplaceAnnotation", iri="shop:Person", property="rdfs:comment", oldValue=value, newValue=value)
+    assert response.status_code == 422
+    assert (U("Person"), RDFS.comment, Literal("A human being.", lang="en")) in doc(pid).graph
+
+
+def test_delete_takes_a_restriction_on_another_class_whole(pid):
+    apply(pid, f"""@prefix shop: <{EX}> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+shop:Invoice a owl:Class ; rdfs:label "Invoice"@en .
+shop:hasLine a owl:ObjectProperty ; rdfs:label "has line"@en .
+shop:Order a owl:Class ; rdfs:label "Order"@en ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty shop:hasLine ; owl:someValuesFrom shop:Invoice ] ;
+    owl:equivalentClass [ owl:unionOf ( shop:Invoice shop:Order ) ] .
+""")
+    impact = run(pid, "DeleteEntity", dry_run=True, iri="shop:Invoice").json()["impact"]
+    ok(pid, "DeleteEntity", iri="shop:Invoice", strategy="orphan")
+    graph = doc(pid).graph
+    assert not [s for s in graph.subjects(RDF.type, OWL.Restriction)], "a restriction with no filler was left"
+    assert not list(graph.objects(U("Order"), RDFS.subClassOf))
+    assert not list(graph.objects(U("Order"), OWL.equivalentClass))
+    assert not [t for t in graph if isinstance(t[0], BNode)], "debris left behind"
+    assert (U("Order"), RDFS.label, Literal("Order", lang="en")) in graph
+    # Its own two, the restriction and the statement to it (4), the union and
+    # the statement to it (2), and the two list cells (4).
+    assert impact["statements"] == 2 + 4 + 2 + 4
+
+
+def test_a_draft_serialised_during_a_save_is_not_written(pid, monkeypatch):
+    """The timer serialises outside the lock; a save in that window must win."""
+    monkeypatch.setattr(editing, "AUTOSAVE_DELAY", 60)
+    ok(pid, "CreateClass", label="Raced")
+    document = doc(pid)
+    generation = document.generation
+    real = editing.clean_turtle
+    fired = []
+
+    def racing(graph):
+        if not fired:
+            fired.append(True)
+            assert save(pid).status_code == 200
+        return real(graph)
+
+    monkeypatch.setattr(editing, "clean_turtle", racing)
+    editing_service._write_draft(document, generation)
+    assert fired
+    assert not (project_store.folder(pid) / ".draft" / "model.ttl").exists()
+
+
+def test_a_duplicate_owns_its_saved_queries(pid):
+    oid = f"{pid}-model"
+    qid = client.post(
+        "/api/queries",
+        json={"name": "Q", "ontologyId": oid, "state": None, "sparql": "SELECT * WHERE { ?s ?p ?o }", "mode": "text"},
+    ).json()["id"]
+    copy = client.post(f"/api/projects/{pid}/duplicate").json()["id"]
+    copied = client.get("/api/queries", params={"ontology": f"{copy}-model"}).json()
+    assert len(copied) == 1 and copied[0]["id"] != qid and copied[0]["ontologyId"] == f"{copy}-model"
+    assert client.delete(f"/api/queries/{qid}").status_code == 200
+    assert client.get("/api/queries", params={"ontology": oid}).json() == []
+    assert [q["id"] for q in client.get("/api/queries", params={"ontology": f"{copy}-model"}).json()] == [copied[0]["id"]]
+
+
+def test_a_command_builds_the_imports_view_only_when_it_needs_it(pid, monkeypatch):
+    from app.imports import imports_service
+
+    lib = client.post(
+        "/api/ontologies/upload",
+        files={"file": ("lib3.ttl", b"""@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<http://example.org/lib3> a owl:Ontology .
+<http://example.org/lib3#Party> a owl:Class .
+""")},
+    ).json()["id"]
+    current = client.get(f"/api/projects/{pid}/documents/model/source").json()["text"]
+    apply(pid, current + "\n<http://example.org/shop> <http://www.w3.org/2002/07/owl#imports> <http://example.org/lib3> .\n")
+    client.post(f"/api/ontologies/{pid}-model/imports/mapping", json={"iri": "http://example.org/lib3", "ontologyId": lib})
+    calls = []
+    real = imports_service.merged
+    monkeypatch.setattr(imports_service, "merged", lambda *a, **k: calls.append(1) or real(*a, **k))
+    ok(pid, "CreateClass", label="Local", parent="shop:Person")
+    assert calls == []
+    ok(pid, "CreateClass", label="Imported child", parent="http://example.org/lib3#Party")
+    assert calls, "a target only an import defines was not looked up there"

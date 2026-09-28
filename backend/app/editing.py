@@ -446,12 +446,24 @@ class Change:
 class Context:
     """What a command reads: the graph, the project, and name resolution."""
 
-    def __init__(self, graph: Graph, manifest: dict, imported: Optional[Graph]):
+    def __init__(self, graph: Graph, manifest: dict, imported: Callable[[], Optional[Graph]]):
         self.graph = graph
         self.manifest = manifest
         self.primary = manifest.get("primaryLanguage", "en")
         self.base = manifest["baseIri"]
-        self.imported = imported
+        self._imported = imported
+        self._imported_view: Optional[Graph] = None
+        self._imported_read = False
+
+    @property
+    def imported(self) -> Optional[Graph]:
+        """The merged imports view, built only when a command asks: most
+        targets are in the document itself, and the view is rebuilt for every
+        revision (found in review)."""
+        if not self._imported_read:
+            self._imported_view = self._imported()
+            self._imported_read = True
+        return self._imported_view
 
     # --- names --------------------------------------------------------------
 
@@ -551,22 +563,18 @@ class Context:
 
 
 def _change(graph: Graph, label: str, adds: Iterable = (), removes: Iterable = ()) -> Change:
-    """Only what would really change, so the inverse restores exactly."""
-    removed = []
-    seen = set()
-    for t in removes:
-        if t in graph and t not in seen:
-            removed.append(t)
-            seen.add(t)
-    added = []
-    removed_set = set(removed)
-    for t in adds:
-        if (t not in graph or t in removed_set) and t not in seen:
-            added.append(t)
-            seen.add(t)
-    # A triple both removed and added is no change at all.
-    both = set(added) & removed_set
-    return Change(label, [t for t in added if t not in both], [t for t in removed if t not in both])
+    """Only what would really change, so the inverse restores exactly.
+
+    A triple both removed and added is no change at all, and stays where it
+    is: setting a label to the value it already has must leave the label,
+    not delete it (the first version did, found in review).
+    """
+    removing = {t for t in removes if t in graph}
+    adding = {t for t in adds if t not in graph or t in removing}
+    both = adding & removing
+    added = [t for t in dict.fromkeys(adds) if t in adding and t not in both]
+    removed = [t for t in dict.fromkeys(removes) if t in removing and t not in both]
+    return Change(label, added, removed)
 
 
 def _label_triples(ctx: Context, iri: URIRef, predicate: URIRef, lang: str) -> list:
@@ -870,6 +878,41 @@ def _bnode_closure(graph: Graph, roots: Iterable, removing: set) -> set:
     return extra
 
 
+def _expressions_mentioning(graph: Graph, iri: URIRef) -> set:
+    """Every anonymous expression that mentions the entity, whole.
+
+    `:Order rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :hasLine ;
+    owl:someValuesFrom :Invoice ]`: deleting :Invoice must take the whole
+    restriction and the statement pointing at it, or a restriction with no
+    filler is left behind. So from each blank node that mentions the entity
+    the walk goes up to the first named node (through list cells and nested
+    expressions alike), taking every statement on the way and each blank
+    node's whole description below.
+    """
+    extra: set = set()
+    queue = [s for s, _, _ in graph.triples((None, None, iri)) if isinstance(s, BNode)]
+    queue += [s for s, _, _ in graph.triples((None, iri, None)) if isinstance(s, BNode)]
+    seen: set = set()
+    while queue:
+        node = queue.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        for t in graph.triples((None, None, node)):
+            extra.add(t)
+            if isinstance(t[0], BNode):
+                queue.append(t[0])
+        below = [node]
+        while below:
+            current = below.pop()
+            for t in graph.triples((current, None, None)):
+                if t not in extra:
+                    extra.add(t)
+                    if isinstance(t[2], BNode):
+                        below.append(t[2])
+    return extra
+
+
 def delete_plan(ctx: Context, a: dict) -> tuple[Change, dict]:
     iri = ctx.iri(a.get("iri"), "entity")
     if not ctx.mentioned(iri):
@@ -884,6 +927,7 @@ def delete_plan(ctx: Context, a: dict) -> tuple[Change, dict]:
     removing |= set(g.triples((None, iri, None)))
     removing |= set(g.triples((None, None, iri)))
     removing |= _bnode_closure(g, [o for _, _, o in g.triples((iri, None, None))], removing)
+    removing |= _expressions_mentioning(g, iri)
 
     children: list[URIRef] = []
     parents: list[URIRef] = []
@@ -1062,6 +1106,9 @@ class EditingService:
         )
         document = OpenDocument(pid, doc, path, ontology, last_text=text)
         ontology.source_provider = lambda: document.text().encode("utf-8")
+        # Every view reads under the same lock the edits take, so a build never
+        # iterates a graph an apply is changing (found in review).
+        ontology.lock = document.lock
         return document
 
     def open(self, pid: str) -> dict:
@@ -1159,9 +1206,12 @@ class EditingService:
 
     def _context(self, document: OpenDocument) -> Context:
         manifest = self.projects.manifest(document.pid)
-        imported = None
-        if load_state(document.ontology):
-            imported = imports_service.merged(document.ontology)["graph"]
+
+        def imported() -> Optional[Graph]:
+            if not load_state(document.ontology):
+                return None
+            return imports_service.merged(document.ontology)["graph"]
+
         return Context(document.graph, manifest, imported)
 
     def _apply(self, document: OpenDocument, change: Change, *, origin: str) -> None:
@@ -1311,6 +1361,9 @@ class EditingService:
 
     @staticmethod
     def _cancel(document: OpenDocument) -> None:
+        # Moving the generation is what stops a timer already past its wait:
+        # cancel() only stops one that has not fired.
+        document.generation += 1
         if document.timer is not None:
             document.timer.cancel()
             document.timer = None
@@ -1337,11 +1390,18 @@ class EditingService:
             }
         if text is None:
             text = clean_turtle(snapshot)
-        draft, sidecar = _draft_paths(document)
-        draft.parent.mkdir(exist_ok=True)
-        draft.write_text(text, encoding="utf-8")
-        sidecar.write_text(json.dumps(meta), encoding="utf-8")
-        self.drafts_written += 1
+        # Serialising ran outside the lock, so a save, a discard or a newer
+        # change may have happened meanwhile: each moves the generation, and
+        # a draft written now would be offered for recovery after the user
+        # saved or discarded it (found in review).
+        with document.lock:
+            if generation != document.generation or not document.dirty:
+                return
+            draft, sidecar = _draft_paths(document)
+            draft.parent.mkdir(exist_ok=True)
+            draft.write_text(text, encoding="utf-8")
+            sidecar.write_text(json.dumps(meta), encoding="utf-8")
+            self.drafts_written += 1
 
     @staticmethod
     def _remove_draft(document: OpenDocument) -> None:

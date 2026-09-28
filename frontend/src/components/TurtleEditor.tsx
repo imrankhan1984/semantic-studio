@@ -41,7 +41,7 @@ EXPECTED OUTPUT
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { TurtleError, getDocumentSource } from "../api";
-import { projectStore, useProjectStore } from "../state/projectStore";
+import { projectStore, useProjectSelector } from "../state/projectStore";
 import type { ProjectDocName } from "../types";
 
 interface Props {
@@ -71,13 +71,21 @@ function offsetOf(text: string, line: number, column: number): number {
 }
 
 export default function TurtleEditor({ projectId, doc, revision }: Props) {
-  const { editorDraft } = useProjectStore();
+  const editorDraft = useProjectSelector((s) => s.editorDraft);
   const [base, setBase] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [problem, setProblem] = useState<ParseProblem | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
+
+  // Another document: the old text goes at once, so nothing can be typed
+  // into it and drafted against the wrong document while the new one loads
+  // (found in review). The box is read-only until it arrives.
+  useEffect(() => {
+    setBase(null);
+    setProblem(null);
+  }, [projectId, doc]);
 
   // The document's own text, again whenever it changes -- unless the user has
   // edits in hand, which a refetch must never overwrite.

@@ -194,3 +194,23 @@ describe("TurtleEditor", () => {
     expect(editor().value).toBe("mine");
   });
 });
+
+
+describe("TurtleEditor, found in code review", () => {
+  it("switching document drops the old text at once, so nothing is typed against the wrong one", async () => {
+    const view = render(<TurtleEditor projectId="prj-0123456789ab" doc="model" revision={0} />);
+    await act(async () => undefined);
+    expect(editor().value).toBe(TEXT);
+    let resolve: (v: { text: string; revision: number; fromEditor: boolean }) => void = () => undefined;
+    getDocumentSource.mockImplementation(() => new Promise((r) => (resolve = r)));
+    await act(async () => {
+      view.rerender(<TurtleEditor projectId="prj-0123456789ab" doc="shapes" revision={0} />);
+    });
+    const box = screen.getByRole("textbox", { name: "Turtle source of shapes.ttl" }) as HTMLTextAreaElement;
+    expect(box.value).toBe("");
+    expect(box.readOnly).toBe(true);
+    await act(async () => resolve({ text: "@prefix sh: <http://www.w3.org/ns/shacl#> .\n", revision: 0, fromEditor: true }));
+    expect(box.value).toContain("sh:");
+    expect(box.readOnly).toBe(false);
+  });
+});

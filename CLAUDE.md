@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 578 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 702 tests, vitest
+cd backend  && python -m pytest tests    # 587 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 708 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -232,6 +232,9 @@ leaves one behind.
 - The project store is module state: a test rendering App calls `cleanup()`. [authoring foundations]
 - Authoring controls are `aria-disabled`, not `disabled`, so focus is never dropped. [authoring foundations]
 - `pick_label` tests the exact `en` tag before the prefix match. [authoring foundations]
+- `_change` leaves a triple that is in both adds and removes; setting a value to itself deletes nothing. [authoring foundations]
+- Views read a project document inside `Ontology.reading()`, the lock edits take. [authoring foundations]
+- App reads the project store by selector; the editor's text must not re-render App. [authoring foundations]
 
 **Graph**
 - Both reducers go through `focusTarget`; `ErrorBoundary` stays around `<App />`. [used to blank]

@@ -77,6 +77,7 @@ from __future__ import annotations
 #   sys       - detect the operating system to pick the OS-standard data dir
 #   threading - locks so concurrent requests do not double-parse or corrupt state
 #   uuid      - generate stable, collision-free ontology ids
+import contextlib
 import contextvars
 import json
 import os
@@ -318,6 +319,10 @@ class Ontology:
     # A project document's current text, supplied by editing.py: the text last
     # applied in the editor, or clean Turtle. The library reads its file.
     source_provider: Optional[Callable[[], bytes]] = field(default=None, repr=False, compare=False)
+    # A project document's lock, which editing.py holds while it changes the
+    # graph. Views take it while they read, so none iterates a graph mid-edit.
+    # None for the library, which never changes.
+    lock: Optional[threading.RLock] = field(default=None, repr=False, compare=False)
     # Guards the one-time parse so two concurrent requests cannot both parse.
     _load_lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
@@ -334,11 +339,17 @@ class Ontology:
         chosen = display if display in self.languages else primary
         return (chosen, primary)
 
+    def reading(self):
+        """Hold while reading the graph: the edit lock for a project document,
+        nothing for the library."""
+        return self.lock if self.lock is not None else contextlib.nullcontext()
+
     def _cached(self, slot: str, key, build: Callable[[], object]):
         held = getattr(self, slot)
         if held is not None and held[0] == key:
             return held[1]
-        value = build()
+        with self.reading():
+            value = build()
         setattr(self, slot, (key, value))
         return value
 
@@ -392,7 +403,8 @@ class Ontology:
         """The document as text: the stored file, or a project document's
         current text. Documentation export and the source view read this."""
         if self.source_provider is not None:
-            return self.source_provider()
+            with self.reading():
+                return self.source_provider()
         return self.data_path.read_bytes()
 
     def query_schema(self) -> dict:

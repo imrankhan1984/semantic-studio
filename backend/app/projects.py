@@ -406,6 +406,26 @@ class ProjectStore:
         manifest = json.loads((target / MANIFEST).read_text(encoding="utf-8"))
         now = _now()
         manifest.update(id=new_id, name=f"{manifest['name']} (copy)", createdAt=now, updatedAt=now)
+        # Copied queries would keep the original's ontology id, so they would
+        # never list here, and share its query ids, so deleting one could
+        # delete the other project's (found in review). Each gets a new id and
+        # this project's document id.
+        queries = target / "queries"
+        if queries.is_dir():
+            for path in sorted(queries.glob("q-*.json")):
+                try:
+                    entry = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    path.unlink(missing_ok=True)
+                    continue
+                entry["id"] = "q-" + uuid.uuid4().hex[:12]
+                ontology_id = str(entry.get("ontologyId", ""))
+                if ontology_id.startswith(pid + "-"):
+                    entry["ontologyId"] = new_id + ontology_id[len(pid):]
+                (queries / f"{entry['id']}.json").write_text(
+                    json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                path.unlink()
         (target / MANIFEST).write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
         )
