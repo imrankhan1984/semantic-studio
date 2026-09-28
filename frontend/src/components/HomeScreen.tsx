@@ -55,6 +55,9 @@ INPUTS / INPUT SOURCES (props)
     - onLoaded: a catalogue entry finished downloading (the same callback the
       Load dialog uses).
     - onOpenDialog: hand the file and URL routes to the existing Load dialog.
+    - projects: the "My projects" section, rendered first; the library below
+      it is headed "Library (read-only)" (authoring-foundations 5.1).
+    - onStartProject: "Start a project from this" on each library card.
     Plus fetchOntology from api.ts for a catalogue pick, and CATALOGUE through
     CatalogueList.
 
@@ -64,7 +67,7 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { downloadDocumentation, fetchOntology } from "../api";
 import { triggerDownload } from "../download";
 import type { CatalogueEntry } from "../catalogue";
@@ -108,7 +111,7 @@ const PENDING_HEADING: Record<AppMode, string> = {
   query: "Choose an ontology to query",
   view: "Choose an ontology to view",
   hierarchy: "Choose an ontology to see its hierarchy",
-  home: "Your library",
+  home: "Library (read-only)",
 };
 
 interface Props {
@@ -129,6 +132,12 @@ interface Props {
   onRemove: (id: string) => void;
   onLoaded: (summary: OntologySummary) => void;
   onOpenDialog: (tab: "file" | "url") => void;
+  /** "My projects" (authoring-foundations), rendered first, above the
+   *  library. A slot rather than props here, because App owns the projects
+   *  and every action on them. */
+  projects?: ReactNode;
+  /** "Start a project from this" on each library card. */
+  onStartProject?: (id: string) => void;
 }
 
 /** What Tab may land on inside the confirmation dialog. Same selector as
@@ -179,6 +188,8 @@ export default function HomeScreen({
   onRemove,
   onLoaded,
   onOpenDialog,
+  projects,
+  onStartProject,
 }: Props) {
   // Which catalogue entry is downloading, and what went wrong last time. Both
   // are local: nothing above this component needs to know about a download that
@@ -420,7 +431,9 @@ export default function HomeScreen({
               : `${matching.length} ontologies match`
             : "";
 
-  const heading = pendingMode ? PENDING_HEADING[pendingMode] : "Your library";
+  // "Read-only" is in the heading because the library is where exploring FIBO
+  // can never change it; a project is where things change (Section 7).
+  const heading = pendingMode ? PENDING_HEADING[pendingMode] : "Library (read-only)";
 
   return (
     // Both class names on purpose. `start-screen` is what carries the layout
@@ -440,6 +453,8 @@ export default function HomeScreen({
         <div className="start-live" role="status" aria-live="polite">
           {announcement}
         </div>
+
+        {projects}
 
         <section className="start-section" aria-labelledby="home-library-heading">
           <div className="home-library-head">
@@ -527,6 +542,7 @@ export default function HomeScreen({
                   onViewSource={onViewSource}
                   onDownloadDocs={requestDocs}
                   onRemove={onRemove}
+                  onStartProject={onStartProject}
                 />
               ))}
             </div>

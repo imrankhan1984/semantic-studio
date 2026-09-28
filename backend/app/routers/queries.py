@@ -18,11 +18,17 @@ BASIC IDEA
     digits, because the store uses the id as a file name (backlog CF-5), and
     query text over the endpoint's 100 KB. The store checks the id again.
 
+    A query saved against a project document (a prj-<hex>-<doc> id) is kept
+    in that project's own queries/ folder and listed only there (5.9), so it
+    travels with the project's export and goes to the trash with it. Library
+    queries stay where they were.
+
 INPUTS / INPUT SOURCES
     - HTTP requests from the frontend's query panel.
     - JSON save bodies (name, ontologyId, mode, builder state or null, sparql,
       optional id).
-    - The shared `saved_queries` and `store` singletons.
+    - The shared `saved_queries` and `store` singletons, and each project's
+      own store through projects.ProjectStore.
 
 EXPECTED OUTPUT
     - JSON: a list of saved queries, a single saved entry, or a delete
@@ -41,7 +47,21 @@ from pydantic import BaseModel, Field
 from ..embedded_queries import MAX_TEXT_CHARS
 
 # The saved-query store, plus the ontology store to validate references.
+from ..editing import project_store
+from ..projects import UnknownProject, split_document_id
+from ..queries_store import SavedQueryStore
 from ..store import saved_queries, store
+
+
+def _store_for(ontology_id: Optional[str]) -> SavedQueryStore:
+    """The project's own store for a project document, else the library's."""
+    split = split_document_id(ontology_id or "")
+    if split is None:
+        return saved_queries
+    try:
+        return project_store.queries(split[0])
+    except UnknownProject as exc:
+        raise HTTPException(status_code=404, detail="There is no such project.") from exc
 
 # All routes hang off /api/queries.
 router = APIRouter(prefix="/api/queries", tags=["queries"])
@@ -64,7 +84,7 @@ class SaveQueryRequest(BaseModel):
 @router.get("")
 def list_queries(ontology: Optional[str] = Query(default=None)) -> list[dict]:
     """GET /api/queries[?ontology=id] -> saved queries, optionally for one ontology."""
-    return saved_queries.list(ontology_id=ontology)
+    return _store_for(ontology).list(ontology_id=ontology)
 
 
 @router.post("")
@@ -83,7 +103,7 @@ def save_query(request: SaveQueryRequest) -> dict:
     if request.mode == "visual" and request.state is None:
         raise HTTPException(status_code=400, detail="A visual query needs its builder state.")
     # Persist; the store keeps createdAt when id refers to an existing query.
-    return saved_queries.save(
+    return _store_for(request.ontologyId).save(
         name=request.name,
         ontology_id=request.ontologyId,
         ontology_name=ontology.name,
@@ -96,7 +116,13 @@ def save_query(request: SaveQueryRequest) -> dict:
 
 @router.delete("/{qid}")
 def delete_query(qid: str) -> dict:
-    """DELETE /api/queries/{qid} -> remove one saved query."""
-    if not saved_queries.delete(qid):
-        raise HTTPException(status_code=404, detail=f"Unknown query id: {qid}")
-    return {"deleted": qid}
+    """DELETE /api/queries/{qid} -> remove one saved query.
+
+    The id alone names it: the library is tried first, then each project's
+    store. Every one of them refuses an id outside the pattern before it
+    becomes a path.
+    """
+    for candidate in [saved_queries, *project_store.all_query_stores()]:
+        if candidate.delete(qid):
+            return {"deleted": qid}
+    raise HTTPException(status_code=404, detail=f"Unknown query id: {qid}")

@@ -3614,3 +3614,324 @@ button.legend-row:hover {
 .query-scope {
   margin: 0 0 6px;
 }
+
+/* --- projects and editing (authoring-foundations) ----------------------- */
+
+/* aria-disabled rather than disabled on the authoring controls, so they keep
+   focus and announce why; this is the visible half of that state. */
+.project-header button[aria-disabled="true"],
+.turtle-editor button[aria-disabled="true"],
+.confirm-dialog button[aria-disabled="true"],
+.project-card button[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.project-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.project-header button,
+.project-header select {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.project-name {
+  font-weight: 600;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The status is words; the left rule is decoration beside them, never the
+   only signal (Section 6: no state by colour alone). */
+.project-status {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-left: 3px solid var(--accent-3);
+  color: var(--text-dim);
+}
+
+.project-status-unsaved {
+  border-left-color: var(--accent-2);
+  color: var(--text);
+}
+
+.project-status-saving {
+  border-left-color: var(--accent);
+}
+
+.project-lang-wrap {
+  position: relative;
+}
+
+.project-lang-menu {
+  width: 320px;
+  padding: 10px 12px;
+  right: 0;
+  left: auto;
+}
+
+.project-lang-menu fieldset {
+  border: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.project-lang-menu legend {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.project-lang-menu label {
+  display: block;
+  padding: 3px 0;
+  font-size: 13px;
+}
+
+.project-lang-missing {
+  color: var(--text-dim);
+}
+
+.project-lang-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.project-lang-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.project-lang-add input {
+  width: 90px;
+}
+
+.project-card .project-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 4px 0 8px;
+}
+
+.project-rename {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  flex: 1;
+}
+
+.project-rename input {
+  flex: 1;
+  min-width: 120px;
+}
+
+/* The four authoring questions and the New project form: the approval
+   dialog's shape, one step above the Load dialog. */
+.confirm-backdrop {
+  z-index: 60;
+}
+
+.confirm-dialog {
+  position: fixed;
+  top: 12vh;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 61;
+  width: 460px;
+  max-width: calc(100vw - 32px);
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 22px 24px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px var(--shadow);
+}
+
+.confirm-title {
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.confirm-body p {
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+
+.new-project-dialog {
+  width: 520px;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.form-field label {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.form-field input,
+.form-field select {
+  font: inherit;
+  padding: 6px 8px;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.form-field input[aria-invalid="true"] {
+  border-color: var(--error);
+}
+
+.form-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.form-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--error-text);
+}
+
+.new-project-reason {
+  text-align: right;
+  margin-top: 6px;
+}
+
+/* The Turtle editor: the source view's overlay, with a line-number gutter
+   that scrolls with the text. */
+.turtle-state {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.turtle-state[data-state="edited"] {
+  color: var(--text);
+}
+
+.turtle-state[data-state="error"] {
+  color: var(--error-text);
+}
+
+.turtle-error {
+  flex: none;
+  margin: 8px 12px 0;
+  padding: 8px 12px;
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  border-radius: 8px;
+  color: var(--error-text);
+}
+
+.turtle-error p {
+  margin: 0;
+}
+
+.turtle-error pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  margin: 6px 0 0;
+}
+
+.turtle-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  margin: 8px 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.turtle-gutter {
+  flex: none;
+  overflow: hidden;
+  padding: 8px 8px 8px 10px;
+  text-align: right;
+  color: var(--text-dim);
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-soft);
+  user-select: none;
+}
+
+.turtle-gutter,
+.turtle-textarea {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.turtle-gutter-error {
+  color: var(--error-text);
+  font-weight: 700;
+}
+
+.turtle-textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  border: none;
+  outline-offset: -2px;
+  padding: 8px 10px;
+  color: var(--text);
+  background: transparent;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.turtle-help {
+  flex: none;
+  margin: 6px 12px 10px;
+}
+
+/* The detail panel's Names block: each project language and its name, with
+   "missing" written out and set in italics as well as dimmed. */
+.detail-names {
+  margin: 0 0 8px;
+}
+
+.detail-names > div {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.detail-names dt {
+  color: var(--text-dim);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+
+.detail-names dd {
+  margin: 0;
+}
+
+.detail-name-missing {
+  color: var(--text-dim);
+  font-style: italic;
+}

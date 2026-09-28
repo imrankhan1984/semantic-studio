@@ -247,6 +247,9 @@ export interface VizNode {
   // With imports on: the import that defines this entity. The graph draws it
   // smaller, so being imported is not told by colour alone (AC-21).
   importedFrom?: string;
+  // A project document's node: every name it has, in any language, which is
+  // what search matched on (D-085). Absent for the library.
+  names?: string[];
 }
 
 // One edge in the graph view.
@@ -433,6 +436,9 @@ export interface NodeDetails {
   incomingTotal: number;
   // With imports on, for an entity defined only in an import (AC-21).
   importedFrom?: string;
+  // A project document: each project language and the name in it, or null
+  // where the translation is missing (5.4.2).
+  names?: { lang: string; value: string | null }[];
 }
 
 /* --- theme-aware palettes ------------------------------------------------ */
@@ -647,4 +653,61 @@ export interface ImportFilesResult {
   mismatch: { file: string; declares: string | null; forIri: string }[];
   invalid: { file: string; error: string }[];
   imports: ImportsListing;
+}
+
+/* --- projects and editing (authoring-foundations) ------------------------ */
+
+// A project as the home screen lists it, from its manifest alone.
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  baseIri: string;
+  prefix: string;
+  primaryLanguage: string;
+  languages: string[];
+  documents: { file: string; role: ProjectDocName }[];
+  counts: { classes?: number; properties?: number; concepts?: number; triples?: number };
+}
+
+export type ProjectDocName = "model" | "shapes";
+
+export type ProjectTemplate = "empty" | "vocabulary" | "small";
+
+// An open document's state. `ontologyId` is what every existing view reads
+// it by (prj-<hex>-<doc>); `revision` keys every refetch (D-081).
+export interface ProjectDocumentState {
+  doc: ProjectDocName;
+  ontologyId: string;
+  revision: number;
+  dirty: boolean;
+  canUndo: boolean;
+  undoLabel: string | null;
+  canRedo: boolean;
+  redoLabel: string | null;
+  triples: number;
+}
+
+export interface OpenedProject {
+  project: ProjectSummary;
+  documents: ProjectDocumentState[];
+  recovery: { available: boolean; draftTime: string | null };
+}
+
+// A command, an apply, an undo or a redo.
+export interface ChangeResult {
+  revision: number;
+  label: string;
+  state: ProjectDocumentState;
+}
+
+export type SaveResult =
+  | { savedAt: string; state: ProjectDocumentState }
+  | { needsCommentsWarning: true; backup: string };
+
+export interface LanguageReport {
+  entities: number;
+  languages: string[];
+  missing: Record<string, number>;
 }

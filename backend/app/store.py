@@ -25,6 +25,14 @@ BASIC IDEA
     lazy loading above. Anything stored before it existed simply has no `card`,
     and nothing backfills one.
 
+    Every derived view is stored with the key it was built from -- the
+    ontology's `revision`, and for a project document its label languages --
+    and rebuilt when the key has moved (D-081). A library ontology never
+    changes revision, so for it nothing is ever rebuilt. A project document
+    (projects.py, editing.py) is an Ontology too, registered here under a
+    `prj-<hex>-<doc>` id while its project is open, so every read endpoint
+    serves it unchanged; it is kept out of `list()`, which is the library.
+
     A parse can be given a wall-clock timeout by the caller. It runs on a
     worker thread so the request can be released; the work itself cannot be
     killed, which is why the upload size cap matters (see D-013).
@@ -46,7 +54,7 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - Ontology objects with a stable id, metadata summary, and lazily parsed
-      graph, plus cached viz/schema/pretty views. A second cache,
+      graph, plus viz/schema/hierarchy/pretty views cached per revision. A second cache,
       `merged_cache`, holds the views over the file plus its resolved imports;
       imports.py fills it and it never mixes with the file-only one.
     - Raises ParseError for unparseable input and ParseTimeout when a bounded
@@ -69,6 +77,7 @@ from __future__ import annotations
 #   sys       - detect the operating system to pick the OS-standard data dir
 #   threading - locks so concurrent requests do not double-parse or corrupt state
 #   uuid      - generate stable, collision-free ontology ids
+import contextlib
 import contextvars
 import json
 import os
@@ -81,7 +90,7 @@ from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 # rdflib is the RDF engine: Graph holds triples; guess_format maps a filename
 # to an rdflib parser name.
@@ -272,7 +281,7 @@ def parse_rdf(
 class Ontology:
     """One loaded ontology: its identity, metadata, and lazily built views.
 
-    The heavy fields (graph and the three caches) are excluded from repr and
+    The heavy fields (graph and the caches) are excluded from repr and
     equality so debugging output stays small.
     """
 
@@ -283,18 +292,66 @@ class Ontology:
     meta: dict                 # persisted summary: triples, stats, namespaces, addedAt
     data_path: Path            # where the original bytes are stored on disk
     # --- lazily populated, cached derived products (None until first use) ---
+    # Each cache holds (key, value), the key being what the value was built
+    # from: the revision, and the label languages where names are shown.
+    # Nothing used to invalidate these, because nothing changed an ontology
+    # after loading it; editing does, and a view keyed on the revision cannot
+    # go stale.
     graph: Optional[Graph] = field(default=None, repr=False)          # parsed triples
-    viz_cache: Optional[dict] = field(default=None, repr=False)       # graph-view nodes/edges
-    schema_cache: Optional[dict] = field(default=None, repr=False)    # query-builder schema
-    hierarchy_cache: Optional[dict] = field(default=None, repr=False)  # subClassOf/broader forests
-    pretty_cache: Optional[str] = field(default=None, repr=False)     # re-serialized Turtle
+    viz_cache: Optional[tuple] = field(default=None, repr=False)      # graph-view nodes/edges
+    schema_cache: Optional[tuple] = field(default=None, repr=False)   # query-builder schema
+    hierarchy_cache: Optional[tuple] = field(default=None, repr=False)  # subClassOf/broader forests
+    pretty_cache: Optional[tuple] = field(default=None, repr=False)   # re-serialized Turtle
     # The same views over the file plus its resolved imports, built by
     # imports.py. A cache of its own rather than a second key inside the ones
     # above, so the file-only views cannot be served from a merged build or the
-    # other way round; dropped whole whenever the resolved closure changes.
+    # other way round; dropped whole whenever the resolved closure changes, and
+    # carrying the revision it was built at.
     merged_cache: Optional[dict] = field(default=None, repr=False)
+    # Moved by editing.py on every change to a project document. A library
+    # ontology stays at 0 for ever, which is what keeps its caches built once.
+    revision: int = 0
+    # True only for a project document.
+    editable: bool = False
+    # A project document's languages, primary first (D-085). None for the
+    # library, whose label choice stays as it was.
+    languages: Optional[tuple] = None
+    # A project document's current text, supplied by editing.py: the text last
+    # applied in the editor, or clean Turtle. The library reads its file.
+    source_provider: Optional[Callable[[], bytes]] = field(default=None, repr=False, compare=False)
+    # A project document's lock, which editing.py holds while it changes the
+    # graph. Views take it while they read, so none iterates a graph mid-edit.
+    # None for the library, which never changes.
+    lock: Optional[threading.RLock] = field(default=None, repr=False, compare=False)
     # Guards the one-time parse so two concurrent requests cannot both parse.
     _load_lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def label_langs(self, display: Optional[str] = None) -> Optional[tuple]:
+        """The ordered label languages for a view: display, then primary.
+
+        None for the library, which keeps English-then-untagged. A display
+        language the project does not carry falls back to the primary rather
+        than being refused, so a stale switch in the browser cannot break a view.
+        """
+        if not self.languages:
+            return None
+        primary = self.languages[0]
+        chosen = display if display in self.languages else primary
+        return (chosen, primary)
+
+    def reading(self):
+        """Hold while reading the graph: the edit lock for a project document,
+        nothing for the library."""
+        return self.lock if self.lock is not None else contextlib.nullcontext()
+
+    def _cached(self, slot: str, key, build: Callable[[], object]):
+        held = getattr(self, slot)
+        if held is not None and held[0] == key:
+            return held[1]
+        with self.reading():
+            value = build()
+        setattr(self, slot, (key, value))
+        return value
 
     def ensure_loaded(self) -> Graph:
         """Parse the persisted RDF on first use (lazy restore).
@@ -323,11 +380,14 @@ class Ontology:
         except (OSError, ValueError):
             return None
 
-    def viz(self) -> dict:
-        """Visualization nodes/edges for the graph view (built once, cached)."""
-        if self.viz_cache is None:
-            self.viz_cache = build_viz_graph(self.ensure_loaded())
-        return self.viz_cache
+    def viz(self, lang: Optional[str] = None) -> dict:
+        """Visualization nodes/edges for the graph view (cached per revision)."""
+        langs = self.label_langs(lang)
+        return self._cached(
+            "viz_cache",
+            (self.revision, langs),
+            lambda: build_viz_graph(self.ensure_loaded(), langs=langs),
+        )
 
     def pretty_turtle(self) -> str:
         """The graph re-serialized as tidy, prefixed Turtle (cached).
@@ -335,25 +395,36 @@ class Ontology:
         Re-serializing a large graph is expensive, and the viewer asks for
         it every time the format toggle is flipped.
         """
-        if self.pretty_cache is None:
-            self.pretty_cache = self.ensure_loaded().serialize(format="turtle")
-        return self.pretty_cache
+        return self._cached(
+            "pretty_cache", self.revision, lambda: self.ensure_loaded().serialize(format="turtle")
+        )
+
+    def source_bytes(self) -> bytes:
+        """The document as text: the stored file, or a project document's
+        current text. Documentation export and the source view read this."""
+        if self.source_provider is not None:
+            with self.reading():
+                return self.source_provider()
+        return self.data_path.read_bytes()
 
     def query_schema(self) -> dict:
         """Class-level schema for the visual query builder (cached)."""
-        if self.schema_cache is None:
-            self.schema_cache = build_query_schema(self.ensure_loaded())
-        return self.schema_cache
+        return self._cached(
+            "schema_cache", self.revision, lambda: build_query_schema(self.ensure_loaded())
+        )
 
-    def hierarchy(self) -> dict:
+    def hierarchy(self, lang: Optional[str] = None) -> dict:
         """The subClassOf / broader forests for the Hierarchy view (cached).
 
         Cached like query_schema for the same reason: the forest is a pure
         function of the graph and is read every time the Hierarchy tab opens.
         """
-        if self.hierarchy_cache is None:
-            self.hierarchy_cache = build_hierarchy(self.ensure_loaded())
-        return self.hierarchy_cache
+        langs = self.label_langs(lang)
+        return self._cached(
+            "hierarchy_cache",
+            (self.revision, langs),
+            lambda: build_hierarchy(self.ensure_loaded(), langs=langs),
+        )
 
     def summary(self) -> dict:
         """The lightweight JSON the frontend lists in the dropdown.
@@ -403,6 +474,10 @@ class OntologyStore:
         self.onto_dir.mkdir(parents=True, exist_ok=True)
         # In-memory index of id -> Ontology.
         self._items: dict[str, Ontology] = {}
+        # Open project documents, by their prj-<hex>-<doc> id. Apart from
+        # _items so the library list never shows one and removing a library
+        # entry can never reach a project.
+        self._documents: dict[str, Ontology] = {}
         # Guards mutations of _items against concurrent add/remove.
         self._lock = threading.Lock()
         # Register anything a previous session left on disk (without parsing).
@@ -514,7 +589,8 @@ class OntologyStore:
             meta=meta,
             data_path=data_path,
             graph=graph,
-            viz_cache=viz,
+            # Keyed as viz() keys it, so the first read does not rebuild.
+            viz_cache=((0, None), viz),
         )
         with self._lock:
             self._items[oid] = ontology
@@ -528,8 +604,17 @@ class OntologyStore:
         )
 
     def get(self, oid: str) -> Optional[Ontology]:
-        # Look up a loaded ontology by id, or None if unknown.
-        return self._items.get(oid)
+        # A loaded ontology, or an open project document, by id.
+        return self._items.get(oid) or self._documents.get(oid)
+
+    def register_document(self, ontology: Ontology) -> None:
+        """Serve an open project document through the ontology endpoints."""
+        with self._lock:
+            self._documents[ontology.id] = ontology
+
+    def unregister_document(self, oid: str) -> None:
+        with self._lock:
+            self._documents.pop(oid, None)
 
     def remove(self, oid: str) -> bool:
         """Unload the ontology and delete its persisted files.

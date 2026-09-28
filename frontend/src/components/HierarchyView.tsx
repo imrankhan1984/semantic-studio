@@ -48,6 +48,8 @@ INPUTS / INPUT SOURCES (props)
       click or a search pick does — so Explore shows its detail and the graph can
       draw it even when the budget left it out (AC-13).
     - imports: fetch the forests over the ontology plus its resolved imports.
+    - revision, language: a project document's revision and display language;
+      either moving refetches the forests and keeps expansion and filter.
 
 EXPECTED OUTPUT
     - The rendered tree(s), an empty state, or the loading / error treatments.
@@ -66,6 +68,11 @@ interface Props {
   selected: string | null;
   onSelect: (iri: string) => void;
   imports?: boolean;
+  /** A project document's revision and display language (authoring-
+   *  foundations). A change refetches the forests but keeps what the user
+   *  expanded and typed, so an edit does not collapse the tree. */
+  revision?: number;
+  language?: string | null;
 }
 
 /** Fixed row height, in pixels, shared by the CSS and the windowing maths. */
@@ -266,6 +273,8 @@ export default function HierarchyView({
   selected,
   onSelect,
   imports = false,
+  revision = 0,
+  language = null,
 }: Props) {
   const [data, setData] = useState<Hierarchy | null>(null);
   const [loading, setLoading] = useState(false);
@@ -298,6 +307,22 @@ export default function HierarchyView({
       cancelled = true;
     };
   }, [ontologyId, imports]);
+
+  // An edit or a language switch: the same ontology, new forests. Only the
+  // data is replaced; the first run is the effect above's.
+  const refreshKey = `${revision}|${language}`;
+  const lastRefresh = useRef(refreshKey);
+  useEffect(() => {
+    if (!ontologyId || lastRefresh.current === refreshKey) return;
+    lastRefresh.current = refreshKey;
+    let cancelled = false;
+    fetchHierarchy(ontologyId, imports)
+      .then((h) => !cancelled && setData(h))
+      .catch((e: unknown) => !cancelled && setError(e instanceof ApiError ? e.message : String(e)));
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
 
   const toggle = useCallback((id: string, next: boolean) => {
     setExpanded((prev) => {

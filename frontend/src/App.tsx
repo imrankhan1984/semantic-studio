@@ -91,6 +91,18 @@ BASIC IDEA
     builder and SPARQL all pass it to the server as ?imports=true. It is off
     unless the user turned it on, and remembered per ontology in this browser.
 
+    Projects (authoring-foundations) are the user's own work, opened from the
+    Home screen's first section. An open project document is just another
+    activeId -- prj-<hex>-<doc> -- so every view works on it unchanged; what
+    authoring adds lives in the project store (state/projectStore.ts, D-084)
+    rather than here. App keeps three jobs for it: the revision and display
+    language join the fetch keys, so every view refreshes after a change
+    (D-081); View mode becomes the Turtle editor; and every way out of an
+    edit asks first -- unapplied editor text asks "Apply, discard, or stay?",
+    unsaved changes ask "Save, discard, or stay?" -- because only App sees
+    both the edit and the way out. Mount now makes two requests: the ontology
+    list and the project list, both from metadata files.
+
     Removal is the one destructive action here, and it counts what it will
     destroy before it asks. Deleting an ontology has always deleted every query
     saved against it; onRemove now fetches that count first, puts it in the
@@ -110,15 +122,34 @@ EXPECTED OUTPUT
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
+  createProject,
   deleteOntology,
+  deleteProject,
+  downloadDocumentCopy,
+  duplicateProject,
+  exportProject,
   getGraph,
   getNeighborhood,
   grantNetwork,
   listImports,
   listOntologies,
+  listProjects,
   listSavedQueries,
   setApprovalHandler,
+  updateProject,
 } from "./api";
+import ConfirmDialog from "./components/ConfirmDialog";
+import NewProjectDialog, { type NewProjectRequest } from "./components/NewProjectDialog";
+import ProjectHeader from "./components/ProjectHeader";
+import ProjectsSection from "./components/ProjectsSection";
+import TurtleEditor from "./components/TurtleEditor";
+import { triggerDownload } from "./download";
+import {
+  activeDocument,
+  projectStore,
+  revisionOf,
+  useProjectSelector,
+} from "./state/projectStore";
 import AboutPanel from "./components/AboutPanel";
 import DetailPanel from "./components/DetailPanel";
 import ExploreStart from "./components/ExploreStart";
@@ -158,10 +189,25 @@ import type {
   ImportsListing,
   MergeResult,
   OntologySummary,
+  ProjectDocName,
+  ProjectSummary,
   Theme,
   VizGraph,
   VizNeighborhood,
 } from "./types";
+
+/** The 5.6 warning, word for word, before a commented file is rewritten. */
+const COMMENTS_WARNING =
+  "This file has comments. Saving after a visual change rewrites it in a standard " +
+  "layout and removes them.";
+
+/** "28 Sep 2026, 14:05" for the recovery question. */
+function when(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime())
+    ? iso
+    : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
 
 /** What a mode tab says when there is nothing for it to act on yet. The tabs
  *  used to be disabled here, which prevented the empty canvas by removing the
@@ -411,8 +457,40 @@ export default function App() {
     setImportsCount(resolvedCount(listing));
     setImportsVersion((v) => v + 1);
   }, []);
+  // The open project (authoring-foundations). Its revision and display
+  // language are part of every fetch key below, so a change refreshes the
+  // views; for a library ontology both are constant (0 and null).
+  // Read slice by slice: the editor's text is in the store too and changes on
+  // every keystroke, which must not re-render all of App.
+  const openProjectSummary = useProjectSelector((s) => s.project);
+  const projectDocuments = useProjectSelector((s) => s.documents);
+  const projectActiveDoc = useProjectSelector((s) => s.activeDoc);
+  const projectRecovery = useProjectSelector((s) => s.recovery);
+  const commentsWarning = useProjectSelector((s) => s.commentsWarning);
+  const projectSaving = useProjectSelector((s) => s.saving);
+  const projectDoc = activeDocument({ documents: projectDocuments, activeDoc: projectActiveDoc });
+  const revision = revisionOf({ documents: projectDocuments }, activeId);
+  const editingProjectDoc =
+    openProjectSummary !== null && projectDocuments.some((d) => d.ontologyId === activeId);
+  // Only a project document's views are named by it; a library ontology open
+  // beside a project ignores it, and must not refetch when it moves.
+  const storeLanguage = useProjectSelector((s) => s.displayLanguage);
+  const displayLanguage = editingProjectDoc ? storeLanguage : null;
+  // The project list, for the Home screen's first section.
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(true);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [projectBusyId, setProjectBusyId] = useState<string | null>(null);
+  // The New project form, and the library ontology it starts from, if any.
+  const [newProject, setNewProject] = useState<{ source?: string } | null>(null);
+  // The two questions an exit can need, each holding what to do on the way
+  // out once it is answered.
+  const [leaveEditor, setLeaveEditor] = useState<(() => void) | null>(null);
+  const [leaveProject, setLeaveProject] = useState<(() => void) | null>(null);
+  const [promptBusy, setPromptBusy] = useState(false);
+
   // The shared query-builder state; the schema is only fetched in Query mode.
-  const builder = useQueryBuilder(activeId, mode === "query", includeImports);
+  const builder = useQueryBuilder(activeId, mode === "query", includeImports, revision);
 
   // Apply and persist the theme whenever it changes (data-theme drives the CSS).
   useEffect(() => {
@@ -433,9 +511,33 @@ export default function App() {
       .finally(() => setListLoading(false));
   }, []);
 
+  // The project list, from manifests alone. The second of mount's two
+  // requests; like the ontology list it parses nothing.
+  const refreshProjects = useCallback(() => {
+    setProjectsError(null);
+    return listProjects()
+      .then((list) => setProjects(list))
+      .catch((e) => setProjectsError(String(e.message ?? e)))
+      .finally(() => setProjectsLoading(false));
+  }, []);
+
   useEffect(() => {
     refreshList();
-  }, [refreshList]);
+    void refreshProjects();
+  }, [refreshList, refreshProjects]);
+
+  // Unsaved changes survive a closed tab in the autosaved draft, but the
+  // browser's own question is still worth asking before the tab goes.
+  const anyDirty = projectDocuments.some((d) => d.dirty);
+  useEffect(() => {
+    if (!anyDirty) return;
+    const onUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  }, [anyDirty]);
 
   // Give the remove control its focus back when the count finishes.
   //
@@ -474,8 +576,14 @@ export default function App() {
   // Fetch the graph whenever the ontology or the requested budget changes.
   // The `cancelled` flag ignores a stale response if the user switches again
   // before it arrives.
+  // What the graph on screen was fetched for, so a refetch caused only by an
+  // edit or a language switch keeps it up until the new one arrives rather
+  // than blanking the canvas on every change (found in review).
+  const graphFor = useRef<string | null>(null);
   useEffect(() => {
-    setGraphData(null);
+    const identity = `${activeId}|${graphBudget}|${includeImports}`;
+    if (graphFor.current !== identity) setGraphData(null);
+    graphFor.current = identity;
     // A new graph response replaces the canvas, so everything expansions added
     // to the old one is gone with it. That is the documented way to shrink the
     // view back: reloading returns to the budgeted graph. Reset here rather
@@ -521,7 +629,16 @@ export default function App() {
     };
     // importsVersion only while the switch is on: a closure resolved with it
     // off changes nothing drawn, so it must not cost a refetch.
-  }, [activeId, graphBudget, includeImports, includeImports ? importsVersion : 0]);
+  }, [
+    activeId,
+    graphBudget,
+    includeImports,
+    includeImports ? importsVersion : 0,
+    // A project document's revision and display language: an edit, an undo
+    // or a language switch refetches the graph (D-081, D-085).
+    revision,
+    displayLanguage,
+  ]);
 
   // The query panel says what a query runs over, which needs the number of
   // resolved imports. Asked for in Query mode only, so neither mount nor
@@ -538,8 +655,24 @@ export default function App() {
     };
   }, [activeId, inQuery, importsCount]);
 
-  // The currently active ontology's summary (or null).
-  const active = ontologies.find((o) => o.id === activeId) ?? null;
+  // The currently active ontology's summary (or null). An open project
+  // document is not in the library list, so its summary is made from the
+  // project store: what the status bar and the query panel read.
+  const active: OntologySummary | null =
+    ontologies.find((o) => o.id === activeId) ??
+    (editingProjectDoc && projectDoc && openProjectSummary
+      ? {
+          id: projectDoc.ontologyId,
+          name: `${openProjectSummary.name} (${projectDoc.doc}.ttl)`,
+          source: "project",
+          format: "turtle",
+          triples: projectDoc.triples,
+          nodes: 0,
+          edges: 0,
+          kindCounts: {},
+          namespaces: {},
+        }
+      : null);
 
   // The home screen stands in for the whole main area, and there are two ways
   // to be on it: nothing is open, or the user pressed Home with something open.
@@ -585,10 +718,20 @@ export default function App() {
   // query being built all survive, because the alternative — treating Home as
   // "close everything" — would make it dangerous to press and would duplicate
   // "Close this ontology", which already exists and says what it does. D-026.
-  const goHome = useCallback(() => {
-    setPendingMode(null);
-    setMode("home");
+  // Unapplied text in the Turtle editor: ask before whatever would unmount it.
+  // Read from the store at the moment of asking, not subscribed to: App has no
+  // other reason to re-render while the user types.
+  const guardEditor = useCallback((then: () => void) => {
+    if (projectStore.getSnapshot().editorDraft !== null) setLeaveEditor(() => then);
+    else then();
   }, []);
+
+  const goHome = useCallback(() => {
+    guardEditor(() => {
+      setPendingMode(null);
+      setMode("home");
+    });
+  }, [guardEditor]);
 
   // Called by the Load dialog and the chooser's catalogue once an ontology is
   // loaded: add it and select it. Someone who deliberately loaded a file
@@ -913,16 +1056,20 @@ export default function App() {
   // by removing the choice instead of answering it.
   const onPickMode = useCallback(
     (next: AppMode) => {
-      setSourceTarget(null);
-      if (!activeId) {
-        setPendingMode(next);
-        setMode("home");
-        return;
-      }
-      setPendingMode(null);
-      setMode(next);
+      const go = () => {
+        setSourceTarget(null);
+        if (!activeId) {
+          setPendingMode(next);
+          setMode("home");
+          return;
+        }
+        setPendingMode(null);
+        setMode(next);
+      };
+      if (next === "view") go();
+      else guardEditor(go);
     },
-    [activeId],
+    [activeId, guardEditor],
   );
 
   // The distinct edge kinds present, for the legend's "relations" section.
@@ -978,6 +1125,204 @@ export default function App() {
       }
     }
   }, []);
+
+  // --- projects (authoring-foundations) -----------------------------------
+
+  const failed = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
+
+  // Leave the open project, asking "Save, discard, or stay?" when it has
+  // unsaved changes. `then` runs once the project is closed.
+  const exitProject = useCallback(
+    (then: () => void) => {
+      guardEditor(() => {
+        const state = projectStore.getSnapshot();
+        if (!state.project) {
+          then();
+          return;
+        }
+        if (state.documents.some((d) => d.dirty)) {
+          setLeaveProject(() => then);
+          return;
+        }
+        projectStore
+          .close()
+          .then(() => {
+            then();
+            void refreshProjects();
+          })
+          .catch(failed);
+      });
+    },
+    [guardEditor, refreshProjects],
+  );
+
+  const openProjectById = useCallback(
+    (pid: string) => {
+      const go = async () => {
+        setProjectBusyId(pid);
+        try {
+          const oid = await projectStore.open(pid);
+          enterMode(oid, "explore");
+        } catch (e: unknown) {
+          failed(e);
+        } finally {
+          setProjectBusyId(null);
+        }
+      };
+      const current = projectStore.getSnapshot().project;
+      if (current?.id === pid) {
+        enterMode(projectStore.getSnapshot().documents[0].ontologyId, "explore");
+        return;
+      }
+      if (current) exitProject(() => void go());
+      else void go();
+    },
+    [enterMode, exitProject],
+  );
+
+  // A library ontology opened while a project is open leaves the project.
+  const enterLibrary = useCallback(
+    (id: string, next: AppMode) => {
+      if (projectStore.getSnapshot().project) exitProject(() => enterMode(id, next));
+      else enterMode(id, next);
+    },
+    [enterMode, exitProject],
+  );
+
+  const onCreateProject = async (request: NewProjectRequest) => {
+    const created = await createProject(request);
+    setNewProject(null);
+    await refreshProjects();
+    openProjectById(created.id);
+  };
+
+  const onRenameProject = async (pid: string, name: string) => {
+    await updateProject(pid, { name });
+    await refreshProjects();
+    if (projectStore.getSnapshot().project?.id === pid) await projectStore.reload();
+  };
+
+  const onDuplicateProject = (pid: string) => {
+    setProjectBusyId(pid);
+    duplicateProject(pid)
+      .then((copy) => {
+        setNotice(`Made an independent copy: ${copy.name}.`);
+        return refreshProjects();
+      })
+      .catch(failed)
+      .finally(() => setProjectBusyId(null));
+  };
+
+  const onExportProject = (pid: string) => {
+    setProjectBusyId(pid);
+    exportProject(pid)
+      .then(({ blob, filename }) => triggerDownload(blob, filename))
+      .catch(failed)
+      .finally(() => setProjectBusyId(null));
+  };
+
+  // Delete moves the folder into the trash and says where: nothing is
+  // destroyed, and the confirmation says so before and after (5.1).
+  const onDeleteProject = (pid: string) => {
+    const project = projects.find((p) => p.id === pid);
+    const name = project?.name ?? "this project";
+    const question =
+      `Delete "${name}"? Its folder moves into projects/.trash/ in your ` +
+      "Semantic Studio data folder, where you can still recover it.";
+    if (!window.confirm(question)) return;
+    const run = () => {
+      setProjectBusyId(pid);
+      deleteProject(pid)
+        .then((result) => {
+          if (projectStore.getSnapshot().project?.id === pid) projectStore.reset();
+          setNotice(`Deleted "${name}". Its folder was moved to ${result.location} in your data folder; nothing was destroyed.`);
+          return refreshProjects();
+        })
+        .catch(failed)
+        .finally(() => setProjectBusyId(null));
+    };
+    if (projectStore.getSnapshot().project?.id === pid) {
+      exitProject(() => {
+        setActiveId(null);
+        run();
+      });
+    } else run();
+  };
+
+  const onSwitchDocument = (doc: ProjectDocName) => {
+    guardEditor(() => {
+      const target = projectStore.getSnapshot().documents.find((d) => d.doc === doc);
+      if (!target) return;
+      projectStore.switchDocument(doc);
+      setActiveId(target.ontologyId);
+    });
+  };
+
+  const onCloseProject = () =>
+    exitProject(() => {
+      setActiveId(null);
+      setMode("home");
+    });
+
+  const onSaveCopy = () => {
+    const state = projectStore.getSnapshot();
+    if (!state.project) return;
+    downloadDocumentCopy(state.project.id, state.activeDoc)
+      .then(({ blob, filename }) => triggerDownload(blob, filename))
+      .catch(failed);
+  };
+
+  // "Apply, discard, or stay?" (5.3), then whatever the user was leaving for.
+  const answerLeaveEditor = async (answer: string) => {
+    const then = leaveEditor;
+    if (answer === "stay" || !then) {
+      setLeaveEditor(null);
+      return;
+    }
+    if (answer === "apply") {
+      setPromptBusy(true);
+      try {
+        await projectStore.applyEditor();
+      } catch (e: unknown) {
+        // Invalid Turtle: nothing changed and nothing is lost. Stay, and let
+        // the editor's own error say where.
+        setPromptBusy(false);
+        setLeaveEditor(null);
+        failed(e);
+        return;
+      }
+      setPromptBusy(false);
+    } else {
+      projectStore.setEditorDraft(null);
+    }
+    setLeaveEditor(null);
+    then();
+  };
+
+  // "Save, discard, or stay?" (5.7), then whatever the user was leaving for.
+  const answerLeaveProject = async (answer: string) => {
+    const then = leaveProject;
+    if (answer === "stay" || !then) {
+      setLeaveProject(null);
+      return;
+    }
+    setPromptBusy(true);
+    try {
+      if (answer === "save" && (await projectStore.saveAll()) === "warning") {
+        // The comments question takes over; leaving waits for another try.
+        setLeaveProject(null);
+        return;
+      }
+      await projectStore.close(answer === "discard");
+      setLeaveProject(null);
+      then();
+      void refreshProjects();
+    } catch (e: unknown) {
+      failed(e);
+    } finally {
+      setPromptBusy(false);
+    }
+  };
 
   // Layout: a header (brand + nav rows), a main area (graph + right panel that
   // depends on the mode), a status bar, and the Load dialog when open.
@@ -1103,7 +1448,15 @@ export default function App() {
           {/* Keyed off `active`, not the list length: with a saved library and
               the chooser open there is nothing for the dropdown to select, and
               a select showing a blank row would look like a defect. */}
-          {active ? (
+          {editingProjectDoc ? (
+            <ProjectHeader
+              guard={guardEditor}
+              onSwitchDocument={onSwitchDocument}
+              onClose={onCloseProject}
+              onError={(message) => setError(message)}
+              onSaveCopy={onSaveCopy}
+            />
+          ) : active ? (
             <>
               <label className="context-label" htmlFor="ontology-select">
                 ONTOLOGY
@@ -1255,12 +1608,27 @@ export default function App() {
           workingId={removingId}
           pendingMode={pendingMode}
           onRetry={refreshList}
-          onOpen={(id) => enterMode(id, modeAfterPick())}
-          onEnterMode={enterMode}
-          onViewSource={(id) => enterMode(id, "view")}
+          onOpen={(id) => enterLibrary(id, modeAfterPick())}
+          onEnterMode={enterLibrary}
+          onViewSource={(id) => enterLibrary(id, "view")}
           onRemove={(id) => void onRemove(id)}
           onLoaded={onLoaded}
           onOpenDialog={openDialog}
+          onStartProject={(id) => setNewProject({ source: id })}
+          projects={
+            <ProjectsSection
+              projects={projects}
+              loading={projectsLoading}
+              error={projectsError}
+              busyId={projectBusyId}
+              onNew={() => setNewProject({})}
+              onOpen={openProjectById}
+              onRename={onRenameProject}
+              onDuplicate={onDuplicateProject}
+              onExport={onExportProject}
+              onDelete={onDeleteProject}
+            />
+          }
         />
       ) : mode === "hierarchy" ? (
         // Hierarchy replaces the graph rather than overlaying it: it is a tree,
@@ -1285,6 +1653,8 @@ export default function App() {
             selected={selected}
             onSelect={selectFromOutsideGraph}
             imports={includeImports}
+            revision={revision}
+            language={displayLanguage}
           />
           {selected === null ? (
             <aside className="detail-panel detail-empty" aria-label="Entity details">
@@ -1302,6 +1672,8 @@ export default function App() {
               onExpand={(entity) => void onExpand(entity)}
               expanding={expandingIri === selected}
               imports={includeImports}
+              revision={revision}
+              language={displayLanguage}
             />
           )}
         </main>
@@ -1351,13 +1723,23 @@ export default function App() {
           </div>
           {/* View sits over the graph rather than replacing it, so switching
               back to Explore does not throw away the settled layout. */}
-          {mode === "view" && (
-            <SourceView
-              ontologyId={activeId}
-              target={sourceTarget}
-              onTargetResolved={onSourceTargetResolved}
-            />
-          )}
+          {/* A project document's View is the Turtle editor, the expert's
+              door (5.3); a library ontology keeps the read-only source view
+              with its Original and Formatted toggle. */}
+          {mode === "view" &&
+            (editingProjectDoc && openProjectSummary && projectDoc ? (
+              <TurtleEditor
+                projectId={openProjectSummary.id}
+                doc={projectDoc.doc}
+                revision={revision}
+              />
+            ) : (
+              <SourceView
+                ontologyId={activeId}
+                target={sourceTarget}
+                onTargetResolved={onSourceTargetResolved}
+              />
+            ))}
           {mode === "query" ? (
             <QueryPanel
               ontologyId={activeId}
@@ -1392,6 +1774,8 @@ export default function App() {
                 onExpand={(entity) => void onExpand(entity)}
                 expanding={expandingIri === selected}
                 imports={includeImports}
+                revision={revision}
+                language={displayLanguage}
               />
             )
           ) : null}
@@ -1409,7 +1793,9 @@ export default function App() {
             <span>{countOf(graphData, "node", expanded)} nodes</span>
             <span>{countOf(graphData, "edge", expanded)} edges</span>
             <span className="dim">{active.format}</span>
-            {active.source !== "upload" && <span className="dim src">{active.source}</span>}
+            {active.source !== "upload" && active.source !== "project" && (
+              <span className="dim src">{active.source}</span>
+            )}
           </>
         ) : (
           <span className="dim">Load an ontology to begin — RDF, RDFS, OWL & SKOS supported.</span>
@@ -1426,6 +1812,100 @@ export default function App() {
           onClose={() => setDialogOpen(false)}
           initialTab={dialogTab}
         />
+      )}
+
+      {newProject && (
+        <NewProjectDialog
+          library={ontologies.map((o) => ({ id: o.id, name: o.name }))}
+          initialSource={newProject.source}
+          onCreate={onCreateProject}
+          onClose={() => setNewProject(null)}
+        />
+      )}
+
+      {projectRecovery && (
+        <ConfirmDialog
+          title="Recover unsaved changes?"
+          escape="later"
+          busy={promptBusy}
+          actions={[
+            { id: "discard", label: "Discard them", danger: true },
+            { id: "recover", label: "Recover", primary: true },
+          ]}
+          onAnswer={(answer) => {
+            if (answer === "later") {
+              projectStore.dismissRecovery();
+              return;
+            }
+            setPromptBusy(true);
+            projectStore
+              .recover(answer as "recover" | "discard")
+              .catch(failed)
+              .finally(() => setPromptBusy(false));
+          }}
+        >
+          <p>
+            This project has changes from {when(projectRecovery.draftTime)} that were
+            never saved. Recovering loads them as unsaved changes; the undo history is not
+            recovered.
+          </p>
+        </ConfirmDialog>
+      )}
+
+      {commentsWarning && (
+        <ConfirmDialog
+          title="Save and remove the comments?"
+          escape="cancel"
+          busy={projectSaving}
+          actions={[
+            { id: "cancel", label: "Don't save" },
+            { id: "save", label: "Save and keep a backup", primary: true },
+          ]}
+          onAnswer={(answer) => {
+            if (answer === "save") projectStore.save(true).catch(failed);
+            else projectStore.cancelCommentsWarning();
+          }}
+        >
+          <p>
+            {COMMENTS_WARNING} The current file will be kept as{" "}
+            <code>{commentsWarning.backup}</code>.
+          </p>
+        </ConfirmDialog>
+      )}
+
+      {leaveEditor && (
+        <ConfirmDialog
+          title="Apply your Turtle edits?"
+          escape="stay"
+          busy={promptBusy}
+          actions={[
+            { id: "stay", label: "Stay" },
+            { id: "discard", label: "Discard", danger: true },
+            { id: "apply", label: "Apply", primary: true },
+          ]}
+          onAnswer={(answer) => void answerLeaveEditor(answer)}
+        >
+          <p>The text in the editor has changes that are not applied yet. Apply, discard, or stay?</p>
+        </ConfirmDialog>
+      )}
+
+      {leaveProject && (
+        <ConfirmDialog
+          title="Save your changes?"
+          escape="stay"
+          busy={promptBusy}
+          actions={[
+            { id: "stay", label: "Stay" },
+            { id: "discard", label: "Discard", danger: true },
+            { id: "save", label: "Save", primary: true },
+          ]}
+          onAnswer={(answer) => void answerLeaveProject(answer)}
+        >
+          <p>
+            {openProjectSummary?.name ?? "This project"} has unsaved changes. Save, discard, or
+            stay?
+          </p>
+        </ConfirmDialog>
       )}
 
       {/* Last, so it stacks over the Load dialog that usually caused it. */}

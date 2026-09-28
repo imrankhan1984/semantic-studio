@@ -49,7 +49,8 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES
     - A store.Ontology (its parsed graph, its complete viz dict, its name,
-      format, original bytes at data_path and pretty-printed Turtle).
+      format, original bytes at data_path -- or a project document's current
+      draft, through source_bytes() -- and pretty-printed Turtle).
     - The static viewer assets in docs_assets/ (graph.js, styles.css).
 
 EXPECTED OUTPUT
@@ -1002,7 +1003,9 @@ def build_zip(ontology, include_individuals: bool = False) -> bytes:
         raise OversizeGraphError(size)
 
     # The exact original bytes are preserved (D-041/AC-18), guarded independently.
-    source_bytes = ontology.data_path.read_bytes()
+    # For a project document the "original" is its current draft, not the file
+    # last saved: the documentation describes what the user is looking at.
+    source_bytes = ontology.source_bytes()
     if len(source_bytes) > MAX_SOURCE_BYTES:
         raise OversizeSourceError(len(source_bytes))
     source_ext = _source_extension(ontology.format)

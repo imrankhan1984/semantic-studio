@@ -860,3 +860,63 @@ EXPECTED OUTPUT
   width* if the container measures zero at mount — an environment timing artifact
   of the WebGL canvas, **not** a Hierarchy defect (the tree mounts no Sigma). It
   clears on reload once the viewport has a real width.
+
+- **Authoring foundations: projects, editing and the Turtle editor**
+  (2026-09-28, spec `authoring-foundations`, backlog E-6, decisions D-081 to
+  D-085). A project is a folder under `<data dir>/projects/` with a
+  `project.json` manifest; opened, each document is an `Ontology` registered
+  in the store under `prj-<hex>-<doc>`, so every read endpoint serves it
+  unchanged. Only `editing.py` changes one: typed commands with triple deltas,
+  the whole-text Turtle apply, a 200-step undo, save under formatting option A,
+  a two-second autosave to `.draft/`, and recovery from that draft.
+
+  **Seven things are load-bearing.** **Every derived view on `Ontology` is
+  `(key, value)`**, the key being the revision (and, where names show, the
+  label languages); nothing else invalidated them, because nothing had ever
+  changed an ontology after loading it, and an edit would otherwise leave the
+  graph, the tree and the query builder on the old model. A library ontology
+  stays at revision 0 for ever, and `test_cache_invalidation.py` counts builder
+  calls to prove it never rebuilds. **Only `editing.py` mutates a document's
+  graph**: `test_no_direct_mutation.py` parses every module with `ast` and
+  fails on a mutating call on an ontology's graph anywhere else, after proving
+  it catches a planted one. **A project id is matched with `fullmatch` before
+  it becomes a path, and an id the server did not issue is 404 on every route**
+  -- the path-attack test in `test_projects.py` reads the routes from OpenAPI,
+  and it found `close` answering 200 for `..\..\ontologies` before the fix.
+  **The Turtle editor's unapplied text lives in the project store, not in the
+  editor**, because leaving it is App's to ask about ("Apply, discard, or
+  stay?") before the editor unmounts. **The project store is module state**, so
+  a test that renders App must `cleanup()` between tests: `App.test.tsx`
+  emptied the body without unmounting, and seventy detached Apps answered one
+  store change with seventy graph requests. **The authoring controls use
+  `aria-disabled`, not `disabled`**: pressing Undo until the stack is empty
+  would otherwise disable the button holding focus. **`pick_label` tests the
+  exact `en` tag before the BCP 47 prefix match**: the prefix match on every
+  label cost about 8% of a 40,000-node library build; with the exact test first
+  the medians are 962 ms before and 972 ms after, interleaved.
+
+  Two measured facts worth not rediscovering. rdflib normalises some lexical
+  forms when a literal is made -- a `dateTime` ending `Z` becomes `+00:00` --
+  so a typed value round-trips exactly from what was stored, not from what was
+  typed. And a page with unsaved changes raises the browser's `beforeunload`
+  question on purpose, so a headless driver navigating away must answer it
+  (`Page.handleJavaScriptDialog`) or its `Page.navigate` times out.
+
+  **The code review of the branch found ten defects, all fixed with a test that
+  fails without the fix**, and four are rules now. **`_change` must leave a
+  triple that is in both adds and removes where it is**: the first version put
+  it in `removed` only, so `SetLabel` to the label a class already had deleted
+  the label. **Views read a project document under `Ontology.reading()`**, the
+  re-entrant lock `editing.py` takes, or a graph build iterates a graph an
+  apply is changing. **The autosave timer moves nothing on disk unless the
+  generation it started with is still current**, checked again after it
+  serialises: a save or a discard in between used to leave a draft that was
+  then offered for recovery. **App reads the project store by selector**: the
+  editor's text is in the store, and a whole-snapshot subscription re-rendered
+  all of App on every keystroke. The other six: a duplicate's saved queries
+  get their own ids and the copy's document id; deleting an entity takes whole
+  any anonymous expression that mentions it (a restriction on another class,
+  a list in a union); a command builds the imports view only when a target is
+  not in the document; Undo, Redo and Save ask about unapplied Turtle first;
+  saving every document leaves the active one where it was; and switching
+  document empties the editor until the new text arrives.

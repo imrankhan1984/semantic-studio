@@ -1,0 +1,22 @@
+@prefix {{prefix}}: <{{base}}> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+
+<{{ontology}}> a owl:Ontology ;
+    rdfs:label "{{name}}"@{{lang}} .
+
+{{prefix}}:Scheme a skos:ConceptScheme ;
+    skos:prefLabel "{{name}}"@{{lang}} ;
+    skos:hasTopConcept {{prefix}}:Animal .
+
+{{prefix}}:Animal a skos:Concept ;
+    skos:prefLabel "Animal"@{{lang}} ;
+    skos:definition "A living organism that feeds on organic matter."@{{lang}} ;
+    skos:inScheme {{prefix}}:Scheme ;
+    skos:topConceptOf {{prefix}}:Scheme .
+
+{{prefix}}:Dog a skos:Concept ;
+    skos:prefLabel "Dog"@{{lang}} ;
+    skos:broader {{prefix}}:Animal ;
+    skos:inScheme {{prefix}}:Scheme .

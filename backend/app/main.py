@@ -29,8 +29,8 @@ INPUTS / INPUT SOURCES
     - Environment variable STATIC_DIR: optional override for where the built
       frontend lives. In Docker this is set to /app/static.
     - The upload cap, read from the ontologies router at request time.
-    - The three router modules (ontologies, queries, network) which define
-      the actual endpoints.
+    - The four router modules (ontologies, queries, network, projects) which
+      define the actual endpoints.
 
 EXPECTED OUTPUT
     - A configured `app` object that uvicorn imports and runs (see the Docker
@@ -70,7 +70,7 @@ from fastapi.staticfiles import StaticFiles
 # (ontologies vs saved queries) keeps this file small.
 from .local_guard import LocalOnlyMiddleware
 from .network_broker import ApprovalRequired, GrantScopeMiddleware, HostBlocked, Offline
-from .routers import network, ontologies, queries
+from .routers import network, ontologies, projects, queries
 
 # Create the application. The title/version surface in the auto-generated
 # OpenAPI docs at /docs.
@@ -106,13 +106,20 @@ async def refuse_oversized_bodies(request: Request, call_next):
     held to the imports closure's 150 MB. Both endpoints still enforce the real
     size while reading; this is the half that runs before FastAPI buffers the
     body (D-015).
+
+    The Turtle editor's apply (authoring-foundations) is a third: typed Turtle
+    is the same input as an uploaded file and keeps the upload cap.
     """
-    if request.method != "POST":
+    if request.method not in ("POST", "PUT"):
         return await call_next(request)
     path = request.url.path
     limit: Optional[int] = None
     detail = ""
-    if path == "/api/ontologies/upload":
+    if request.method == "PUT":
+        if _SOURCE_PATH.match(path):
+            limit = ontologies.MAX_UPLOAD_BYTES
+            detail = ontologies.too_large_detail(limit, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES")
+    elif path == "/api/ontologies/upload":
         limit = ontologies.MAX_UPLOAD_BYTES
         detail = ontologies.too_large_detail(limit, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES")
     elif _IMPORT_FILES_PATH.match(path):
@@ -131,6 +138,7 @@ async def refuse_oversized_bodies(request: Request, call_next):
 # The one parameterised multipart route. Matched rather than compared, because
 # the ontology id is in the path.
 _IMPORT_FILES_PATH = re.compile(r"^/api/ontologies/[^/]+/imports/files$")
+_SOURCE_PATH = re.compile(r"^/api/projects/[^/]+/documents/[^/]+/source$")
 
 
 # Carries a just-once grant from the X-Semantic-Studio-Grant header to the
@@ -150,6 +158,7 @@ app.add_middleware(LocalOnlyMiddleware)
 app.include_router(ontologies.router)
 app.include_router(queries.router)
 app.include_router(network.router)
+app.include_router(projects.router)
 
 
 # The broker's three policy decisions, mapped once for every route. They can

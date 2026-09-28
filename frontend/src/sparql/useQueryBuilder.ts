@@ -190,7 +190,14 @@ export interface TextQuery {
 }
 
 /** The hook itself: owns the builder state and exposes state + actions. */
-export function useQueryBuilder(ontologyId: string | null, active: boolean, imports = false) {
+export function useQueryBuilder(
+  ontologyId: string | null,
+  active: boolean,
+  imports = false,
+  // A project document's revision (authoring-foundations): the schema is
+  // fetched again when an edit moves it. 0 for the library, which never does.
+  revision = 0,
+) {
   const [schema, setSchema] = useState<QuerySchema | null>(null);      // class-level schema
   const [schemaError, setSchemaError] = useState<string | null>(null); // schema fetch error
   const [loadingSchema, setLoadingSchema] = useState(false);
@@ -227,7 +234,7 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean, impo
   // fetched for the other setting would offer steps the query cannot use. The
   // query being built is kept across the switch; only the schema is replaced.
   useEffect(() => {
-    const key = `${ontologyId}|${imports}`;
+    const key = `${ontologyId}|${imports}|${revision}`;
     if (!active || !ontologyId || requestedFor.current === key) return;
     requestedFor.current = key;
     setLoadingSchema(true);
@@ -243,7 +250,7 @@ export function useQueryBuilder(ontologyId: string | null, active: boolean, impo
     return () => {
       cancelled = true;
     };
-  }, [active, ontologyId, imports]);
+  }, [active, ontologyId, imports, revision]);
 
   // The live SPARQL, regenerated whenever the state or namespaces change.
   const sparql = useMemo(

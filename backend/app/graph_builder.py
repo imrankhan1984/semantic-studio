@@ -43,13 +43,16 @@ EXPECTED OUTPUT
     - node_details -> every outgoing/incoming statement for one IRI (or None).
     - search_nodes -> ranked node matches for the search box.
     - pick_label / prefixed are imported by query_schema.py and sparql_exec.py.
+    - labeler / lang_matches choose a project document's names in its display
+      language, falling back to the primary one marked "(en)" (D-085); a
+      library ontology keeps pick_label's rule.
 ================================================================================
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Optional
+from typing import Callable, Optional, Sequence
 
 from rdflib import Graph, Literal, URIRef, BNode
 from rdflib.namespace import DC, DCTERMS, OWL, RDF, RDFS, SKOS, XSD
@@ -167,18 +170,93 @@ def _local_name(iri: str) -> str:
     return iri
 
 
+def lang_matches(tag: Optional[str], wanted: str) -> bool:
+    """BCP 47 prefix matching: `en` accepts `en`, `en-US` and `en-GB`.
+
+    Case-insensitive, as tags are. An exact-string test treated "Invoice"@en-US
+    as foreign under an English preference, which is the defect D-085 fixes.
+    """
+    if not tag:
+        return False
+    tag, wanted = tag.lower(), wanted.lower()
+    return tag == wanted or tag.startswith(wanted + "-")
+
+
+def pick_label_in(graph: Graph, node: URIRef, langs: Sequence[str]) -> tuple[str, Optional[str]]:
+    """The label for an ordered language list, and the tag it was found in.
+
+    Language order dominates predicate order here, unlike the library's rule:
+    a French rdfs:label is the French name even when the English one is a
+    skos:prefLabel. Then untagged, then any other language, then the local
+    name. The tag comes back so a caller can mark a fallback as one: "" for
+    untagged and None for the local name.
+    """
+    for lang in langs:
+        for predicate in LABEL_PREDICATES:
+            for value in graph.objects(node, predicate):
+                if isinstance(value, Literal) and lang_matches(value.language, lang):
+                    return str(value), value.language
+    fallback: Optional[tuple[str, Optional[str]]] = None
+    for predicate in LABEL_PREDICATES:
+        for value in graph.objects(node, predicate):
+            if isinstance(value, Literal):
+                if not value.language:
+                    return str(value), ""
+                if fallback is None:
+                    fallback = (str(value), value.language)
+    if fallback is not None:
+        return fallback
+    return _local_name(str(node)), None
+
+
+def labeler(graph: Graph, langs: Optional[Sequence[str]]) -> Callable[[URIRef], str]:
+    """The label function for a view: the library's, or a project's (D-085).
+
+    `langs` is (display, primary). Where the display language has no name the
+    primary one is shown marked "(en)" in text, so a fallback is never mistaken
+    for a translation.
+    """
+    if not langs:
+        return lambda node: pick_label(graph, node)
+    display, primary = langs[0], langs[-1]
+
+    def label(node: URIRef) -> str:
+        text, tag = pick_label_in(graph, node, langs)
+        if display != primary and tag and not lang_matches(tag, display):
+            return f"{text} ({primary if lang_matches(tag, primary) else tag})"
+        return text
+
+    return label
+
+
+def all_names(graph: Graph, node: URIRef) -> list[str]:
+    """Every label literal of an entity, in every language, for search."""
+    return [
+        str(value)
+        for predicate in LABEL_PREDICATES
+        for value in graph.objects(node, predicate)
+        if isinstance(value, Literal)
+    ]
+
+
 def pick_label(graph: Graph, node: URIRef) -> str:
     """Preferred human label: skos:prefLabel > rdfs:label > titles > local name.
 
     Prefers an English (or untagged) label, but remembers the first
-    other-language value as a fallback so nothing is left unlabelled.
+    other-language value as a fallback so nothing is left unlabelled. English
+    matches by prefix, so an en-US or en-GB label counts as English (D-085);
+    otherwise this is the library's rule exactly as it was.
     """
     fallback: Optional[str] = None
     for predicate in LABEL_PREDICATES:
         for value in graph.objects(node, predicate):
             if isinstance(value, Literal):
                 # Untagged or English label: use it immediately.
-                if value.language in (None, "en") :
+                # The exact test first: nearly every label is untagged or "en",
+                # and the prefix match cost 8% of a 40,000-node build when it
+                # ran for all of them.
+                tag = value.language
+                if tag is None or tag == "en" or lang_matches(tag, "en"):
                     return str(value)
                 # Otherwise keep the first foreign-language label as a backup.
                 if fallback is None:
@@ -231,13 +309,18 @@ def subclass_parents(graph: Graph) -> dict[URIRef, set[URIRef]]:
     return parents
 
 
-def build_viz_graph(graph: Graph) -> dict:
+def build_viz_graph(graph: Graph, langs: Optional[Sequence[str]] = None) -> dict:
     """Extract nodes and edges for visualization from an rdflib graph.
 
     Walks the triples in three passes and returns JSON-ready nodes, edges and
     summary stats. Node "kind" is accumulated as a set during the passes and
     collapsed to the best single kind at the end.
+
+    With `langs` (a project document's display and primary languages) each
+    node is labelled in the display language and carries `names`, every label
+    it has in any language, so search matches all of them whatever is shown.
     """
+    label = labeler(graph, langs)
     # kinds: every kind we have seen for each entity (collapsed later).
     kinds: dict[URIRef, set[str]] = defaultdict(set)
     # edges: a set (dedupes) of (source, edge-kind, target, label) tuples.
@@ -320,12 +403,15 @@ def build_viz_graph(graph: Graph) -> dict:
     nodes = [
         {
             "id": str(iri),
-            "label": pick_label(graph, iri),
+            "label": label(iri),
             "kind": _best_kind(ks),
             "degree": degree.get(iri, 0),
         }
         for iri, ks in kinds.items()
     ]
+    if langs:
+        for node, iri in zip(nodes, kinds):
+            node["names"] = all_names(graph, iri)
     # Build the JSON edge list from the deduped edge tuples.
     edge_list = [
         {"source": str(src), "target": str(dst), "kind": kind, "label": label}
@@ -571,12 +657,22 @@ def _term_json(graph: Graph, term) -> dict:
     return {"type": "unknown", "value": str(term)}
 
 
-def node_details(graph: Graph, iri: str, limit: int = 500) -> Optional[dict]:
+def node_details(
+    graph: Graph,
+    iri: str,
+    limit: int = 500,
+    langs: Optional[Sequence[str]] = None,
+    languages: Optional[Sequence[str]] = None,
+) -> Optional[dict]:
     """Every statement about one entity, for the detail panel.
 
     Returns outgoing statements (iri as subject) and incoming ones (iri as
     object), each capped at `limit` rows but with the true totals reported so
     the UI can say "showing 500 of N". Returns None if the IRI has no triples.
+
+    For a project document, `langs` picks the title's language and `languages`
+    (the project's, primary first) adds `names`: each language with its name
+    or None, which the panel shows as missing.
     """
     ref = URIRef(iri)
     outgoing = []
@@ -602,15 +698,29 @@ def node_details(graph: Graph, iri: str, limit: int = 500) -> Optional[dict]:
     # Nothing references or is stated about this IRI -> not a real entity.
     if out_total == 0 and in_total == 0:
         return None
-    return {
+    result = {
         "iri": iri,
         "prefixed": prefixed(graph, ref),
-        "label": pick_label(graph, ref),
+        "label": labeler(graph, langs)(ref),
         "outgoing": outgoing,
         "incoming": incoming,
         "outgoingTotal": out_total,
         "incomingTotal": in_total,
     }
+    if languages:
+        result["names"] = [
+            {"lang": lang, "value": name_in(graph, ref, lang)} for lang in languages
+        ]
+    return result
+
+
+def name_in(graph: Graph, node: URIRef, lang: str) -> Optional[str]:
+    """An entity's name in one language (prefix-matched), or None if missing."""
+    for predicate in LABEL_PREDICATES:
+        for value in graph.objects(node, predicate):
+            if isinstance(value, Literal) and lang_matches(value.language, lang):
+                return str(value)
+    return None
 
 
 def search_nodes(viz: dict, query: str, limit: int = 25) -> list[dict]:
@@ -628,9 +738,12 @@ def search_nodes(viz: dict, query: str, limit: int = 25) -> list[dict]:
     for node in viz["nodes"]:
         label = node["label"].lower()
         iri = node["id"].lower()
-        if label.startswith(q):
+        # A project document's nodes carry every name they have, so a French
+        # name is found while English is displayed (D-085).
+        names = [n.lower() for n in node.get("names", ())]
+        if label.startswith(q) or any(n.startswith(q) for n in names):
             starts.append(node)
-        elif q in label or q in iri:
+        elif q in label or q in iri or any(q in n for n in names):
             contains.append(node)
         # Stop early once we have enough strong (prefix) matches.
         if len(starts) >= limit:

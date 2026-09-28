@@ -41,6 +41,9 @@ INPUTS / INPUT SOURCES (props)
     - busy: something on the screen is working; every control is inert.
     - working: THIS entry is the one being worked on.
     - onOpen / onEnterMode / onViewSource / onRemove: what the controls do.
+    - onStartProject: "Start a project from this" (authoring-foundations), the
+      explicit way to get an editable copy of a read-only library entry.
+      Omitted, the menu item is absent.
 
 EXPECTED OUTPUT
     - One <article> with a heading, a picture, chips, a composition bar, three
@@ -68,6 +71,7 @@ interface Props {
   onViewSource: (id: string) => void;
   onDownloadDocs: (id: string) => void;
   onRemove: (id: string) => void;
+  onStartProject?: (id: string) => void;
 }
 
 /** The three verbs, in the header's own order so the two places a user meets
@@ -107,6 +111,7 @@ function OntologyCard({
   onViewSource,
   onDownloadDocs,
   onRemove,
+  onStartProject,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const headingId = useId();
@@ -276,6 +281,19 @@ function OntologyCard({
                   >
                     Download documentation
                   </button>
+                  {onStartProject && (
+                    // Opens the New project form over this screen; closeMenu
+                    // first so its focus trap records the stable ⋮ button as
+                    // what to return to, as Download documentation does.
+                    <button
+                      onClick={() => {
+                        closeMenu();
+                        onStartProject(summary.id);
+                      }}
+                    >
+                      Start a project from this
+                    </button>
+                  )}
                   <button
                     className="danger"
                     onClick={() => {

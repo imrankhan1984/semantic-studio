@@ -55,7 +55,8 @@ EXPECTED OUTPUT
       status (builtin / unresolved / resolved / failed / blocked), source,
       provenance and any reason, plus the limit reached if one was.
     - MergedView instances and the derived views built over them, cached on the
-      Ontology beside the file-only ones and never mixed with them.
+      Ontology beside the file-only ones and never mixed with them, and
+      rebuilt when a project document's revision moves.
     - Entities defined only in an import, named by the import that defines
       them, so the interface can say "Imported from FOAF".
 ================================================================================
@@ -985,7 +986,9 @@ class ImportsService:
         toggle on before resolving shows exactly the file.
         """
         cache = ontology.merged_cache
-        if cache is not None and "view" in cache:
+        # Keyed on the revision as well as dropped by save_state: an edit to a
+        # project document changes the file's half of the merge (D-081).
+        if cache is not None and "view" in cache and cache.get("revision") == ontology.revision:
             return cache["view"]
         own = ontology.ensure_loaded()
         state = load_state(ontology)
@@ -998,14 +1001,15 @@ class ImportsService:
                 docs.append((graph, row.get("sourceName") or row["iri"]))
         view = MergedView([own] + [g for g, _ in docs])
         imported: dict[str, str] = {}
-        subjects = view.subjects_by_document()
+        with ontology.reading():
+            subjects = view.subjects_by_document()
         own_subjects = subjects[0]
         for (_, name), held in zip(docs, subjects[1:]):
             for subject in held:
                 if isinstance(subject, URIRef) and subject not in own_subjects:
                     imported.setdefault(str(subject), name)
         built = {"graph": view, "importedFrom": imported, "documents": len(docs)}
-        ontology.merged_cache = {"view": built}
+        ontology.merged_cache = {"view": built, "revision": ontology.revision}
         return built
 
     def _graph_for(self, ref: dict, parse_timeout) -> Optional[Graph]:
@@ -1027,30 +1031,39 @@ class ImportsService:
             return None
         return None
 
-    def derived(self, ontology: Ontology, name: str, build: Callable[[Graph], dict]) -> dict:
+    def derived(self, ontology: Ontology, name, build: Callable[[Graph], dict]) -> dict:
         """A view built over the merged graph, cached beside it (never beside the
         file-only caches, which is the second key the spec asks for)."""
         view = self.merged(ontology)
         cache = ontology.merged_cache
         if name not in cache:
-            cache[name] = build(view["graph"])
+            with ontology.reading():
+                cache[name] = build(view["graph"])
         return cache[name]
 
 
-def merged_viz(ontology: Ontology, parse_timeout: Optional[float] = None) -> dict:
+def merged_viz(
+    ontology: Ontology, parse_timeout: Optional[float] = None, lang: Optional[str] = None
+) -> dict:
     """The graph view's nodes and edges over the merged view, imported marked."""
     view = imports_service.merged(ontology, parse_timeout)
+    langs = ontology.label_langs(lang)
     return imports_service.derived(
-        ontology, "viz", lambda g: mark_imported_viz(build_viz_graph(g), view["importedFrom"])
+        ontology,
+        ("viz", langs),
+        lambda g: mark_imported_viz(build_viz_graph(g, langs=langs), view["importedFrom"]),
     )
 
 
-def merged_hierarchy(ontology: Ontology, parse_timeout: Optional[float] = None) -> dict:
+def merged_hierarchy(
+    ontology: Ontology, parse_timeout: Optional[float] = None, lang: Optional[str] = None
+) -> dict:
     view = imports_service.merged(ontology, parse_timeout)
+    langs = ontology.label_langs(lang)
     return imports_service.derived(
         ontology,
-        "hierarchy",
-        lambda g: mark_imported_hierarchy(build_hierarchy(g), view["importedFrom"]),
+        ("hierarchy", langs),
+        lambda g: mark_imported_hierarchy(build_hierarchy(g, langs=langs), view["importedFrom"]),
     )
 
 

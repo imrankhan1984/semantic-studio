@@ -51,14 +51,20 @@ EXPECTED OUTPUT
       explore-mode-starting-point, AC-1 to AC-8 and AC-12 of
       result-navigation, AC-1 to AC-4, AC-11 and AC-13 of about-panel, and
       the approval and Network-control glue of external-access Stage 1
-      (AC-7 to AC-10 as App sees them, and the unchanged mount budget).
+      (AC-7 to AC-10 as App sees them, and the unchanged mount budget), and
+      authoring-foundations as App sees it: mount now asks for the project
+      list too, a project document flows through Explore, Query, Hierarchy
+      and View with its revision in the fetch keys (AC-5, AC-16), and every
+      way out of an edit asks first (AC-9, the close prompt, recovery and the
+      comments warning -- AC-12, AC-13).
 ================================================================================
 */
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { ApiError } from "./api";
+import { projectStore } from "./state/projectStore";
 // The stylesheet as text, for the one assertion jsdom cannot make: that the
 // skip link is clipped until it takes focus. `test: { css: true }` in
 // vite.config.ts is what makes this import real rather than "" — see the trap
@@ -88,6 +94,15 @@ const {
   getNetworkPolicy,
   getNetworkActivity,
   listImports,
+  listProjects,
+  openProject,
+  closeProject,
+  createProject,
+  getDocumentSource,
+  applyDocumentSource,
+  undoChange,
+  saveDocument,
+  recoverProject,
 } = vi.hoisted(() => ({
   listOntologies: vi.fn(),
   getGraph: vi.fn(),
@@ -117,6 +132,16 @@ const {
   // external-access Stage 2. The imports panel reads this in View and
   // Hierarchy modes, and Query mode reads it for the "Querying ..." sentence.
   listImports: vi.fn(),
+  // authoring-foundations. listProjects is mount's second request.
+  listProjects: vi.fn(),
+  openProject: vi.fn(),
+  closeProject: vi.fn(),
+  createProject: vi.fn(),
+  getDocumentSource: vi.fn(),
+  applyDocumentSource: vi.fn(),
+  undoChange: vi.fn(),
+  saveDocument: vi.fn(),
+  recoverProject: vi.fn(),
 }));
 
 // importOriginal rather than a bare factory, so ApiError stays the real class.
@@ -146,6 +171,15 @@ vi.mock("./api", async (importOriginal) => ({
   getNetworkPolicy,
   getNetworkActivity,
   listImports,
+  listProjects,
+  openProject,
+  closeProject,
+  createProject,
+  getDocumentSource,
+  applyDocumentSource,
+  undoChange,
+  saveDocument,
+  recoverProject,
 }));
 
 /** Every mocked client function, so a test can count what mount actually did. */
@@ -171,6 +205,15 @@ const ALL_API = {
   grantNetwork,
   getNetworkPolicy,
   getNetworkActivity,
+  listProjects,
+  openProject,
+  closeProject,
+  createProject,
+  getDocumentSource,
+  applyDocumentSource,
+  undoChange,
+  saveDocument,
+  recoverProject,
 };
 
 // Sigma needs a WebGL context; jsdom has none. Nothing here asserts on the
@@ -184,24 +227,32 @@ const ALL_API = {
 // graphology and is asserted in GraphView.test.tsx; what App is responsible for
 // is what it does with the result, so the stub reports every node in the
 // expansion as newly added — the case where none of them were already drawn.
+// How often the stub rendered, which is how often App did: the review found
+// App re-rendering on every keystroke in the Turtle editor.
+const graphRenders = vi.hoisted(() => ({ count: 0 }));
+
 vi.mock("./components/GraphView", () => ({
   default: ({
+    data,
     leftRail,
     onSelect,
     expansion,
     onExpanded,
     focusTick,
   }: {
+    data: unknown;
     leftRail?: React.ReactNode;
     onSelect: (iri: string | null) => void;
     expansion?: { data: VizNeighborhood; token: number } | null;
     onExpanded?: (result: MergeResult) => void;
     focusTick: number;
-  }) => (
+  }) => {
+    graphRenders.count += 1;
+    return (
     // focusTick is surfaced because "the camera re-centres" is not otherwise
     // observable from here: the real GraphView watches this prop and moves. Its
     // guard against a target that is not on the canvas is GraphView.test.tsx's.
-    <div data-testid="graph" data-focus-tick={focusTick}>
+    <div data-testid="graph" data-focus-tick={focusTick} data-has-graph={data ? "yes" : "no"}>
       {leftRail}
       <button onClick={() => onSelect("http://x/issuedBy")}>fake node</button>
       {expansion && (
@@ -217,7 +268,8 @@ vi.mock("./components/GraphView", () => ({
         </button>
       )}
     </div>
-  ),
+    );
+  },
 }));
 
 /** Which entity the stubbed result row and search hit point at. Mutable so a
@@ -305,6 +357,8 @@ beforeEach(() => {
   // in every browser, and the throw is jsdom's gap, not the pane's.
   Element.prototype.scrollIntoView = vi.fn();
   listOntologies.mockResolvedValue([SUMMARY]);
+  listProjects.mockResolvedValue([]);
+  projectStore._reset();
   getGraph.mockResolvedValue(TRUNCATED);
   listImports.mockResolvedValue({ imports: [], limit: null, resolving: null, offline: false });
   searchNodes.mockResolvedValue([]);
@@ -378,6 +432,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Unmount, not only empty the body: a detached App stays subscribed to the
+  // project store, which is module state, and would answer the next test's
+  // store changes with requests of its own.
+  cleanup();
   vi.clearAllMocks();
   document.body.innerHTML = "";
 });
@@ -432,12 +490,17 @@ describe("App startup chooser", () => {
     expect(getGraph).not.toHaveBeenCalled();
   });
 
-  it("requests only the ontology list on mount", async () => {
-    // AC-13. Exactly one request, and it is the list.
+  it("requests only the ontology list and the project list on mount", async () => {
+    // AC-13, and authoring-foundations' "mount still one request plus the
+    // projects list": two lists, both built from metadata files, and nothing
+    // that parses.
     await renderApp();
 
     expect(listOntologies).toHaveBeenCalledTimes(1);
-    const others = Object.entries(ALL_API).filter(([name]) => name !== "listOntologies");
+    expect(listProjects).toHaveBeenCalledTimes(1);
+    const others = Object.entries(ALL_API).filter(
+      ([name]) => name !== "listOntologies" && name !== "listProjects",
+    );
     for (const [name, fn] of others) {
       expect(fn, `${name} was called on mount`).not.toHaveBeenCalled();
     }
@@ -2511,5 +2574,281 @@ describe("App imports (external-access Stage 2)", () => {
     });
     await waitFor(() => expect(screen.getByTestId("query-scope").textContent).toBe("false|1"));
     expect(listImports).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+/* --- authoring-foundations: projects as App sees them ---------------------- */
+
+const PROJECT = {
+  id: "prj-0123456789ab",
+  name: "Invoices",
+  createdAt: "2026-09-28T08:00:00+00:00",
+  updatedAt: "2026-09-28T09:00:00+00:00",
+  baseIri: "http://example.org/invoices#",
+  prefix: "invoices",
+  primaryLanguage: "en",
+  languages: [],
+  documents: [{ file: "model.ttl", role: "model" as const }],
+  counts: { classes: 2, properties: 1, concepts: 0, triples: 12 },
+};
+const OID = "prj-0123456789ab-model";
+
+function docState(changes: Record<string, unknown> = {}) {
+  return {
+    doc: "model" as const,
+    ontologyId: OID,
+    revision: 0,
+    dirty: false,
+    canUndo: false,
+    undoLabel: null,
+    canRedo: false,
+    redoLabel: null,
+    triples: 12,
+    ...changes,
+  };
+}
+
+function opened(
+  changes: Record<string, unknown> = {},
+  recovery: { available: boolean; draftTime: string | null } = { available: false, draftTime: null },
+) {
+  return { project: PROJECT, documents: [docState(changes)], recovery };
+}
+
+async function renderProject(changes: Record<string, unknown> = {}, recovery?: { available: boolean; draftTime: string | null }) {
+  listProjects.mockResolvedValue([PROJECT]);
+  openProject.mockResolvedValue(opened(changes, recovery));
+  await renderApp();
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Open Invoices" }));
+  });
+}
+
+function tab(name: string): HTMLElement {
+  return screen.getByRole("tab", { name: new RegExp(name) });
+}
+
+describe("App projects (authoring-foundations)", () => {
+  it("lists projects above the read-only library", async () => {
+    listProjects.mockResolvedValue([PROJECT]);
+    await renderApp();
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(headings.indexOf("My projects")).toBeLessThan(headings.indexOf("Library (read-only)"));
+    expect(screen.getByRole("heading", { level: 3, name: "Invoices" })).toBeTruthy();
+    expect(getGraph).not.toHaveBeenCalled();
+  });
+
+  it("a project document flows through Explore, Query and Hierarchy under its own id (AC-5)", async () => {
+    await renderProject();
+    expect(openProject).toHaveBeenCalledWith(PROJECT.id);
+    expect(getGraph).toHaveBeenCalledTimes(1);
+    expect(getGraph.mock.calls[0][0]).toBe(OID);
+    // The header is the project's, not the library's select.
+    expect(screen.getByText("Invoices", { selector: ".project-name" })).toBeTruthy();
+    expect(screen.queryByLabelText("ONTOLOGY")).toBeNull();
+
+    getQuerySchema.mockResolvedValue({ classes: [], links: [], namespaces: {}, truncated: false, embeddedQueryCount: 0 });
+    await act(async () => {
+      fireEvent.click(tab("Query"));
+    });
+    expect(getQuerySchema.mock.calls[0][0]).toBe(OID);
+
+    await act(async () => {
+      fireEvent.click(tab("Hierarchy"));
+    });
+    expect(fetchHierarchy.mock.calls[0][0]).toBe(OID);
+  });
+
+  it("a change moves the revision and every view refetches (AC-16)", async () => {
+    await renderProject({ canUndo: true, undoLabel: "Created class Invoice", dirty: true });
+    await act(async () => {
+      fireEvent.click(tab("Hierarchy"));
+    });
+    const graphs = getGraph.mock.calls.length;
+    const trees = fetchHierarchy.mock.calls.length;
+    undoChange.mockResolvedValue({
+      revision: 1,
+      label: "Created class Invoice",
+      state: docState({ revision: 1, dirty: true, canRedo: true, redoLabel: "Created class Invoice" }),
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Undo: Created class Invoice" }));
+    });
+    expect(undoChange).toHaveBeenCalledWith(PROJECT.id, "model");
+    expect(getGraph.mock.calls.length).toBe(graphs + 1);
+    expect(fetchHierarchy.mock.calls.length).toBe(trees + 1);
+    // The live region says what was undone and the status after it.
+    expect(document.querySelector(".project-header [role=status]")!.textContent).toBe(
+      "Undid: Created class Invoice. Unsaved changes.",
+    );
+  });
+
+  it("View is the Turtle editor for a project document", async () => {
+    getDocumentSource.mockResolvedValue({ text: "@prefix : <x#> .\n", revision: 0, fromEditor: true });
+    await renderProject();
+    await act(async () => {
+      fireEvent.click(tab("View"));
+    });
+    expect(screen.getByRole("textbox", { name: "Turtle source of model.ttl" })).toBeTruthy();
+    expect(getSource).not.toHaveBeenCalled();
+  });
+
+  it("leaving the editor with unapplied text asks Apply, discard, or stay (AC-9)", async () => {
+    getDocumentSource.mockResolvedValue({ text: "@prefix : <x#> .\n", revision: 0, fromEditor: true });
+    await renderProject();
+    await act(async () => {
+      fireEvent.click(tab("View"));
+    });
+    const editor = screen.getByRole("textbox", { name: "Turtle source of model.ttl" });
+    fireEvent.change(editor, { target: { value: "@prefix : <x#> .\n:A a :B .\n" } });
+
+    // Stay: nothing changes, the text is kept.
+    await act(async () => {
+      fireEvent.click(tab("Explore"));
+    });
+    expect(screen.getByRole("dialog", { name: "Apply your Turtle edits?" })).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Stay" }));
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect((screen.getByRole("textbox", { name: "Turtle source of model.ttl" }) as HTMLTextAreaElement).value).toContain(":A a :B");
+
+    // Apply: the text is applied, then the move happens.
+    applyDocumentSource.mockResolvedValue({
+      revision: 1,
+      label: "Applied Turtle edits",
+      state: docState({ revision: 1, dirty: true, canUndo: true, undoLabel: "Applied Turtle edits" }),
+    });
+    await act(async () => {
+      fireEvent.click(tab("Explore"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    });
+    expect(applyDocumentSource).toHaveBeenCalledWith(PROJECT.id, "model", "@prefix : <x#> .\n:A a :B .\n");
+    expect(screen.queryByRole("textbox", { name: "Turtle source of model.ttl" })).toBeNull();
+    expect(tab("Explore").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("discarding in that prompt drops the text and leaves", async () => {
+    getDocumentSource.mockResolvedValue({ text: "@prefix : <x#> .\n", revision: 0, fromEditor: true });
+    await renderProject();
+    await act(async () => {
+      fireEvent.click(tab("View"));
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Turtle source of model.ttl" }), {
+      target: { value: "changed" },
+    });
+    await act(async () => {
+      fireEvent.click(tab("Hierarchy"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    });
+    expect(applyDocumentSource).not.toHaveBeenCalled();
+    expect(projectStore.getSnapshot().editorDraft).toBeNull();
+    expect(tab("Hierarchy").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("closing with unsaved changes asks Save, discard, or stay", async () => {
+    closeProject.mockResolvedValue({ closed: PROJECT.id });
+    await renderProject({ dirty: true });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Close project" }));
+    });
+    expect(screen.getByRole("dialog", { name: "Save your changes?" })).toBeTruthy();
+    expect(closeProject).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    });
+    expect(closeProject).toHaveBeenCalledWith(PROJECT.id, true);
+    expect(homeShown()).toBe(true);
+    expect(projectStore.getSnapshot().project).toBeNull();
+  });
+
+  it("a newer draft offers recovery, and Recover restores it as unsaved changes (AC-13)", async () => {
+    recoverProject.mockResolvedValue({ documents: [docState({ revision: 1, dirty: true })] });
+    await renderProject({}, { available: true, draftTime: "2026-09-28T10:15:00+00:00" });
+    const dialog = screen.getByRole("dialog", { name: "Recover unsaved changes?" });
+    expect(dialog.textContent).toMatch(/never saved/);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Recover" }));
+    });
+    expect(recoverProject).toHaveBeenCalledWith(PROJECT.id, "recover");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText("Unsaved changes", { selector: ".project-status" })).toBeTruthy();
+  });
+
+  it("the first rewrite of a commented file warns once, and confirming keeps the backup (AC-12)", async () => {
+    saveDocument
+      .mockResolvedValueOnce({ needsCommentsWarning: true, backup: "model.original.ttl" })
+      .mockResolvedValueOnce({ savedAt: "2026-09-28T10:20:00+00:00", state: docState({ revision: 2 }) });
+    await renderProject({ dirty: true });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    const dialog = screen.getByRole("dialog", { name: "Save and remove the comments?" });
+    expect(dialog.textContent).toContain("This file has comments.");
+    expect(dialog.textContent).toContain("model.original.ttl");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save and keep a backup" }));
+    });
+    expect(saveDocument).toHaveBeenLastCalledWith(PROJECT.id, "model", true);
+    expect(screen.getByText("Saved", { selector: ".project-status" })).toBeTruthy();
+  });
+});
+
+
+describe("App projects, found in code review", () => {
+  it("Undo with unapplied Turtle asks first, and Discard then undoes", async () => {
+    getDocumentSource.mockResolvedValue({ text: "@prefix : <x#> .\n", revision: 0, fromEditor: true });
+    undoChange.mockResolvedValue({ revision: 1, label: "Created class A", state: docState({ revision: 1 }) });
+    await renderProject({ canUndo: true, undoLabel: "Created class A", dirty: true });
+    await act(async () => {
+      fireEvent.click(tab("View"));
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Turtle source of model.ttl" }), {
+      target: { value: "typed but not applied" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Undo: Created class A" }));
+    });
+    expect(screen.getByRole("dialog", { name: "Apply your Turtle edits?" })).toBeTruthy();
+    expect(undoChange).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    });
+    expect(undoChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("typing in the Turtle editor does not re-render App", async () => {
+    getDocumentSource.mockResolvedValue({ text: "@prefix : <x#> .\n", revision: 0, fromEditor: true });
+    await renderProject();
+    await act(async () => {
+      fireEvent.click(tab("View"));
+    });
+    const editor = screen.getByRole("textbox", { name: "Turtle source of model.ttl" });
+    fireEvent.change(editor, { target: { value: "a" } });
+    const before = graphRenders.count;
+    for (const value of ["ab", "abc", "abcd", "abcde"]) {
+      fireEvent.change(editor, { target: { value } });
+    }
+    expect((editor as HTMLTextAreaElement).value).toBe("abcde");
+    expect(graphRenders.count).toBe(before);
+  });
+
+  it("an edit refreshes the graph without blanking it first", async () => {
+    await renderProject({ canUndo: true, undoLabel: "Created class A", dirty: true });
+    await waitFor(() => expect(screen.getByTestId("graph").dataset.hasGraph).toBe("yes"));
+    let resolve: (g: VizGraph) => void = () => undefined;
+    getGraph.mockImplementation(() => new Promise<VizGraph>((r) => (resolve = r)));
+    undoChange.mockResolvedValue({ revision: 1, label: "Created class A", state: docState({ revision: 1 }) });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Undo: Created class A" }));
+    });
+    expect(getGraph).toHaveBeenCalled();
+    expect(screen.getByTestId("graph").dataset.hasGraph).toBe("yes");
+    await act(async () => resolve(TRUNCATED));
   });
 });

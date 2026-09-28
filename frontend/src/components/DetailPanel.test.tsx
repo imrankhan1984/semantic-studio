@@ -288,3 +288,41 @@ describe("DetailPanel imports (external-access Stage 2)", () => {
     expect(getNodeDetails).toHaveBeenLastCalledWith("o1", SUBJECT, true);
   });
 });
+
+describe("DetailPanel names (authoring-foundations 5.4.2)", () => {
+  it("lists each project language with its name, and writes missing where there is none (AC-6b)", async () => {
+    await renderPanel({
+      ...detailsWith(1),
+      names: [
+        { lang: "en", value: "Organization" },
+        { lang: "fr", value: null },
+      ],
+    });
+    expect(screen.getByRole("heading", { level: 3, name: "Names" })).toBeTruthy();
+    const block = document.querySelector(".detail-names")!;
+    const rows = [...block.querySelectorAll("div")].map((row) => row.textContent);
+    expect(rows).toEqual(["enOrganization", "frmissing"]);
+    // In text, not only by colour: the word is there for a screen reader.
+    expect(screen.getByText("missing").tagName).toBe("DD");
+  });
+
+  it("shows no Names block for a library ontology, whose details carry none", async () => {
+    await renderPanel(detailsWith(1));
+    expect(screen.queryByRole("heading", { name: "Names" })).toBeNull();
+  });
+
+  it("asks again when a project document's revision moves", async () => {
+    getNodeDetails.mockResolvedValue(detailsWith(1));
+    const view = render(
+      <DetailPanel ontologyId="o1" iri={SUBJECT} onNavigate={vi.fn()} onClose={vi.fn()} revision={1} />,
+    );
+    await act(async () => undefined);
+    const calls = getNodeDetails.mock.calls.length;
+    await act(async () => {
+      view.rerender(
+        <DetailPanel ontologyId="o1" iri={SUBJECT} onNavigate={vi.fn()} onClose={vi.fn()} revision={2} />,
+      );
+    });
+    expect(getNodeDetails.mock.calls.length).toBe(calls + 1);
+  });
+});
