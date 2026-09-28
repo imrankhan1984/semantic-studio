@@ -18,7 +18,9 @@
 #     loaded machine, which is exactly where a wall-clock assertion fails
 #     without a line of code changing, so the backend's `perf` marker and the
 #     frontend's `[budget]` titles run only in `budgets`, which reports and
-#     never blocks. Count-based budgets (renders, calls, reads) are not timings
+#     never blocks. There each millisecond limit is multiplied by
+#     BUDGET_FACTOR=2 (backend/tests/budget.py, frontend/src/budget.ts), so a
+#     runner that is merely slower than a laptop does not turn it red. Count-based budgets (renders, calls, reads) are not timings
 #     and stay in the blocking jobs. Locally both suites still run everything.
 #
 #     `-m` on the command line replaces the `-m "not network"` in pytest.ini
@@ -123,6 +125,11 @@ jobs:
     # Informational. A slow runner reports a missed budget here and the pull
     # request stays mergeable; the numbers that matter are measured locally.
     continue-on-error: true
+    # Every millisecond limit is doubled here, and only here (visual-modeling
+    # 5.7): the limits stay as measured on a developer's machine, and this
+    # allows for a shared runner's. Ratios and byte counts are not scaled.
+    env:
+      BUDGET_FACTOR: "2"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6

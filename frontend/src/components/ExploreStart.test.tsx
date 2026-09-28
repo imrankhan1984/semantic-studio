@@ -43,6 +43,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DetailPanel from "./DetailPanel";
 import ExploreStart from "./ExploreStart";
 import type { VizGraph, VizNode } from "../types";
+import { limitMs } from "../budget";
 
 /** Call counts for the two pure functions, for the memoization row. */
 const counts = vi.hoisted(() => ({ ranking: 0, summary: 0 }));
@@ -352,7 +353,7 @@ describe("ExploreStart budgets", () => {
     // Asserted so a render that drew nothing cannot pass on being fast.
     render(<ExploreStart graph={graph} loading={false} theme="dark" onSelect={() => {}} />);
     expect(rows()).toHaveLength(8);
-    expect(median).toBeLessThan(20);
+    expect(median).toBeLessThan(limitMs(20));
   });
 
   it("memoizes the ranking across re-renders", () => {

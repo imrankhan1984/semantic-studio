@@ -69,6 +69,11 @@ A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
 `network` again. Count-based budgets (renders, calls) are not timings and stay
 in the blocking jobs. A new wall-clock assertion gets the `[budget]` tag.
 
+**Timed budgets scale by `BUDGET_FACTOR`.** Every millisecond limit goes
+through `limitMs` (`frontend/src/budget.ts`) or `limit_ms`
+(`backend/tests/budget.py`): 1 by default, 2 in the CI `budgets` job. Ratios
+and byte counts are not scaled. A new timed budget uses them.
+
 **Timed budgets take a median, and that is load-bearing.** Backend: median of
 five with `gc.disable()` around them (D-024); a single sample measures how many
 other fixtures the suite holds. Frontend: jsdom gives no hold on the collector,
@@ -175,13 +180,16 @@ frontend/src/
   home/              Pure home-screen logic: the card thumbnail's layout and
                      the composition bar's bands
   projects/          Pure New project form logic: defaults and validation
+  modeling/          Pure editing-form logic: an entity's blocks read out of
+                     its statements, and annotation value types and checks
+  links.ts           linkTarget: the one gate an IRI passes to become a link
 
 docs/known-state.md  Why each load-bearing rule below exists
 ```
 
-`sparql/`, `explore/`, `home/` and `projects/` are the same idea four times: logic a
+`sparql/`, `explore/`, `home/`, `projects/` and `modeling/` are the same idea five times: logic a
 component needs, kept out of the component so it can be tested without
-rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts` and
+rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts`, `links.ts` and
 `catalogue.ts` are the same idea for one function and one constant. Prefer this
 split for anything with a rule in it.
 
@@ -210,6 +218,7 @@ leaves one behind.
 - Network tests assert a recording server saw zero requests, not only a 4xx. [S-1, S-2]
 - `test_fetch_restrictions.py` restricts nothing; network tests go elsewhere. [test_fetch_restrictions]
 - The About panel's "stay on this machine" sentences change with any feature that sends content out. [About panel]
+- Every `href` goes through `linkTarget` (http and https only); `links.test.ts` scans for one that does not (D-088). [safe links]
 
 **Queries and imports**
 - `MergedView` deduplicates and prunes by subject. [owl:imports]
@@ -235,6 +244,10 @@ leaves one behind.
 - `_change` leaves a triple that is in both adds and removes; setting a value to itself deletes nothing. [authoring foundations]
 - Views read a project document inside `Ontology.reading()`, the lock edits take. [authoring foundations]
 - App reads the project store by selector; the editor's text must not re-render App. [authoring foundations]
+- An undo `Step` is compared by identity (`eq=False`); the save point is a step, not a depth. [save point is a step]
+- A step keeps the editor text on both sides; undo restores `before`, redo `after`. [save point is a step]
+- `DetailPanel` keeps its details across a revision refetch; clearing them drops the form's focus. [keeps its details]
+- A tree row's `⋯` is `aria-hidden` and not a tab stop; the row declares Shift+F10. [row menu]
 
 **Graph**
 - Both reducers go through `focusTarget`; `ErrorBoundary` stays around `<App />`. [used to blank]

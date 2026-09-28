@@ -22,23 +22,31 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES
     - Constructed Hierarchy objects.
-    - A mocked api.ts (fetchHierarchy only; ApiError stays real).
+    - A mocked api.ts (fetchHierarchy; for the project's actions also
+      openProject, runCommand and previewDelete; ApiError stays real).
 
 EXPECTED OUTPUT
     - Pass/fail per assertion, covering AC-6 to AC-9, AC-11, AC-12 and AC-14 of
-      hierarchy-view.md.
+      hierarchy-view.md, and AC-5 of visual-modeling-canvas.md: in a project,
+      New class, New concept and the row menu, all by keyboard.
 ================================================================================
 */
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import HierarchyView from "./HierarchyView";
+import { projectStore } from "../state/projectStore";
 import type { Hierarchy, HierarchyForest } from "../types";
 
-const fetchHierarchy = vi.hoisted(() => vi.fn());
+const { fetchHierarchy, openProject, runCommand, previewDelete } = vi.hoisted(() => ({
+  fetchHierarchy: vi.fn(),
+  openProject: vi.fn(),
+  runCommand: vi.fn(),
+  previewDelete: vi.fn(),
+}));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, fetchHierarchy };
+  return { ...actual, fetchHierarchy, openProject, runCommand, previewDelete };
 });
 
 const EX = "http://example.org/#";
@@ -397,5 +405,238 @@ describe("HierarchyView imports (external-access Stage 2)", () => {
     render(<HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} imports />);
     await screen.findByText("Alpha");
     expect(fetchHierarchy).toHaveBeenCalledWith("o1", true);
+  });
+});
+
+describe("HierarchyView in a project (visual-modeling 5.2, AC-5)", () => {
+  const PID = "prj-0123456789ab";
+  const STATE = {
+    doc: "model" as const,
+    ontologyId: `${PID}-model`,
+    revision: 2,
+    dirty: true,
+    canUndo: true,
+    undoLabel: "x",
+    canRedo: false,
+    redoLabel: null,
+    triples: 10,
+  };
+
+  beforeEach(async () => {
+    projectStore._reset();
+    for (const mock of [openProject, runCommand, previewDelete]) mock.mockReset();
+    openProject.mockResolvedValue({
+      project: {
+        id: PID, name: "Shop", createdAt: "", updatedAt: "", baseIri: EX, prefix: "ex",
+        primaryLanguage: "en", languages: [], documents: [{ file: "model.ttl", role: "model" }], counts: {},
+      },
+      documents: [STATE],
+      recovery: { available: false, draftTime: null },
+    });
+    await projectStore.open(PID);
+    runCommand.mockImplementation(async (_p, _d, command: string) => ({ revision: 3, label: command, state: STATE }));
+  });
+
+  afterEach(() => projectStore._reset());
+
+  function renderProject(hierarchy: Hierarchy, onSelect = vi.fn(), onDeleted = vi.fn()) {
+    fetchHierarchy.mockResolvedValue(hierarchy);
+    render(
+      <HierarchyView
+        ontologyId="o1"
+        theme="dark"
+        selected={null}
+        onSelect={onSelect}
+        editing={{ primaryLanguage: "en" }}
+        onDeleted={onDeleted}
+      />,
+    );
+    return { onSelect, onDeleted };
+  }
+
+  // The row's button is for the pointer and hidden from assistive
+  // technology, so it is found by its class and checked by its label.
+  const menuOf = (label: string) => {
+    const button = itemByLabel(label)!.querySelector<HTMLElement>(".hierarchy-menu-btn")!;
+    expect(button.getAttribute("aria-label")).toBe(`More actions for ${label}`);
+    return button;
+  };
+
+  it("offers nothing to change outside a project", async () => {
+    renderView(mixed());
+    await screen.findByText("Alpha");
+    expect(screen.queryByRole("button", { name: "New class" })).toBeNull();
+    expect(document.querySelector(".hierarchy-menu-btn")).toBeNull();
+  });
+
+  it("shows New class even on an empty model, and New concept beside the concepts", async () => {
+    renderProject(hierarchyOf(EMPTY, EMPTY));
+    expect(await screen.findByRole("button", { name: "New class" })).toBeTruthy();
+    expect(screen.getByText("No classes yet. New class makes the first.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "New concept" })).toBeNull();
+    document.body.innerHTML = "";
+
+    renderProject(mixed());
+    expect(await screen.findByRole("button", { name: "New concept" })).toBeTruthy();
+  });
+
+  it("creates a class by name and selects it", async () => {
+    runCommand.mockResolvedValueOnce({ revision: 3, label: "Created class Invoice", state: STATE, created: EX + "Invoice" });
+    const { onSelect } = renderProject(mixed());
+    fireEvent.click(await screen.findByRole("button", { name: "New class" }));
+    const name = screen.getByRole("textbox", { name: "Name (en)" });
+    expect(document.activeElement).toBe(name);
+    fireEvent.change(name, { target: { value: "Invoice" } });
+    await act(async () => {
+      fireEvent.submit(name.closest("form")!);
+    });
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateClass", { label: "Invoice", iri: undefined, parent: undefined });
+    expect(onSelect).toHaveBeenCalledWith(EX + "Invoice");
+  });
+
+  it("creates a concept in the scheme there is", async () => {
+    renderProject(mixed());
+    fireEvent.click(await screen.findByRole("button", { name: "New concept" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name (en)" }), { target: { value: "Ice" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    });
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateConcept", { prefLabel: "Ice", iri: undefined, scheme: EX + "Scheme" });
+  });
+
+  it("opens the row menu from the keyboard, moves through it, and Escape returns to the row", async () => {
+    renderProject(mixed());
+    await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
+    const row = itemByLabel("Alpha")!;
+    // The row names its shortcut, and its name is not swollen by the button's.
+    expect(row.getAttribute("aria-keyshortcuts")).toBe("Shift+F10");
+    expect(row.querySelector(".hierarchy-menu-btn")!.getAttribute("aria-hidden")).toBe("true");
+    act(() => row.focus());
+    fireEvent.keyDown(row, { key: "F10", shiftKey: true });
+    const menu = await screen.findByRole("menu", { name: "More actions for Alpha" });
+    const entries = within(menu).getAllByRole("menuitem").map((m) => m.textContent);
+    expect(entries).toEqual(["Add subclass", "Rename", "Delete…"]);
+    expect(document.activeElement?.textContent).toBe("Add subclass");
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement?.textContent).toBe("Rename");
+    fireEvent.keyDown(menu, { key: "End" });
+    expect(document.activeElement?.textContent).toBe("Delete…");
+    fireEvent.keyDown(menu, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(itemByLabel("Alpha")));
+  });
+
+  it("offers Add narrower concept on a concept, and the row's button opens the same menu", async () => {
+    renderProject(mixed());
+    await waitFor(() => expect(itemByLabel("Scheme")).toBeTruthy());
+    fireEvent.click(itemByLabel("Scheme")!.querySelector(".hierarchy-twistie")!);
+    await waitFor(() => expect(itemByLabel("Water")).toBeTruthy());
+    const button = menuOf("Water");
+    expect(button.getAttribute("tabindex")).toBe("-1");
+    fireEvent.click(button);
+    const menu = screen.getByRole("menu");
+    expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "Add narrower concept",
+      "Rename",
+      "Delete…",
+    ]);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Add narrower concept" }));
+    expect(screen.getByText("New narrower concept of Water")).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "Name (en)" }), { target: { value: "Ice" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    });
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateConcept", { prefLabel: "Ice", iri: undefined, broader: EX + "Water" });
+  });
+
+  it("adds a subclass from the menu under that class", async () => {
+    renderProject(mixed());
+    await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
+    fireEvent.click(menuOf("Alpha"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Add subclass" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name (en)" }), { target: { value: "Delta" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    });
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateClass", { label: "Delta", iri: undefined, parent: EX + "Alpha" });
+  });
+
+  it("renames in place in the primary language; Escape cancels and sends nothing", async () => {
+    renderProject(mixed());
+    await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
+    fireEvent.click(menuOf("Alpha"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+    let field = screen.getByRole("textbox", { name: "New name for Alpha" }) as HTMLInputElement;
+    expect(field.value).toBe("Alpha");
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(screen.queryByRole("textbox", { name: "New name for Alpha" })).toBeNull();
+    expect(runCommand).not.toHaveBeenCalled();
+
+    fireEvent.click(menuOf("Alpha"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+    field = screen.getByRole("textbox", { name: "New name for Alpha" }) as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "First" } });
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "SetLabel", { iri: EX + "Alpha", value: "First", lang: "en" });
+  });
+
+  it("treats Enter on an unchanged name as a cancel (found in review)", async () => {
+    renderProject(mixed());
+    await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
+    fireEvent.click(menuOf("Alpha"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+    const field = screen.getByRole("textbox", { name: "New name for Alpha" });
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(screen.queryByRole("textbox", { name: "New name for Alpha" })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("deletes from the menu only after the impact is confirmed", async () => {
+    previewDelete.mockResolvedValue({
+      dryRun: true,
+      revision: 2,
+      impact: {
+        iri: EX + "Alpha", label: "Alpha", kind: "class", statements: 4, strategy: "reparent",
+        children: [{ iri: EX + "Beta", label: "Beta" }], reparentedTo: [], properties: [], individuals: [], importMentions: 0,
+      },
+    });
+    const { onDeleted } = renderProject(mixed());
+    await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
+    fireEvent.click(menuOf("Alpha"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
+    });
+    const dialog = screen.getByRole("dialog", { name: "Delete Alpha?" });
+    expect(within(dialog).getByRole("radio", { name: "Move them up to the top level" })).toBeTruthy();
+    expect(runCommand).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    });
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "DeleteEntity", { iri: EX + "Alpha", strategy: "reparent" });
+    expect(onDeleted).toHaveBeenCalledWith(EX + "Alpha");
+  });
+
+  it("offers only Add subclass on an imported class, and no menu on other imported rows", async () => {
+    const classes: HierarchyForest = {
+      nodes: { [EX + "Agent"]: { ...node("Agent"), importedFrom: "FOAF" } },
+      children: {},
+      roots: [EX + "Agent"],
+    };
+    const concepts: HierarchyForest = {
+      nodes: { [EX + "Topic"]: { ...node("Topic", "concept"), importedFrom: "SKOS" } },
+      children: {},
+      roots: [EX + "Topic"],
+    };
+    renderProject(hierarchyOf(classes, concepts));
+    await waitFor(() => expect(itemByLabel("Agent")).toBeTruthy());
+    expect(itemByLabel("Topic")!.querySelector(".hierarchy-menu-btn")).toBeNull();
+    fireEvent.click(menuOf("Agent"));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Add subclass"]);
   });
 });

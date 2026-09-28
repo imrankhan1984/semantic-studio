@@ -24,6 +24,10 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - Pass/fail for AC-6, AC-6a, AC-7 to AC-15 and AC-18, and four budgets.
+    - visual-modeling-canvas Stage 1: AC-8 (undo or redo to the save point is
+      clean, nothing to recover) and AC-9 (apply, undo, save writes the file
+      byte for byte), and what the form needs from the server: the created
+      IRI, plain literals, search by kind, kinds in project details.
 ================================================================================
 """
 
@@ -42,6 +46,8 @@ from rdflib.namespace import DCTERMS, OWL, RDF, RDFS, SKOS, XSD
 from app import editing
 from app.editing import editing_service, has_comments, project_store
 from app.main import app
+
+from budget import limit_ms
 
 client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
@@ -772,7 +778,7 @@ def big(pid) -> str:
 def test_command_budget(big):
     counter = iter(range(100))
     median = _median_ms(lambda: ok(big, "CreateClass", label=f"Timed {next(counter)}", parent="shop:C7"))
-    assert median <= 50, f"a command took {median:.1f} ms (median of 5)"
+    assert median <= limit_ms(50), f"a command took {median:.1f} ms (median of 5)"
 
 
 @pytest.mark.perf
@@ -780,7 +786,7 @@ def test_undo_budget(big):
     for i in range(5):
         ok(big, "CreateClass", label=f"Undone {i}")
     median = _median_ms(lambda: client.post(f"/api/projects/{big}/documents/model/undo"))
-    assert median <= 50, f"an undo took {median:.1f} ms (median of 5)"
+    assert median <= limit_ms(50), f"an undo took {median:.1f} ms (median of 5)"
 
 
 @pytest.mark.perf
@@ -788,7 +794,7 @@ def test_apply_budget(pid):
     text = _big_document(pid)
     median = _median_ms(lambda: apply(pid, text))
     assert len(doc(pid).graph) >= 10_000
-    assert median <= 1500, f"applying 10,000 triples took {median:.0f} ms (median of 5)"
+    assert median <= limit_ms(1500), f"applying 10,000 triples took {median:.0f} ms (median of 5)"
 
 
 @pytest.mark.perf
@@ -798,7 +804,7 @@ def test_save_budget(big):
         lambda: save(big),
         setup=lambda: ok(big, "CreateClass", label=f"Saved {next(counter)}"),
     )
-    assert median <= 1000, f"saving clean Turtle took {median:.0f} ms (median of 5)"
+    assert median <= limit_ms(1000), f"saving clean Turtle took {median:.0f} ms (median of 5)"
 
 
 def test_autosave_off_path(big, monkeypatch):
@@ -915,3 +921,171 @@ def test_a_command_builds_the_imports_view_only_when_it_needs_it(pid, monkeypatc
     assert calls == []
     ok(pid, "CreateClass", label="Imported child", parent="http://example.org/lib3#Party")
     assert calls, "a target only an import defines was not looked up there"
+
+
+# --- visual-modeling Stage 1: the save point (AC-8) and apply keeping its text (AC-9) ------
+
+
+def _state(pid: str) -> dict:
+    return doc(pid).state()
+
+
+def undo(pid: str) -> dict:
+    response = client.post(f"/api/projects/{pid}/documents/model/undo")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def redo(pid: str) -> dict:
+    response = client.post(f"/api/projects/{pid}/documents/model/redo")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_undoing_back_to_the_saved_state_is_clean(pid):
+    ok(pid, "CreateClass", label="Kept")
+    save(pid)
+    ok(pid, "CreateClass", label="Extra")
+    assert _state(pid)["dirty"] is True
+    assert undo(pid)["state"]["dirty"] is False
+    # Redo leaves the save point, and undo returns to it.
+    assert redo(pid)["state"]["dirty"] is True
+    assert undo(pid)["state"]["dirty"] is False
+    # Clean means clean: closing needs no discard.
+    assert client.post(f"/api/projects/{pid}/close").status_code == 200
+
+
+def test_redoing_back_to_the_saved_state_is_clean(pid):
+    ok(pid, "CreateClass", label="Saved here")
+    save(pid)
+    assert undo(pid)["state"]["dirty"] is True
+    assert redo(pid)["state"]["dirty"] is False
+
+
+def test_undoing_everything_since_opening_is_clean(pid):
+    ok(pid, "CreateClass", label="One")
+    ok(pid, "CreateClass", label="Two")
+    undo(pid)
+    assert undo(pid)["state"]["dirty"] is False
+    assert client.post(f"/api/projects/{pid}/close").status_code == 200
+
+
+def test_the_save_point_leaves_nothing_to_recover(pid, monkeypatch):
+    monkeypatch.setattr(editing, "AUTOSAVE_DELAY", 0.05)
+    ok(pid, "CreateClass", label="Drafted")
+    draft = project_store.folder(pid) / ".draft" / "model.ttl"
+    assert _wait_for(draft.exists)
+    undo(pid)
+    assert not draft.exists()
+    time.sleep(0.2)
+    assert not draft.exists(), "no timer left armed writes it back"
+    _crash(pid)
+    assert client.post(f"/api/projects/{pid}/open").json()["recovery"]["available"] is False
+
+
+def test_a_new_change_after_an_undo_drops_a_save_point_on_the_redo_branch(pid):
+    ok(pid, "CreateClass", label="Saved branch")
+    save(pid)
+    undo(pid)
+    ok(pid, "CreateClass", label="Other branch")
+    # The saved state is gone with the redo branch: nothing leads back to it.
+    assert undo(pid)["state"]["dirty"] is True
+
+
+def test_the_undo_cap_drops_a_save_point_it_can_no_longer_reach(pid):
+    for i in range(201):
+        ok(pid, "CreateClass", label=f"Capped {i}")
+    while client.post(f"/api/projects/{pid}/documents/model/undo").status_code == 200:
+        pass
+    # The opened state was one step below the 200 kept; it is not reached.
+    assert _state(pid)["dirty"] is True
+
+
+def test_the_undo_cap_keeps_a_save_point_at_the_new_bottom(pid):
+    ok(pid, "CreateClass", label="Saved first")
+    save(pid)
+    for i in range(200):
+        ok(pid, "CreateClass", label=f"Later {i}")
+    while client.post(f"/api/projects/{pid}/documents/model/undo").status_code == 200:
+        pass
+    assert _state(pid)["dirty"] is False
+
+
+def test_apply_undo_save_writes_the_file_byte_for_byte(pid):
+    original = model_text(pid)
+    typed = f"@prefix shop: <{EX}> .\n# hand-written\nshop:Only   a <http://www.w3.org/2002/07/owl#Class> .\n"
+    apply(pid, typed)
+    undo(pid)
+    assert save(pid).status_code == 200
+    assert model_text(pid) == original
+
+
+def test_undoing_an_apply_after_a_save_restores_the_saved_text(pid):
+    first = f"@prefix shop: <{EX}> .\n# first layout\nshop:A a <http://www.w3.org/2002/07/owl#Class> .\n"
+    second = f"@prefix shop: <{EX}> .\n# second layout\nshop:B a <http://www.w3.org/2002/07/owl#Class> .\n"
+    apply(pid, first)
+    save(pid)
+    apply(pid, second)
+    undo(pid)
+    source = client.get(f"/api/projects/{pid}/documents/model/source").json()
+    assert source == {"text": first, "revision": revision(pid), "fromEditor": True}
+    # Redo brings the second text back as the editor's, comments included.
+    redo(pid)
+    assert client.get(f"/api/projects/{pid}/documents/model/source").json()["text"] == second
+    save(pid)
+    assert model_text(pid) == second
+
+
+def test_undoing_a_command_after_an_apply_keeps_the_applied_text(pid):
+    typed = f"@prefix shop: <{EX}> .\n# mine\nshop:A a <http://www.w3.org/2002/07/owl#Class> .\n"
+    apply(pid, typed)
+    ok(pid, "CreateClass", label="Visual")
+    undo(pid)
+    source = client.get(f"/api/projects/{pid}/documents/model/source").json()
+    assert source["text"] == typed and source["fromEditor"] is True
+    save(pid)
+    assert model_text(pid) == typed, "no visual change is left, so no rewrite"
+
+
+# --- visual-modeling Stage 1: what the form needs from the server ---------------------------
+
+
+def test_a_create_command_names_the_iri_it_minted(pid):
+    assert ok(pid, "CreateClass", label="Invoice item")["created"] == EX + "InvoiceItem"
+    assert ok(pid, "CreateConcept", prefLabel="Draft")["created"] == EX + "Draft"
+    assert "created" not in ok(pid, "SetLabel", iri="shop:InvoiceItem", value="Line")
+    # A rename typed as a prefixed name answers with the full IRI to select.
+    assert ok(pid, "RenameIri", old="shop:InvoiceItem", new="shop:Line")["created"] == EX + "Line"
+
+
+def test_a_plain_literal_can_be_replaced_and_removed_as_text_without_a_language(pid):
+    apply(pid, model_text(pid) + f'\n<{EX}Person> <http://www.w3.org/2002/07/owl#versionInfo> "1.0" .\n')
+    plain = {"kind": "typed", "value": "1.0", "datatype": "xsd:string"}
+    ok(pid, "ReplaceAnnotation", iri="shop:Person", property="owl:versionInfo", oldValue=plain,
+       newValue={**plain, "value": "1.1"})
+    assert (U("Person"), OWL.versionInfo, Literal("1.0")) not in doc(pid).graph
+    ok(pid, "RemoveAnnotation", iri="shop:Person", property="owl:versionInfo", value={**plain, "value": "1.1"})
+    assert not list(doc(pid).graph.objects(U("Person"), OWL.versionInfo))
+
+
+def test_search_keeps_one_kind_before_its_limit(pid):
+    for i in range(30):
+        ok(pid, "CreateObjectProperty", label=f"Zeta link {i}")
+    # A substring match ranks after every prefix match.
+    ok(pid, "CreateClass", label="Big zeta class")
+    oid = f"{pid}-model"
+    unfiltered = client.get(f"/api/ontologies/{oid}/search", params={"q": "zeta"}).json()
+    assert "Big zeta class" not in [n["label"] for n in unfiltered], "25 properties crowd it out"
+    classes = client.get(f"/api/ontologies/{oid}/search", params={"q": "zeta", "kind": "class"}).json()
+    assert [n["label"] for n in classes] == ["Big zeta class"]
+    assert client.get(f"/api/ontologies/{oid}/search", params={"q": "z", "kind": "bogus"}).status_code == 422
+
+
+def test_project_details_carry_the_kind_of_the_entity_and_its_terms(pid):
+    ok(pid, "CreateClass", label="Invoice")
+    ok(pid, "CreateDatatypeProperty", label="total", domain="shop:Invoice", datatype="xsd:decimal")
+    ok(pid, "CreateObjectProperty", label="billed to", domain="shop:Invoice", range="shop:Person")
+    details = client.get(f"/api/ontologies/{pid}-model/node", params={"iri": EX + "Invoice"}).json()
+    assert details["kind"] == "class"
+    kinds = {row["subject"]["value"]: row["subject"]["kind"] for row in details["incoming"]}
+    assert kinds == {EX + "total": "datatypeProperty", EX + "billedTo": "objectProperty"}

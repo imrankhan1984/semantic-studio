@@ -94,7 +94,9 @@ them by clicking, without writing SPARQL by hand.
   (`Ctrl+Enter`) and every view updates. **Undo and Redo** (`Ctrl+Z`, `Ctrl+Y`),
   **Save** (`Ctrl+S`) and *Save a copy* are in the header, changes are autosaved
   to a draft, and a crash offers to recover them. Names can be kept in several
-  languages, with a switch for which one the views show. See
+  languages, with a switch for which one the views show. You do not need to
+  write Turtle: the **detail panel is an editing form** and the **Hierarchy
+  tree has New class, New concept and a menu on every row**. See
   [Projects](#projects).
 
 ## Quick start (Docker)
@@ -364,6 +366,23 @@ of them open as fast as none.
   additional ones. The *Language* menu chooses which the graph, tree, detail
   panel and search show, falling back to the primary name marked *(en)*, and
   says how many entities still lack a name in each language.
+- **Edit without writing Turtle.** Select an entity of your model and the
+  detail panel's *Edit* section changes its names in each language, its
+  definition, any annotation (text in a language, a date, a number, yes or no,
+  or a link), its parents, attributes and relationships, a property's domain
+  and range, or a concept's broader concepts. You type names; the identifiers
+  are made for you, and *Change identifier…* is there when you want your own.
+  Every change is one step of Undo.
+- **The Hierarchy tree builds too.** *New class* and *New concept* sit at the
+  top of their sections, and each row's menu (the `⋯` button, or `Shift+F10`
+  on the focused row) adds a subclass or a narrower concept, renames, or
+  deletes. Deleting says first what it takes with it, and asks what to do with
+  the children.
+- **Undo back to where you saved and it says Saved.** Nothing is left to save
+  or recover. Undoing a Turtle *Apply* puts your text back exactly as it was.
+- **Only web addresses are links.** An identifier from a file is a link only
+  when it starts `http:` or `https:`; anything else is shown as text you can
+  copy.
 - Queries saved while a project is open are kept in its `queries/` folder.
 
 ## Where your ontologies are stored
@@ -462,7 +481,7 @@ The image stores ontologies in the `/data` volume:
 | `GET  /api/ontologies/{id}/graph`   | Visualization nodes/edges            |
 | `GET  /api/ontologies/{id}/neighborhood` | `?iri=` — one entity and its neighbours, to grow the drawn graph |
 | `GET  /api/ontologies/{id}/node`    | `?iri=` — all statements for an IRI  |
-| `GET  /api/ontologies/{id}/search`  | `?q=` — label/IRI search             |
+| `GET  /api/ontologies/{id}/search`  | `?q=` — label/IRI search; `&kind=class` (or `concept`, `objectProperty`, `datatypeProperty`, `annotationProperty`) keeps one kind |
 | `GET  /api/ontologies/{id}/query-schema` | Class-level schema for the builder |
 | `GET  /api/ontologies/{id}/query-node`   | `?iri=` — class/type of a clicked node |
 | `POST /api/ontologies/{id}/sparql`  | `{query}` — run a SELECT             |

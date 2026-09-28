@@ -38,6 +38,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SourceView from "./SourceView";
 import { findTargetLine, targetMissingMessage } from "../sourceTarget";
 import type { OntologySource } from "../types";
+import { limitMs } from "../budget";
 
 const { getSource } = vi.hoisted(() => ({ getSource: vi.fn() }));
 vi.mock("../api", () => ({ getSource }));
@@ -216,7 +217,7 @@ describe("locating a target in the source", () => {
       median,
       `${lines.length.toLocaleString()} lines, ${(bytes / 1024 / 1024).toFixed(1)} MB, ` +
         `median ${median.toFixed(1)} ms of ${runs.map((r) => r.toFixed(1)).join(", ")}`,
-    ).toBeLessThanOrEqual(50);
+    ).toBeLessThanOrEqual(limitMs(50));
   });
 });
 

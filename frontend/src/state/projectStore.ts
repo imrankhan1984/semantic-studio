@@ -21,6 +21,8 @@ BASIC IDEA
     here, so the revision the views refetch on is always the server's number,
     never one counted in the browser (D-081). The actions are plain async
     functions; a component calls them and re-renders from the snapshot.
+    `command` is the editing form's and the tree's one way to change the
+    model (visual-modeling 5.1, 5.2): the same bookkeeping as an undo.
 
     The editor's unapplied text lives here rather than in the editor, because
     leaving it is App's business: switching mode, switching document or
@@ -43,6 +45,7 @@ import {
   openProject,
   recoverProject,
   redoChange,
+  runCommand,
   saveDocument,
   setDisplayLanguage as setApiLanguage,
   undoChange,
@@ -236,6 +239,27 @@ export const projectStore = {
   /** Record a change made elsewhere (a command) so the views refetch. */
   applied(result: ChangeResult): void {
     afterChange(result, "");
+  },
+
+  /** Run one command on the open document (visual-modeling 5.1). The views
+   *  refetch on the revision it returns, and the live region says what
+   *  changed. A refusal throws the server's ApiError, with its sentence and
+   *  nothing changed; the caller shows it under the field that caused it.
+   *  `announce` replaces the usual "<label>. <status>." sentence. */
+  async command(
+    name: string,
+    args: Record<string, unknown>,
+    announcement?: (result: ChangeResult) => string,
+  ): Promise<ChangeResult> {
+    const project = requireProject();
+    const result = await runCommand(project.id, snapshot.activeDoc, name, args);
+    if (announcement) {
+      set({ documents: withDocument(result.state) });
+      announce(announcement(result));
+    } else {
+      afterChange(result, "");
+    }
+    return result;
   },
 
   setEditorDraft(text: string | null): void {

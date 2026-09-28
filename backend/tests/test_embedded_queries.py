@@ -36,6 +36,8 @@ from fastapi.testclient import TestClient
 from app import main
 from app.embedded_queries import MAX_ENTRIES, MAX_TEXT_CHARS, query_form
 
+from budget import limit_ms
+
 client = TestClient(main.app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
 PREFIXES = """
@@ -235,4 +237,4 @@ def test_listing_budget():
     median = sorted(samples)[2]
     # The work was real: the cap bound, over a total the fixture chose.
     assert listing["total"] == 300 and len(listing["queries"]) == MAX_ENTRIES
-    assert median <= 100, f"embedded-queries listing took {median:.1f} ms (median of 5)"
+    assert median <= limit_ms(100), f"embedded-queries listing took {median:.1f} ms (median of 5)"

@@ -43,6 +43,8 @@ from rdflib.namespace import OWL
 from app import main
 from app.hierarchy import build_hierarchy
 
+from budget import limit_ms
+
 EXAMPLE = Path(__file__).parent.parent.parent / "examples" / "space-exploration.ttl"
 SPACE = "http://example.org/space#"
 EX = "http://example.org/#"
@@ -511,4 +513,4 @@ def test_hierarchy_build_time(big_graph):
     finally:
         gc.enable()
     median = sorted(samples)[len(samples) // 2]
-    assert median < 0.5, f"hierarchy build median was {median * 1000:.1f} ms"
+    assert median < limit_ms(500) / 1000, f"hierarchy build median was {median * 1000:.1f} ms"

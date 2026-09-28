@@ -32,6 +32,7 @@ EXPECTED OUTPUT
 import { describe, expect, it } from "vitest";
 import { describeContents, suggestedEntities } from "./suggestions";
 import type { VizGraph, VizNode } from "../types";
+import { limitMs } from "../budget";
 
 /** A graph carrying the given nodes; kindCounts derived so it stays consistent. */
 function graphOf(nodes: VizNode[], kindCounts?: Record<string, number>): VizGraph {
@@ -306,7 +307,7 @@ describe("suggestion budgets", () => {
     expect(result).toHaveLength(8);
     // Asserted so a "fast" run that returned nothing cannot pass the budget.
     expect(result[0].degree).toBe(40000);
-    expect(elapsed).toBeLessThan(20);
+    expect(elapsed).toBeLessThan(limitMs(20));
   });
 
   it("[budget] describes contents within budget", () => {
@@ -320,6 +321,6 @@ describe("suggestion budgets", () => {
     const elapsed = performance.now() - started;
 
     expect(sentence).toContain("This ontology describes");
-    expect(elapsed).toBeLessThan(1);
+    expect(elapsed).toBeLessThan(limitMs(1));
   });
 });

@@ -711,7 +711,27 @@ def node_details(
         result["names"] = [
             {"lang": lang, "value": name_in(graph, ref, lang)} for lang in languages
         ]
+        # The editing form reads the entity's kind, and tells an attribute from
+        # a relationship among the properties that name it as their domain,
+        # by the kind of each term. Project documents only: the library panel
+        # does not need it and should not pay for the lookups.
+        result["kind"] = term_kind(graph, ref)
+        for row in outgoing:
+            _with_kind(graph, row["object"])
+        for row in incoming:
+            _with_kind(graph, row["subject"])
     return result
+
+
+def term_kind(graph: Graph, node: URIRef) -> str:
+    """The node kind rdf:type gives, as the graph view would colour it."""
+    kinds = {TYPE_TO_KIND[t] for t in graph.objects(node, RDF.type) if t in TYPE_TO_KIND}
+    return _best_kind(kinds)
+
+
+def _with_kind(graph: Graph, term: dict) -> None:
+    if term.get("type") == "uri":
+        term["kind"] = term_kind(graph, URIRef(term["value"]))
 
 
 def name_in(graph: Graph, node: URIRef, lang: str) -> Optional[str]:
@@ -723,11 +743,25 @@ def name_in(graph: Graph, node: URIRef, lang: str) -> Optional[str]:
     return None
 
 
-def search_nodes(viz: dict, query: str, limit: int = 25) -> list[dict]:
+# The kinds a picker may ask search for (visual-modeling 5.1).
+SEARCH_KINDS = (
+    KIND_CLASS,
+    KIND_CONCEPT,
+    KIND_OBJECT_PROPERTY,
+    KIND_DATATYPE_PROPERTY,
+    KIND_ANNOTATION_PROPERTY,
+)
+
+
+def search_nodes(viz: dict, query: str, limit: int = 25, kind: Optional[str] = None) -> list[dict]:
     """Rank nodes for the search box: label-prefix matches first, then substrings.
 
     Searches the already-built viz dict (not the raw graph), matching on both
     the label and the IRI, case-insensitively.
+
+    `kind` keeps one kind of node, and is applied before the limit rather than
+    after it: a form's parent picker asking for classes must not be handed 25
+    properties that happened to match first and nothing it can use.
     """
     q = query.strip().lower()
     if not q:
@@ -736,6 +770,8 @@ def search_nodes(viz: dict, query: str, limit: int = 25) -> list[dict]:
     starts: list[dict] = []
     contains: list[dict] = []
     for node in viz["nodes"]:
+        if kind is not None and node["kind"] != kind:
+            continue
         label = node["label"].lower()
         iri = node["id"].lower()
         # A project document's nodes carry every name they have, so a French

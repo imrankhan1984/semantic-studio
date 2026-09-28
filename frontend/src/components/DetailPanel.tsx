@@ -38,6 +38,18 @@ INPUTS / INPUT SOURCES (props)
       details are fetched again when it moves, so an edit shows at once. A
       project document's details also carry `names`, shown as a Names block
       listing each project language and its name, or "missing" in text.
+      Refetching for a new revision keeps the details on screen until the new
+      ones arrive: clearing them would unmount the form field the user just
+      pressed Enter in, and drop their focus with it.
+    - editing: the open project's languages, when this is its model.ttl. The
+      panel then shows the Edit section (visual-modeling 5.1) above the
+      statements, in place of the read-only Names block.
+    - readOnlyNote: why there is no Edit section (a library ontology,
+      shapes.ttl), said in one line of text (AC-4).
+    - onDeleted: the entity was deleted from the form.
+
+    The IRI under the title is a link only when linkTarget allows it (D-088):
+    http and https. Any other scheme is shown as text, with Copy beside it.
 
 EXPECTED OUTPUT
     - The rendered detail panel (or nothing when no node is selected).
@@ -46,7 +58,9 @@ EXPECTED OUTPUT
 
 import { useEffect, useRef, useState } from "react";
 import { getNodeDetails } from "../api";
+import { linkTarget } from "../links";
 import type { NodeDetails, TermRef } from "../types";
+import EditSection from "./EditSection";
 
 interface Props {
   ontologyId: string | null;
@@ -69,6 +83,11 @@ interface Props {
   revision?: number;
   /** The display language, which names the title; refetched when it moves. */
   language?: string | null;
+  /** The project's languages, when this entity's document is its model.ttl. */
+  editing?: { primaryLanguage: string; languages: string[] } | null;
+  /** Why the entity cannot be edited here, when that is the document's fault. */
+  readOnlyNote?: string | null;
+  onDeleted?: (iri: string) => void;
 }
 
 /** The heading id, so the panel can be named by it and focus can be sent to it. */
@@ -115,21 +134,38 @@ export default function DetailPanel({
   imports = false,
   revision = 0,
   language = null,
+  editing = null,
+  readOnlyNote = null,
+  onDeleted,
 }: Props) {
   const [details, setDetails] = useState<NodeDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  // The entity the details on screen describe. A new revision of the same
+  // entity keeps them until the refetch lands (see the header).
+  const shownKey = useRef<string | null>(null);
 
   useEffect(() => {
-    setDetails(null);
+    const key = `${ontologyId}|${iri}|${imports}`;
+    if (shownKey.current !== key) {
+      shownKey.current = key;
+      setDetails(null);
+    }
     setError(null);
     if (!ontologyId || !iri) return;
     setLoading(true);
     let cancelled = false;
     getNodeDetails(ontologyId, iri, imports)
       .then((d) => !cancelled && setDetails(d))
-      .catch((e) => !cancelled && setError(String(e.message ?? e)))
+      .catch((e) => {
+        if (cancelled) return;
+        // Kept details are only for a refetch that succeeds: after an undo
+        // of the entity's creation the refetch is a 404, and a form left on
+        // screen would edit an entity that no longer exists (found in review).
+        setDetails(null);
+        setError(String(e.message ?? e));
+      })
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
@@ -153,6 +189,7 @@ export default function DetailPanel({
   }, [iri, focusHeading]);
 
   if (!iri) return null;
+  const href = linkTarget(iri);
 
   return (
     <aside className="detail-panel" aria-labelledby={HEADING_ID}>
@@ -172,12 +209,20 @@ export default function DetailPanel({
       </div>
 
       <div className="detail-iri">
-        <a href={iri} target="_blank" rel="noreferrer" title="Open IRI in a new tab">
-          {iri}
-        </a>
+        {href ? (
+          <a href={href} target="_blank" rel="noreferrer" title="Open IRI in a new tab">
+            {iri}
+          </a>
+        ) : (
+          // Not http(s): shown, never followed (D-088).
+          <span className="detail-iri-text">{iri}</span>
+        )}
         <button
           className="icon-btn"
           title="Copy IRI"
+          // The glyph is not a name; a non-web IRI is only text, and this is
+          // how it is taken elsewhere (D-088).
+          aria-label="Copy IRI"
           onClick={() => navigator.clipboard?.writeText(iri)}
         >
           ⧉
@@ -208,12 +253,24 @@ export default function DetailPanel({
         </button>
       )}
 
-      {loading && <p className="detail-note">Loading…</p>}
+      {loading && !details && <p className="detail-note">Loading…</p>}
       {error && <p className="detail-error">{error}</p>}
+      {readOnlyNote && <p className="detail-note detail-readonly">{readOnlyNote}</p>}
 
       {details && (
         <>
-          {details.names && (
+          {editing && ontologyId && (
+            <EditSection
+              key={details.iri}
+              ontologyId={ontologyId}
+              details={details}
+              primaryLanguage={editing.primaryLanguage}
+              languages={editing.languages}
+              onSelect={onNavigate}
+              onDeleted={(deleted) => (onDeleted ? onDeleted(deleted) : onClose())}
+            />
+          )}
+          {details.names && !editing && (
             // Each project language and its name. "missing" is written, not
             // shown by colour: a translation still to do is a normal state of
             // work, and it has to be readable as one (5.4.2).

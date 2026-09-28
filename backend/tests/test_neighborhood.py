@@ -44,6 +44,8 @@ from app import main
 from app.graph_builder import neighborhood_viz
 from app.routers import ontologies
 
+from budget import limit_ms
+
 EX = "http://example.org/neighborhood#"
 
 
@@ -401,4 +403,4 @@ def test_neighborhood_cost(client, big_oid, dense_oid):
         elapsed_ms = _median_ms(
             lambda: neighborhood_viz(viz, center, ontologies.DEFAULT_NEIGHBORHOOD_LIMIT)
         )
-        assert elapsed_ms <= 50, f"{shape} fixture took {elapsed_ms:.1f} ms"
+        assert elapsed_ms <= limit_ms(50), f"{shape} fixture took {elapsed_ms:.1f} ms"
