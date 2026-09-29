@@ -88,8 +88,13 @@ them by clicking, without writing SPARQL by hand.
   [Where your ontologies are stored](#where-your-ontologies-are-stored).
 - **Projects — your own ontologies, editable.** The home screen's first section,
   *My projects*, holds your own work; the library below it is read-only. Start a
-  project from a template (empty, a small SKOS vocabulary, a small ontology) or
-  from any library ontology (*Start a project from this* copies it). In a
+  project as an **ontology** (classes, their attributes and the relationships
+  between them) or a **taxonomy** (concepts from broad to narrow), each from an
+  empty or a small template, or from any library ontology (*Start a project
+  from this* copies it, and its kind is judged from what it holds). The kind
+  decides the tools the canvas, the tree and the form offer; content of the
+  other kind stays visible, read-only, and the card's menu changes the kind
+  without touching the model. In a
   project, *View* becomes a **Turtle editor**: edit the text, *Apply*
   (`Ctrl+Enter`) and every view updates. **Undo and Redo** (`Ctrl+Z`, `Ctrl+Y`),
   **Save** (`Ctrl+S`) and *Save a copy* are in the header, changes are autosaved
@@ -377,14 +382,20 @@ of them open as fast as none.
   tree and the form: drag a *Class* or a *Concept* onto it and type a name,
   drop one onto a box to make a kind of it, draw a line from one box to
   another to say *is a kind of*, *narrower than* or a new relationship, and
-  double-click a name (or press Enter on a box) to rename it. Boxes stay
+  double-click a name (or press Enter on a box) to rename it. The line's menu
+  reads what it will make as a sentence (*A Person works for an
+  Organization.*) and **Swap** turns it round before anything is made. Click
+  a relationship's line to open its details, or an *is a kind of* line to see
+  or remove the link; several relationships between two boxes curve apart,
+  and a class can be linked to itself (*Person knows Person*). Boxes stay
   where you put them, saved beside the model in `model.layout.json`; moving
   one is not a change to the model. A model of more than 300 classes and
   concepts draws the ones you choose (*Show on canvas*). The *Canvas* switch
   above the tree hides it; everything it does can be done from the tree and
   the form.
-- **The Hierarchy tree builds too.** *New class* and *New concept* sit at the
-  top of their sections, and each row's menu (the `⋯` button, or `Shift+F10`
+- **The Hierarchy tree builds too.** *New class* (or, in a taxonomy, *New
+  concept*) sits at the top of its section, every relationship and attribute
+  is listed with its ends (*works for (Person → Organization)*), and each row's menu (the `⋯` button, or `Shift+F10`
   on the focused row) adds a subclass or a narrower concept, renames, or
   deletes. Deleting says first what it takes with it, and asks what to do with
   the children.

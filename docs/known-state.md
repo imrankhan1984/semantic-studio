@@ -1090,3 +1090,44 @@ EXPECTED OUTPUT
   document: 1.2 ms per write again, and GET canvas no longer pays for a
   fresh file either.
 
+
+- **Relationships and project kinds, Stage A** (2026-09-29, E-8,
+  `relationships-and-project-kinds.md`). Four things a later change could
+  undo without noticing.
+
+  **Completing a relationship by a line is one command.** The canvas used
+  to send `SetDomain` then `SetRange` for a relationship with neither end, so
+  one line was two undo steps and an undo left half a relationship (the E-7
+  note, matrix row R6). `SetEnds` sets whichever ends the line supplies in one
+  change. Checked in Chrome: one Undo, labelled *Set the ends of likes: from
+  Employee to Organization*, takes both away.
+
+  **After a line makes or completes a relationship, focus goes to the canvas
+  surface, not the box.** Focusing a box selects it (E-7, so the form follows
+  the keyboard), and focusing the start box straight after selecting the new
+  relationship took the selection back to the class. The surface is
+  script-focusable and keeps Delete for the selected line.
+
+  **A loop leaves a box's right side near the top and enters its top edge.**
+  The first version looped on the middle of the right side, where the lines
+  to other boxes leave: in Chrome it sat on top of them, was small, and a
+  click on it selected another relationship. `curves.ts` holds the geometry;
+  its test asserts the loop's label is above and right of the corner.
+
+  **The tree lists every property for a project document only, and only the
+  document's own.** `build_hierarchy(own=...)` is the document graph, also
+  under the merged imports view: listing the merged graph's properties
+  would bury a small model under FOAF's. A library ontology keeps the
+  sub-property forests alone (a test asserts it), because a large ontology's
+  flat property list is the wall the tree exists to avoid.
+
+  **The kind is the tools, never the model (D-089).** `PATCH` with `kind`
+  writes the manifest only; a test compares the model file byte for byte
+  across the change, and Chrome confirmed it. Content of the other kind is
+  shown read-only with one line, never filtered out of a view.
+
+  **Found in the browser pass and left alone:** with the canvas on, Tab from
+  the tree to the form walks every canvas box, and each box focused selects
+  its entity, so the form ends on the last box. That is E-7's design (a box
+  focused is a box selected); the keyboard route through the tree and the
+  form (matrix R22) was run with the canvas switched off.
