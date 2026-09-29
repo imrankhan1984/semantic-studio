@@ -126,4 +126,17 @@ describe("LinkPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Person" }));
     expect(onSelect.mock.calls).toEqual([[EX + "Employee"], [EX + "Person"]]);
   });
+
+  it("a link with an end of the project's other kind says why, and offers no Remove (review)", () => {
+    const reason = "Apple is a SKOS concept, read-only in an ontology. Edit it in Turtle, or change the project to a taxonomy.";
+    render(
+      <LinkPanel
+        link={{ kind: "broader", source: EX + "Apple", target: EX + "Fruit", sourceLabel: "Apple", targetLabel: "Fruit", readOnly: reason }}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(reason)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Remove this link" })).toBeNull();
+  });
 });

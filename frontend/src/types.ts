@@ -824,6 +824,8 @@ export interface CanvasLink {
   target: string;
   sourceLabel: string;
   targetLabel: string;
+  // Why it cannot be removed here: an end of the project's other kind.
+  readOnly?: string;
 }
 
 export interface CanvasView {

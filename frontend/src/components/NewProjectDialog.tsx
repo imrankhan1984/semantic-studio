@@ -82,6 +82,14 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
   // "" until a kind is chosen or a library ontology picked.
   const [source, setSource] = useState(initialSource ? `library:${initialSource}` : "");
   const templates = KIND_CHOICES.find((c) => c.kind === kind)?.templates ?? [];
+  // A library copy's kind is judged by the server from what it holds, so
+  // picking one clears the kind rather than leave a choice the server will
+  // not use on screen (found in review); a note says how it is judged.
+  const chooseSource = (next: string) => {
+    setSource(next);
+    if (next.startsWith("library:")) setKind(null);
+  };
+  const fromLibrary = source.startsWith("library:");
   const chooseKind = (next: ProjectKind) => {
     setKind(next);
     // The kind's small template: a first project with something in it to
@@ -207,7 +215,12 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
           {field("name", "Name", name, setName)}
           <div className="form-field">
             <label htmlFor="new-project-source">Start from</label>
-            <select id="new-project-source" value={source} onChange={(e) => setSource(e.target.value)}>
+            <select
+              id="new-project-source"
+              value={source}
+              onChange={(e) => chooseSource(e.target.value)}
+              aria-describedby={fromLibrary ? "new-project-source-hint" : undefined}
+            >
               {source === "" && (
                 <option value="" disabled>
                   Choose Ontology or Taxonomy first
@@ -232,6 +245,12 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
                 </optgroup>
               )}
             </select>
+            {fromLibrary && (
+              <p id="new-project-source-hint" className="form-hint">
+                A copy is an ontology or a taxonomy by what it holds: concepts and no classes make a taxonomy.
+                Choosing a kind above starts from its template instead.
+              </p>
+            )}
           </div>
           {field(
             "baseIri",

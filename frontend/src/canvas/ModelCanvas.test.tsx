@@ -1163,6 +1163,19 @@ describe("relationships Stage A: the project's kind (AC-2)", () => {
     expect(screen.getByText(/This taxonomy also contains 2 classes\./)).toBeTruthy();
   });
 
+  it("a link between boxes of the other kind is not removed here, by Delete or the panel (review)", async () => {
+    await renderCanvas(viewOf({ kind: "ontology" }));
+    const broader = (flow.props.edges as any[]).find((e) => e.id.startsWith("broader"));
+    await act(async () => flow.props.onEdgeClick({}, broader));
+    const reason = "Paid is a SKOS concept, read-only in an ontology. Edit it in Turtle, or change the project to a taxonomy.";
+    expect(onSelectLink).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "broader", readOnly: reason }));
+    await act(async () => {
+      fireEvent.keyDown(document.querySelector(".react-flow")!, { key: "Delete" });
+    });
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(screen.getByRole("status").textContent).toBe(reason);
+  });
+
   it("with no other kind present, there is no note", async () => {
     await renderCanvas(viewOf({ kind: "taxonomy", nodes: viewOf().nodes.filter((n) => n.kind === "concept"), edges: [] }));
     expect(document.querySelector(".canvas-other-kind")).toBeNull();

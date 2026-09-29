@@ -50,7 +50,7 @@ app writes into the real per-user ontology library.
 
 ```bash
 cd backend  && python -m pytest tests    # 678 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 938 tests, vitest
+cd frontend && npm run test              # 941 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both

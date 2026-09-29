@@ -15,7 +15,8 @@ BASIC IDEA
     with it. Removing is one command through the shared runner, so one undo
     step, with *Removing…* while it runs and the server's sentence if it is
     refused. Both ends are buttons that select the entity, as a term link in
-    the detail panel does.
+    the detail panel does. A link with an end of the project's other kind
+    (D-089) says why it is read-only instead of offering Remove.
 
     It stands where the detail panel stands, as an aside named by its
     sentence, and App shows it in place of the empty panel.
@@ -47,7 +48,7 @@ export default function LinkPanel({ link, onSelect, onClose }: Props) {
   const sentence = linkSentence(link.kind, link.sourceLabel, link.targetLabel);
 
   const remove = async () => {
-    if (busy) return;
+    if (busy || link.readOnly) return;
     const done =
       link.kind === "subClassOf"
         ? await run("link", "RemoveSubClassOf", { child: link.source, parent: link.target })
@@ -78,11 +79,15 @@ export default function LinkPanel({ link, onSelect, onClose }: Props) {
           {link.targetLabel}
         </button>
       </p>
-      <div className="edit-actions">
-        <button type="button" className="ghost danger" aria-disabled={busy} onClick={() => void remove()}>
-          {busy ? "Removing…" : "Remove this link"}
-        </button>
-      </div>
+      {link.readOnly ? (
+        <p className="detail-note">{link.readOnly}</p>
+      ) : (
+        <div className="edit-actions">
+          <button type="button" className="ghost danger" aria-disabled={busy} onClick={() => void remove()}>
+            {busy ? "Removing…" : "Remove this link"}
+          </button>
+        </div>
+      )}
       {errors.link && (
         <p className="edit-error" role="alert">
           {errors.link}

@@ -166,6 +166,20 @@ describe("NewProjectDialog", () => {
     expect(onCreate.mock.calls[0][0]).not.toHaveProperty("template");
   });
 
+  it("a library copy clears the kind, and says how its kind is judged (review)", () => {
+    renderDialog();
+    kind("Ontology");
+    fireEvent.change(field("Start from"), { target: { value: "library:ont-1" } });
+    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    expect(radios.map((r) => r.checked)).toEqual([false, false]);
+    const hint = document.getElementById(field("Start from").getAttribute("aria-describedby")!)!;
+    expect(hint.textContent).toContain("concepts and no classes make a taxonomy");
+    // Choosing a kind again is choosing its template, in sight in the select.
+    kind("Taxonomy");
+    expect(field("Start from").value).toBe("template:taxonomy-small");
+    expect(field("Start from").getAttribute("aria-describedby")).toBeNull();
+  });
+
   it("shows the server's refusal and stays open", async () => {
     const onCreate = vi.fn(async () => {
       throw new Error("The prefix must start with a letter.");

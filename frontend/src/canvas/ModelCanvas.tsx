@@ -365,9 +365,27 @@ function Canvas(props: ModelCanvasProps) {
     );
   };
 
+  /** Why a subclass or broader line is not changed here: an end of the
+   *  project's other kind (D-089; found in review, where Delete and the link
+   *  panel still removed a link between two read-only concepts). */
+  const fixedLink = (edge: CanvasView["edges"][number]): string | null => {
+    if (!view || edge.kind === "relationship") return null;
+    for (const iri of [edge.source, edge.target]) {
+      const box = view.nodes.find((n) => n.iri === iri);
+      const reason = box && !box.imported ? otherKindRefusal(view, box) : null;
+      if (reason) return reason;
+    }
+    return null;
+  };
+
   const removeEdge = async (id: string) => {
     const edge = view?.edges.find((e) => edgeId(e) === id);
     if (!edge) return;
+    const fixed = fixedLink(edge);
+    if (fixed) {
+      setHint(fixed);
+      return;
+    }
     if (edge.kind === "subClassOf") await run("edge", "RemoveSubClassOf", { child: edge.source, parent: edge.target });
     else if (edge.kind === "broader") await run("edge", "RemoveBroader", { concept: edge.source, broader: edge.target });
     else if (edge.property) setDeleting({ iri: edge.property, label: edge.label ?? edge.property });
@@ -777,12 +795,14 @@ function Canvas(props: ModelCanvasProps) {
             // A click on a line focuses nothing, so the Delete key went to the
             // page and never reached this canvas (PR #47 review): focus the
             // surface, where the key handler is, and say what Delete will do.
+            const line = view.edges.find((e) => edgeId(e) === edge.id);
+            const fixed = line ? fixedLink(line) : null;
             setSelectedEdge(edge.id);
-            setHint(`${edge.ariaLabel ?? "Line"} selected. Delete removes it.`);
+            setHint(fixed ?? `${edge.ariaLabel ?? "Line"} selected. Delete removes it.`);
             wrapper.current?.focus();
             // And show what the line is (5.2): a relationship's form, or the
-            // link panel for a subclass or broader line.
-            const line = view.edges.find((e) => edgeId(e) === edge.id);
+            // link panel for a subclass or broader line, read-only when an
+            // end is of the project's other kind.
             if (line?.kind === "relationship" && line.property) selectHere(line.property);
             else if (line && line.kind !== "relationship") {
               onSelectLink?.({
@@ -791,6 +811,7 @@ function Canvas(props: ModelCanvasProps) {
                 target: line.target,
                 sourceLabel: label(view, line.source),
                 targetLabel: label(view, line.target),
+                ...(fixed ? { readOnly: fixed } : {}),
               });
             }
           }}
