@@ -1725,6 +1725,11 @@ button.legend-row:hover {
 }
 
 .hierarchy-label {
+  /* The name keeps its width, up to half the row, before anything beside it
+     does: beside the canvas the tree is narrow, and a relationship's ends cut
+     its name to "kno…" (found in the browser pass). */
+  flex: 0 0 auto;
+  max-width: 50%;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text);
@@ -1738,7 +1743,8 @@ button.legend-row:hover {
 
 /* A relationship's or attribute's ends, after its name (relationships 5.5). */
 .hierarchy-ends {
-  flex: 0 1 auto;
+  /* Shrinks long before the name does: the name is what the row is. */
+  flex: 0 20 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1748,7 +1754,10 @@ button.legend-row:hover {
 }
 
 .hierarchy-other-kind {
-  margin: 0 0 6px;
+  flex: none;
+  margin: 0;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .hierarchy-count {

@@ -148,10 +148,9 @@ function LabelledEdge(props: EdgeProps<Edge<LineData>>) {
   let y: number;
   if (props.source === props.target && box) {
     const width = box.measured.width ?? 190;
-    const height = box.measured.height ?? BOX_HEIGHT;
     ({ path, labelX: x, labelY: y } = loopCurve(
       box.internals.positionAbsolute.x + width,
-      box.internals.positionAbsolute.y + height / 2,
+      box.internals.positionAbsolute.y,
       data.pair,
     ));
   } else if (data.pairs > 1) {
@@ -418,7 +417,7 @@ function Canvas(props: ModelCanvasProps) {
       const id = edgeId(e);
       const relationship = e.kind === "relationship";
       const loop = e.source === e.target;
-      const [out, into] = loop ? (["r", "r"] as const) : sides(positions[e.source], positions[e.target]);
+      const [out, into] = loop ? (["r", "t"] as const) : sides(positions[e.source], positions[e.target]);
       return {
         id,
         source: e.source,

@@ -52,13 +52,16 @@ describe("curves", () => {
     expect([one.labelX, one.labelY]).toEqual([100, 0]);
   });
 
-  it("draws a loop out of the right side and back, the next one outside it", () => {
+  it("draws a loop out of the right side into the top, the next one outside it", () => {
     const first = loopCurve(190, 40, 0);
     const second = loopCurve(190, 40, 1);
-    expect(first.path.startsWith("M 190,30")).toBe(true);
-    expect(first.path.endsWith("190,50")).toBe(true);
+    expect(first.path.startsWith("M 190,54")).toBe(true);
+    expect(first.path.endsWith("160,40")).toBe(true);
+    // Above the box and to the right of its corner, clear of the middle of
+    // the side, where the lines to other boxes leave.
     expect(first.labelX).toBeGreaterThan(190);
-    expect(second.labelX).toBeGreaterThan(first.labelX + 20);
-    expect(first.labelY).toBe(40);
+    expect(first.labelY).toBeLessThan(40);
+    expect(second.labelX).toBeGreaterThan(first.labelX + 10);
+    expect(second.labelY).toBeLessThan(first.labelY - 10);
   });
 });

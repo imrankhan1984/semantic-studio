@@ -1107,7 +1107,7 @@ describe("relationships Stage A: seeing and drawing relationships", () => {
     expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["new relationship…"]);
   });
 
-  it("lines sharing two boxes carry their place, and a loop leaves and enters on the right (AC-5)", async () => {
+  it("lines sharing two boxes carry their place, and a loop leaves on the right and enters the top (AC-5)", async () => {
     await renderCanvas(
       viewOf({
         edges: [
@@ -1121,7 +1121,7 @@ describe("relationships Stage A: seeing and drawing relationships", () => {
     expect([a.data.pair, a.data.pairs, b.data.pair, b.data.pairs]).toEqual([0, 2, 1, 2]);
     // Both directions in one frame: one runs with the pair's order, one against.
     expect(a.data.forward).not.toBe(b.data.forward);
-    expect([c.sourceHandle, c.targetHandle]).toEqual(["r", "r"]);
+    expect([c.sourceHandle, c.targetHandle]).toEqual(["r", "t"]);
     expect(c.data.text).toBe("c");
   });
 });

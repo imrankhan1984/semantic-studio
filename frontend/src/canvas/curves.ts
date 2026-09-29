@@ -22,15 +22,17 @@ BASIC IDEA
     (the normal across a vertical line is horizontal, and names are wide)
     still do not cover each other.
 
-    Loops grow with their place: the second loop on a box is drawn outside
-    the first, with its label further out.
+    A loop leaves the box's right side near its top and comes back into its
+    top edge, so it stands above the corner rather than across the lines to
+    other boxes. Loops grow with their place: the second loop on a box is
+    drawn outside the first, with its label further out.
 
     Pure geometry, so it is tested without React Flow, whose edges the
     component tests stub.
 
 INPUTS / INPUT SOURCES
     - The two ends React Flow computed, the line's place, and for a loop
-      the box's right edge and middle.
+      the box's right edge and top.
 
 EXPECTED OUTPUT
     - { path, labelX, labelY }: an SVG path and the label's centre.
@@ -40,8 +42,8 @@ EXPECTED OUTPUT
 /** Space between neighbouring curves of one pair, at their middle. */
 export const PAIR_SPACING = 44;
 /** How far a first loop reaches out from the box, and each next one more. */
-const LOOP_REACH = 64;
-const LOOP_STEP = 34;
+const LOOP_REACH = 70;
+const LOOP_STEP = 36;
 
 export interface Curve {
   path: string;
@@ -92,16 +94,19 @@ export function pairCurve(
   };
 }
 
-/** A loop from a box's right side back into it, the `pair`-th on that box. */
-export function loopCurve(right: number, middle: number, pair: number): Curve {
+/** A loop from a box's right side back into its top, the `pair`-th on that
+ *  box: out of the upper right corner, clear of the lines that leave the
+ *  middle of that side for other boxes (found in the browser pass, where a
+ *  loop on the middle of the side sat on top of them and a click on it
+ *  landed on theirs). */
+export function loopCurve(right: number, top: number, pair: number): Curve {
   const reach = LOOP_REACH + pair * LOOP_STEP;
-  const spreadY = 26 + pair * 12;
-  const out = right + reach;
+  const startY = top + 14;
+  const endX = right - 30;
   return {
-    path: `M ${right},${middle - 10} C ${out},${middle - spreadY - 20} ${out},${middle + spreadY + 20} ${right},${middle + 10}`,
-    // The curve's farthest point is three quarters of the way to its
-    // control points' x, at the middle.
-    labelX: right + reach * 0.75,
-    labelY: middle,
+    path: `M ${right},${startY} C ${right + reach},${startY} ${endX},${top - reach} ${endX},${top}`,
+    // Near the curve's farthest point, up and out from the corner.
+    labelX: right + reach * 0.4,
+    labelY: top - reach * 0.45,
   };
 }
