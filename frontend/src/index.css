@@ -1725,6 +1725,11 @@ button.legend-row:hover {
 }
 
 .hierarchy-label {
+  /* The name keeps its width, up to half the row, before anything beside it
+     does: beside the canvas the tree is narrow, and a relationship's ends cut
+     its name to "kno…" (found in the browser pass). */
+  flex: 0 0 auto;
+  max-width: 50%;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text);
@@ -1734,6 +1739,25 @@ button.legend-row:hover {
   flex: none;
   font-size: 11px;
   color: var(--text-dim);
+}
+
+/* A relationship's or attribute's ends, after its name (relationships 5.5). */
+.hierarchy-ends {
+  /* Shrinks long before the name does: the name is what the row is. */
+  flex: 0 20 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.hierarchy-other-kind {
+  flex: none;
+  margin: 0;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .hierarchy-count {
@@ -3821,9 +3845,86 @@ button.legend-row:hover {
   color: var(--error-text);
 }
 
+/* The project's kind on its Home card, in words (relationships 5.1). */
+.project-kind {
+  margin: 2px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
 .new-project-reason {
   text-align: right;
   margin-top: 6px;
+}
+
+/* The kind choice (relationships 5.1): two large options, each a native
+   radio button labelled by its name and sentence. The chosen one is marked
+   by its border and the checked radio, not by colour alone. */
+.new-project-kinds {
+  border: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.new-project-kinds legend {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+.form-field .new-project-kind {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.form-field .new-project-kind.chosen {
+  border: 2px solid var(--accent);
+  padding: 9px;
+  background: var(--bg-raised);
+}
+
+.new-project-kind input {
+  margin-top: 3px;
+}
+
+.new-project-kind-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.new-project-kind-text strong {
+  font-size: 14px;
+  color: var(--text);
+}
+
+@media (max-width: 560px) {
+  .new-project-kinds {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .form-field .new-project-kind {
+    transition: none;
+  }
 }
 
 /* The Turtle editor: the source view's overlay, with a line-number gutter
@@ -4326,6 +4427,19 @@ kbd {
   background: var(--bg-panel);
 }
 
+/* The project's other kind (D-089): drawn and read-only, dotted rather than
+   an import's dashes, and saying so in text. */
+.canvas-box.other-kind {
+  border-style: dotted;
+  background: var(--bg-panel);
+}
+
+.canvas-other-kind {
+  flex: none;
+  margin: 0;
+  padding: 0 10px 4px;
+}
+
 .canvas-box.selected {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -4398,6 +4512,12 @@ kbd {
   pointer-events: none;
 }
 
+/* The selected line's label, marked by weight and border as well as colour. */
+.canvas-edge-label.selected {
+  border: 2px solid var(--accent);
+  font-weight: 600;
+}
+
 .canvas-hollow {
   fill: var(--bg);
   stroke: var(--text-dim);
@@ -4464,10 +4584,35 @@ kbd {
   background: var(--bg-subhead);
 }
 
-.relate-title {
+.relate-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin: 0 0 4px;
+}
+
+.relate-title {
+  margin: 0;
   font-size: 12px;
   color: var(--text-dim);
+}
+
+.relate-swap {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+/* The sentence the new relationship will make, as it is typed. */
+.relate-sentence {
+  margin: 6px 0 0;
+  font-size: 13px;
+  font-style: italic;
+  color: var(--text);
+}
+
+.relate-refusal {
+  margin: 4px 0;
 }
 
 .model-canvas button[aria-disabled="true"],

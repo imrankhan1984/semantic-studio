@@ -22,6 +22,11 @@ BASIC IDEA
     line to nowhere tells the learner nothing. Such a box is read-only: the
     canvas links to it and never changes it.
 
+    Lines sharing two boxes carry their place among them (`pair`, `pairs`),
+    so several relationships between Person and Organization, or loops on one
+    box, are drawn apart (relationships 5.4); a relationship whose domain is
+    its range is a loop, not something to refuse.
+
     A relationship is drawn only with both ends: an arrow needs a start and a
     finish, and inventing one would draw something the model does not say.
     The rest are listed in `undrawn`, so the canvas can say how many and the
@@ -40,7 +45,8 @@ INPUTS / INPUT SOURCES
     - The merged imports view and its importedFrom map, or None.
 
 EXPECTED OUTPUT
-    - build_canvas(...) -> {nodes, edges, undrawn, total}
+    - build_canvas(...) -> {nodes, edges, undrawn, total}; each edge with
+      `pair` and `pairs`.
     - restrict(view, shown) -> the same shape, cut to the shown set.
 ================================================================================
 """
@@ -175,6 +181,8 @@ def build_canvas(
                 "label": label(prop),
             })
 
+    _spread(edges)
+
     # An attribute is drawn in its class's box; a class outside the model is
     # drawn only when a line reaches it, and otherwise the attribute is
     # listed, not lost.
@@ -209,6 +217,27 @@ def build_canvas(
             "attributes": attributes.get(iri, []),
         })
     return {"nodes": nodes, "edges": edges, "undrawn": undrawn, "total": len(classes | concepts)}
+
+
+def _spread(edges: list[dict]) -> None:
+    """Number the lines that share two boxes (relationships 5.4).
+
+    Each line gets `pair`, its place among the lines joining the same two
+    boxes in either direction, and `pairs`, how many there are, so the
+    frontend can curve them apart and keep their labels off each other. The
+    places are counted in one order for both directions: *works for* and
+    *employs* on the same two boxes are two places, not two first lines laid
+    on top of each other. A line from a box to itself is counted with the
+    other loops on that box.
+    """
+    groups: dict[tuple, list[dict]] = {}
+    for edge in edges:
+        key = tuple(sorted((edge["source"], edge["target"])))
+        groups.setdefault(key, []).append(edge)
+    for group in groups.values():
+        for i, edge in enumerate(group):
+            edge["pair"] = i
+            edge["pairs"] = len(group)
 
 
 def restrict(view: dict, shown: Optional[list]) -> dict:

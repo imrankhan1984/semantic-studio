@@ -43,6 +43,7 @@ const PROJECT: ProjectSummary = {
     { file: "shapes.ttl", role: "shapes" },
   ],
   counts: { classes: 2, properties: 1, concepts: 0 },
+  kind: "ontology",
 };
 
 function renderSection(props: Partial<React.ComponentProps<typeof ProjectsSection>> = {}) {
@@ -50,6 +51,7 @@ function renderSection(props: Partial<React.ComponentProps<typeof ProjectsSectio
     onNew: vi.fn(),
     onOpen: vi.fn(),
     onRename: vi.fn(async () => undefined),
+    onChangeKind: vi.fn(),
     onDuplicate: vi.fn(),
     onExport: vi.fn(),
     onDelete: vi.fn(),
@@ -162,5 +164,24 @@ describe("ProjectsSection", () => {
     expect(open.textContent).toBe("Working…");
     fireEvent.click(open);
     expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("says the project's kind, and offers to change it from its menu (relationships AC-1)", () => {
+    const { onChangeKind } = renderSection({ projects: [PROJECT, { ...PROJECT, id: "prj-bbbbbbbbbbbb", name: "Fruit", kind: "taxonomy" }] });
+    const [invoices, fruit] = screen.getAllByRole("article");
+    expect(invoices.querySelector(".project-kind")!.textContent).toBe("Ontology");
+    expect(fruit.querySelector(".project-kind")!.textContent).toBe("Taxonomy");
+    fireEvent.click(screen.getByRole("button", { name: "More actions for Invoices" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change to taxonomy…" }));
+    expect(onChangeKind).toHaveBeenCalledWith(PROJECT.id);
+    fireEvent.click(screen.getByRole("button", { name: "More actions for Fruit" }));
+    expect(screen.getByRole("button", { name: "Change to ontology…" })).toBeTruthy();
+  });
+
+  it("a project from before kinds names none and offers no change until it is opened", () => {
+    renderSection({ projects: [{ ...PROJECT, kind: null }] });
+    expect(document.querySelector(".project-kind")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "More actions for Invoices" }));
+    expect(screen.queryByRole("button", { name: /Change to/ })).toBeNull();
   });
 });

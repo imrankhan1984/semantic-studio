@@ -765,3 +765,40 @@ describe("Stage 2 follow-ups (visual-modeling 5.8)", () => {
   });
 });
 
+
+describe("the project's kind (relationships AC-2)", () => {
+  const paid = () => details("Paid", "concept", [[P.type, uri(SKOS + "Concept")], [P.prefLabel, lit("Paid", "en")]]);
+
+  async function renderKind(d: NodeDetails, projectKind: "ontology" | "taxonomy") {
+    await act(async () => {
+      render(
+        <EditSection
+          ontologyId={OID}
+          details={d}
+          primaryLanguage="en"
+          languages={["fr"]}
+          projectKind={projectKind}
+          onSelect={onSelect}
+          onDeleted={onDeleted}
+        />,
+      );
+    });
+  }
+
+  it("a concept in an ontology is shown read-only, with where it is changed", async () => {
+    await renderKind(paid(), "ontology");
+    expect(
+      screen.getByText("A SKOS concept, read-only in an ontology. Edit it in Turtle, or change the project to a taxonomy."),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add broader concept" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Delete/ })).toBeNull();
+  });
+
+  it("a class in a taxonomy is shown read-only, and the kind's own entity is edited as before", async () => {
+    await renderKind(invoice(), "taxonomy");
+    expect(screen.getByText(/A class, read-only in a taxonomy\./)).toBeTruthy();
+    cleanup();
+    await renderKind(paid(), "taxonomy");
+    expect(screen.getByRole("button", { name: "Add broader concept" })).toBeTruthy();
+  });
+});

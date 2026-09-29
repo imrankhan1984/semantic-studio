@@ -1063,7 +1063,10 @@ def merged_hierarchy(
     return imports_service.derived(
         ontology,
         ("hierarchy", langs),
-        lambda g: mark_imported_hierarchy(build_hierarchy(g, langs=langs), view["importedFrom"]),
+        lambda g: mark_imported_hierarchy(
+            build_hierarchy(g, langs=langs, own=ontology.graph if ontology.editable else None),
+            view["importedFrom"],
+        ),
     )
 
 

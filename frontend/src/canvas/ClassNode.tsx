@@ -7,8 +7,9 @@ SUMMARY
     A class box on the modeling canvas (visual-modeling 5.4): its name in the
     display language, its attributes listed inside as *name : type*, and a
     *+ attribute* control; an imported class dashed, named by its import, and
-    read-only. Also NameLine, the name or its rename field, which the concept
-    box shares.
+    read-only; in a taxonomy, a class dotted and marked *read-only in a
+    taxonomy*, without *+ attribute* (relationships 5.1, D-089). Also
+    NameLine, the name or its rename field, which the concept box shares.
 
 BASIC IDEA
     React Flow draws the box and makes it focusable; this draws what is in it.
@@ -38,6 +39,8 @@ import type { CanvasNode } from "../types";
 
 export interface BoxData extends Record<string, unknown> {
   node: CanvasNode;
+  // A box of the project's other kind (D-089): drawn, never changed here.
+  otherKind: boolean;
   // The drop target while a palette item is dragged over it.
   dropTarget: boolean;
   renaming: boolean;
@@ -114,7 +117,7 @@ function RenameField({ data }: { data: BoxData }) {
 }
 
 function ClassNode({ data, selected }: NodeProps<BoxNode>) {
-  const { node, dropTarget, busy, onAddAttribute } = data;
+  const { node, dropTarget, busy, onAddAttribute, otherKind } = data;
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [datatype, setDatatype] = useState("xsd:string");
@@ -131,6 +134,7 @@ function ClassNode({ data, selected }: NodeProps<BoxNode>) {
       className={
         "canvas-box canvas-class" +
         (imported ? " imported" : "") +
+        (otherKind ? " other-kind" : "") +
         (selected ? " selected" : "") +
         (dropTarget ? " drop-target" : "")
       }
@@ -142,6 +146,7 @@ function ClassNode({ data, selected }: NodeProps<BoxNode>) {
           {node.imported === "outside" ? "outside this model" : `from ${node.imported}`}
         </span>
       )}
+      {otherKind && <span className="canvas-box-from">read-only in a taxonomy</span>}
       {node.attributes.length > 0 && (
         <ul className="canvas-attributes">
           {node.attributes.map((a) => (
@@ -152,6 +157,7 @@ function ClassNode({ data, selected }: NodeProps<BoxNode>) {
         </ul>
       )}
       {!imported &&
+        !otherKind &&
         (adding ? (
           <div className="canvas-attr-form nodrag" onKeyDown={keep}>
             <input

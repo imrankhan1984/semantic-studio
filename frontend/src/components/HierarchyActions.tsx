@@ -27,7 +27,9 @@ BASIC IDEA
     making a subclass of FOAF's Person is this project's own change; anything
     else imported, nothing. Past 300 boxes the canvas draws a chosen set
     (visual-modeling 5.6), and a class or concept row then also offers *Show
-    on canvas* or *Hide from canvas*.
+    on canvas* or *Hide from canvas*. A row of the project's other kind (a
+    concept in an ontology, a class in a taxonomy, D-089) offers nothing of
+    its own: it is changed in Turtle, or after changing the kind.
 
 INPUTS / INPUT SOURCES (props)
     - label: the row's name, for the menu's accessible name.
@@ -35,7 +37,7 @@ INPUTS / INPUT SOURCES (props)
     - onChoose(action), onClose: the choice, or none.
 
 EXPECTED OUTPUT
-    - rowActions(kind, imported) and the RowMenu component.
+    - rowActions(kind, imported, canvas, otherKind) and the RowMenu component.
 ================================================================================
 */
 
@@ -53,13 +55,14 @@ export function rowActions(
   kind: string,
   imported: boolean,
   canvas: { limited: boolean; shown: boolean } | null = null,
+  otherKind = false,
 ): MenuItem[] {
   const drawable = kind === "class" || kind === "concept";
   const onCanvas: MenuItem[] =
     canvas?.limited && drawable
       ? [canvas.shown ? { action: "hide", label: "Hide from canvas" } : { action: "show", label: "Show on canvas" }]
       : [];
-  return [...ownActions(kind, imported), ...onCanvas];
+  return [...(otherKind ? [] : ownActions(kind, imported)), ...onCanvas];
 }
 
 function ownActions(kind: string, imported: boolean): MenuItem[] {

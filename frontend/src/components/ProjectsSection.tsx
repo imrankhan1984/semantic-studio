@@ -6,8 +6,10 @@ FILE: frontend/src/components/ProjectsSection.tsx
 SUMMARY
     "My projects", the first section of the Home screen (authoring-foundations
     5.1): the user's own work, above the read-only library. Each project card
-    shows its name, when it last changed, its documents and its counts, an
-    Open button, and a menu with Rename, Duplicate, Export as zip and Delete.
+    shows its name, its kind (*Ontology* or *Taxonomy*, relationships 5.1),
+    when it last changed, its documents and its counts, an Open button, and
+    a menu with Rename, Change to taxonomy… (or ontology…), Duplicate,
+    Export as zip and Delete.
 
 BASIC IDEA
     Everything on a card comes from the project list App fetched on mount,
@@ -19,12 +21,13 @@ BASIC IDEA
     happens in place, in a labelled field that Enter saves and Escape
     abandons, rather than in a browser prompt. Delete is App's, because the
     confirmation and the sentence saying where the folder went belong with the
-    live region App owns.
+    live region App owns. So is Change to…, which asks first with one
+    sentence of what changes: the tools, never the model (D-089).
 
 INPUTS / INPUT SOURCES (props)
     - projects, loading, error: the list and its state.
     - busyId: the project an action is running on, which then says so.
-    - onNew, onOpen, onRename, onDuplicate, onExport, onDelete.
+    - onNew, onOpen, onRename, onChangeKind, onDuplicate, onExport, onDelete.
 
 EXPECTED OUTPUT
     - The section, and one callback per action.
@@ -42,6 +45,7 @@ interface Props {
   onNew: () => void;
   onOpen: (pid: string) => void;
   onRename: (pid: string, name: string) => Promise<void>;
+  onChangeKind: (pid: string) => void;
   onDuplicate: (pid: string) => void;
   onExport: (pid: string) => void;
   onDelete: (pid: string) => void;
@@ -65,6 +69,7 @@ function ProjectCard({
   disabled,
   onOpen,
   onRename,
+  onChangeKind,
   onDuplicate,
   onExport,
   onDelete,
@@ -72,7 +77,7 @@ function ProjectCard({
   project: ProjectSummary;
   busy: boolean;
   disabled: boolean;
-} & Pick<Props, "onOpen" | "onRename" | "onDuplicate" | "onExport" | "onDelete">) {
+} & Pick<Props, "onOpen" | "onRename" | "onChangeKind" | "onDuplicate" | "onExport" | "onDelete">) {
   const headingId = useId();
   const menuId = useId();
   const renameId = useId();
@@ -189,6 +194,13 @@ function ProjectCard({
                   >
                     Rename
                   </button>
+                  {/* A project from before kinds gets its kind when it is
+                      first opened; until then there is nothing to change. */}
+                  {project.kind && (
+                    <button onClick={act(onChangeKind)}>
+                      {project.kind === "ontology" ? "Change to taxonomy…" : "Change to ontology…"}
+                    </button>
+                  )}
                   <button onClick={act(onDuplicate)}>Duplicate</button>
                   <button onClick={act(onExport)}>Export as zip</button>
                   <button className="danger" onClick={act(onDelete)}>
@@ -200,6 +212,7 @@ function ProjectCard({
           </div>
         </div>
         {renameError && <p className="form-error">{renameError}</p>}
+        {project.kind && <p className="project-kind">{project.kind === "ontology" ? "Ontology" : "Taxonomy"}</p>}
         <p className="onto-summary">
           {plural(project.counts.classes, "class", "classes")},{" "}
           {plural(project.counts.properties, "property", "properties")},{" "}
@@ -232,6 +245,7 @@ export default function ProjectsSection({
   onNew,
   onOpen,
   onRename,
+  onChangeKind,
   onDuplicate,
   onExport,
   onDelete,
@@ -264,6 +278,7 @@ export default function ProjectsSection({
               disabled={busyId !== null}
               onOpen={onOpen}
               onRename={onRename}
+              onChangeKind={onChangeKind}
               onDuplicate={onDuplicate}
               onExport={onExport}
               onDelete={onDelete}

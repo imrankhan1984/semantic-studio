@@ -5,22 +5,34 @@ FILE: frontend/src/canvas/RelateMenu.tsx
 
 SUMMARY
     The small menu that opens at the end of a line drawn between two boxes
-    (visual-modeling 5.4, Relating): *is a kind of*, *new relationship…*
-    with its name field, *narrower than*, or an existing relationship the
-    line would complete; the notes on those it will not offer; and the
-    server's sentence if the command is refused.
+    (visual-modeling 5.4, Relating; relationships 5.3): headed *Person …
+    Organization* with a Swap button that reverses the line before anything
+    is made; each choice read as the sentence it makes (*Person is a kind of
+    Organization*, *Person works for Organization (existing relationship)*);
+    *new relationship…* with its name field and the sentence as typed, *A
+    Person works for an Organization.*; the notes on what it will not offer;
+    and the server's sentence if the command is refused.
 
 BASIC IDEA
     A WAI-ARIA menu, as the tree's row menu is: focus goes to the first item,
     the arrow keys, Home and End move it, Escape closes it and gives focus
     back. *New relationship…* turns the menu into a one-field form, because a
     relationship needs a name, and the name is all it asks (names first,
-    5.1). The choices come from relate.ts; this only draws them and says
-    which was chosen.
+    5.1). The sentence under the field describes it rather than announcing
+    each key, which would talk over the typing. The choices come from
+    relate.ts and the sentences from modeling/sentences.ts; this only draws
+    them and says which was chosen.
+
+    Swap is a plain button beside the heading, outside the menu's arrow-key
+    order: it changes what every item says, so it is reached by Tab from the
+    menu, and focus goes back to the first item after it, which now reads
+    the other way round.
 
 INPUTS / INPUT SOURCES (props)
-    - title: "Invoice Item to Invoice".
-    - choices, notes: from relateChoices.
+    - from, to: the two boxes' names, in the line's direction.
+    - choices, notes: from relateChoices; refusal: the swapped direction's,
+      when it cannot mean anything.
+    - onSwap: ask again the other way round.
     - anchor: where the line ended, in the canvas's own coordinates.
     - busy, error: the command in flight, and its refusal.
     - onChoose(choice, name?), onClose.
@@ -30,14 +42,18 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { relationshipSentence } from "../modeling/sentences";
 import { keep } from "./ClassNode";
 import type { RelateChoice } from "./relate";
 
 interface Props {
-  title: string;
+  from: string;
+  to: string;
   choices: RelateChoice[];
   notes: string[];
+  refusal?: string | null;
+  onSwap: () => void;
   anchor: { x: number; y: number };
   busy: boolean;
   error: string | null;
@@ -45,14 +61,28 @@ interface Props {
   onClose: () => void;
 }
 
-export default function RelateMenu({ title, choices, notes, anchor, busy, error, onChoose, onClose }: Props) {
+export default function RelateMenu({
+  from,
+  to,
+  choices,
+  notes,
+  refusal = null,
+  onSwap,
+  anchor,
+  busy,
+  error,
+  onChoose,
+  onClose,
+}: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const sentenceId = useId();
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState("");
 
+  // On open, and after a swap: the first item, which now reads the other way.
   useEffect(() => {
-    if (!naming) ref.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
-  }, [naming]);
+    if (!naming) (ref.current?.querySelector<HTMLElement>('[role="menuitem"]') ?? ref.current?.querySelector<HTMLElement>(".relate-swap"))?.focus();
+  }, [naming, from, to]);
 
   const move = (step: number | "first" | "last") => {
     const all = Array.from(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
@@ -78,9 +108,22 @@ export default function RelateMenu({ title, choices, notes, anchor, busy, error,
         else if (!naming && e.key === "End") move("last");
       }}
     >
-      <p className="relate-title" id="relate-title">
-        {title}
-      </p>
+      <div className="relate-head">
+        <p className="relate-title" id="relate-title">
+          {from} <span aria-hidden="true">…</span>
+          <span className="visually-hidden">to</span> {to}
+        </p>
+        <button
+          type="button"
+          className="ghost relate-swap"
+          aria-disabled={busy}
+          onClick={() => !busy && onSwap()}
+          aria-label={`Swap: from ${to} to ${from}`}
+          title="Swap the direction"
+        >
+          <span aria-hidden="true">⇄</span> Swap
+        </button>
+      </div>
       {naming && newRelationship ? (
         <form
           onSubmit={(e) => {
@@ -91,7 +134,17 @@ export default function RelateMenu({ title, choices, notes, anchor, busy, error,
           <label className="edit-field-label" htmlFor="relate-name">
             Name of the new relationship
           </label>
-          <input id="relate-name" autoFocus value={name} readOnly={busy} onChange={(e) => setName(e.target.value)} />
+          <input
+            id="relate-name"
+            autoFocus
+            value={name}
+            readOnly={busy}
+            aria-describedby={sentenceId}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <p id={sentenceId} className="relate-sentence">
+            {relationshipSentence(from, name, to)}
+          </p>
           <div className="edit-actions">
             <button type="submit" className="primary" aria-disabled={busy || !name.trim()}>
               {busy ? "Saving change…" : "Create"}
@@ -101,6 +154,8 @@ export default function RelateMenu({ title, choices, notes, anchor, busy, error,
             </button>
           </div>
         </form>
+      ) : refusal ? (
+        <p className="detail-note relate-refusal">{refusal}</p>
       ) : (
         <ul role="menu" aria-labelledby="relate-title">
           {choices.map((choice) => (

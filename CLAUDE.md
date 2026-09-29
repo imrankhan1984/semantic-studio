@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 648 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 893 tests, vitest
+cd backend  && python -m pytest tests    # 678 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 941 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -179,13 +179,16 @@ frontend/src/
                      ontology summary sentence
   home/              Pure home-screen logic: the card thumbnail's layout and
                      the composition bar's bands
-  projects/          Pure New project form logic: defaults and validation
+  projects/          Pure New project form logic: the two kinds, defaults
+                     and validation
   modeling/          Pure editing-form logic: an entity's blocks read out of
-                     its statements, and annotation value types and checks
+                     its statements, annotation value types and checks, and
+                     the sentences a relationship reads as (sentences.ts)
   links.ts           linkTarget: the one gate an IRI passes to become a link
   canvas/            The modeling canvas (D-086): ModelCanvas on React Flow,
-                     its boxes and relate menu, and the pure layered layout
-                     and relate rule; loaded only through React.lazy in App
+                     its boxes and relate menu, and the pure layered layout,
+                     relate rule and line curves; loaded only through
+                     React.lazy in App
 
 docs/known-state.md  Why each load-bearing rule below exists
 ```
@@ -277,6 +280,13 @@ leaves one behind.
 - `projectStore.close()` awaits every registered flush; the canvas registers its layout save. [lost drop point]
 - The layout's `generation` is the server's alone; a response older than the last successful save gives no positions. [layout generation]
 - `ProjectStore` serves layouts from memory after the first read: opening a just-replaced file costs ~130 ms on Windows. [layout generation]
+
+**Relationships and kinds**
+- A line completing a relationship is one `SetEnds`, never `SetDomain` then `SetRange`. [Relationships and project kinds]
+- After a line makes a relationship, focus goes to the canvas surface, not a box: focusing a box selects it. [Relationships and project kinds]
+- A loop leaves a box's upper right, clear of the side's middle where other lines leave. [Relationships and project kinds]
+- The tree lists every property only for a project document, and only the document's own (`own`), never an import's. [Relationships and project kinds]
+- A kind change writes the manifest only; the other kind is shown read-only, never hidden (D-089). [Relationships and project kinds]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

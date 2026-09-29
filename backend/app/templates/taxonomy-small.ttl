@@ -1,0 +1,27 @@
+@prefix {{prefix}}: <{{base}}> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+
+<{{ontology}}> a owl:Ontology ;
+    rdfs:label "{{name}}"@{{lang}} .
+
+{{prefix}}:Scheme a skos:ConceptScheme ;
+    skos:prefLabel "{{name}}"@{{lang}} ;
+    skos:hasTopConcept {{prefix}}:Fruit .
+
+{{prefix}}:Fruit a skos:Concept ;
+    skos:prefLabel "Fruit"@{{lang}} ;
+    skos:definition "The seed-bearing part of a plant, often eaten."@{{lang}} ;
+    skos:inScheme {{prefix}}:Scheme ;
+    skos:topConceptOf {{prefix}}:Scheme .
+
+{{prefix}}:Apple a skos:Concept ;
+    skos:prefLabel "Apple"@{{lang}} ;
+    skos:broader {{prefix}}:Fruit ;
+    skos:inScheme {{prefix}}:Scheme .
+
+{{prefix}}:Pear a skos:Concept ;
+    skos:prefLabel "Pear"@{{lang}} ;
+    skos:broader {{prefix}}:Fruit ;
+    skos:inScheme {{prefix}}:Scheme .

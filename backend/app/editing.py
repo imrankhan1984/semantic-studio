@@ -863,6 +863,57 @@ def cmd_set_range(ctx: Context, a: dict) -> Change:
     return _set_single(ctx, a, RDFS.range, "range")
 
 
+def _relationship(ctx: Context, a: dict) -> URIRef:
+    prop = ctx.iri(a.get("property"), "relationship")
+    if not ctx.mentioned(prop):
+        raise CommandError(f"There is no relationship {ctx.short(prop)} in this document.")
+    if (prop, RDF.type, OWL.DatatypeProperty) in ctx.graph:
+        raise CommandError(
+            f"{ctx.name(prop)} is an attribute: its range is a type of value, not a class at the other end."
+        )
+    if (prop, RDF.type, OWL.ObjectProperty) not in ctx.graph:
+        raise CommandError(f"{ctx.name(prop)} is not a relationship of this document.")
+    return prop
+
+
+def cmd_swap_ends(ctx: Context, a: dict) -> Change:
+    """Domain and range exchanged, as one undo step (relationships 5.6, 8).
+
+    Every domain becomes a range and every range a domain, so a relationship
+    with one end set keeps that end at the other side.
+    """
+    prop = _relationship(ctx, a)
+    domains = [o for o in ctx.graph.objects(prop, RDFS.domain)]
+    ranges = [o for o in ctx.graph.objects(prop, RDFS.range)]
+    if not domains and not ranges:
+        raise CommandError(f"{ctx.name(prop)} has no start or end to swap yet.")
+    if set(domains) == set(ranges):
+        # Person knows Person: the refusal says why, not only that nothing changed.
+        raise CommandError(f"{ctx.name(prop)} starts and ends at the same class, so swapping changes nothing.")
+    removes = [(prop, RDFS.domain, d) for d in domains] + [(prop, RDFS.range, r) for r in ranges]
+    adds = [(prop, RDFS.range, d) for d in domains] + [(prop, RDFS.domain, r) for r in ranges]
+    return _change(ctx.graph, f"Swapped the ends of {ctx.name(prop)}", adds, removes)
+
+
+def cmd_set_ends(ctx: Context, a: dict) -> Change:
+    """A relationship's domain and range set together, as one undo step: a
+    line drawn to complete an existing relationship sets both at once (the
+    E-7 note, relationships R6). Either may be left out; each replaces."""
+    prop = _relationship(ctx, a)
+    if not a.get("domain") and not a.get("range"):
+        raise CommandError("Say which end to set: a domain, a range, or both.")
+    adds, removes, parts = [], [], []
+    for key, predicate, word in (("domain", RDFS.domain, "from"), ("range", RDFS.range, "to")):
+        if not a.get(key):
+            continue
+        target = ctx.iri(a[key], key)
+        ctx.require(target, "class")
+        removes += [(prop, predicate, o) for o in ctx.graph.objects(prop, predicate)]
+        adds.append((prop, predicate, target))
+        parts.append(f"{word} {ctx.name(target)}")
+    return _change(ctx.graph, f"Set the ends of {ctx.name(prop)}: {' '.join(parts)}", adds, removes)
+
+
 def cmd_add_broader(ctx: Context, a: dict) -> Change:
     concept, broader = _pair(ctx, a, "concept", "broader", "concept")
     if (concept, SKOS.broader, broader) in ctx.graph:
@@ -1059,6 +1110,8 @@ COMMANDS: dict[str, Callable[[Context, dict], Change]] = {
     "RemoveSubClassOf": cmd_remove_subclass,
     "SetDomain": cmd_set_domain,
     "SetRange": cmd_set_range,
+    "SwapEnds": cmd_swap_ends,
+    "SetEnds": cmd_set_ends,
     "AddBroader": cmd_add_broader,
     "RemoveBroader": cmd_remove_broader,
     "RenameIri": cmd_rename_iri,
@@ -1201,6 +1254,9 @@ class EditingService:
                     doc = entry["role"]
                     documents[doc] = self._load(pid, doc, manifest)
                     self._prune_layout(documents[doc])
+                # A project made before kinds is judged from its model (D-089).
+                self.projects.ensure_kind(pid, documents["model"].graph)
+                manifest = self.projects.manifest(pid)
                 self._open[pid] = documents
                 for document in documents.values():
                     self.store.register_document(document.ontology)
@@ -1606,7 +1662,10 @@ class EditingService:
             view = document._canvas[1]
             layout = self.projects.read_layout(pid, doc)
             revision = ontology.revision
-        return {"revision": revision, **restrict(view, layout["shown"]), "layout": layout}
+        # The project's kind decides what the palette offers and which boxes
+        # the visual doors may change (D-089); the model is the same either way.
+        kind = self.projects.manifest(pid).get("kind")
+        return {"revision": revision, "kind": kind, **restrict(view, layout["shown"]), "layout": layout}
 
     def get_layout(self, pid: str, doc: str) -> dict:
         document = self.document(pid, doc)

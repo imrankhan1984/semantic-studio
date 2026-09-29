@@ -61,7 +61,7 @@ EXPECTED OUTPUT
 import { useEffect, useRef, useState } from "react";
 import { getNodeDetails } from "../api";
 import { linkTarget } from "../links";
-import type { CanvasSet, NodeDetails, TermRef } from "../types";
+import type { CanvasSet, NodeDetails, TermRef, ProjectKind } from "../types";
 import EditSection from "./EditSection";
 
 interface Props {
@@ -86,7 +86,7 @@ interface Props {
   /** The display language, which names the title; refetched when it moves. */
   language?: string | null;
   /** The project's languages, when this entity's document is its model.ttl. */
-  editing?: { primaryLanguage: string; languages: string[] } | null;
+  editing?: { primaryLanguage: string; languages: string[]; kind?: ProjectKind | null } | null;
   /** Why the entity cannot be edited here, when that is the document's fault. */
   readOnlyNote?: string | null;
   onDeleted?: (iri: string) => void;
@@ -270,6 +270,7 @@ export default function DetailPanel({
               details={details}
               primaryLanguage={editing.primaryLanguage}
               languages={editing.languages}
+              projectKind={editing.kind ?? null}
               onSelect={onNavigate}
               onDeleted={(deleted) => (onDeleted ? onDeleted(deleted) : onClose())}
               canvas={canvas}

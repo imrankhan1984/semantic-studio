@@ -5,7 +5,8 @@ FILE: backend/app/routers/projects.py
 
 SUMMARY
     The HTTP surface for projects and editing (authoring-foundations): list,
-    create, rename, duplicate, trash and export projects; open and close them;
+    create, rename, duplicate, trash and export projects, and change their
+    kind, ontology or taxonomy (relationships 5.1); open and close them;
     run commands, apply Turtle, undo, redo, save and recover a document; and
     the modeling canvas's view and layout (visual-modeling Stage 2).
 
@@ -66,7 +67,7 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 class CreateProject(BaseModel):
     name: str
-    template: Optional[Literal["empty", "vocabulary", "small"]] = None
+    template: Optional[Literal["empty", "small", "taxonomy-empty", "taxonomy-small", "vocabulary"]] = None
     fromOntologyId: Optional[str] = None
     baseIri: Optional[str] = None
     prefix: Optional[str] = None
@@ -76,6 +77,8 @@ class CreateProject(BaseModel):
 class PatchProject(BaseModel):
     name: Optional[str] = None
     languages: Optional[list[str]] = None
+    # Ontology or taxonomy (D-089): the tools change, the model does not.
+    kind: Optional[Literal["ontology", "taxonomy"]] = None
 
 
 class CloseProject(BaseModel):
@@ -169,6 +172,8 @@ def patch_project(pid: str, body: PatchProject) -> dict:
             summary = project_store.rename(pid, body.name)
         if body.languages is not None:
             summary = project_store.set_languages(pid, body.languages)
+        if body.kind is not None:
+            summary = project_store.set_kind(pid, body.kind)
         if summary is None:
             summary = project_store.summary(project_store.manifest(pid))
         editing_service.refresh_manifest(pid)

@@ -5,10 +5,12 @@ FILE: frontend/src/components/NewProjectDialog.test.tsx
 
 SUMMARY
     The New project form (authoring-foundations 5.1, Section 6, AC-1, AC-2,
-    AC-19): the base IRI and prefix follow the name until edited, Create is
-    unavailable with its reason until the form is valid, an invalid base IRI
-    is said inline, the three templates and the library are offered, a
-    library ontology can be preselected, and the dialog behaves as a dialog.
+    AC-19; relationships 5.1, AC-1): Ontology or Taxonomy asked first with
+    the spec's sentences, and each kind's two templates; the base IRI and
+    prefix follow the name until edited, Create is unavailable with its
+    reason until the form is valid, an invalid base IRI is said inline, a
+    library ontology can be preselected and needs no kind, and the dialog
+    behaves as a dialog.
 
 BASIC IDEA
     Rendered alone; onCreate is a spy, so what is asserted is exactly what the
@@ -44,6 +46,9 @@ function renderDialog(props: Partial<React.ComponentProps<typeof NewProjectDialo
 
 const field = (name: string) => screen.getByLabelText(name) as HTMLInputElement;
 const create = () => screen.getByRole("button", { name: /^Create/ });
+const kind = (name: "Ontology" | "Taxonomy") =>
+  fireEvent.click(screen.getByRole("radio", { name: new RegExp(`^${name}`) }));
+const reasonOf = (button: HTMLElement) => document.getElementById(button.getAttribute("aria-describedby")!)!.textContent;
 
 afterEach(() => cleanup());
 
@@ -66,18 +71,51 @@ describe("NewProjectDialog", () => {
     expect(field("Prefix").value).toBe("bills");
   });
 
+  it("asks Ontology or Taxonomy first, each with its sentence, and nothing chosen", () => {
+    renderDialog();
+    const group = screen.getByRole("group", { name: "What are you making?" });
+    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    expect(radios.map((r) => r.checked)).toEqual([false, false]);
+    // The first control of the form, before the name.
+    expect(group.compareDocumentPosition(field("Name")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Each radio is named by its sentence too, so it is read with the choice.
+    expect(screen.getByRole("radio", { name: /^Ontology/ }).closest("label")!.textContent).toBe(
+      "OntologyClasses of things, their attributes and the relationships between them. For example: a Person works for an Organization.",
+    );
+    expect(screen.getByRole("radio", { name: /^Taxonomy/ }).closest("label")!.textContent).toBe(
+      "TaxonomyA vocabulary of concepts arranged from broad to narrow, with related terms. For example: Apple is narrower than Fruit.",
+    );
+  });
+
+  it("offers each kind's two templates, and switches with the kind", () => {
+    renderDialog();
+    const select = field("Start from") as unknown as HTMLSelectElement;
+    const templates = () => [...select.querySelectorAll('optgroup[label="Templates"] option')].map((o) => o.textContent);
+    expect(templates()).toEqual([]);
+    kind("Ontology");
+    expect(templates()).toEqual(["Empty ontology", "Small ontology (two classes, one relationship)"]);
+    expect(select.value).toBe("template:small");
+    kind("Taxonomy");
+    expect(templates()).toEqual(["Empty taxonomy (one concept scheme)", "Small taxonomy (a scheme with a few concepts)"]);
+    expect(select.value).toBe("template:taxonomy-small");
+  });
+
   it("Create is unavailable with its reason until the form is valid", async () => {
     const { onCreate } = renderDialog();
     const button = create();
     expect(button.getAttribute("aria-disabled")).toBe("true");
     // Not disabled: it stays focusable, and its description says why.
     expect(button.hasAttribute("disabled")).toBe(false);
-    const reason = document.getElementById(button.getAttribute("aria-describedby")!)!;
-    expect(reason.textContent).toBe("Give the project a name.");
+    expect(reasonOf(button)).toBe("Choose Ontology or Taxonomy.");
+    fireEvent.change(field("Name"), { target: { value: "Invoices" } });
+    expect(reasonOf(create())).toBe("Choose Ontology or Taxonomy.");
     await act(async () => {
       fireEvent.click(button);
     });
     expect(onCreate).not.toHaveBeenCalled();
+    fireEvent.change(field("Name"), { target: { value: "" } });
+    kind("Ontology");
+    expect(reasonOf(create())).toBe("Give the project a name.");
 
     fireEvent.change(field("Name"), { target: { value: "Invoices" } });
     expect(create().getAttribute("aria-disabled")).toBe("false");
@@ -86,6 +124,7 @@ describe("NewProjectDialog", () => {
 
   it("an invalid base IRI is said inline and blocks Create", async () => {
     renderDialog();
+    kind("Ontology");
     fireEvent.change(field("Name"), { target: { value: "Invoices" } });
     fireEvent.change(field("Base IRI"), { target: { value: "http://example.org/invoices" } });
     fireEvent.blur(field("Base IRI"));
@@ -98,31 +137,27 @@ describe("NewProjectDialog", () => {
   it("creates from a template with the fields it shows", async () => {
     const { onCreate } = renderDialog();
     fireEvent.change(field("Name"), { target: { value: "Pets" } });
-    fireEvent.change(field("Start from"), { target: { value: "template:vocabulary" } });
+    kind("Taxonomy");
+    fireEvent.change(field("Start from"), { target: { value: "template:taxonomy-empty" } });
     await act(async () => {
       fireEvent.click(create());
     });
     expect(onCreate).toHaveBeenCalledWith({
       name: "Pets",
-      template: "vocabulary",
+      template: "taxonomy-empty",
       baseIri: "http://example.org/pets#",
       prefix: "pets",
       primaryLanguage: "en",
     });
   });
 
-  it("offers the three templates and the library, and preselects a library ontology", async () => {
+  it("preselects a library ontology, which needs no kind: the server judges it", async () => {
     const { onCreate } = renderDialog({ initialSource: "ont-2" });
     const select = field("Start from") as unknown as HTMLSelectElement;
     const labels = [...select.options].map((o) => o.textContent);
-    expect(labels).toEqual([
-      "Empty ontology",
-      "Simple vocabulary (a SKOS scheme with two concepts)",
-      "Small ontology (two classes and one property)",
-      "foaf.rdf",
-      "schema.ttl",
-    ]);
+    expect(labels).toEqual(["foaf.rdf", "schema.ttl"]);
     expect(select.value).toBe("library:ont-2");
+    expect(create().getAttribute("aria-disabled")).toBe("false");
     expect(field("Name").value).toBe("schema");
     await act(async () => {
       fireEvent.click(create());
@@ -131,11 +166,26 @@ describe("NewProjectDialog", () => {
     expect(onCreate.mock.calls[0][0]).not.toHaveProperty("template");
   });
 
+  it("a library copy clears the kind, and says how its kind is judged (review)", () => {
+    renderDialog();
+    kind("Ontology");
+    fireEvent.change(field("Start from"), { target: { value: "library:ont-1" } });
+    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    expect(radios.map((r) => r.checked)).toEqual([false, false]);
+    const hint = document.getElementById(field("Start from").getAttribute("aria-describedby")!)!;
+    expect(hint.textContent).toContain("concepts and no classes make a taxonomy");
+    // Choosing a kind again is choosing its template, in sight in the select.
+    kind("Taxonomy");
+    expect(field("Start from").value).toBe("template:taxonomy-small");
+    expect(field("Start from").getAttribute("aria-describedby")).toBeNull();
+  });
+
   it("shows the server's refusal and stays open", async () => {
     const onCreate = vi.fn(async () => {
       throw new Error("The prefix must start with a letter.");
     });
     renderDialog({ onCreate });
+    kind("Ontology");
     fireEvent.change(field("Name"), { target: { value: "Invoices" } });
     await act(async () => {
       fireEvent.click(create());
