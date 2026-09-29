@@ -423,7 +423,9 @@ class Ontology:
         return self._cached(
             "hierarchy_cache",
             (self.revision, langs),
-            lambda: build_hierarchy(self.ensure_loaded(), langs=langs),
+            lambda: build_hierarchy(
+                self.ensure_loaded(), langs=langs, own=self.graph if self.editable else None
+            ),
         )
 
     def summary(self) -> dict:

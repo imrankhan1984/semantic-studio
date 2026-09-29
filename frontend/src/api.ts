@@ -59,6 +59,7 @@ import type {
   OpenedProject,
   ProjectDocName,
   ProjectSummary,
+  ProjectKind,
   ProjectTemplate,
   SaveResult,
   ImportFilesResult,
@@ -634,10 +635,11 @@ export function createProject(payload: {
   }).then((r) => handle<ProjectSummary>(r));
 }
 
-// Rename, or change the additional languages. The manifest only.
+// Rename, change the additional languages, or change the kind (D-089). The
+// manifest only: changing the kind rewrites nothing in the model.
 export function updateProject(
   pid: string,
-  changes: { name?: string; languages?: string[] },
+  changes: { name?: string; languages?: string[]; kind?: ProjectKind },
 ): Promise<ProjectSummary> {
   return send(projectUrl(pid), {
     method: "PATCH",

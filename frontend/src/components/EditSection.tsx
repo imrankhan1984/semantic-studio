@@ -25,8 +25,11 @@ BASIC IDEA
     Read-only cases say why in text (5.1, AC-4). An entity with no rdf:type
     in this document -- a parent from an import, a class only mentioned -- is
     not this document's to change, and the one thing offered for a class is
-    to add a subclass of it here. The library and shapes.ttl are decided by
-    DetailPanel, which does not render this at all for them.
+    to add a subclass of it here. A concept in an ontology, or a class in a
+    taxonomy, is the project's other kind (relationships 5.1, D-089): shown,
+    never changed here, with where it is changed instead. The library and
+    shapes.ttl are decided by DetailPanel, which does not render this at all
+    for them.
 
     The structure blocks are in EditStructure.tsx, the annotation adder in
     AnnotationAdder.tsx, the delete flow in DeleteDialog.tsx, and the pieces
@@ -35,7 +38,7 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES (props)
     - ontologyId, details: the document and the entity's statements.
-    - primaryLanguage, languages: the project's.
+    - primaryLanguage, languages, projectKind: the project's.
     - onSelect: select another entity (a created one, a renamed one, a link).
     - onDeleted: the entity is gone; the caller clears the selection.
     - canvas: past 300 boxes, *Show on canvas* and *Hide from canvas* (5.6).
@@ -55,8 +58,9 @@ EXPECTED OUTPUT
 import { useMemo, useState } from "react";
 import { linkTarget } from "../links";
 import { entityModel, type Annotation } from "../modeling/entity";
+import { otherKindReason } from "../modeling/sentences";
 import { describeValue, typeOfValue, valueProblem, toValue } from "../modeling/values";
-import type { CanvasSet, NodeDetails } from "../types";
+import type { CanvasSet, NodeDetails, ProjectKind } from "../types";
 import AnnotationAdder, { ValueInput } from "./AnnotationAdder";
 import DeleteDialog from "./DeleteDialog";
 import { Block, InlineText, useCopy, useReturnFocus, useRunner, type Runner } from "./EditParts";
@@ -68,6 +72,7 @@ interface Props {
   details: NodeDetails;
   primaryLanguage: string;
   languages: string[];
+  projectKind?: ProjectKind | null;
   onSelect: (iri: string) => void;
   onDeleted: (iri: string) => void;
   canvas?: CanvasSet | null;
@@ -85,6 +90,7 @@ export default function EditSection({
   details,
   primaryLanguage,
   languages,
+  projectKind = null,
   onSelect,
   onDeleted,
   canvas = null,
@@ -109,6 +115,16 @@ export default function EditSection({
   const [subclassOfImport, setSubclassOfImport] = useState(false);
   const iri = details.iri;
   const name = details.label;
+
+  // The project's other kind: shown, changed in Turtle (D-089).
+  const otherKind = otherKindReason(projectKind, model.kind);
+  if (otherKind && model.defined && !details.importedFrom) {
+    return (
+      <section className="edit-section read-only" aria-label="Edit">
+        <p className="detail-note">{otherKind}</p>
+      </section>
+    );
+  }
 
   // 5.1: not this document's to change. The header already names the import.
   if (details.importedFrom || !model.defined) {

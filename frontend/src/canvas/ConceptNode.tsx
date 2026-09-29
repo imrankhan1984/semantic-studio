@@ -11,7 +11,8 @@ SUMMARY
 BASIC IDEA
     The class box without attributes: the same name line and rename field
     (ClassNode's NameLine), the same imported marking, and handles to draw
-    *narrower than* from it.
+    *narrower than* from it. In an ontology a concept is dotted and marked
+    *read-only in an ontology* (relationships 5.1, D-089).
 
 INPUTS / INPUT SOURCES
     - data: ClassNode's BoxData.
@@ -32,6 +33,7 @@ function ConceptNode({ data, selected }: NodeProps<BoxNode>) {
       className={
         "canvas-box canvas-concept" +
         (node.imported ? " imported" : "") +
+        (data.otherKind ? " other-kind" : "") +
         (selected ? " selected" : "") +
         (dropTarget ? " drop-target" : "")
       }
@@ -39,6 +41,7 @@ function ConceptNode({ data, selected }: NodeProps<BoxNode>) {
       <Sides />
       <span className="canvas-box-marker">concept</span>
       <NameLine data={data} />
+      {data.otherKind && <span className="canvas-box-from">read-only in an ontology</span>}
       {node.imported && (
         <span className="canvas-box-from">
           {node.imported === "outside" ? "outside this model" : `from ${node.imported}`}

@@ -56,6 +56,16 @@ INPUTS / INPUT SOURCES (props)
       rename in place in the primary language, or delete with its impact.
       A new entity is selected, its parent expanded, and focus moved to its
       row once the refreshed tree holds it.
+
+      Its `kind` (relationships 5.1, D-089) decides which: an ontology's
+      tree leads with its classes and offers New class, a taxonomy's with
+      its concept scheme and offers New concept. The other kind's rows are
+      still listed, never hidden, with no actions, under one line saying how
+      many there are and where they are changed. And in a project the
+      property sections are *Relationships* and *Attributes*, listing every
+      object and datatype property with its ends -- *works for (Person →
+      Organization)*, *name (Person, text)* -- so every line on the canvas
+      has a row (5.5, D-078).
     - onDeleted: an entity was deleted from the tree.
     - canvas: past 300 boxes, the row menu's *Show on canvas* and *Hide from
       canvas* (visual-modeling 5.6).
@@ -86,6 +96,8 @@ import {
 import { ApiError, fetchHierarchy } from "../api";
 import type { CanvasSet, Hierarchy, HierarchyForest, HierarchyOrigin, Theme } from "../types";
 import { KIND_LABELS, kindColor } from "../types";
+import type { ProjectKind } from "../types";
+import { otherKindNote, otherKindReason, rowEnds } from "../modeling/sentences";
 import DeleteDialog from "./DeleteDialog";
 import { useRunner } from "./EditParts";
 import { RowMenu, rowActions, type RowAction } from "./HierarchyActions";
@@ -102,8 +114,9 @@ interface Props {
    *  expanded and typed, so an edit does not collapse the tree. */
   revision?: number;
   language?: string | null;
-  /** The open project's model.ttl: New buttons and the row menu (5.2). */
-  editing?: { primaryLanguage: string } | null;
+  /** The open project's model.ttl: New buttons and the row menu (5.2), and
+   *  the project's kind, which decides them (relationships 5.1). */
+  editing?: { primaryLanguage: string; kind?: ProjectKind | null } | null;
   onDeleted?: (iri: string) => void;
   canvas?: CanvasSet | null;
   canvasSwitch?: { on: boolean; onToggle: () => void } | null;
@@ -197,6 +210,8 @@ interface Row {
   label: string;
   prefixed: string;
   kind: string;
+  /** A relationship's or attribute's ends, read as text (relationships 5.5). */
+  ends?: string;
   origin: HierarchyOrigin;
   /** The import that defines this entity, with imports on; else undefined. */
   importedFrom?: string;
@@ -245,6 +260,7 @@ function flatten(
       label: node.label,
       prefixed: node.prefixed,
       kind: node.kind,
+      ends: node.ends ? rowEnds(node.ends, node.kind === "datatypeProperty") : undefined,
       origin,
       importedFrom: node.importedFrom,
       expandable,
@@ -295,20 +311,28 @@ function internalIds(forest: HierarchyForest): string[] {
  *  matching the spec's layout. `objectProperties` and friends are absent from the
  *  payload unless the ontology has that kind, so the optional chaining stands in
  *  for a missing key. */
-function sectionsOf(data: Hierarchy, keepClasses = false): { title: string; forest: HierarchyForest }[] {
+function sectionsOf(
+  data: Hierarchy,
+  editing: { kind?: ProjectKind | null } | null = null,
+): { title: string; forest: HierarchyForest }[] {
+  // A project names its property sections as the learner does (5.5).
+  const project = editing !== null;
   const candidates: { title: string; forest: HierarchyForest | undefined }[] = [
-    { title: "Class hierarchy", forest: data.classes },
-    { title: "Object properties", forest: data.objectProperties },
-    { title: "Datatype properties", forest: data.datatypeProperties },
+    { title: CLASS_SECTION, forest: data.classes },
+    { title: project ? "Relationships" : "Object properties", forest: data.objectProperties },
+    { title: project ? "Attributes" : "Datatype properties", forest: data.datatypeProperties },
     { title: "Annotation properties", forest: data.annotationProperties },
-    { title: "Concept hierarchy", forest: data.concepts },
+    { title: CONCEPT_SECTION, forest: data.concepts },
   ];
-  // In a project the class section stays, empty or not: it is where New
-  // class lives, and an empty model has to start somewhere.
+  // A taxonomy leads with its scheme: it is the model (5.1).
+  if (editing?.kind === "taxonomy") candidates.unshift(candidates.pop()!);
+  // In a project the kind's own section stays, empty or not: it is where New
+  // class or New concept lives, and an empty model has to start somewhere.
+  // A project from before kinds keeps the class section, as it always did.
+  const kept = !project ? null : editing?.kind === "taxonomy" ? CONCEPT_SECTION : CLASS_SECTION;
   return candidates.filter(
     (c): c is { title: string; forest: HierarchyForest } =>
-      c.forest !== undefined &&
-      (Object.keys(c.forest.nodes).length > 0 || (keepClasses && c.title === CLASS_SECTION)),
+      c.forest !== undefined && (Object.keys(c.forest.nodes).length > 0 || c.title === kept),
   );
 }
 
@@ -387,7 +411,17 @@ export default function HierarchyView({
 
   // Every forest currently present, in render order. Computed once and reused by
   // expand-all, the empty-state check and the render.
-  const sections = useMemo(() => (data ? sectionsOf(data, editing !== null) : []), [data, editing]);
+  const sections = useMemo(() => (data ? sectionsOf(data, editing) : []), [data, editing]);
+  const kind = editing?.kind ?? null;
+  // The other kind's content, counted for its one line (5.1).
+  const otherNote = useMemo(() => {
+    if (!data || !kind) return null;
+    const forest = kind === "ontology" ? data.concepts : data.classes;
+    const other = kind === "ontology" ? "concept" : "class";
+    return otherKindNote(kind, Object.values(forest.nodes).filter((n) => n.kind === other && !n.importedFrom).length);
+  }, [data, kind]);
+  /** A row of the other kind: shown, never changed here (D-089). */
+  const fixedRow = useCallback((row: Row) => otherKindReason(kind, row.kind) !== null, [kind]);
 
   // --- the project's actions (5.2) ------------------------------------------
   const sectionRef = useRef<HTMLElement>(null);
@@ -494,6 +528,8 @@ export default function HierarchyView({
     if (!editing) return null;
     const section = title === CLASS_SECTION ? "class" : title === CONCEPT_SECTION ? "concept" : null;
     if (!section) return null;
+    // The kind's own New button only; a project from before kinds has both.
+    if ((kind === "ontology" && section === "concept") || (kind === "taxonomy" && section === "class")) return null;
     const open = creating?.section === section;
     return (
       <div className="hierarchy-actions">
@@ -590,6 +626,7 @@ export default function HierarchyView({
           </>
         )}
       </p>
+      {otherNote && <p className="detail-note hierarchy-other-kind">{otherNote}</p>}
       {renaming && actionError && (
         <p className="edit-error" role="alert">
           {actionError}
@@ -630,6 +667,7 @@ export default function HierarchyView({
               busy={busy}
               onRename={(row, value) => void rename(row, value)}
               onMenu={(row, anchor) => setMenu({ row, anchor })}
+              fixedRow={fixedRow}
               reveal={reveal}
               onRevealed={() => setReveal(null)}
             />
@@ -643,6 +681,7 @@ export default function HierarchyView({
             menu.row.kind,
             Boolean(menu.row.importedFrom),
             canvas ? { limited: canvas.limited, shown: canvas.shown.includes(menu.row.id) } : null,
+            fixedRow(menu.row),
           )}
           anchor={menu.anchor}
           onChoose={(action) => choose(menu.row, action)}
@@ -686,6 +725,8 @@ interface ForestProps {
   busy?: boolean;
   onRename?: (row: Row, value: string | null) => void;
   onMenu?: (row: Row, anchor: { top: number; left: number }) => void;
+  /** A row of the project's other kind, which has no actions (D-089). */
+  fixedRow?: (row: Row) => boolean;
   /** A row to focus once it is in this forest (a new entity). */
   reveal?: string | null;
   onRevealed?: () => void;
@@ -709,9 +750,11 @@ function Forest({
   busy = false,
   onRename,
   onMenu,
+  fixedRow,
   reveal = null,
   onRevealed,
 }: ForestProps) {
+  const actionsOf = (row: Row) => rowActions(row.kind, Boolean(row.importedFrom), null, fixedRow?.(row) ?? false);
   const appears = useMemo(() => appearanceCounts(forest), [forest]);
   const keep = useMemo(() => keepForFilter(forest, filter), [forest, filter]);
   const rows = useMemo(
@@ -793,7 +836,7 @@ function Forest({
 
   /** Open the row menu beside a row, from its button or the keyboard. */
   const openMenu = (row: Row, element: Element | null) => {
-    if (!onMenu || rowActions(row.kind, Boolean(row.importedFrom)).length === 0) return;
+    if (!onMenu || actionsOf(row).length === 0) return;
     const rect = element?.getBoundingClientRect();
     onMenu(row, { top: rect ? rect.bottom : 0, left: rect ? Math.max(0, rect.right - 200) : 0 });
   };
@@ -881,7 +924,11 @@ function Forest({
       {header}
       {empty ? (
         <p className="hint hierarchy-status">
-          {filtering ? "No matches in this section." : "No classes yet. New class makes the first."}
+          {filtering
+            ? "No matches in this section."
+            : title === CONCEPT_SECTION
+              ? "No concepts yet. New concept makes the first."
+              : "No classes yet. New class makes the first."}
         </p>
       ) : (
         <div
@@ -908,7 +955,7 @@ function Forest({
                   onToggle={onToggle}
                   onSelect={onSelect}
                   onFocus={setFocusId}
-                  menu={editable && rowActions(row.kind, Boolean(row.importedFrom)).length > 0 ? openMenu : undefined}
+                  menu={editable && actionsOf(row).length > 0 ? openMenu : undefined}
                   rename={
                     renaming === row.id && onRename
                       ? { initial: renameValue?.(row) ?? row.label, busy, onDone: (v) => onRename(row, v) }
@@ -1050,6 +1097,7 @@ function TreeRow({
       ) : (
         <span className="hierarchy-label">{row.label}</span>
       )}
+      {row.ends && !rename && <span className="hierarchy-ends">({row.ends})</span>}
       <span className="hierarchy-kind">{KIND_LABELS[row.kind] ?? KIND_LABELS.other}</span>
       {row.importedFrom && (
         // Text, not a tint: imported and read-only has to survive being read

@@ -365,6 +365,10 @@ export interface HierarchyNode {
   // With imports on: the import that defines this entity, which the row names
   // as "from FOAF" (external-access Stage 2, AC-21). Absent for the file's own.
   importedFrom?: string;
+  // In a project document, a relationship's or attribute's ends by name, for
+  // the row to read *works for (Person → Organization)* (relationships 5.5).
+  // An attribute's range is its datatype, prefixed (xsd:string).
+  ends?: { domain: string | null; range: string | null };
 }
 
 // A reference from a parent to one child. `origin` is "asserted" in this
@@ -674,11 +678,17 @@ export interface ProjectSummary {
   languages: string[];
   documents: { file: string; role: ProjectDocName }[];
   counts: { classes?: number; properties?: number; concepts?: number; triples?: number };
+  // Ontology or taxonomy (D-089): which tools the visual doors offer. Null
+  // only for a project made before kinds, until it is first opened.
+  kind: ProjectKind | null;
 }
 
 export type ProjectDocName = "model" | "shapes";
 
-export type ProjectTemplate = "empty" | "vocabulary" | "small";
+export type ProjectKind = "ontology" | "taxonomy";
+
+// "vocabulary" is the E-6 name for a small SKOS scheme, still accepted.
+export type ProjectTemplate = "empty" | "small" | "taxonomy-empty" | "taxonomy-small" | "vocabulary";
 
 // An open document's state. `ontologyId` is what every existing view reads
 // it by (prj-<hex>-<doc>); `revision` keys every refetch (D-081).
@@ -799,10 +809,28 @@ export interface CanvasEdge {
   target: string;
   property?: string;
   label?: string;
+  // This line's place among the lines joining the same two boxes, in either
+  // direction, and how many there are: several are curved apart, and a line
+  // from a box to itself is a loop (relationships 5.4).
+  pair: number;
+  pairs: number;
+}
+
+// A subclass or broader line the user clicked: the link panel's subject
+// (relationships 5.2). A relationship's line selects the relationship instead.
+export interface CanvasLink {
+  kind: "subClassOf" | "broader";
+  source: string;
+  target: string;
+  sourceLabel: string;
+  targetLabel: string;
 }
 
 export interface CanvasView {
   revision: number;
+  // The project's kind: what the palette offers and what the canvas may
+  // change (D-089). Null for a project that has not been opened since kinds.
+  kind: ProjectKind | null;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   undrawn: {

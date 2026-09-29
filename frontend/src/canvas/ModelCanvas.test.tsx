@@ -117,6 +117,8 @@ const STATE = {
 function viewOf(changes: Partial<CanvasView> = {}): CanvasView {
   return {
     revision: 2,
+    // A project not opened since kinds: both palette items, every box editable.
+    kind: null,
     total: 4,
     limited: false,
     layout: { version: 1, generation: 0, positions: { [EX + "Document"]: [0, 0] }, shown: null, viewport: null },
@@ -134,9 +136,17 @@ function viewOf(changes: Partial<CanvasView> = {}): CanvasView {
       { iri: "http://xmlns.com/foaf/0.1/Agent", kind: "class", label: "Agent", fallback: false, imported: "FOAF", attributes: [] },
     ],
     edges: [
-      { kind: "subClassOf", source: EX + "Invoice", target: EX + "Document" },
-      { kind: "broader", source: EX + "Paid", target: EX + "Status" },
-      { kind: "relationship", source: EX + "Invoice", target: "http://xmlns.com/foaf/0.1/Agent", property: EX + "billedTo", label: "billed to" },
+      { kind: "subClassOf", source: EX + "Invoice", target: EX + "Document", pair: 0, pairs: 1 },
+      { kind: "broader", source: EX + "Paid", target: EX + "Status", pair: 0, pairs: 1 },
+      {
+        kind: "relationship",
+        source: EX + "Invoice",
+        target: "http://xmlns.com/foaf/0.1/Agent",
+        property: EX + "billedTo",
+        label: "billed to",
+        pair: 0,
+        pairs: 1,
+      },
     ],
     undrawn: [
       { iri: EX + "mentions", label: "mentions", kind: "objectProperty", missing: "range", domain: EX + "Invoice", range: null },
@@ -146,6 +156,7 @@ function viewOf(changes: Partial<CanvasView> = {}): CanvasView {
 }
 
 const onSelect = vi.fn();
+const onSelectLink = vi.fn();
 const onDeleted = vi.fn();
 const onCanvasSet = vi.fn();
 
@@ -160,6 +171,7 @@ async function renderCanvas(view: CanvasView = viewOf(), selected: string | null
       primaryLanguage="en"
       selected={selected}
       onSelect={onSelect}
+      onSelectLink={onSelectLink}
       onDeleted={onDeleted}
       onCanvasSet={onCanvasSet}
     />,
@@ -182,7 +194,7 @@ const lastCommand = () => runCommand.mock.calls[runCommand.mock.calls.length - 1
 
 beforeEach(async () => {
   projectStore._reset();
-  for (const mock of [openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails, onSelect, onDeleted, onCanvasSet]) {
+  for (const mock of [openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails, onSelect, onSelectLink, onDeleted, onCanvasSet]) {
     mock.mockReset();
   }
   flow.api.setCenter.mockReset();
@@ -370,9 +382,12 @@ describe("relating (AC-12)", () => {
     await renderCanvas();
     await draw(EX + "Document", "http://xmlns.com/foaf/0.1/Agent");
     const menu = screen.getByRole("menu");
-    expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["is a kind of", "new relationship…"]);
+    expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "Document is a kind of Agent",
+      "new relationship…",
+    ]);
     await act(async () => {
-      fireEvent.click(within(menu).getByRole("menuitem", { name: "is a kind of" }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Document is a kind of Agent" }));
     });
     expect(lastCommand()).toEqual(["AddSubClassOf", { child: EX + "Document", parent: "http://xmlns.com/foaf/0.1/Agent" }]);
     expect(screen.queryByRole("menu")).toBeNull();
@@ -397,16 +412,20 @@ describe("relating (AC-12)", () => {
     await renderCanvas();
     await draw(EX + "Invoice", EX + "Document");
     await act(async () => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "mentions" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Invoice (en) mentions Document (existing relationship)" }));
     });
-    expect(lastCommand()).toEqual(["SetRange", { property: EX + "mentions", target: EX + "Document" }]);
+    // One command, so one undo step (relationships R6).
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    expect(lastCommand()).toEqual(["SetEnds", { property: EX + "mentions", range: EX + "Document" }]);
+    // The relationship it completed is selected, so its form opens.
+    expect(onSelect).toHaveBeenLastCalledWith(EX + "mentions");
   });
 
   it("concept to concept: narrower than runs AddBroader", async () => {
     await renderCanvas();
     await draw(EX + "Status", EX + "Paid");
     await act(async () => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "narrower than" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Status is narrower than Paid" }));
     });
     expect(lastCommand()).toEqual(["AddBroader", { concept: EX + "Status", broader: EX + "Paid" }]);
   });
@@ -423,7 +442,7 @@ describe("relating (AC-12)", () => {
     await renderCanvas();
     await draw(EX + "Document", "http://xmlns.com/foaf/0.1/Agent");
     await act(async () => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "is a kind of" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Document is a kind of Agent" }));
     });
     expect(within(document.querySelector(".relate-menu")!).getByRole("alert").textContent).toBe(
       "Document is already a subclass of Agent.",
@@ -992,4 +1011,167 @@ describe("PR #47 re-review: responses in any order", () => {
     const settled = (flow.props.nodes as { id: string; position: { x: number; y: number } }[]).find((n) => n.id === EX + "Settled")!;
     expect(settled.position).toEqual({ x: 321, y: 123 });
   });
+});
+
+describe("relationships Stage A: seeing and drawing relationships", () => {
+  async function draw(from: string, to: string) {
+    await act(async () => {
+      flow.props.onConnect({ source: from, target: to, sourceHandle: null, targetHandle: null });
+      flow.props.onConnectEnd({ clientX: 40, clientY: 50 });
+    });
+  }
+  const edge = (kind: string) => (flow.props.edges as any[]).find((e) => e.id.startsWith(kind));
+
+  it("a click on a relationship's line selects the relationship (AC-3)", async () => {
+    await renderCanvas();
+    await act(async () => flow.props.onEdgeClick({}, edge("relationship")));
+    expect(onSelect).toHaveBeenLastCalledWith(EX + "billedTo");
+    expect(onSelectLink).not.toHaveBeenCalled();
+    // Delete still removes it, through the impact dialog, as before.
+    expect(screen.getByRole("status").textContent).toContain("selected. Delete removes it.");
+  });
+
+  it("a click on a subclass or broader line opens the link panel (AC-3)", async () => {
+    await renderCanvas();
+    await act(async () => flow.props.onEdgeClick({}, edge("subClassOf")));
+    expect(onSelectLink).toHaveBeenLastCalledWith({
+      kind: "subClassOf", source: EX + "Invoice", target: EX + "Document", sourceLabel: "Invoice (en)", targetLabel: "Document",
+    });
+    await act(async () => flow.props.onEdgeClick({}, edge("broader")));
+    expect(onSelectLink).toHaveBeenLastCalledWith({
+      kind: "broader", source: EX + "Paid", target: EX + "Status", sourceLabel: "Paid", targetLabel: "Status",
+    });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("a relationship's line is lit while the relationship is selected, however it was", async () => {
+    await renderCanvas(viewOf(), EX + "billedTo");
+    expect(edge("relationship").selected).toBe(true);
+    expect(edge("subClassOf").selected).toBe(false);
+  });
+
+  it("a new relationship is selected once created, and announced as a sentence (AC-3)", async () => {
+    runCommand.mockImplementation(async (_p, _d, command: string) => ({
+      revision: 3, label: command, state: STATE, created: EX + "copies",
+    }));
+    await renderCanvas();
+    await draw(EX + "Invoice", EX + "Document");
+    fireEvent.click(screen.getByRole("menuitem", { name: "new relationship…" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name of the new relationship" }), { target: { value: "copies" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    });
+    expect(onSelect).toHaveBeenLastCalledWith(EX + "copies");
+    expect(projectStore.getSnapshot().announcement.text).toBe(
+      "Created relationship copies, from Invoice (en) to Document.",
+    );
+  });
+
+  it("the relate menu is headed by its two ends and swaps them before anything is made (AC-4)", async () => {
+    await renderCanvas();
+    await draw(EX + "Document", EX + "Invoice");
+    const menu = document.querySelector<HTMLElement>(".relate-menu")!;
+    expect(menu.querySelector(".relate-title")!.textContent).toBe("Document …to Invoice (en)");
+    expect(within(menu).getByRole("menuitem", { name: "Document is a kind of Invoice (en)" })).toBeTruthy();
+    fireEvent.click(within(menu).getByRole("button", { name: "Swap: from Invoice (en) to Document" }));
+    expect(menu.querySelector(".relate-title")!.textContent).toBe("Invoice (en) …to Document");
+    // Invoice is already a kind of Document, so that is not offered again;
+    // what the swapped line would complete is.
+    expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "new relationship…",
+      "Invoice (en) mentions Document (existing relationship)",
+    ]);
+    expect(runCommand).not.toHaveBeenCalled();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "new relationship…" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name of the new relationship" }), { target: { value: "copies" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    });
+    expect(lastCommand()).toEqual(["CreateObjectProperty", { label: "copies", domain: EX + "Invoice", range: EX + "Document" }]);
+  });
+
+  it("naming shows the sentence as typed, joined to the field (AC-4)", async () => {
+    await renderCanvas();
+    await draw(EX + "Document", EX + "Invoice");
+    fireEvent.click(screen.getByRole("menuitem", { name: "new relationship…" }));
+    const field = screen.getByRole("textbox", { name: "Name of the new relationship" });
+    const sentence = () => document.getElementById(field.getAttribute("aria-describedby")!)!.textContent;
+    expect(sentence()).toBe("A Document … an Invoice (en).");
+    fireEvent.change(field, { target: { value: "cites" } });
+    expect(sentence()).toBe("A Document cites an Invoice (en).");
+  });
+
+  it("a class linked to itself offers a relationship and never is a kind of (R5)", async () => {
+    await renderCanvas();
+    await draw(EX + "Document", EX + "Document");
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["new relationship…"]);
+  });
+
+  it("lines sharing two boxes carry their place, and a loop leaves and enters on the right (AC-5)", async () => {
+    await renderCanvas(
+      viewOf({
+        edges: [
+          { kind: "relationship", source: EX + "Invoice", target: EX + "Document", property: EX + "a", label: "a", pair: 0, pairs: 2 },
+          { kind: "relationship", source: EX + "Document", target: EX + "Invoice", property: EX + "b", label: "b", pair: 1, pairs: 2 },
+          { kind: "relationship", source: EX + "Document", target: EX + "Document", property: EX + "c", label: "c", pair: 0, pairs: 1 },
+        ],
+      }),
+    );
+    const [a, b, c] = flow.props.edges as any[];
+    expect([a.data.pair, a.data.pairs, b.data.pair, b.data.pairs]).toEqual([0, 2, 1, 2]);
+    // Both directions in one frame: one runs with the pair's order, one against.
+    expect(a.data.forward).not.toBe(b.data.forward);
+    expect([c.sourceHandle, c.targetHandle]).toEqual(["r", "r"]);
+    expect(c.data.text).toBe("c");
+  });
+});
+
+describe("relationships Stage A: the project's kind (AC-2)", () => {
+  it("an ontology offers Class only and marks its concepts read-only, with the note", async () => {
+    await renderCanvas(viewOf({ kind: "ontology" }));
+    const palette = screen.getByRole("toolbar", { name: "Canvas" });
+    expect(within(palette).queryByRole("button", { name: "Class" })).toBeTruthy();
+    expect(within(palette).queryByRole("button", { name: "Concept" })).toBeNull();
+    expect(
+      screen.getByText("This ontology also contains 2 SKOS concepts. Edit them in Turtle, or change the project to a taxonomy."),
+    ).toBeTruthy();
+    expect(box("Paid").querySelector(".canvas-box")!.classList.contains("other-kind")).toBe(true);
+    expect(box("Paid").textContent).toContain("read-only in an ontology");
+    // Not renamed or deleted here: the keys say where instead.
+    fireEvent.keyDown(box("Paid"), { key: "Enter" });
+    fireEvent.keyDown(box("Paid"), { key: "Delete" });
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("read-only in an ontology");
+  });
+
+  it("an ontology refuses a line between its concepts, with where to change them", async () => {
+    await renderCanvas(viewOf({ kind: "ontology" }));
+    await draw(EX + "Status", EX + "Paid");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe(
+      "Status is a SKOS concept, read-only in an ontology. Edit it in Turtle, or change the project to a taxonomy.",
+    );
+  });
+
+  it("a taxonomy offers Concept only, and its classes lose + attribute", async () => {
+    await renderCanvas(viewOf({ kind: "taxonomy" }));
+    const palette = screen.getByRole("toolbar", { name: "Canvas" });
+    expect(within(palette).queryByRole("button", { name: "Class" })).toBeNull();
+    expect(within(palette).queryByRole("button", { name: "Concept" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add an attribute to Document" })).toBeNull();
+    expect(screen.getByText(/This taxonomy also contains 2 classes\./)).toBeTruthy();
+  });
+
+  it("with no other kind present, there is no note", async () => {
+    await renderCanvas(viewOf({ kind: "taxonomy", nodes: viewOf().nodes.filter((n) => n.kind === "concept"), edges: [] }));
+    expect(document.querySelector(".canvas-other-kind")).toBeNull();
+  });
+
+  async function draw(from: string, to: string) {
+    await act(async () => {
+      flow.props.onConnect({ source: from, target: to, sourceHandle: null, targetHandle: null });
+      flow.props.onConnectEnd({ clientX: 40, clientY: 50 });
+    });
+  }
 });

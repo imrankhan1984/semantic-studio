@@ -4,9 +4,11 @@ FILE: frontend/src/components/NewProjectDialog.tsx
 ================================================================================
 
 SUMMARY
-    The New project form (authoring-foundations 5.1): a name, a starting
-    point (one of three templates, or an ontology from the library), a base
-    IRI and a prefix defaulted from the name, and the primary language.
+    The New project form (authoring-foundations 5.1, relationships 5.1):
+    first the kind, Ontology or Taxonomy, each with its sentence; then a
+    name, a starting point (the chosen kind's two templates, or an ontology
+    from the library), a base IRI and a prefix defaulted from the name, and
+    the primary language.
 
 BASIC IDEA
     The base IRI and prefix follow the name until the user edits them, and
@@ -17,13 +19,20 @@ BASIC IDEA
     (and the focus-loss rule never arises). Each invalid field says so inline
     once it has been touched.
 
+    The kind is two native radio buttons in a fieldset, each labelled by its
+    name and sentence, so a screen reader reads the sentence as it lands on
+    the choice. Nothing is chosen at first -- the choice is the learner's to
+    make, not a default to overlook -- and Create says *Choose Ontology or
+    Taxonomy.* until one is. A library copy needs no choice: the server
+    judges its kind from what it holds (D-089).
+
     The dialog does not create anything itself; it hands the fields to
     onCreate and shows the server's sentence if that fails.
 
 INPUTS / INPUT SOURCES (props)
     - library: the ontologies a project can start from.
     - initialSource: a library ontology id to preselect ("Start a project from
-      this" on a library card), or undefined for the Small ontology template.
+      this" on a library card), or undefined to start by choosing a kind.
     - onCreate: carries out the creation; resolves when the project is open.
     - onClose: the dialog's three exits (Cancel, Escape, backdrop).
 
@@ -34,13 +43,15 @@ EXPECTED OUTPUT
 
 import { useCallback, useId, useMemo, useRef, useState } from "react";
 import {
+  CHOOSE_KIND,
   defaultBaseIri,
   defaultPrefix,
   firstReason,
+  KIND_CHOICES,
   validate,
   type NewProjectFields,
 } from "../projects/form";
-import type { ProjectTemplate } from "../types";
+import type { ProjectKind, ProjectTemplate } from "../types";
 import { useDialogTrap } from "./useDialogTrap";
 
 export interface NewProjectRequest {
@@ -59,12 +70,6 @@ interface Props {
   onClose: () => void;
 }
 
-const TEMPLATES: { value: ProjectTemplate; label: string }[] = [
-  { value: "empty", label: "Empty ontology" },
-  { value: "vocabulary", label: "Simple vocabulary (a SKOS scheme with two concepts)" },
-  { value: "small", label: "Small ontology (two classes and one property)" },
-];
-
 export default function NewProjectDialog({ library, initialSource, onCreate, onClose }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -72,8 +77,17 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
   const [name, setName] = useState(() =>
     initialSource ? library.find((o) => o.id === initialSource)?.name.replace(/\.[a-z]+$/i, "") ?? "" : "",
   );
-  // "template:<name>" or "library:<id>", one select for both kinds of start.
-  const [source, setSource] = useState(initialSource ? `library:${initialSource}` : "template:small");
+  const [kind, setKind] = useState<ProjectKind | null>(null);
+  // "template:<name>" or "library:<id>", one select for both kinds of start;
+  // "" until a kind is chosen or a library ontology picked.
+  const [source, setSource] = useState(initialSource ? `library:${initialSource}` : "");
+  const templates = KIND_CHOICES.find((c) => c.kind === kind)?.templates ?? [];
+  const chooseKind = (next: ProjectKind) => {
+    setKind(next);
+    // The kind's small template: a first project with something in it to
+    // look at, as the E-6 form started from Small ontology.
+    setSource(`template:${next === "ontology" ? "small" : "taxonomy-small"}`);
+  };
   const [baseIri, setBaseIri] = useState<string | null>(null);
   const [prefix, setPrefix] = useState<string | null>(null);
   const [primaryLanguage, setPrimaryLanguage] = useState("en");
@@ -93,20 +107,21 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
     primaryLanguage,
   };
   const errors = useMemo(() => validate(fields), [name, baseIri, prefix, primaryLanguage]);
-  const reason = firstReason(errors);
+  // The kind first: it is the first question the form asks (Section 6).
+  const reason = source === "" ? CHOOSE_KIND : firstReason(errors);
   const touch = (field: string) => setTouched((prev) => new Set(prev).add(field));
   const shown = (field: keyof NewProjectFields) => (touched.has(field) ? errors[field] : undefined);
 
   const submit = async () => {
     setTouched(new Set(["name", "baseIri", "prefix", "primaryLanguage"]));
     if (reason || busy) return;
-    const [kind, value] = source.split(/:(.*)/s);
+    const [from, value] = source.split(/:(.*)/s);
     setBusy(true);
     setError(null);
     try {
       await onCreate({
         name: fields.name.trim(),
-        ...(kind === "library" ? { fromOntologyId: value } : { template: value as ProjectTemplate }),
+        ...(from === "library" ? { fromOntologyId: value } : { template: value as ProjectTemplate }),
         baseIri: fields.baseIri.trim(),
         prefix: fields.prefix.trim(),
         primaryLanguage: fields.primaryLanguage.trim(),
@@ -171,17 +186,42 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
             void submit();
           }}
         >
+          <fieldset className="form-field new-project-kinds">
+            <legend>What are you making?</legend>
+            {KIND_CHOICES.map((choice) => (
+              <label key={choice.kind} className={`new-project-kind${kind === choice.kind ? " chosen" : ""}`}>
+                <input
+                  type="radio"
+                  name="new-project-kind"
+                  value={choice.kind}
+                  checked={kind === choice.kind}
+                  onChange={() => chooseKind(choice.kind)}
+                />
+                <span className="new-project-kind-text">
+                  <strong>{choice.label}</strong>
+                  <span>{choice.sentence}</span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
           {field("name", "Name", name, setName)}
           <div className="form-field">
             <label htmlFor="new-project-source">Start from</label>
             <select id="new-project-source" value={source} onChange={(e) => setSource(e.target.value)}>
-              <optgroup label="Templates">
-                {TEMPLATES.map((t) => (
-                  <option key={t.value} value={`template:${t.value}`}>
-                    {t.label}
-                  </option>
-                ))}
-              </optgroup>
+              {source === "" && (
+                <option value="" disabled>
+                  Choose Ontology or Taxonomy first
+                </option>
+              )}
+              {templates.length > 0 && (
+                <optgroup label="Templates">
+                  {templates.map((t) => (
+                    <option key={t.value} value={`template:${t.value}`}>
+                      {t.label}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
               {library.length > 0 && (
                 <optgroup label="A copy of an ontology in your library">
                   {library.map((o) => (

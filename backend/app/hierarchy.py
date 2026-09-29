@@ -38,7 +38,8 @@ EXPECTED OUTPUT
     - build_hierarchy(graph) -> {
         "classes":  forest, "concepts": forest,
         # Each property key is present only when the ontology declares that kind
-        # of property in a subPropertyOf relationship (v0.3):
+        # of property in a subPropertyOf relationship (v0.3), or, for a project
+        # document, declares one at all (relationships 5.5):
         "objectProperties":     forest,   # optional
         "datatypeProperties":   forest,   # optional
         "annotationProperties": forest,   # optional
@@ -46,7 +47,7 @@ EXPECTED OUTPUT
         "truncated": bool,
       }
       where forest = {
-        "nodes":    { id: {label, prefixed, kind, hasChildren, [cyclic]} },
+        "nodes":    { id: {label, prefixed, kind, hasChildren, [cyclic], [ends]} },
         "children": { id: [{id, origin}, ...] },
         "roots":    [id, ...],
       }
@@ -339,7 +340,9 @@ def _property_kind(graph: Graph, node: URIRef) -> str:
     return KIND_OBJECT_PROPERTY
 
 
-def _build_property_forests(graph: Graph, label: Callable[[URIRef], str]) -> dict[str, tuple[dict, int]]:
+def _build_property_forests(
+    graph: Graph, label: Callable[[URIRef], str], own: Optional[Graph] = None
+) -> dict[str, tuple[dict, int]]:
     """One forest per property kind over asserted rdfs:subPropertyOf (v0.3).
 
     `P subPropertyOf Q` makes `P` a child of `Q`, exactly as subClassOf builds
@@ -356,6 +359,14 @@ def _build_property_forests(graph: Graph, label: Callable[[URIRef], str]) -> dic
     what the ontology states ABOUT sub-property structure, and nothing when it
     states none.
 
+    A project document is the exception (`own`, relationships 5.5): there the
+    tree is how a learner reaches each relationship and attribute by keyboard
+    (D-078), so every object and datatype property the document itself types
+    joins -- not an import's, which would bury the model under FOAF's --
+    each carrying its `ends` -- the domain's name and the range's, or the
+    datatype -- for the row to read *works for (Person → Organization)*. A
+    project is small and written by hand; the wall is a library's problem.
+
     Returns a map from response key to (forest, node count) for each of the three
     kinds that has at least one member, so a caller emits only the forests that
     exist.
@@ -371,11 +382,27 @@ def _build_property_forests(graph: Graph, label: Callable[[URIRef], str]) -> dic
             members.add(subject)
             members.add(obj)
 
+    if own is not None:
+        for t in (OWL.ObjectProperty, OWL.DatatypeProperty):
+            members |= {s for s in own.subjects(RDF.type, t) if isinstance(s, URIRef)}
+
     if not members:
         return {}
 
     kind_of = {n: _property_kind(graph, n) for n in members}
     labels = {n: (label(n), prefixed(graph, n)) for n in members}
+
+    def ends(prop: URIRef) -> dict:
+        """The first named domain and range, by name; a datatype by its
+        prefixed name, which the row turns into a word."""
+        def first(predicate) -> Optional[URIRef]:
+            return next((o for o in graph.objects(prop, predicate) if isinstance(o, URIRef)), None)
+        domain, rng = first(RDFS.domain), first(RDFS.range)
+        attribute = kind_of[prop] == KIND_DATATYPE_PROPERTY
+        return {
+            "domain": label(domain) if domain is not None else None,
+            "range": None if rng is None else prefixed(graph, rng) if attribute else label(rng),
+        }
 
     result: dict[str, tuple[dict, int]] = {}
     for kind, key in _PROPERTY_FORESTS:
@@ -391,7 +418,11 @@ def _build_property_forests(graph: Graph, label: Callable[[URIRef], str]) -> dic
             if effective:
                 parents[child] = effective
         kind_labels = {n: labels[n] for n in kind_nodes}
-        result[key] = _forest(kind_nodes, parents, kind_labels, kind)
+        forest, total = _forest(kind_nodes, parents, kind_labels, kind)
+        if own is not None and kind != KIND_ANNOTATION_PROPERTY:
+            for n in kind_nodes:
+                forest["nodes"][str(n)]["ends"] = ends(n)
+        result[key] = (forest, total)
     return result
 
 
@@ -423,7 +454,11 @@ def _truncate(forest: dict, keep: int) -> dict:
 
 
 def build_hierarchy(
-    graph: Graph, *, max_nodes: int = HIERARCHY_MAX_NODES, langs: Optional[Sequence[str]] = None
+    graph: Graph,
+    *,
+    max_nodes: int = HIERARCHY_MAX_NODES,
+    langs: Optional[Sequence[str]] = None,
+    own: Optional[Graph] = None,
 ) -> dict:
     """Build the hierarchy forests from an rdflib graph.
 
@@ -443,14 +478,16 @@ def build_hierarchy(
     interface can say how much was dropped.
 
     `langs` names a project document's rows in its display language (D-085);
-    None keeps the library's label rule.
+    None keeps the library's label rule. `own`, a project document's graph,
+    lists every object and datatype property it types (relationships 5.5);
+    it is `graph` itself, or the document under a merged imports view.
     """
     label = labeler(graph, langs)
     classes, class_total = _build_class_forest(graph, label)
     concepts, concept_total = _build_concept_forest(graph, label)
     # Property forests (v0.3): one per property kind the ontology declares in a
     # subPropertyOf relationship, so most ontologies add nothing here.
-    properties = _build_property_forests(graph, label)
+    properties = _build_property_forests(graph, label, own)
 
     # Every forest present, in emission order, as key -> (forest, node count).
     # classes and concepts are always present (empty when the ontology has none);

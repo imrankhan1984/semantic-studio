@@ -1,0 +1,10 @@
+@prefix {{prefix}}: <{{base}}> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+
+<{{ontology}}> a owl:Ontology ;
+    rdfs:label "{{name}}"@{{lang}} .
+
+{{prefix}}:Scheme a skos:ConceptScheme ;
+    skos:prefLabel "{{name}}"@{{lang}} .

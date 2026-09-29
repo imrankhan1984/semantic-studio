@@ -60,7 +60,7 @@ function node(label: string, kind = "class", hasChildren = false) {
  *  label from its local name. Edges are asserted unless the child id ends in a
  *  marker the caller sets via `inferred`. */
 function forestOf(
-  nodes: Record<string, ReturnType<typeof node>>,
+  nodes: Record<string, HierarchyForest["nodes"][string]>,
   edges: Record<string, string[]>,
   roots: string[],
   inferred: Set<string> = new Set(),
@@ -745,3 +745,92 @@ describe("HierarchyView, Stage 2 follow-ups (visual-modeling 5.8)", () => {
   });
 });
 
+
+describe("HierarchyView, relationships Stage A (AC-2, AC-6)", () => {
+  /** A model with classes, relationships, an attribute and two concepts. */
+  function model(): Hierarchy {
+    const base = mixed();
+    const rel = (label: string, domain: string | null, range: string | null) => ({
+      ...node(label, "objectProperty"),
+      ends: { domain, range },
+    });
+    return {
+      ...base,
+      objectProperties: forestOf(
+        {
+          [EX + "memberOf"]: { ...rel("member of", "Alpha", "Beta"), hasChildren: true },
+          [EX + "worksFor"]: rel("works for", "Alpha", "Beta"),
+          [EX + "likes"]: rel("likes", null, null),
+        },
+        { [EX + "memberOf"]: [EX + "worksFor"] },
+        [EX + "likes", EX + "memberOf"],
+      ),
+      datatypeProperties: forestOf(
+        { [EX + "name"]: { ...node("name", "datatypeProperty"), ends: { domain: "Alpha", range: "xsd:string" } } },
+        {},
+        [EX + "name"],
+      ),
+    };
+  }
+
+  function renderKind(kind: "ontology" | "taxonomy" | null, hierarchy: Hierarchy = model()) {
+    fetchHierarchy.mockResolvedValue(hierarchy);
+    render(
+      <HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en", kind }} />,
+    );
+  }
+
+  const headings = () => [...document.querySelectorAll("h3")].map((h) => h.textContent);
+
+  it("lists every relationship and attribute with its ends, nested under a parent", async () => {
+    renderKind("ontology");
+    await screen.findByText("likes");
+    expect(headings()).toEqual(["Class hierarchy", "Relationships", "Attributes", "Concept hierarchy"]);
+    expect(itemByLabel("likes")!.querySelector(".hierarchy-ends")!.textContent).toBe("(no start yet → no end yet)");
+    expect(itemByLabel("member of")!.querySelector(".hierarchy-ends")!.textContent).toBe("(Alpha → Beta)");
+    expect(itemByLabel("name")!.querySelector(".hierarchy-ends")!.textContent).toBe("(Alpha, text)");
+    // works for is under member of, one level down once it is expanded.
+    expect(itemByLabel("member of")!.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(itemByLabel("member of")!.querySelector(".hierarchy-twistie")!);
+    expect(itemByLabel("works for")!.getAttribute("aria-level")).toBe("2");
+    // Each has the row menu, as a class does (Rename, Delete…).
+    expect(itemByLabel("works for")!.querySelector(".hierarchy-menu-btn")).toBeTruthy();
+  });
+
+  it("an ontology offers New class only, and its concepts are listed without actions under one line", async () => {
+    renderKind("ontology");
+    expect(await screen.findByRole("button", { name: "New class" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "New concept" })).toBeNull();
+    expect(
+      screen.getByText("This ontology also contains 1 SKOS concept. Edit it in Turtle, or change the project to a taxonomy."),
+    ).toBeTruthy();
+    fireEvent.click(itemByLabel("Scheme")!.querySelector(".hierarchy-twistie")!);
+    expect(itemByLabel("Water")).toBeTruthy();
+    expect(itemByLabel("Water")!.querySelector(".hierarchy-menu-btn")).toBeNull();
+    expect(itemByLabel("Water")!.getAttribute("aria-keyshortcuts")).toBeNull();
+  });
+
+  it("a taxonomy leads with its scheme, offers New concept only, and its classes have no actions", async () => {
+    renderKind("taxonomy", mixed());
+    expect(await screen.findByRole("button", { name: "New concept" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "New class" })).toBeNull();
+    expect(headings()).toEqual(["Concept hierarchy", "Class hierarchy"]);
+    expect(itemByLabel("Alpha")!.querySelector(".hierarchy-menu-btn")).toBeNull();
+    expect(screen.getByText(/This taxonomy also contains 2 classes\./)).toBeTruthy();
+  });
+
+  it("an empty taxonomy keeps its concept section, where New concept lives", async () => {
+    renderKind("taxonomy", hierarchyOf(EMPTY, EMPTY));
+    expect(await screen.findByRole("button", { name: "New concept" })).toBeTruthy();
+    expect(headings()).toEqual(["Concept hierarchy"]);
+    expect(screen.getByText("No concepts yet. New concept makes the first.")).toBeTruthy();
+    expect(document.querySelector(".hierarchy-other-kind")).toBeNull();
+  });
+
+  it("a project from before kinds keeps both New buttons and no note", async () => {
+    renderKind(null, mixed());
+    expect(await screen.findByRole("button", { name: "New class" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New concept" })).toBeTruthy();
+    expect(document.querySelector(".hierarchy-other-kind")).toBeNull();
+  });
+});

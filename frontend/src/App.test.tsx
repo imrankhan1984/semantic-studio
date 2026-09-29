@@ -60,7 +60,7 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { ApiError } from "./api";
@@ -103,6 +103,7 @@ const {
   undoChange,
   saveDocument,
   recoverProject,
+  updateProject,
 } = vi.hoisted(() => ({
   listOntologies: vi.fn(),
   getGraph: vi.fn(),
@@ -142,6 +143,8 @@ const {
   undoChange: vi.fn(),
   saveDocument: vi.fn(),
   recoverProject: vi.fn(),
+  // relationships Stage A: changing a project's kind from its card.
+  updateProject: vi.fn(),
 }));
 
 // importOriginal rather than a bare factory, so ApiError stays the real class.
@@ -180,6 +183,7 @@ vi.mock("./api", async (importOriginal) => ({
   undoChange,
   saveDocument,
   recoverProject,
+  updateProject,
 }));
 
 /** Every mocked client function, so a test can count what mount actually did. */
@@ -214,6 +218,7 @@ const ALL_API = {
   undoChange,
   saveDocument,
   recoverProject,
+  updateProject,
 };
 
 // Sigma needs a WebGL context; jsdom has none. Nothing here asserts on the
@@ -2602,6 +2607,7 @@ const PROJECT = {
   languages: [],
   documents: [{ file: "model.ttl", role: "model" as const }],
   counts: { classes: 2, properties: 1, concepts: 0, triples: 12 },
+  kind: "ontology" as const,
 };
 const OID = "prj-0123456789ab-model";
 
@@ -2930,3 +2936,32 @@ describe("App and the modeling canvas (visual-modeling Stage 2)", () => {
   });
 });
 
+describe("App project kinds (relationships Stage A)", () => {
+  it("changes a project's kind from its card after one sentence, rewriting nothing (AC-1, R21)", async () => {
+    listProjects.mockResolvedValue([PROJECT]);
+    updateProject.mockResolvedValue({ ...PROJECT, kind: "taxonomy" });
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: "More actions for Invoices" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change to taxonomy…" }));
+    const dialog = screen.getByRole("dialog", { name: "Change Invoices to a taxonomy?" });
+    expect(dialog.textContent).toContain("Nothing in the model is rewritten");
+    expect(updateProject).not.toHaveBeenCalled();
+    listProjects.mockResolvedValue([{ ...PROJECT, kind: "taxonomy" }]);
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Change" }));
+    });
+    expect(updateProject).toHaveBeenCalledWith(PROJECT.id, { kind: "taxonomy" });
+    expect(screen.getByText("Invoices is now a taxonomy. Nothing in the model was changed.")).toBeTruthy();
+    expect(document.querySelector(".project-kind")!.textContent).toBe("Taxonomy");
+  });
+
+  it("Cancel changes nothing", async () => {
+    listProjects.mockResolvedValue([PROJECT]);
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: "More actions for Invoices" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change to taxonomy…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(updateProject).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});

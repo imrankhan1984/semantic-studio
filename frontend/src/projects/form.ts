@@ -5,8 +5,9 @@ FILE: frontend/src/projects/form.ts
 
 SUMMARY
     The New project form's rules, kept out of the component so they can be
-    tested without rendering: the defaults a name implies (base IRI and
-    prefix), and what makes each field invalid, in a sentence.
+    tested without rendering: the two kinds of project and the templates each
+    offers (relationships 5.1, D-089), the defaults a name implies (base IRI
+    and prefix), and what makes each field invalid, in a sentence.
 
 BASIC IDEA
     The same rules the server applies in projects.py, restated so the form can
@@ -21,9 +22,45 @@ INPUTS / INPUT SOURCES
     - The form's field values.
 
 EXPECTED OUTPUT
-    - Defaults, and a map of field -> sentence for whatever is invalid.
+    - KIND_CHOICES; defaults, and a map of field -> sentence for whatever is
+      invalid; the first reason Create is unavailable.
 ================================================================================
 */
+
+import type { ProjectKind, ProjectTemplate } from "../types";
+
+/** The two kinds a project can be, asked first (relationships 5.1). The
+ *  sentences are the spec's, word for word: they are what a learner reads to
+ *  choose, so a paraphrase here is a change to the product. */
+export const KIND_CHOICES: {
+  kind: ProjectKind;
+  label: string;
+  sentence: string;
+  templates: { value: ProjectTemplate; label: string }[];
+}[] = [
+  {
+    kind: "ontology",
+    label: "Ontology",
+    sentence:
+      "Classes of things, their attributes and the relationships between them. For example: a Person works for an Organization.",
+    templates: [
+      { value: "empty", label: "Empty ontology" },
+      { value: "small", label: "Small ontology (two classes, one relationship)" },
+    ],
+  },
+  {
+    kind: "taxonomy",
+    label: "Taxonomy",
+    sentence:
+      "A vocabulary of concepts arranged from broad to narrow, with related terms. For example: Apple is narrower than Fruit.",
+    templates: [
+      { value: "taxonomy-empty", label: "Empty taxonomy (one concept scheme)" },
+      { value: "taxonomy-small", label: "Small taxonomy (a scheme with a few concepts)" },
+    ],
+  },
+];
+
+export const CHOOSE_KIND = "Choose Ontology or Taxonomy.";
 
 export function slugify(name: string): string {
   const slug = name

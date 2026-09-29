@@ -103,6 +103,14 @@ BASIC IDEA
     both the edit and the way out. Mount now makes two requests: the ontology
     list and the project list, both from metadata files.
 
+    A project is an ontology or a taxonomy (relationships 5.1, D-089). The
+    kind travels with the editing context to the tree, the canvas and the
+    form, which offer its tools and show the other kind read-only; it is
+    changed from the project's card menu, after one sentence of what changes.
+    A click on a subclass or broader line in the canvas opens LinkPanel where
+    the detail panel stands; a click on a relationship's line selects the
+    relationship like any entity (5.2).
+
     Removal is the one destructive action here, and it counts what it will
     destroy before it asks. Deleting an ontology has always deleted every query
     saved against it; onRemove now fetches that count first, puts it in the
@@ -158,6 +166,7 @@ import GraphView from "./components/GraphView";
 import HierarchyView from "./components/HierarchyView";
 import HomeScreen from "./components/HomeScreen";
 import ImportsPanel from "./components/ImportsPanel";
+import LinkPanel from "./components/LinkPanel";
 import Legend from "./components/Legend";
 import LoadDialog from "./components/LoadDialog";
 import Logo from "./components/Logo";
@@ -186,6 +195,7 @@ import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type {
   AppMode,
   ApprovalRequest,
+  CanvasLink,
   CanvasSet,
   ImportsListing,
   MergeResult,
@@ -531,6 +541,8 @@ export default function App() {
         ? {
             primaryLanguage: openProjectSummary.primaryLanguage,
             languages: openProjectSummary.languages,
+            // Which tools the visual doors offer (D-089).
+            kind: openProjectSummary.kind,
           }
         : null,
     [openProjectSummary, openDocName],
@@ -541,6 +553,20 @@ export default function App() {
   const [ModelCanvas, setModelCanvas] = useState(loadCanvas);
   const [canvasOn, setCanvasOn] = useState(canvasPreference);
   const [canvasSet, setCanvasSet] = useState<CanvasSet | null>(null);
+  // A subclass or broader line clicked on the canvas: LinkPanel shows it
+  // where the detail panel stands, until anything else is selected or the
+  // model changes under it (relationships 5.2).
+  const [selectedLink, setSelectedLink] = useState<CanvasLink | null>(null);
+  const selectLink = useCallback((link: CanvasLink) => {
+    setSelected(null);
+    setSelectedLink(link);
+  }, []);
+  useEffect(() => {
+    if (selected !== null) setSelectedLink(null);
+  }, [selected]);
+  useEffect(() => setSelectedLink(null), [revision, activeId]);
+  // The project whose kind is being changed, while the question is open.
+  const [changingKind, setChangingKind] = useState<ProjectSummary | null>(null);
   const toggleCanvas = useCallback(() => {
     setCanvasOn((on) => {
       try {
@@ -1304,6 +1330,22 @@ export default function App() {
     if (projectStore.getSnapshot().project?.id === pid) await projectStore.reload();
   };
 
+  // The kind changes the tools, never the model (D-089): the manifest only.
+  const onChangeKind = async (project: ProjectSummary) => {
+    const kind = project.kind === "ontology" ? "taxonomy" : "ontology";
+    setProjectBusyId(project.id);
+    try {
+      await updateProject(project.id, { kind });
+      setNotice(`${project.name} is now ${kind === "ontology" ? "an ontology" : "a taxonomy"}. Nothing in the model was changed.`);
+      await refreshProjects();
+      if (projectStore.getSnapshot().project?.id === project.id) await projectStore.reload();
+    } catch (e: unknown) {
+      failed(e);
+    } finally {
+      setProjectBusyId(null);
+    }
+  };
+
   const onDuplicateProject = (pid: string) => {
     setProjectBusyId(pid);
     duplicateProject(pid)
@@ -1726,6 +1768,7 @@ export default function App() {
               onNew={() => setNewProject({})}
               onOpen={openProjectById}
               onRename={onRenameProject}
+              onChangeKind={(pid) => setChangingKind(projects.find((p) => p.id === pid) ?? null)}
               onDuplicate={onDuplicateProject}
               onExport={onExportProject}
               onDelete={onDeleteProject}
@@ -1779,13 +1822,16 @@ export default function App() {
                   primaryLanguage={editingModel.primaryLanguage}
                   selected={selected}
                   onSelect={selectFromOutsideGraph}
+                  onSelectLink={selectLink}
                   onDeleted={onEntityDeleted}
                   onCanvasSet={setCanvasSet}
                 />
               </Suspense>
             </CanvasBoundary>
           )}
-          {selected === null ? (
+          {selected === null && selectedLink && showCanvas ? (
+            <LinkPanel link={selectedLink} onSelect={selectFromOutsideGraph} onClose={() => setSelectedLink(null)} />
+          ) : selected === null ? (
             <aside className="detail-panel detail-empty" aria-label="Entity details">
               <p className="detail-note">
                 Select a class, property or concept to see its details and
@@ -2005,6 +2051,28 @@ export default function App() {
           <p>
             {COMMENTS_WARNING} The current file will be kept as{" "}
             <code>{commentsWarning.backup}</code>.
+          </p>
+        </ConfirmDialog>
+      )}
+
+      {changingKind && (
+        <ConfirmDialog
+          title={`Change ${changingKind.name} to ${changingKind.kind === "ontology" ? "a taxonomy" : "an ontology"}?`}
+          escape="cancel"
+          actions={[
+            { id: "cancel", label: "Cancel" },
+            { id: "change", label: "Change", primary: true },
+          ]}
+          onAnswer={(answer) => {
+            const project = changingKind;
+            setChangingKind(null);
+            if (answer === "change") void onChangeKind(project);
+          }}
+        >
+          <p>
+            {changingKind.kind === "ontology"
+              ? "The canvas and the tree will offer concepts instead of classes. Nothing in the model is rewritten: its classes stay, shown read-only and editable in Turtle."
+              : "The canvas and the tree will offer classes instead of concepts. Nothing in the model is rewritten: its concepts stay, shown read-only and editable in Turtle."}
           </p>
         </ConfirmDialog>
       )}

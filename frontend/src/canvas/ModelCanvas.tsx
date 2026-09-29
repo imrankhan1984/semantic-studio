@@ -35,12 +35,31 @@ BASIC IDEA
     menu opens; a command the server refuses shows its sentence where the
     action was.
 
+    Relationships are seen from where they are drawn (relationships 5.2 to
+    5.4). A click on a relationship's line selects the relationship, so the
+    form opens on it and its tree row is selected, and the line stays
+    highlighted while it is the selection; a click on an *is a kind of* or
+    *narrower than* line opens the link panel (App's, via onSelectLink). A
+    relationship made or completed by a line is selected at once and
+    announced as a sentence. The relate menu reads each choice as its
+    sentence and swaps the direction before anything is made. Lines sharing
+    two boxes are curved apart, and a relationship from a class to itself is
+    a loop (curves.ts). Completing an existing relationship is one command,
+    SetEnds, so one undo step (it was two).
+
+    The project's kind decides the palette (Class for an ontology, Concept
+    for a taxonomy) and which boxes the canvas may change (D-089). The other
+    kind's boxes are still drawn, never hidden, marked read-only, with one
+    line saying how many there are and where they are edited.
+
     Moving a box is not an undo step and never makes the model dirty (5.5).
 
 INPUTS / INPUT SOURCES (props)
     - projectId, doc, revision, language, primaryLanguage: the document, and
       the language names are shown and renamed in.
     - selected, onSelect: the shared selection (D-047).
+    - onSelectLink: a subclass or broader line was clicked; App shows the
+      link panel for it.
     - onDeleted: an entity deleted from the canvas.
     - onCanvasSet: tells App the shown set past 300 boxes, for the tree's and
       the form's Show on canvas and Hide from canvas (5.6).
@@ -61,6 +80,7 @@ import {
   MarkerType,
   ReactFlow,
   ReactFlowProvider,
+  useInternalNode,
   useReactFlow,
   type Connection,
   type Edge,
@@ -77,13 +97,15 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import DeleteDialog from "../components/DeleteDialog";
 import { getNodeDetails } from "../api";
 import { useRunner } from "../components/EditParts";
+import { createdAnnouncement, otherKindNote } from "../modeling/sentences";
 import { projectStore } from "../state/projectStore";
-import type { CanvasSet, CanvasView, ProjectDocName } from "../types";
+import type { CanvasLink, CanvasNode, CanvasSet, CanvasView, ProjectDocName } from "../types";
 import ClassNode, { type BoxData, type BoxNode } from "./ClassNode";
 import ConceptNode from "./ConceptNode";
+import { loopCurve, pairCurve } from "./curves";
 import { BOX_HEIGHT } from "./layered";
 import RelateMenu from "./RelateMenu";
-import { boxName, relateChoices, type RelateChoice } from "./relate";
+import { boxName, otherKindRefusal, relateChoices, type RelateChoice } from "./relate";
 import { useCanvasData } from "./useCanvasData";
 
 export interface ModelCanvasProps {
@@ -94,6 +116,7 @@ export interface ModelCanvasProps {
   primaryLanguage: string;
   selected: string | null;
   onSelect: (iri: string) => void;
+  onSelectLink?: (link: CanvasLink) => void;
   onDeleted: (iri: string) => void;
   onCanvasSet?: (set: CanvasSet | null) => void;
 }
@@ -104,18 +127,56 @@ const DRAG_TYPE = { class: "application/x-semantic-studio-class", concept: "appl
 
 const nodeTypes = { class: ClassNode, concept: ConceptNode };
 
+interface LineData extends Record<string, unknown> {
+  text: string;
+  always: boolean;
+  hover: boolean;
+  pair: number;
+  pairs: number;
+  forward: boolean;
+}
+
 /** A line: *is a kind of* and *narrower than* show their words on hover and
- *  focus (5.4); a relationship always shows its name. */
-function LabelledEdge(props: EdgeProps<Edge<{ text: string; always: boolean; hover: boolean }>>) {
-  const [path, x, y] = getBezierPath(props);
-  const show = props.data && (props.data.always || props.data.hover || props.selected);
+ *  focus (5.4); a relationship always shows its name. One line between two
+ *  boxes is React Flow's curve; several are spread apart, and a line from a
+ *  box to itself is a loop on its right side (curves.ts). */
+function LabelledEdge(props: EdgeProps<Edge<LineData>>) {
+  const box = useInternalNode(props.source);
+  const data = props.data!;
+  let path: string;
+  let x: number;
+  let y: number;
+  if (props.source === props.target && box) {
+    const width = box.measured.width ?? 190;
+    const height = box.measured.height ?? BOX_HEIGHT;
+    ({ path, labelX: x, labelY: y } = loopCurve(
+      box.internals.positionAbsolute.x + width,
+      box.internals.positionAbsolute.y + height / 2,
+      data.pair,
+    ));
+  } else if (data.pairs > 1) {
+    ({ path, labelX: x, labelY: y } = pairCurve(
+      props.sourceX, props.sourceY, props.targetX, props.targetY, data.pair, data.pairs, data.forward,
+    ));
+  } else {
+    [path, x, y] = getBezierPath(props);
+  }
+  const show = data.always || data.hover || props.selected;
   return (
     <>
-      <BaseEdge id={props.id} path={path} markerEnd={props.markerEnd} className={`canvas-edge ${props.data?.always ? "relationship" : ""}`} />
+      <BaseEdge
+        id={props.id}
+        path={path}
+        markerEnd={props.markerEnd}
+        className={`canvas-edge${data.always ? " relationship" : ""}${props.selected ? " selected" : ""}`}
+      />
       {show && (
         <EdgeLabelRenderer>
-          <span className="canvas-edge-label" style={{ transform: `translate(-50%, -50%) translate(${x}px, ${y}px)` }}>
-            {props.data!.text}
+          <span
+            className={`canvas-edge-label${props.selected ? " selected" : ""}`}
+            style={{ transform: `translate(-50%, -50%) translate(${x}px, ${y}px)` }}
+          >
+            {data.text}
           </span>
         </EdgeLabelRenderer>
       )}
@@ -132,7 +193,8 @@ interface Draft {
 }
 
 function Canvas(props: ModelCanvasProps) {
-  const { projectId, doc, revision, language, primaryLanguage, selected, onSelect, onDeleted, onCanvasSet } = props;
+  const { projectId, doc, revision, language, primaryLanguage, selected, onSelect, onSelectLink, onDeleted, onCanvasSet } =
+    props;
   const data = useCanvasData(projectId, doc, revision, language);
   const { view, positions } = data;
   const flow = useReactFlow();
@@ -152,7 +214,15 @@ function Canvas(props: ModelCanvasProps) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [draftName, setDraftName] = useState("");
   const [hint, setHint] = useState("");
-  const [relate, setRelate] = useState<{ from: string; to: string; choices: RelateChoice[]; notes: string[] } | null>(null);
+  const [relate, setRelate] = useState<{
+    from: string;
+    to: string;
+    choices: RelateChoice[];
+    notes: string[];
+    // The swapped direction may mean nothing (a line into an imported box
+    // turned round): the menu says so in place of its choices.
+    refusal?: string;
+  } | null>(null);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
   const [deleting, setDeleting] = useState<{ iri: string; label: string } | null>(null);
   const [tidying, setTidying] = useState(false);
@@ -238,19 +308,62 @@ function Canvas(props: ModelCanvasProps) {
   const choose = async (choice: RelateChoice, name?: string) => {
     if (!relate) return;
     const { from, to } = relate;
+    const fromName = label(view!, from);
+    const toName = label(view!, to);
     let ok = true;
+    // The relationship a line made or completed: selected once it exists, so
+    // its details are on screen at once (5.2).
+    let relationship: string | null = null;
     if (choice.kind === "subClassOf") ok = !!(await run("relate", "AddSubClassOf", { child: from, parent: to }));
     else if (choice.kind === "broader") ok = !!(await run("relate", "AddBroader", { concept: from, broader: to }));
-    else if (choice.kind === "newRelationship")
-      ok = !!(await run("relate", "CreateObjectProperty", { label: name, domain: from, range: to }));
-    else {
-      if (choice.setDomain) ok = !!(await run("relate", "SetDomain", { property: choice.property, target: from }));
-      if (ok && choice.setRange) ok = !!(await run("relate", "SetRange", { property: choice.property, target: to }));
+    else if (choice.kind === "newRelationship") {
+      const result = await run(
+        "relate",
+        "CreateObjectProperty",
+        { label: name, domain: from, range: to },
+        () => createdAnnouncement(name ?? "", fromName, toName),
+      );
+      ok = !!result;
+      relationship = result?.created ?? null;
+    } else {
+      // Both ends in one command, so one undo step (relationships R6; the
+      // E-7 note: SetDomain then SetRange took two).
+      const result = await run(
+        "relate",
+        "SetEnds",
+        {
+          property: choice.property,
+          ...(choice.setDomain ? { domain: from } : {}),
+          ...(choice.setRange ? { range: to } : {}),
+        },
+        () => `Completed relationship ${choice.name}, from ${fromName} to ${toName}.`,
+      );
+      ok = !!result;
+      if (ok) relationship = choice.property;
     }
-    if (ok) {
-      setRelate(null);
+    if (!ok) return;
+    setRelate(null);
+    if (relationship && alive()) {
+      selectHere(relationship);
+      setSelectedEdge(null);
+      // Not the box: focusing a box selects it, and would take the selection
+      // straight back from the relationship. The surface keeps the keys.
+      wrapper.current?.focus();
+    } else {
       focusBox(from);
     }
+  };
+
+  /** The relate menu's Swap: the same two boxes, asked the other way round. */
+  const swap = () => {
+    if (!relate || !view) return;
+    clear("relate");
+    const result = relateChoices(view, relate.to, relate.from);
+    setRelate(
+      "refusal" in result
+        ? { from: relate.to, to: relate.from, choices: [], notes: [], refusal: result.refusal }
+        : { from: relate.to, to: relate.from, ...result },
+    );
   };
 
   const removeEdge = async (id: string) => {
@@ -273,6 +386,7 @@ function Canvas(props: ModelCanvasProps) {
         .map<BoxNode>((n) => {
           const data: BoxData = {
             node: n,
+            otherKind: !n.imported && otherKindRefusal(view, n) !== null,
             dropTarget: dropTarget === n.iri,
             renaming: renaming === n.iri,
             busy,
@@ -303,7 +417,8 @@ function Canvas(props: ModelCanvasProps) {
     return view.edges.map((e) => {
       const id = edgeId(e);
       const relationship = e.kind === "relationship";
-      const [out, into] = sides(positions[e.source], positions[e.target]);
+      const loop = e.source === e.target;
+      const [out, into] = loop ? (["r", "r"] as const) : sides(positions[e.source], positions[e.target]);
       return {
         id,
         source: e.source,
@@ -311,7 +426,9 @@ function Canvas(props: ModelCanvasProps) {
         sourceHandle: out,
         targetHandle: into,
         type: "labelled",
-        selected: id === selectedEdge,
+        // A relationship's line is lit while the relationship is the
+        // selection, however it was selected: by the line, the tree or a link.
+        selected: id === selectedEdge || (relationship && e.property === selected),
         ariaLabel:
           e.kind === "subClassOf"
             ? `${label(view, e.source)} is a kind of ${label(view, e.target)}`
@@ -326,10 +443,13 @@ function Canvas(props: ModelCanvasProps) {
           text: relationship ? (e.label ?? "") : e.kind === "subClassOf" ? "is a kind of" : "narrower than",
           always: relationship,
           hover: hover === id,
+          pair: e.pair ?? 0,
+          pairs: e.pairs ?? 1,
+          forward: e.source < e.target,
         },
       };
     });
-  }, [view, hover, selectedEdge, positions]);
+  }, [view, hover, selectedEdge, positions, selected]);
 
   // --- selection made elsewhere pans here (D-047) ------------------------------------
 
@@ -431,7 +551,7 @@ function Canvas(props: ModelCanvasProps) {
     const el = document.elementFromPoint?.(e.clientX, e.clientY)?.closest<HTMLElement>(".react-flow__node");
     const id = el?.dataset.id;
     const node = id ? view?.nodes.find((n) => n.iri === id) : undefined;
-    return node && node.kind === kind ? node : null;
+    return node && node.kind === kind && !otherKindRefusal(view!, node) ? node : null;
   };
 
   const onDragOver = (e: React.DragEvent) => {
@@ -482,12 +602,18 @@ function Canvas(props: ModelCanvasProps) {
     const box = target.closest<HTMLElement>(".react-flow__node");
     const id = box?.dataset.id;
     const node = id ? view?.nodes.find((n) => n.iri === id) : undefined;
-    if (node && e.key === "Enter" && !node.imported) {
+    const fixed = node && (node.imported || otherKindRefusal(view!, node) !== null);
+    if (node && fixed && (e.key === "Enter" || e.key === "Delete" || e.key === "Backspace")) {
+      // Read-only here: say where it is changed, rather than doing nothing.
+      e.preventDefault();
+      e.stopPropagation();
+      if (!node.imported) setHint(otherKindRefusal(view!, node)!);
+    } else if (node && e.key === "Enter") {
       // Enter renames (5.4); React Flow's own Enter would only select.
       e.preventDefault();
       e.stopPropagation();
       setRenaming(node.iri);
-    } else if (node && (e.key === "Delete" || e.key === "Backspace") && !node.imported) {
+    } else if (node && (e.key === "Delete" || e.key === "Backspace")) {
       e.preventDefault();
       e.stopPropagation();
       setDeleting({ iri: node.iri, label: node.label });
@@ -527,6 +653,10 @@ function Canvas(props: ModelCanvasProps) {
 
   const undrawn = view.undrawn.filter((u) => u.kind === "objectProperty");
   const empty = view.total === 0;
+  // The kind's own palette item; both for a project not opened since kinds.
+  const palette: ("class" | "concept")[] =
+    view.kind === "ontology" ? ["class"] : view.kind === "taxonomy" ? ["concept"] : ["class", "concept"];
+  const otherNote = otherKindLine(view);
   const draftNode = draft ? flow.flowToScreenPosition({ x: draft.at[0], y: draft.at[1] }) : null;
   const origin = wrapper.current?.getBoundingClientRect();
   const refused = errors.draft || errors.rename || errors.attribute || errors.edge || data.saveError || "";
@@ -542,7 +672,7 @@ function Canvas(props: ModelCanvasProps) {
       </svg>
       <div className="canvas-toolbar" role="toolbar" aria-label="Canvas">
         <span className="canvas-palette-label">Drag onto the canvas:</span>
-        {(["class", "concept"] as const).map((kind) => (
+        {palette.map((kind) => (
           <button
             key={kind}
             type="button"
@@ -599,6 +729,7 @@ function Canvas(props: ModelCanvasProps) {
       <p className="canvas-hint" role="status">
         {busy ? "Saving change…" : hint || refused}
       </p>
+      {otherNote && <p className="detail-note canvas-other-kind">{otherNote}</p>}
       {view.limited && (
         <p className="detail-note canvas-limited">
           This model has {view.total.toLocaleString()} classes and concepts; the canvas shows the ones you choose.
@@ -622,7 +753,9 @@ function Canvas(props: ModelCanvasProps) {
         onDoubleClick={(e) => {
           const id = (e.target as HTMLElement).closest<HTMLElement>(".react-flow__node")?.dataset.id;
           const node = id ? view.nodes.find((n) => n.iri === id) : undefined;
-          if (node && !node.imported && (e.target as HTMLElement).closest(".canvas-box-name")) setRenaming(node.iri);
+          if (node && !node.imported && !otherKindRefusal(view, node) && (e.target as HTMLElement).closest(".canvas-box-name")) {
+            setRenaming(node.iri);
+          }
         }}
       >
         <ReactFlow<BoxNode, Edge>
@@ -648,6 +781,19 @@ function Canvas(props: ModelCanvasProps) {
             setSelectedEdge(edge.id);
             setHint(`${edge.ariaLabel ?? "Line"} selected. Delete removes it.`);
             wrapper.current?.focus();
+            // And show what the line is (5.2): a relationship's form, or the
+            // link panel for a subclass or broader line.
+            const line = view.edges.find((e) => edgeId(e) === edge.id);
+            if (line?.kind === "relationship" && line.property) selectHere(line.property);
+            else if (line && line.kind !== "relationship") {
+              onSelectLink?.({
+                kind: line.kind,
+                source: line.source,
+                target: line.target,
+                sourceLabel: label(view, line.source),
+                targetLabel: label(view, line.target),
+              });
+            }
           }}
           onEdgeMouseEnter={(_, edge) => setHover(edge.id)}
           onEdgeMouseLeave={() => setHover(null)}
@@ -670,7 +816,9 @@ function Canvas(props: ModelCanvasProps) {
           minZoom={0.2}
           maxZoom={2}
         />
-        {empty && !draft && <p className="canvas-empty">Drag a Class here to start</p>}
+        {empty && !draft && (
+          <p className="canvas-empty">Drag a {view.kind === "taxonomy" ? "Concept" : "Class"} here to start</p>
+        )}
         {draft && draftNode && origin && (
           <div
             className={`canvas-box canvas-draft canvas-${draft.kind}`}
@@ -704,9 +852,12 @@ function Canvas(props: ModelCanvasProps) {
         )}
         {relate && anchor && (
           <RelateMenu
-            title={`${label(view, relate.from)} to ${label(view, relate.to)}`}
+            from={label(view, relate.from)}
+            to={label(view, relate.to)}
             choices={relate.choices}
             notes={relate.notes}
+            refusal={relate.refusal ?? null}
+            onSwap={swap}
             anchor={anchor}
             busy={busy}
             error={errors.relate || null}
@@ -776,6 +927,13 @@ const UNDRAWN_WHY: Record<CanvasView["undrawn"][number]["missing"], string> = {
 
 function edgeId(e: CanvasView["edges"][number]): string {
   return `${e.kind}|${e.source}|${e.target}|${e.property ?? ""}`;
+}
+
+/** One line when the document holds the other kind (5.1). Imported boxes
+ *  are not counted: they are an import's, whatever the kind. */
+function otherKindLine(view: CanvasView): string | null {
+  const other: CanvasNode["kind"] = view.kind === "ontology" ? "concept" : "class";
+  return otherKindNote(view.kind, view.nodes.filter((n) => n.kind === other && !n.imported).length);
 }
 
 function label(view: CanvasView, iri: string): string {

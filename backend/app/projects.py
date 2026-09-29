@@ -32,6 +32,13 @@ BASIC IDEA
     Delete never destroys: the folder moves into projects/.trash/, and the
     trash is emptied by hand (open question 3, closed as recommended).
 
+    A project is an ontology or a taxonomy (D-089), recorded as `kind` in the
+    manifest. A template says which; a library copy, and a project made
+    before kinds existed, is judged from its content -- concepts and no
+    classes make a taxonomy, anything else an ontology -- the latter the
+    first time it is opened. The kind changes the tools the interface
+    offers, never the model: changing it rewrites nothing but the manifest.
+
     Each document may have a layout file beside it, <doc>.layout.json, holding
     where the modeling canvas draws each box (visual-modeling 5.5, D-087). It
     is not the model: writing it touches neither the revision nor the dirty
@@ -90,7 +97,17 @@ PROJECT_ID = re.compile(r"prj-[0-9a-f]{12}")
 DOCUMENTS = {"model": "model.ttl", "shapes": "shapes.ttl"}
 DOCUMENT_ROLES = {"model": "model", "shapes": "shapes"}
 
-TEMPLATES = {"empty", "vocabulary", "small"}
+# Each template and the kind of project it starts. "vocabulary" is the E-6
+# name for a small SKOS scheme, kept so a request naming it still works.
+TEMPLATE_KINDS = {
+    "empty": "ontology",
+    "small": "ontology",
+    "taxonomy-empty": "taxonomy",
+    "taxonomy-small": "taxonomy",
+    "vocabulary": "taxonomy",
+}
+TEMPLATES = set(TEMPLATE_KINDS)
+KINDS = ("ontology", "taxonomy")
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
 MANIFEST = "project.json"
@@ -267,6 +284,14 @@ def graph_counts(graph: Graph) -> dict:
     }
 
 
+def infer_kind(graph: Graph) -> str:
+    """Concepts and no classes make a taxonomy; anything else, an ontology
+    (D-089). A model with both is an ontology whose values are concepts,
+    the commoner case, and its concepts stay visible either way."""
+    counts = graph_counts(graph)
+    return "taxonomy" if counts["concepts"] and not counts["classes"] else "ontology"
+
+
 def render_template(
     template: str, *, name: str, base_iri: str, prefix: str, lang: str
 ) -> str:
@@ -396,6 +421,8 @@ class ProjectStore:
             "prefix": manifest["prefix"],
             "primaryLanguage": manifest.get("primaryLanguage", "en"),
             "languages": manifest.get("languages", []),
+            # None only for a project made before kinds, until it is opened.
+            "kind": manifest.get("kind"),
             "documents": manifest["documents"],
             "counts": manifest.get("counts", {}),
         }
@@ -474,6 +501,8 @@ class ProjectStore:
             graph = Graph()
             graph.parse(data=text, format="turtle")
 
+        copied = source_text is not None or source_graph is not None
+        kind = infer_kind(graph) if copied else TEMPLATE_KINDS[template or "empty"]
         pid = "prj-" + uuid.uuid4().hex[:12]
         folder = self.dir / pid
         folder.mkdir()
@@ -490,6 +519,9 @@ class ProjectStore:
             "languages": [],
             "documents": [{"file": "model.ttl", "role": "model"}],
             "counts": graph_counts(graph),
+            # A template names its kind; a library copy is judged from what
+            # it holds (D-089).
+            "kind": kind,
             "commentsWarned": False,
             "startedFrom": source_name or template or "empty",
         }
@@ -528,6 +560,18 @@ class ProjectStore:
             raise ProjectError(f"A project name can be at most {NAME_MAX} characters.")
         # The name only: the IRIs were minted from it once and never follow it.
         return self.summary(self.update_manifest(pid, name=name, updatedAt=_now()))
+
+    def set_kind(self, pid: str, kind: str) -> dict:
+        """Change the tools, not the model: only the manifest is written."""
+        if kind not in KINDS:
+            raise ProjectError("A project is an ontology or a taxonomy.")
+        return self.summary(self.update_manifest(pid, kind=kind))
+
+    def ensure_kind(self, pid: str, graph: Graph) -> None:
+        """A project made before kinds gets one the first time it is opened,
+        judged from its model the way a library copy is."""
+        if self.manifest(pid).get("kind") not in KINDS:
+            self.update_manifest(pid, kind=infer_kind(graph))
 
     def set_languages(self, pid: str, languages: list[str]) -> dict:
         manifest = self.manifest(pid)
