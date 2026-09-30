@@ -180,3 +180,59 @@ describe("entityModel, found in review", () => {
     expect(entityModel({ ...d, outgoingTotal: 501 }, "en", []).partial).toBe(true);
   });
 });
+
+describe("entityModel, relationships Stage B", () => {
+  const OWL = "http://www.w3.org/2002/07/owl#";
+  const SKOS = "http://www.w3.org/2004/02/skos/core#";
+
+  it("reads a relationship's other way round from either side, its characteristics and its parent", () => {
+    const model = entityModel(
+      details(
+        [
+          [P.type, uri(OWL + "ObjectProperty")],
+          [P.type, uri(OWL + "FunctionalProperty")],
+          [P.type, uri(OWL + "TransitiveProperty")],
+          [P.inverseOf, uri(EX + "employs")],
+          [P.subPropertyOf, uri(EX + "memberOf")],
+        ],
+        [[uri(EX + "hires"), P.inverseOf]],
+        "objectProperty",
+      ),
+      "en",
+      [],
+    );
+    expect(model.inverses.map((r) => r.iri)).toEqual([EX + "employs", EX + "hires"]);
+    expect([...model.characteristics].sort()).toEqual(["functional", "transitive"]);
+    expect(model.superProperties.map((r) => r.iri)).toEqual([EX + "memberOf"]);
+    // None of it is an annotation the form would list twice.
+    expect(model.annotations).toEqual([]);
+  });
+
+  it("reads a concept's related concepts either way, its mappings and where it is a top concept", () => {
+    const model = entityModel(
+      details(
+        [
+          [P.type, uri(SKOS + "Concept")],
+          [P.related, uri(EX + "Orchard")],
+          [SKOS + "exactMatch", uri("http://dbpedia.org/resource/Apple")],
+          [SKOS + "closeMatch", uri("urn:x:apple")],
+          [P.topConceptOf, uri(EX + "Fruits")],
+        ],
+        [
+          [uri(EX + "Tree"), P.related],
+          [uri(EX + "Plants"), P.hasTopConcept],
+        ],
+        "concept",
+      ),
+      "en",
+      [],
+    );
+    expect(model.related.map((r) => r.iri)).toEqual([EX + "Orchard", EX + "Tree"]);
+    expect(model.mappings.map((m) => [m.kind, m.target.iri])).toEqual([
+      ["exactMatch", "http://dbpedia.org/resource/Apple"],
+      ["closeMatch", "urn:x:apple"],
+    ]);
+    expect(model.topOf.map((r) => r.iri)).toEqual([EX + "Fruits", EX + "Plants"]);
+    expect(model.annotations).toEqual([]);
+  });
+});

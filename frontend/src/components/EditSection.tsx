@@ -31,7 +31,9 @@ BASIC IDEA
     shapes.ttl are decided by DetailPanel, which does not render this at all
     for them.
 
-    The structure blocks are in EditStructure.tsx, the annotation adder in
+    A relationship or an attribute opens on its sentence and any warning of
+    the modeling checks (relationships 5.6, 5.9), PropertyHead in
+    RelationshipForm.tsx. The structure blocks are in EditStructure.tsx, the annotation adder in
     AnnotationAdder.tsx, the delete flow in DeleteDialog.tsx, and the pieces
     they share in EditParts.tsx: the spec's "split by block if it grows past
     400 lines".
@@ -57,7 +59,7 @@ EXPECTED OUTPUT
 
 import { useMemo, useState } from "react";
 import { linkTarget } from "../links";
-import { entityModel, type Annotation } from "../modeling/entity";
+import { entityModel, structureOf, type Annotation } from "../modeling/entity";
 import { otherKindReason } from "../modeling/sentences";
 import { describeValue, typeOfValue, valueProblem, toValue } from "../modeling/values";
 import type { CanvasSet, NodeDetails, ProjectKind } from "../types";
@@ -66,6 +68,7 @@ import DeleteDialog from "./DeleteDialog";
 import { Block, InlineText, useCopy, useReturnFocus, useRunner, type Runner } from "./EditParts";
 import EditStructure from "./EditStructure";
 import NewEntityForm from "./NewEntityForm";
+import { PropertyHead } from "./RelationshipForm";
 
 interface Props {
   ontologyId: string;
@@ -224,6 +227,12 @@ export default function EditSection({
           This entity has more statements than the panel loads, so the lists below may be
           incomplete. The Turtle editor (View) shows them all.
         </p>
+      )}
+
+      {structureOf(model.kind) === "property" && (
+        // The sentence first (5.6): what the blocks below say, with the 5.9
+        // warnings under it until they are resolved.
+        <PropertyHead model={model} name={name} warnings={details.warnings ?? []} runner={runner} />
       )}
 
       <Block title="Names">

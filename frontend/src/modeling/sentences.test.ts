@@ -20,6 +20,7 @@ EXPECTED OUTPUT
 */
 
 import { describe, expect, it } from "vitest";
+import * as S from "./sentences";
 import {
   article,
   createdAnnouncement,
@@ -70,5 +71,64 @@ describe("sentences", () => {
       ["xsd:string", "xsd:integer", "xsd:decimal", "xsd:boolean", "xsd:date", "xsd:dateTime", "xsd:anyURI"].map(typeWord),
     ).toEqual(["text", "whole number", "decimal number", "yes or no", "date", "date and time", "web address"]);
     expect(typeWord("xsd:gYear")).toBe("xsd:gYear");
+  });
+});
+
+describe("Stage B sentences (relationships 5.6 to 5.8)", () => {
+  it("reads the relationship back, with the missing end said", () => {
+    expect(S.formSentence("Person", "works for", "Organization")).toBe("A Person works for an Organization.");
+    expect(S.formSentence(null, "works for", "Organization")).toBe("(no start yet) works for an Organization.");
+    expect(S.formSentence("Person", "works for", null)).toBe("A Person works for (no end yet).");
+  });
+
+  it("reads the other way round with the ends swapped", () => {
+    expect(S.inverseSentence("employs", "Person", "Organization")).toBe("An Organization employs a Person.");
+  });
+
+  it("writes every characteristic's example from the relationship's own names, as 5.6 shows them", () => {
+    const example = (id: S.Characteristic) => S.characteristicExample(id, "works for", "Person", "Organization");
+    expect(S.CHARACTERISTICS.map((c) => [c.name, example(c.id)])).toEqual([
+      ["At most one", "A Person works for at most one Organization."],
+      ["Identifies its start", "An Organization is linked by works for to at most one Person."],
+      ["Works both ways", "If A works for B, then B works for A."],
+      ["Chains", "If A works for B and B works for C, then A works for C."],
+      ["Never both ways", "If A works for B, then B never works for A."],
+      ["Never to itself", "Nothing works for itself."],
+      ["Always to itself", "Everything works for itself."],
+    ]);
+    // Four always shown, three under More.
+    expect(S.CHARACTERISTICS.filter((c) => c.more).map((c) => c.id)).toEqual(["asymmetric", "irreflexive", "reflexive"]);
+  });
+
+  it("gives an example even before the ends are set", () => {
+    expect(S.characteristicExample("functional", "owns", null, null)).toBe("Something owns at most one thing.");
+    expect(S.characteristicExample("inverseFunctional", "owns", null, null)).toBe(
+      "Something is linked by owns to at most one thing.",
+    );
+  });
+
+  it("names the more general relationship and why there is one start and one end", () => {
+    expect(S.parentSentence("works for", "member of")).toBe("works for is a more specific kind of member of");
+    expect(S.oneStartOneEnd("works for", "Person")).toContain('To use "works for" from another class too, make Person and that class');
+  });
+
+  it("reads an attribute and one value only", () => {
+    expect(S.attributeSentence("Person", "name", "xsd:string")).toBe("A Person has a name, as text.");
+    expect(S.attributeSentence(null, "age", null)).toBe("Something has an age.");
+    expect(S.oneValueExample("Person", "name")).toBe("A Person has at most one name.");
+  });
+
+  it("reads related lines, top concepts and the five mappings", () => {
+    expect(S.linkSentence("related", "Apple", "Orchard")).toBe("Apple is related to Orchard");
+    expect(S.topConceptSentence("Fruits")).toBe("Top concept of Fruits");
+    expect(S.MAPPINGS.map((m) => m.id)).toEqual(["exactMatch", "closeMatch", "broadMatch", "narrowMatch", "relatedMatch"]);
+    expect(S.MAPPINGS.every((m) => m.means.endsWith("."))).toBe(true);
+  });
+
+  it("keeps relationships and attributes read-only in a taxonomy, and only there (5.10 item 2)", () => {
+    expect(S.otherKindReason("taxonomy", "objectProperty")).toMatch(/^A relationship, read-only in a taxonomy/);
+    expect(S.otherKindReason("taxonomy", "datatypeProperty")).toMatch(/^An attribute, read-only in a taxonomy/);
+    expect(S.otherKindReason("ontology", "objectProperty")).toBeNull();
+    expect(S.otherKindReason(null, "objectProperty")).toBeNull();
   });
 });

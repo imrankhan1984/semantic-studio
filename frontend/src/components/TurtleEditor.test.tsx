@@ -105,6 +105,14 @@ describe("TurtleEditor", () => {
     expect(applyButton().getAttribute("aria-disabled")).toBe("true");
   });
 
+  it("says a relative IRI is read on the project's base IRI (CF-8)", async () => {
+    await renderEditor();
+    expect(editor().getAttribute("aria-describedby")).toBe("turtle-editor-help");
+    expect(document.getElementById("turtle-editor-help")!.textContent).toContain(
+      "A relative IRI such as <owns> is read as the project's base IRI followed by owns.",
+    );
+  });
+
   it("Tab is left to the browser, so it leaves the field", async () => {
     await renderEditor();
     const event = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });

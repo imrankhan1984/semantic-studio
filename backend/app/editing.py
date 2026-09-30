@@ -29,6 +29,18 @@ BASIC IDEA
     prefixed name the document or the well-known vocabularies define), its
     targets exist, a new IRI is not taken, a value is valid for its datatype.
     A refusal is a CommandError carrying a sentence, and the graph is untouched.
+    The modeling checks of relationships 5.9 -- contradicting characteristics,
+    a relationship as its own inverse, related concepts one broader than the
+    other, a loop of broader or sub-relationship links -- are modeling_checks'
+    sentences, raised the same way.
+
+    A concept's place at the top of its scheme is kept by the commands, never
+    by hand (D-091): CreateConcept joins the scheme and is a top concept when
+    nothing above it is in the scheme, and AddBroader, RemoveBroader and a
+    concept's delete move skos:hasTopConcept in the same undo step.
+
+    Turtle is parsed with the project's base IRI, so a relative IRI such as
+    <owns> is base + "owns" and never a path on this machine (CF-8).
 
     Formatting option A decides what Save writes. While every change since the
     last save came from the editor, the file gets the text last applied,
@@ -57,6 +69,7 @@ BASIC IDEA
 INPUTS / INPUT SOURCES
     - Project folders and manifests, through projects.ProjectStore.
     - Command names and arguments, and Turtle text, from routers/projects.py.
+    - The project's base IRI, from its manifest, for every Turtle parse.
     - The imports merged view, read only, for targets defined in an import and
       for the delete impact's import mentions.
 
@@ -103,6 +116,7 @@ from .projects import (
     graph_counts,
     valid_lang,
 )
+from . import modeling_checks
 from .canvas import build_canvas, restrict
 from .imports import imports_service, load_state
 from .store import Ontology, OntologyStore, ParseTimeout
@@ -391,19 +405,36 @@ def local_name_from(label: str, lower_first: bool) -> str:
     return joined
 
 
-def parse_turtle(text: str, timeout: Optional[float]) -> Graph:
+# Where a relative IRI lands while the text is parsed, before it is moved
+# onto the project's base. A reserved name (RFC 2606), so no real IRI starts
+# with it.
+_RELATIVE = "http://relative.invalid/"
+
+
+def parse_turtle(text: str, timeout: Optional[float], base: Optional[str] = None) -> Graph:
     """Turtle only, under the upload path's wall-clock limit.
 
     Not store.parse_rdf: that tries every format in turn, and an editor error
     has to be Turtle's error, with the line and column where it happened.
+
+    With `base`, a relative IRI is the project's: `<owns>` is base + "owns"
+    (CF-8). Without one rdflib resolved it against the server's working
+    folder, so the model gained file:///C:/... and the machine's path went
+    out in every save and export. (A file saved as the editor's text keeps
+    `<owns>` as typed; the model it holds never names a folder again.) It is
+    written onto the base rather than
+    resolved against it, because the default base ends in "#": RFC 3986 would
+    turn <owns> under http://example.org/shop# into http://example.org/owns,
+    which is not what a learner who typed it means. An @base in the text
+    still wins, as Turtle says.
     """
     def work() -> Graph:
         parsed = Graph()
         try:
-            parsed.parse(data=text, format="turtle")
+            parsed.parse(data=text, format="turtle", publicID=_RELATIVE if base else None)
         except Exception as exc:  # rdflib raises BadSyntax and friends
             raise _syntax_error(text, exc) from exc
-        return parsed
+        return _onto_base(parsed, base) if base else parsed
 
     if timeout is None:
         return work()
@@ -416,6 +447,36 @@ def parse_turtle(text: str, timeout: Optional[float]) -> Graph:
             raise ParseTimeout(
                 f"This text took longer than {timeout:g} seconds to parse and was stopped."
             ) from exc
+
+
+def _onto_base(parsed: Graph, base: str) -> Graph:
+    """Every IRI parsed under _RELATIVE, moved onto the project's base."""
+    def rebase(value: str) -> str:
+        rest = value[len(_RELATIVE):]
+        # <#x> under a base ending in "#" is base + "x", not base + "#x".
+        if rest.startswith("#") and base.endswith("#"):
+            rest = rest[1:]
+        return base + rest
+
+    def term(t):
+        if isinstance(t, URIRef) and str(t).startswith(_RELATIVE):
+            return URIRef(rebase(str(t)))
+        if isinstance(t, Literal) and t.datatype is not None and str(t.datatype).startswith(_RELATIVE):
+            return Literal(str(t), datatype=URIRef(rebase(str(t.datatype))))
+        return t
+
+    namespaces = list(parsed.namespaces())
+    touched = any(str(ns).startswith(_RELATIVE) for _, ns in namespaces) or any(
+        term(t) is not t for triple in parsed for t in triple
+    )
+    if not touched:
+        return parsed
+    moved = Graph()
+    for prefix, namespace in namespaces:
+        moved.bind(prefix, term(URIRef(namespace)), override=True, replace=True)
+    for s, p, o in parsed:
+        moved.add((term(s), term(p), term(o)))
+    return moved
 
 
 def _syntax_error(text: str, exc: Exception) -> TurtleSyntaxError:
@@ -679,16 +740,28 @@ def cmd_create_concept(ctx: Context, a: dict) -> Change:
     iri = ctx.minted(a, label, lower_first=False)
     ctx.require_new(iri)
     adds = [(iri, RDF.type, SKOS.Concept), (iri, SKOS.prefLabel, Literal(label, lang=ctx.primary))]
-    if a.get("scheme"):
-        scheme = ctx.iri(a["scheme"], "concept scheme")
-        ctx.require(scheme, "concept scheme")
-        adds.append((iri, SKOS.inScheme, scheme))
-        if not a.get("broader"):
-            adds.append((scheme, SKOS.hasTopConcept, iri))
+    broader = None
     if a.get("broader"):
         broader = ctx.iri(a["broader"], "broader concept")
         ctx.require(broader, "concept")
         adds.append((iri, SKOS.broader, broader))
+    if a.get("scheme"):
+        scheme = ctx.iri(a["scheme"], "concept scheme")
+        ctx.require(scheme, "concept scheme")
+    else:
+        # A new concept joins the scheme (relationships 5.8): its broader
+        # concept's, or the document's own. A taxonomy has one; with several,
+        # written in Turtle, the first by IRI, and none adds none.
+        candidates = sorted(_schemes(ctx.graph, broader)) if broader is not None else []
+        candidates = candidates or sorted(
+            s for s in ctx.graph.subjects(RDF.type, SKOS.ConceptScheme) if isinstance(s, URIRef)
+        )
+        scheme = candidates[0] if candidates else None
+    if scheme is not None:
+        adds.append((iri, SKOS.inScheme, scheme))
+        # A top concept exactly when nothing above it is in the scheme (D-091).
+        if broader is None or not _in_scheme(ctx.graph, broader, scheme):
+            adds.append((scheme, SKOS.hasTopConcept, iri))
     return _created(_change(ctx.graph, f"Created concept {label}", adds), iri)
 
 
@@ -914,13 +987,234 @@ def cmd_set_ends(ctx: Context, a: dict) -> Change:
     return _change(ctx.graph, f"Set the ends of {ctx.name(prop)}: {' '.join(parts)}", adds, removes)
 
 
+# --- relationship Stage B: ends, inverse, characteristics, parent (5.6, 5.7) ------------
+
+
+def _property(ctx: Context, a: dict, key: str = "property") -> URIRef:
+    """A relationship or an attribute defined in this document."""
+    prop = ctx.iri(a.get(key), "property")
+    types = set(ctx.graph.objects(prop, RDF.type))
+    if not types & {OWL.ObjectProperty, OWL.DatatypeProperty}:
+        raise CommandError(f"{ctx.short(prop)} is not a relationship or an attribute of this document.")
+    return prop
+
+
+def _clear_end(ctx: Context, a: dict, predicate: URIRef, word: str) -> Change:
+    prop = _property(ctx, a)
+    removes = [(prop, predicate, o) for o in ctx.graph.objects(prop, predicate)]
+    if not removes:
+        raise CommandError(f"{ctx.name(prop)} has no {word} to clear.")
+    return _change(ctx.graph, f"Cleared the {word} of {ctx.name(prop)}", removes=removes)
+
+
+def cmd_clear_domain(ctx: Context, a: dict) -> Change:
+    return _clear_end(ctx, a, RDFS.domain, "start")
+
+
+def cmd_clear_range(ctx: Context, a: dict) -> Change:
+    return _clear_end(ctx, a, RDFS.range, "end")
+
+
+def _inverse_triples(ctx: Context, prop: URIRef) -> list:
+    """Every statement that says `prop` has an inverse, read either way."""
+    g = ctx.graph
+    return [(prop, OWL.inverseOf, o) for o in g.objects(prop, OWL.inverseOf)] + [
+        (s, OWL.inverseOf, prop) for s in g.subjects(OWL.inverseOf, prop)
+    ]
+
+
+def cmd_set_inverse(ctx: Context, a: dict) -> Change:
+    """The other way round (5.6): an existing relationship, or a new one made
+    from a name with this one's ends swapped, as one undo step. Any inverse
+    it had is replaced, and a relationship picked leaves the one it was the
+    other way round of, so each has one (found in review: picking one that
+    already had an inverse gave it two).
+    """
+    prop = _relationship(ctx, a)
+    removes = _inverse_triples(ctx, prop)
+    adds: list = []
+    created = None
+    if a.get("inverse"):
+        inverse = ctx.iri(a["inverse"], "relationship")
+        refusal = modeling_checks.own_inverse_refusal(prop, inverse, ctx.name(prop))
+        if refusal:
+            raise CommandError(refusal)
+        ctx.require(inverse, "relationship")
+        kinds = set(ctx.graph.objects(inverse, RDF.type))
+        if ctx.imported is not None:
+            kinds |= set(ctx.imported.objects(inverse, RDF.type))
+        if OWL.DatatypeProperty in kinds or (kinds and OWL.ObjectProperty not in kinds):
+            raise CommandError(f"{ctx.name(inverse)} is not a relationship, so it cannot be the other way round.")
+        if (inverse, OWL.inverseOf, prop) in ctx.graph or (prop, OWL.inverseOf, inverse) in ctx.graph:
+            raise CommandError(f"{ctx.name(inverse)} is already the other way round of {ctx.name(prop)}.")
+        removes += _inverse_triples(ctx, inverse)
+        adds.append((inverse, OWL.inverseOf, prop))
+        target_name = ctx.name(inverse)
+    else:
+        label = ctx.primary_label(a)
+        inverse = ctx.minted(a, label, lower_first=True)
+        ctx.require_new(inverse)
+        adds += [
+            (inverse, RDF.type, OWL.ObjectProperty),
+            (inverse, RDFS.label, Literal(label, lang=ctx.primary)),
+            (inverse, OWL.inverseOf, prop),
+        ]
+        # Swapped ends: *An Organization employs a Person*.
+        adds += [(inverse, RDFS.domain, r) for r in ctx.graph.objects(prop, RDFS.range)]
+        adds += [(inverse, RDFS.range, d) for d in ctx.graph.objects(prop, RDFS.domain)]
+        created = inverse
+        target_name = label
+    change = _change(ctx.graph, f"Made {target_name} the other way round of {ctx.name(prop)}", adds, removes)
+    change.created = created
+    return change
+
+
+def cmd_clear_inverse(ctx: Context, a: dict) -> Change:
+    """Every other way round, or with `inverse` only that one: Turtle can give
+    a relationship two, and Remove on one row must not take both (review)."""
+    prop = _relationship(ctx, a)
+    removes = _inverse_triples(ctx, prop)
+    if a.get("inverse"):
+        other = ctx.iri(a["inverse"], "relationship")
+        removes = [t for t in removes if other in (t[0], t[2])]
+    if not removes:
+        raise CommandError(f"{ctx.name(prop)} has no other way round to remove.")
+    return _change(ctx.graph, f"Removed the other way round of {ctx.name(prop)}", removes=removes)
+
+
+def cmd_set_characteristic(ctx: Context, a: dict) -> Change:
+    """One of the seven characteristics on or off (5.6); an attribute takes
+    only *one value only* (5.7). A contradiction is refused (5.9)."""
+    prop = _property(ctx, a)
+    name = a.get("characteristic")
+    if name not in modeling_checks.CHARACTERISTICS:
+        offered = ", ".join(modeling_checks.CHARACTERISTICS)
+        raise CommandError(f"The characteristic is one of {offered}.")
+    on = a.get("on")
+    if not isinstance(on, bool):
+        raise CommandError("Say whether the characteristic is on or off.")
+    if (prop, RDF.type, OWL.DatatypeProperty) in ctx.graph and name != "functional":
+        raise CommandError(
+            f'{ctx.name(prop)} is an attribute; an attribute can only be "one value only". '
+            "The others describe links between things."
+        )
+    refusal = modeling_checks.characteristic_refusal(ctx.graph, prop, name, on)
+    if refusal:
+        raise CommandError(refusal)
+    triple = (prop, RDF.type, modeling_checks.CHARACTERISTICS[name])
+    attribute = (prop, RDF.type, OWL.DatatypeProperty) in ctx.graph
+    words = "one value only" if attribute else modeling_checks.WORDS[name]
+    if on:
+        if triple in ctx.graph:
+            raise CommandError(f'{ctx.name(prop)} is already "{words}".')
+        return _change(ctx.graph, f'Marked {ctx.name(prop)} as "{words}"', [triple])
+    if triple not in ctx.graph:
+        raise CommandError(f'{ctx.name(prop)} is not "{words}".')
+    return _change(ctx.graph, f'Unmarked {ctx.name(prop)} as "{words}"', removes=[triple])
+
+
+def _property_kind(ctx: Context, iri: URIRef) -> Optional[URIRef]:
+    kinds = set(ctx.graph.objects(iri, RDF.type))
+    if ctx.imported is not None:
+        kinds |= set(ctx.imported.objects(iri, RDF.type))
+    for kind in (OWL.ObjectProperty, OWL.DatatypeProperty):
+        if kind in kinds:
+            return kind
+    return None
+
+
+def _sub_pair(ctx: Context, a: dict) -> tuple[URIRef, URIRef]:
+    child = _property(ctx, a, "child")
+    parent = ctx.iri(a.get("parent"), "parent")
+    ctx.require(parent, "relationship")
+    if _property_kind(ctx, parent) != _property_kind(ctx, child):
+        word = "relationship" if (child, RDF.type, OWL.ObjectProperty) in ctx.graph else "attribute"
+        raise CommandError(
+            f"{ctx.name(child)} is {'a' if word == 'relationship' else 'an'} {word}; "
+            f"its more general one must be {'a' if word == 'relationship' else 'an'} {word} too."
+        )
+    return child, parent
+
+
+def cmd_add_subproperty(ctx: Context, a: dict) -> Change:
+    child, parent = _sub_pair(ctx, a)
+    refusal = modeling_checks.subproperty_loop_refusal(ctx.graph, child, parent, ctx.name)
+    if refusal:
+        raise CommandError(refusal)
+    if (child, RDFS.subPropertyOf, parent) in ctx.graph:
+        raise CommandError(f"{ctx.name(child)} is already a more specific kind of {ctx.name(parent)}.")
+    return _change(
+        ctx.graph, f"Made {ctx.name(child)} a more specific kind of {ctx.name(parent)}",
+        [(child, RDFS.subPropertyOf, parent)],
+    )
+
+
+def cmd_remove_subproperty(ctx: Context, a: dict) -> Change:
+    child = _property(ctx, a, "child")
+    parent = ctx.iri(a.get("parent"), "parent")
+    if (child, RDFS.subPropertyOf, parent) not in ctx.graph:
+        raise CommandError(f"{ctx.name(child)} is not a more specific kind of {ctx.name(parent)}.")
+    return _change(
+        ctx.graph, f"Removed {ctx.name(parent)} as more general than {ctx.name(child)}",
+        removes=[(child, RDFS.subPropertyOf, parent)],
+    )
+
+
+# --- concepts: broader, related, mappings, and top concepts kept right (5.8, D-091) -----
+
+
+def _in_scheme(g: Graph, concept, scheme) -> bool:
+    return (
+        (concept, SKOS.inScheme, scheme) in g
+        or (concept, SKOS.topConceptOf, scheme) in g
+        or (scheme, SKOS.hasTopConcept, concept) in g
+    )
+
+
+def _schemes(g: Graph, concept) -> set:
+    return (
+        set(g.objects(concept, SKOS.inScheme))
+        | set(g.objects(concept, SKOS.topConceptOf))
+        | set(g.subjects(SKOS.hasTopConcept, concept))
+    )
+
+
+def _broaders(g: Graph, concept) -> set:
+    return set(g.objects(concept, SKOS.broader)) | set(g.subjects(SKOS.narrower, concept))
+
+
+def _top_delta(g: Graph, concept, broaders_after: set) -> tuple[list, list]:
+    """What keeps `concept` a top concept exactly where it should be, once its
+    broader concepts are `broaders_after` (D-091): in each of its schemes it
+    is a top concept when none of those is in the same scheme."""
+    adds, removes = [], []
+    for scheme in _schemes(g, concept):
+        under = any(_in_scheme(g, b, scheme) for b in broaders_after)
+        marked = [
+            t for t in ((scheme, SKOS.hasTopConcept, concept), (concept, SKOS.topConceptOf, scheme)) if t in g
+        ]
+        if under:
+            removes += marked
+        elif not marked:
+            adds.append((scheme, SKOS.hasTopConcept, concept))
+    return adds, removes
+
+
 def cmd_add_broader(ctx: Context, a: dict) -> Change:
+    concept = ctx.iri(a.get("concept"), "concept")
+    broader = ctx.iri(a.get("broader"), "broader")
+    # A loop is named as one, whether it is one step or many (5.9).
+    refusal = modeling_checks.broader_loop_refusal(ctx.graph, concept, broader, ctx.name)
+    refusal = refusal or modeling_checks.broader_related_refusal(ctx.graph, concept, broader, ctx.name)
+    if refusal:
+        raise CommandError(refusal)
     concept, broader = _pair(ctx, a, "concept", "broader", "concept")
     if (concept, SKOS.broader, broader) in ctx.graph:
         raise CommandError(f"{ctx.name(concept)} is already narrower than {ctx.name(broader)}.")
+    adds, removes = _top_delta(ctx.graph, concept, _broaders(ctx.graph, concept) | {broader})
     return _change(
         ctx.graph, f"Made {ctx.name(concept)} narrower than {ctx.name(broader)}",
-        [(concept, SKOS.broader, broader)],
+        [(concept, SKOS.broader, broader), *adds], removes,
     )
 
 
@@ -929,8 +1223,82 @@ def cmd_remove_broader(ctx: Context, a: dict) -> Change:
     removes = [(concept, SKOS.broader, broader), (broader, SKOS.narrower, concept)]
     if not any(t in ctx.graph for t in removes):
         raise CommandError(f"{ctx.name(concept)} is not narrower than {ctx.name(broader)}.")
+    adds, top_removes = _top_delta(ctx.graph, concept, _broaders(ctx.graph, concept) - {broader})
     return _change(
-        ctx.graph, f"Removed {ctx.name(broader)} as broader of {ctx.name(concept)}", removes=removes
+        ctx.graph, f"Removed {ctx.name(broader)} as broader of {ctx.name(concept)}", adds, removes + top_removes
+    )
+
+
+def _concepts(ctx: Context, a: dict, first: str, second: str) -> tuple[URIRef, URIRef]:
+    x, y = _pair(ctx, a, first, second, "concept")
+    for c in (x, y):
+        if (c, RDF.type, SKOS.Concept) not in ctx.graph and not (
+            ctx.imported is not None and (c, RDF.type, SKOS.Concept) in ctx.imported
+        ):
+            raise CommandError(f"{ctx.name(c)} is not a concept.")
+    return x, y
+
+
+def cmd_add_related(ctx: Context, a: dict) -> Change:
+    """*Related to*, written both ways, since SKOS defines it as symmetric (5.8)."""
+    concept, related = _concepts(ctx, a, "concept", "related")
+    refusal = modeling_checks.related_refusal(ctx.graph, concept, related, ctx.name)
+    if refusal:
+        raise CommandError(refusal)
+    both = [(concept, SKOS.related, related), (related, SKOS.related, concept)]
+    if all(t in ctx.graph for t in both):
+        raise CommandError(f"{ctx.name(concept)} is already related to {ctx.name(related)}.")
+    return _change(ctx.graph, f"Related {ctx.name(concept)} to {ctx.name(related)}", both)
+
+
+def cmd_remove_related(ctx: Context, a: dict) -> Change:
+    concept, related = _pair(ctx, a, "concept", "related", "concept")
+    both = [(concept, SKOS.related, related), (related, SKOS.related, concept)]
+    if not any(t in ctx.graph for t in both):
+        raise CommandError(f"{ctx.name(concept)} is not related to {ctx.name(related)}.")
+    return _change(ctx.graph, f"Removed {ctx.name(related)} as related to {ctx.name(concept)}", removes=both)
+
+
+MAPPINGS = {
+    "exactMatch": (SKOS.exactMatch, "an exact match"),
+    "closeMatch": (SKOS.closeMatch, "a close match"),
+    "broadMatch": (SKOS.broadMatch, "a broader match"),
+    "narrowMatch": (SKOS.narrowMatch, "a narrower match"),
+    "relatedMatch": (SKOS.relatedMatch, "a related match"),
+}
+
+
+def _mapping(ctx: Context, a: dict) -> tuple[URIRef, URIRef, URIRef, str]:
+    concept = ctx.iri(a.get("concept"), "concept")
+    if (concept, RDF.type, SKOS.Concept) not in ctx.graph:
+        raise CommandError(f"There is no concept {ctx.short(concept)} in this document.")
+    kind = a.get("kind")
+    if kind not in MAPPINGS:
+        raise CommandError(f"The mapping is one of {', '.join(MAPPINGS)}.")
+    # A mapping points outside the project; the IRI is checked like any link.
+    target = ctx.iri(a.get("target"), "mapping target")
+    if target == concept:
+        raise CommandError(f"{ctx.name(concept)} cannot be mapped to itself.")
+    predicate, words = MAPPINGS[kind]
+    return concept, predicate, target, words
+
+
+def cmd_add_mapping(ctx: Context, a: dict) -> Change:
+    concept, predicate, target, words = _mapping(ctx, a)
+    if (concept, predicate, target) in ctx.graph:
+        raise CommandError(f"{ctx.name(concept)} already has that mapping.")
+    return _change(
+        ctx.graph, f"Added {words} of {ctx.name(concept)}: {target}", [(concept, predicate, target)]
+    )
+
+
+def cmd_remove_mapping(ctx: Context, a: dict) -> Change:
+    concept, predicate, target, words = _mapping(ctx, a)
+    if (concept, predicate, target) not in ctx.graph:
+        raise CommandError(f"{ctx.name(concept)} has no such mapping to remove.")
+    return _change(
+        ctx.graph, f"Removed {words} of {ctx.name(concept)}: {target}",
+        removes=[(concept, predicate, target)],
     )
 
 
@@ -1053,6 +1421,14 @@ def delete_plan(ctx: Context, a: dict) -> tuple[Change, dict]:
             parents = sorted(set(parents) | {s for s in g.subjects(down, iri) if isinstance(s, URIRef)})
         if strategy == "reparent":
             adds = [(child, up, parent) for child in children for parent in parents if child != parent]
+        if kind == "concept":
+            # A narrower concept left with nothing above it in its scheme is a
+            # top concept now; the commands keep that, not the user (D-091).
+            moved_to = set(parents) if strategy == "reparent" else set()
+            for child in children:
+                top_adds, top_removes = _top_delta(g, child, (_broaders(g, child) - {iri}) | moved_to)
+                adds += top_adds
+                removing |= set(top_removes)
 
     ref = lambda node: {"iri": str(node), "label": ctx.name(node)}  # noqa: E731
     properties = [
@@ -1112,8 +1488,19 @@ COMMANDS: dict[str, Callable[[Context, dict], Change]] = {
     "SetRange": cmd_set_range,
     "SwapEnds": cmd_swap_ends,
     "SetEnds": cmd_set_ends,
+    "ClearDomain": cmd_clear_domain,
+    "ClearRange": cmd_clear_range,
+    "SetInverse": cmd_set_inverse,
+    "ClearInverse": cmd_clear_inverse,
+    "SetCharacteristic": cmd_set_characteristic,
+    "AddSubPropertyOf": cmd_add_subproperty,
+    "RemoveSubPropertyOf": cmd_remove_subproperty,
     "AddBroader": cmd_add_broader,
     "RemoveBroader": cmd_remove_broader,
+    "AddRelated": cmd_add_related,
+    "RemoveRelated": cmd_remove_related,
+    "AddMapping": cmd_add_mapping,
+    "RemoveMapping": cmd_remove_mapping,
     "RenameIri": cmd_rename_iri,
     "DeleteEntity": cmd_delete_entity,
 }
@@ -1219,7 +1606,8 @@ class EditingService:
     def _load(self, pid: str, doc: str, manifest: dict) -> OpenDocument:
         path = self.projects.document_path(pid, doc)
         text = path.read_text(encoding="utf-8")
-        graph = parse_turtle(text, None)
+        # The file may hold the editor's text verbatim, relative IRIs and all.
+        graph = parse_turtle(text, None, manifest["baseIri"])
         languages = (manifest.get("primaryLanguage", "en"), *manifest.get("languages", []))
         ontology = Ontology(
             id=document_id(pid, doc),
@@ -1405,7 +1793,8 @@ class EditingService:
 
     def apply_text(self, pid: str, doc: str, text: str, timeout: Optional[float]) -> dict:
         document = self.document(pid, doc)
-        parsed = parse_turtle(text, timeout)  # raises before anything changes
+        base = self.projects.manifest(pid)["baseIri"]
+        parsed = parse_turtle(text, timeout, base)  # raises before anything changes
         with document.lock:
             graph = document.graph
             old, new = set(graph), set(parsed)
@@ -1609,7 +1998,7 @@ class EditingService:
                     meta = json.loads(sidecar.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
                     meta = {}
-                parsed = parse_turtle(text, timeout)
+                parsed = parse_turtle(text, timeout, self.projects.manifest(pid)["baseIri"])
                 graph = document.graph
                 for t in list(graph):
                     graph.remove(t)

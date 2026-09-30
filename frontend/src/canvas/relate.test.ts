@@ -84,9 +84,26 @@ describe("relateChoices", () => {
     expect(result.choices[0].kind).toBe("newRelationship");
   });
 
-  it("offers narrower than between concepts", () => {
+  it("offers narrower than and related to between concepts (5.8)", () => {
     const result = relateChoices(view, "Status", "Paid");
-    expect(result).toEqual({ choices: [{ kind: "broader", label: "Status is narrower than Paid" }], notes: [] });
+    expect(result).toEqual({
+      choices: [
+        { kind: "broader", label: "Status is narrower than Paid" },
+        { kind: "related", label: "Status is related to Paid" },
+      ],
+      notes: [],
+    });
+  });
+
+  it("does not offer related to again for a pair already related, either way round", () => {
+    const related = { ...view, edges: [...view.edges, { kind: "related" as const, source: "Paid", target: "Status", pair: 0, pairs: 1 }] };
+    const result = relateChoices(related, "Status", "Paid");
+    expect("choices" in result && result.choices.map((c) => c.kind)).toEqual(["broader"]);
+  });
+
+  it("gives a loop no notes about other relationships on its box (5.10 item 4)", () => {
+    const result = relateChoices(view, "Inv", "Inv");
+    expect("notes" in result && result.notes).toEqual([]);
   });
 
   it.each([

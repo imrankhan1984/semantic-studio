@@ -12,6 +12,13 @@ SUMMARY
     itself; and the tree listing every relationship and attribute of a
     project document with its ends.
 
+    And Stage B: the relationship form's commands through their matrix rows
+    (R3, R7, R9, R11, R13), each checked for exact triples, one undo, redo,
+    and save and reload; *related to* written both ways and drawn once (R17);
+    each mapping kind (R20); top concepts kept by CreateConcept, AddBroader,
+    RemoveBroader and delete (R16, D-091); and CF-8, a relative IRI written
+    onto the project's base.
+
 BASIC IDEA
     Through the HTTP API, as the frontend drives it, with the graph read
     directly for exact triples and isomorphism, the way test_editing.py
@@ -23,8 +30,9 @@ INPUTS / INPUT SOURCES
     - The conftest temp data directory; the four templates; inline Turtle.
 
 EXPECTED OUTPUT
-    - Pass/fail for AC-1 (the server half), AC-5's data, AC-6, and matrix
-      rows R1, R2, R5, R6 and R21 as the server sees them.
+    - Pass/fail for AC-1 (the server half), AC-5's data, AC-6, AC-7 to AC-9
+      as the server sees them, matrix rows R1 to R7, R9, R11, R13, R16, R17,
+      R20 and R21, and CF-8. The 5.9 checks are in test_modeling_checks.py.
 ================================================================================
 """
 
@@ -34,10 +42,11 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
-from rdflib import Graph, URIRef
+from rdflib import Graph, Literal, URIRef
 from rdflib.compare import isomorphic
-from rdflib.namespace import OWL, RDF, RDFS
+from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 
+from app import modeling_checks
 from app.editing import editing_service, project_store
 from app.main import app
 
@@ -308,3 +317,281 @@ def test_a_library_ontology_keeps_the_sub_property_tree_only():
     upload = client.post("/api/ontologies/upload", files={"file": ("lib.ttl", MODEL.encode())})
     tree = client.get(f"/api/ontologies/{upload.json()['id']}/hierarchy").json()
     assert "objectProperties" not in tree and "datatypeProperties" not in tree
+
+
+# =====================================================================================
+# Stage B: the relationship form's commands, taxonomy relations, and CF-8
+# =====================================================================================
+
+
+def undo(pid: str):
+    return client.post(f"/api/projects/{pid}/documents/model/undo")
+
+
+def redo(pid: str):
+    return client.post(f"/api/projects/{pid}/documents/model/redo")
+
+
+def save_and_reopen(pid: str) -> Graph:
+    """Save, close, open: what the matrix calls save and reload."""
+    assert client.post(f"/api/projects/{pid}/documents/model/save", json={"confirmRewrite": True}).status_code == 200
+    assert client.post(f"/api/projects/{pid}/close").status_code == 200
+    _open(pid)
+    return graph(pid)
+
+
+def exactly(pid: str, command: str, added: set, removed: set = frozenset(), **args) -> None:
+    """Matrix checks 3 to 5 for one command: exactly these triples change, one
+    undo takes exactly them away, redo puts exactly them back, and save and
+    reload keep them."""
+    before = snapshot(pid)
+    response = run(pid, command, **args)
+    assert response.status_code == 200, response.text
+    after = snapshot(pid)
+    assert set(after) - set(before) == set(added), command
+    assert set(before) - set(after) == set(removed), command
+    assert undo(pid).status_code == 200
+    assert isomorphic(graph(pid), before), f"one undo must take {command} away"
+    assert redo(pid).status_code == 200
+    assert isomorphic(graph(pid), after)
+    assert isomorphic(save_and_reopen(pid), after)
+
+
+def test_r3_swap_after_creating_is_one_undo_step(pid):
+    exactly(
+        pid, "SwapEnds",
+        {(U("worksFor"), RDFS.domain, U("Organization")), (U("worksFor"), RDFS.range, U("Person"))},
+        {(U("worksFor"), RDFS.domain, U("Person")), (U("worksFor"), RDFS.range, U("Organization"))},
+        property="shop:worksFor",
+    )
+
+
+@pytest.mark.parametrize(
+    "end,predicate,value", [("ClearDomain", RDFS.domain, "Person"), ("ClearRange", RDFS.range, "Organization")]
+)
+def test_an_end_is_cleared_as_one_step(pid, end, predicate, value):
+    exactly(pid, end, set(), {(U("worksFor"), predicate, U(value))}, property="shop:worksFor")
+
+
+def test_r7_an_inverse_by_name_has_the_swapped_ends(pid):
+    """R7: `:hasEmployee owl:inverseOf :worksFor`, ends swapped, one step."""
+    exactly(
+        pid, "SetInverse",
+        {
+            (U("hasEmployee"), RDF.type, OWL.ObjectProperty),
+            (U("hasEmployee"), RDFS.label, Literal("has employee", lang="en")),
+            (U("hasEmployee"), OWL.inverseOf, U("worksFor")),
+            (U("hasEmployee"), RDFS.domain, U("Organization")),
+            (U("hasEmployee"), RDFS.range, U("Person")),
+        },
+        property="shop:worksFor", label="has employee",
+    )
+
+
+def test_r7_an_existing_inverse_replaces_the_one_before(pid):
+    assert run(pid, "SetInverse", property="shop:worksFor", label="has employee").status_code == 200
+    exactly(
+        pid, "SetInverse",
+        {(U("employs"), OWL.inverseOf, U("worksFor"))},
+        {(U("hasEmployee"), OWL.inverseOf, U("worksFor"))},
+        property="shop:worksFor", inverse="shop:employs",
+    )
+    # Read either way round: the inverse is removed from whichever side holds it.
+    exactly(pid, "ClearInverse", set(), {(U("employs"), OWL.inverseOf, U("worksFor"))}, property="shop:employs")
+
+
+def test_a_picked_inverse_leaves_the_one_it_had(pid):
+    """Found in review: employs, already the other way round of worksFor,
+    picked for knows had two inverses."""
+    assert run(pid, "SetInverse", property="shop:worksFor", inverse="shop:employs").status_code == 200
+    exactly(
+        pid, "SetInverse",
+        {(U("employs"), OWL.inverseOf, U("knows"))},
+        {(U("employs"), OWL.inverseOf, U("worksFor"))},
+        property="shop:knows", inverse="shop:employs",
+    )
+
+
+def test_one_of_two_inverses_is_removed_alone(pid):
+    """Turtle can give a relationship two; Remove on one row takes only it."""
+    text = MODEL + "shop:employs owl:inverseOf shop:worksFor .\nshop:likes owl:inverseOf shop:worksFor .\n"
+    assert client.put(f"/api/projects/{pid}/documents/model/source", json={"text": text}).status_code == 200
+    exactly(pid, "ClearInverse", set(), {(U("likes"), OWL.inverseOf, U("worksFor"))},
+            property="shop:worksFor", inverse="shop:likes")
+
+
+@pytest.mark.parametrize("name,iri", sorted(modeling_checks.CHARACTERISTICS.items()))
+def test_r9_each_characteristic_on_and_off(pid, name, iri):
+    exactly(pid, "SetCharacteristic", {(U("knows"), RDF.type, iri)},
+            property="shop:knows", characteristic=name, on=True)
+    exactly(pid, "SetCharacteristic", set(), {(U("knows"), RDF.type, iri)},
+            property="shop:knows", characteristic=name, on=False)
+
+
+def test_r11_a_sub_relationship_by_the_form_nests_in_the_tree(pid):
+    exactly(pid, "AddSubPropertyOf", {(U("worksFor"), RDFS.subPropertyOf, U("memberOf"))},
+            child="shop:worksFor", parent="shop:memberOf")
+    forest = client.get(f"/api/ontologies/{pid}-model/hierarchy").json()["objectProperties"]
+    assert {c["id"] for c in forest["children"][EX + "memberOf"]} == {EX + "worksFor"}
+    exactly(pid, "RemoveSubPropertyOf", set(), {(U("worksFor"), RDFS.subPropertyOf, U("memberOf"))},
+            child="shop:worksFor", parent="shop:memberOf")
+
+
+def test_a_relationship_is_not_made_a_kind_of_an_attribute(pid):
+    response = run(pid, "AddSubPropertyOf", child="shop:worksFor", parent="shop:name")
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "works for is a relationship; its more general one must be a relationship too."
+    )
+
+
+@pytest.mark.parametrize(
+    "datatype", ["xsd:string", "xsd:integer", "xsd:decimal", "xsd:boolean", "xsd:date", "xsd:dateTime", "xsd:anyURI"]
+)
+def test_r13_an_attribute_with_each_type_and_one_value_only(pid, datatype):
+    xsd = URIRef(str(XSD) + datatype.split(":")[1])
+    exactly(
+        pid, "CreateDatatypeProperty",
+        {
+            (U("born"), RDF.type, OWL.DatatypeProperty),
+            (U("born"), RDFS.label, Literal("born", lang="en")),
+            (U("born"), RDFS.domain, U("Person")),
+            (U("born"), RDFS.range, xsd),
+        },
+        label="born", domain="shop:Person", datatype=datatype,
+    )
+    exactly(pid, "SetCharacteristic", {(U("born"), RDF.type, OWL.FunctionalProperty)},
+            property="shop:born", characteristic="functional", on=True)
+
+
+# --- 5.8 and D-091: related, mappings, top concepts -------------------------------------
+
+
+@pytest.fixture
+def fruit() -> str:
+    """The small taxonomy: Scheme with Fruit on top, Apple and Pear under it."""
+    project = _create(name="Fruits", template="taxonomy-small", baseIri=EX, prefix="shop")["id"]
+    _open(project)
+    return project
+
+
+def tops(pid: str) -> set:
+    g = graph(pid)
+    scheme = U("Scheme")
+    return set(g.objects(scheme, SKOS.hasTopConcept)) | set(g.subjects(SKOS.topConceptOf, scheme))
+
+
+def test_r17_related_is_written_both_ways_and_drawn_once(fruit):
+    exactly(fruit, "AddRelated",
+            {(U("Apple"), SKOS.related, U("Pear")), (U("Pear"), SKOS.related, U("Apple"))},
+            concept="shop:Apple", related="shop:Pear")
+    edges = client.get(f"/api/projects/{fruit}/documents/model/canvas").json()["edges"]
+    related = [e for e in edges if e["kind"] == "related"]
+    assert [(e["source"], e["target"]) for e in related] == [(EX + "Apple", EX + "Pear")]
+    exactly(fruit, "RemoveRelated", set(),
+            {(U("Apple"), SKOS.related, U("Pear")), (U("Pear"), SKOS.related, U("Apple"))},
+            concept="shop:Pear", related="shop:Apple")
+
+
+def test_a_related_line_written_one_way_in_turtle_is_still_drawn(fruit):
+    text = client.get(f"/api/projects/{fruit}/documents/model/source").json()["text"]
+    text += "\nshop:Pear skos:related shop:Apple .\n"
+    assert client.put(f"/api/projects/{fruit}/documents/model/source", json={"text": text}).status_code == 200
+    edges = client.get(f"/api/projects/{fruit}/documents/model/canvas").json()["edges"]
+    assert [(e["source"], e["target"]) for e in edges if e["kind"] == "related"] == [(EX + "Apple", EX + "Pear")]
+
+
+@pytest.mark.parametrize("kind", ["exactMatch", "closeMatch", "broadMatch", "narrowMatch", "relatedMatch"])
+@pytest.mark.parametrize("target", ["http://dbpedia.org/resource/Apple", "http://example.org/imported#Apple"])
+def test_r20_each_mapping_kind(fruit, kind, target):
+    predicate = URIRef(str(SKOS) + kind)
+    exactly(fruit, "AddMapping", {(U("Apple"), predicate, URIRef(target))},
+            concept="shop:Apple", kind=kind, target=target)
+    exactly(fruit, "RemoveMapping", set(), {(U("Apple"), predicate, URIRef(target))},
+            concept="shop:Apple", kind=kind, target=target)
+
+
+def test_a_mapping_target_that_is_not_an_iri_is_refused(fruit):
+    response = run(fruit, "AddMapping", concept="shop:Apple", kind="exactMatch", target="apple")
+    assert response.status_code == 422 and "not an absolute IRI" in response.json()["detail"]
+
+
+def test_a_new_concept_joins_the_scheme_and_is_a_top_concept_only_with_nothing_above(fruit):
+    exactly(fruit, "CreateConcept",
+            {(U("Berry"), RDF.type, SKOS.Concept), (U("Berry"), SKOS.prefLabel, Literal("Berry", lang="en")),
+             (U("Berry"), SKOS.inScheme, U("Scheme")), (U("Scheme"), SKOS.hasTopConcept, U("Berry"))},
+            prefLabel="Berry")
+    exactly(fruit, "CreateConcept",
+            {(U("Gala"), RDF.type, SKOS.Concept), (U("Gala"), SKOS.prefLabel, Literal("Gala", lang="en")),
+             (U("Gala"), SKOS.inScheme, U("Scheme")), (U("Gala"), SKOS.broader, U("Apple"))},
+            prefLabel="Gala", broader="shop:Apple")
+
+
+def test_r16_narrower_than_moves_the_top_concept_in_the_same_undo_step(fruit):
+    """Fruit is the top concept (written both ways); made narrower than a new
+    top, it stops being one, and one undo puts both statements back."""
+    assert run(fruit, "CreateConcept", prefLabel="Food").status_code == 200
+    assert tops(fruit) == {U("Fruit"), U("Food")}
+    exactly(fruit, "AddBroader",
+            {(U("Fruit"), SKOS.broader, U("Food"))},
+            {(U("Scheme"), SKOS.hasTopConcept, U("Fruit")), (U("Fruit"), SKOS.topConceptOf, U("Scheme"))},
+            concept="shop:Fruit", broader="shop:Food")
+    assert tops(fruit) == {U("Food")}
+    exactly(fruit, "RemoveBroader",
+            {(U("Scheme"), SKOS.hasTopConcept, U("Fruit"))},
+            {(U("Fruit"), SKOS.broader, U("Food"))},
+            concept="shop:Fruit", broader="shop:Food")
+    assert tops(fruit) == {U("Fruit"), U("Food")}
+
+
+def test_deleting_a_top_concept_makes_its_children_top_concepts(fruit):
+    before = snapshot(fruit)
+    response = run(fruit, "DeleteEntity", iri="shop:Fruit")
+    assert response.status_code == 200, response.text
+    assert tops(fruit) == {U("Apple"), U("Pear")}
+    undo(fruit)
+    assert isomorphic(graph(fruit), before)
+
+
+def test_a_concept_outside_every_scheme_is_left_alone(pid):
+    """An ontology's concepts with no scheme gain no scheme triples."""
+    assert run(pid, "CreateConcept", prefLabel="Draft").status_code == 200
+    assert run(pid, "CreateConcept", prefLabel="Final", broader="shop:Draft").status_code == 200
+    assert not any(p in (SKOS.inScheme, SKOS.hasTopConcept, SKOS.topConceptOf) for _, p, _ in graph(pid))
+
+
+# --- CF-8: a relative IRI is the project's -----------------------------------------------
+
+
+def _source(pid: str) -> str:
+    return client.get(f"/api/projects/{pid}/documents/model/source").json()["text"]
+
+
+def test_cf8_a_relative_iri_lands_on_the_base_never_on_a_file_path(pid):
+    text = MODEL + '<owns> a owl:ObjectProperty ; rdfs:label "owns"@en .\n<#Car> a owl:Class .\n<> a owl:Ontology .\n'
+    assert client.put(f"/api/projects/{pid}/documents/model/source", json={"text": text}).status_code == 200
+    g = graph(pid)
+    assert (U("owns"), RDF.type, OWL.ObjectProperty) in g
+    assert (U("Car"), RDF.type, OWL.Class) in g
+    assert (URIRef(EX), RDF.type, OWL.Ontology) in g
+    assert not any(str(term).startswith(("file:", "http://relative.invalid")) for t in g for term in t)
+    # The editor's text is saved verbatim, relative IRIs and all: reading the
+    # file back puts them on the base again, not on the server's folder.
+    reopened = save_and_reopen(pid)
+    assert "<owns>" in _source(pid)
+    assert (U("owns"), RDF.type, OWL.ObjectProperty) in reopened
+    assert not any(str(term).startswith("file:") for t in reopened for term in t)
+
+
+def test_cf8_an_at_base_in_the_text_still_wins(pid):
+    text = "@base <http://other.example/> .\n" + MODEL + "<owns> a owl:ObjectProperty .\n"
+    assert client.put(f"/api/projects/{pid}/documents/model/source", json={"text": text}).status_code == 200
+    assert (URIRef("http://other.example/owns"), RDF.type, OWL.ObjectProperty) in graph(pid)
+
+
+def test_cf8_a_slash_base_resolves_the_same_way():
+    project = _create(name="Slash", template="empty", baseIri="http://example.org/slash/", prefix="sl")["id"]
+    _open(project)
+    text = "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<a/b> a owl:Class .\n"
+    assert client.put(f"/api/projects/{project}/documents/model/source", json={"text": text}).status_code == 200
+    assert (URIRef("http://example.org/slash/a/b"), RDF.type, OWL.Class) in graph(project)

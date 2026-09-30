@@ -4636,3 +4636,61 @@ kbd {
 .hierarchy-toolbar button[aria-pressed="true"] {
   border-color: var(--accent);
 }
+
+/* Relationships Stage B (5.6 to 5.8). A related line is dashed with no
+   arrowhead: it reads the same both ways. */
+.canvas-surface .canvas-edge.related {
+  stroke-dasharray: 6 4;
+}
+
+/* An attribute row in a class box opens the attribute's form (5.7). */
+.canvas-attr {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.canvas-attr:hover {
+  text-decoration: underline;
+}
+
+.form-sentence {
+  margin: 0;
+  font-style: italic;
+}
+
+/* A 5.9 warning: marked by text and a border, not colour alone. */
+.form-warnings {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.form-warning {
+  margin-top: 4px;
+  padding: 4px 8px;
+  border-left: 3px solid var(--error-text);
+  font-size: 12px;
+}
+
+.characteristic label {
+  font-weight: 600;
+}
+.owl-term {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+  font-family: ui-monospace, Consolas, monospace;
+}
+.characteristic-example {
+  margin: 0 0 6px 22px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.characteristics {
+  border: none;
+  margin: 0;
+  padding: 0;
+}

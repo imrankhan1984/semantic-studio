@@ -19,7 +19,8 @@ BASIC IDEA
     with no domain and no range, or with one end already this line's. One
     already linking other classes is never offered, because SetDomain would
     silently change what it means elsewhere; the menu says so instead.
-    Concept to concept offers *narrower than*. A class and a concept cannot be
+    Concept to concept offers *narrower than* and *related to* (relationships
+    5.8). A class and a concept cannot be
     linked here at all. A line that would change an imported box is refused
     with a sentence. A link that already exists is not offered again.
 
@@ -49,6 +50,7 @@ import type { CanvasNode, CanvasView } from "../types";
 export type RelateChoice =
   | { kind: "subClassOf"; label: string }
   | { kind: "broader"; label: string }
+  | { kind: "related"; label: string }
   | { kind: "newRelationship"; label: string }
   | {
       kind: "existing";
@@ -101,8 +103,19 @@ export function relateChoices(view: CanvasView, fromIri: string, toIri: string):
     view.edges.some((e) => e.kind === kind && e.source === from.iri && e.target === to.iri);
 
   if (from.kind === "concept") {
+    // Narrower than, and related to (5.8). Related reads the same both
+    // ways, so a line either way round counts; whether one of the two is
+    // already broader than the other is the server's check (5.9), which
+    // sees the whole hierarchy and not only what is drawn.
+    const related = view.edges.some(
+      (e) => e.kind === "related" && ((e.source === from.iri && e.target === to.iri) || (e.source === to.iri && e.target === from.iri)),
+    );
+    // A drawn broader line already says one is under the other, which SKOS
+    // keeps apart from related: that choice is not offered at all.
     if (has("broader")) return { refusal: `${from.label} is already narrower than ${to.label}.` };
-    return { choices: [{ kind: "broader", label: linkSentence("broader", from.label, to.label) }], notes: [] };
+    const choices: RelateChoice[] = [{ kind: "broader", label: linkSentence("broader", from.label, to.label) }];
+    if (!related) choices.push({ kind: "related", label: linkSentence("related", from.label, to.label) });
+    return { choices, notes: [] };
   }
 
   const choices: RelateChoice[] = [];
@@ -128,8 +141,10 @@ export function relateChoices(view: CanvasView, fromIri: string, toIri: string):
     });
   }
   // Drawn relationships sharing an end with this line are not offered, and
-  // the menu says why, so the learner does not look for them in vain.
-  const notes = view.edges
+  // the menu says why, so the learner does not look for them in vain. A
+  // loop shares both ends with every relationship on its box, and none of
+  // them could be completed by it, so it lists none (5.10 item 4).
+  const notes = self ? [] : view.edges
     .filter(
       (e) =>
         e.kind === "relationship" &&

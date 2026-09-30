@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 678 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 941 tests, vitest
+cd backend  && python -m pytest tests    # 767 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 995 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -62,8 +62,8 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Sixteen backend tests carry
-`@pytest.mark.perf`; nine frontend tests have `[budget]` in their title. CI runs
+**Timing budgets are separated, not deleted.** Nineteen backend tests carry
+`@pytest.mark.perf`; ten frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
 `network` again. Count-based budgets (renders, calls) are not timings and stay
@@ -157,6 +157,7 @@ backend/app/
                      duplicate, trash, export; per-project saved queries
   editing.py         The only mutator of a project document: commands, undo,
                      Turtle apply, save rule, autosave, recovery
+  modeling_checks.py The 5.9 checks: refusals and warnings, in plain words
   templates/         The three New project templates, Turtle with placeholders
   graph_builder.py   RDF -> visualization nodes and edges, labels, node kinds
   query_schema.py    Class-level schema powering the visual query builder
@@ -287,6 +288,11 @@ leaves one behind.
 - A loop leaves a box's upper right, clear of the side's middle where other lines leave. [Relationships and project kinds]
 - The tree lists every property only for a project document, and only the document's own (`own`), never an import's. [Relationships and project kinds]
 - A kind change writes the manifest only; the other kind is shown read-only, never hidden (D-089). [Relationships and project kinds]
+- A project's Turtle is parsed with its base IRI, relative IRIs written onto it, never resolved against the server's folder (CF-8). [Stage B]
+- The modeling checks read a hierarchy in one predicate scan, never one store lookup per node. [Stage B]
+- Top concepts are kept by the commands in the same undo step, never marked by hand (D-091). [Stage B]
+- A characteristic's checkbox shows the model, not the click: a refusal leaves it unticked. [Stage B]
+- A selected line's highlight clears on a change of selection only; a line's label is a click on its line. [Stage B]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

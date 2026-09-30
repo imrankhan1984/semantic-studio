@@ -1131,3 +1131,52 @@ EXPECTED OUTPUT
   its entity, so the form ends on the last box. That is E-7's design (a box
   focused is a box selected); the keyboard route through the tree and the
   form (matrix R22) was run with the canvas switched off.
+
+- **Relationships and project kinds, Stage B** (2026-09-30, E-8 and CF-8,
+  `relationships-and-project-kinds.md`). Meaningful relationships: six
+  things a later change could undo without noticing.
+
+  **A project's Turtle is parsed with its base IRI, written onto it, never
+  resolved against it (CF-8).** Without a base, rdflib resolved `<owns>`
+  against the server's working folder and the model gained
+  `file:///C:/…/owns`, which went out in every save and export. With the
+  base, standard resolution is still wrong for the default base, which ends
+  in `#`: `<owns>` under `http://example.org/shop#` resolves to
+  `http://example.org/owns`. So `parse_turtle` parses under a reserved
+  `http://relative.invalid/` and moves every such IRI onto the base, and an
+  `@base` in the text still wins. It applies to the editor's apply, to a file
+  loaded on open (the editor's text is saved verbatim, relative IRIs and
+  all), and to a recovered draft. A test deletes the base and goes red.
+
+  **The 5.9 checks read a hierarchy in one scan of its predicate.** Walking
+  up by asking the store for each node's parents cost 25 ms for a 2,500-deep
+  chain in a loaded test process, over the 20 ms budget; one
+  `subject_objects` scan into a dictionary and a walk of that is about 3 ms.
+
+  **Top concepts are kept by the commands, in the same undo step (D-091).**
+  `CreateConcept`, `AddBroader`, `RemoveBroader` and a concept's delete
+  compute `_top_delta`; nothing in the form marks one. A stale
+  `skos:hasTopConcept` is an integrity error the learner cannot see.
+
+  **A characteristic's checkbox shows the model, not the click.** It is
+  controlled by the statements the panel refetches, so a refused
+  contradiction leaves it unticked with the sentence under the block; an
+  optimistic tick would show a combination the model does not hold.
+
+  **A selected line's highlight clears on a change of selection only.** The
+  effect depends on `selected` alone: depending on the selected line too
+  cleared a relationship's line on its own click, before App's selection
+  arrived (found by the unit tests, which do not re-render with it). A line's
+  label is a click on its line (`pointer-events: all` on the label, drawn
+  outside the SVG over the pane), or the click went to the pane and cleared
+  the selection.
+
+  **The link panel clears its refusal when the line changes.** App keeps one
+  panel mounted across line clicks; the refusal for the last line stood under
+  the next (5.10 item 5).
+
+  **Found in the browser pass:** a matrix harness that calls
+  `scrollIntoView` on an element inside the canvas scrolls React Flow's
+  container, which React Flow puts back at once, so the click lands about
+  11 px from its target. It looked like *+ attribute* never opening; it was
+  the harness. Elements on the canvas are clicked where they are drawn.

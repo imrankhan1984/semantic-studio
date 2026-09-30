@@ -17,6 +17,9 @@ BASIC IDEA
     The line numbers are a gutter beside it, aria-hidden and scrolled with it:
     they help the eye find "line 12" and say nothing a screen reader needs.
 
+    The help line under it says how a relative IRI is read: written onto the
+    project's base IRI by the server (CF-8), never resolved against a folder.
+
     What the user has typed and not applied lives in the project store
     (editorDraft), not here, because leaving is App's to arbitrate: switching
     mode, switching document or closing the project asks "Apply, discard, or
@@ -230,6 +233,7 @@ export default function TurtleEditor({ projectId, doc, revision }: Props) {
       </div>
       <p id="turtle-editor-help" className="hint turtle-help">
         Press Ctrl+Enter to apply. Tab moves to the next control. An apply is one step of Undo.
+        A relative IRI such as &lt;owns&gt; is read as the project&apos;s base IRI followed by owns.
       </p>
     </section>
   );

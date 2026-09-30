@@ -97,13 +97,13 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import DeleteDialog from "../components/DeleteDialog";
 import { getNodeDetails } from "../api";
 import { useRunner } from "../components/EditParts";
-import { createdAnnouncement, otherKindNote } from "../modeling/sentences";
+import { createdAnnouncement, linkSentence, otherKindNote } from "../modeling/sentences";
 import { projectStore } from "../state/projectStore";
 import type { CanvasLink, CanvasNode, CanvasSet, CanvasView, ProjectDocName } from "../types";
 import ClassNode, { type BoxData, type BoxNode } from "./ClassNode";
 import ConceptNode from "./ConceptNode";
 import { loopCurve, pairCurve } from "./curves";
-import { BOX_HEIGHT } from "./layered";
+import { BOX_HEIGHT, freeSpot } from "./layered";
 import RelateMenu from "./RelateMenu";
 import { boxName, otherKindRefusal, relateChoices, type RelateChoice } from "./relate";
 import { useCanvasData } from "./useCanvasData";
@@ -134,6 +134,10 @@ interface LineData extends Record<string, unknown> {
   pair: number;
   pairs: number;
   forward: boolean;
+  // skos:related: dashed, no arrowhead (relationships 5.8).
+  dashed: boolean;
+  // A click on the label is a click on its line (5.10 item 7).
+  onLabel: (id: string) => void;
 }
 
 /** A line: *is a kind of* and *narrower than* show their words on hover and
@@ -167,13 +171,20 @@ function LabelledEdge(props: EdgeProps<Edge<LineData>>) {
         id={props.id}
         path={path}
         markerEnd={props.markerEnd}
-        className={`canvas-edge${data.always ? " relationship" : ""}${props.selected ? " selected" : ""}`}
+        className={`canvas-edge${data.always ? " relationship" : ""}${data.dashed ? " related" : ""}${props.selected ? " selected" : ""}`}
       />
       {show && (
         <EdgeLabelRenderer>
+          {/* The label is drawn outside the SVG, over the pane: without its
+              own click it let the click through to the pane, which cleared
+              the selection (5.10 item 7). */}
           <span
-            className={`canvas-edge-label${props.selected ? " selected" : ""}`}
-            style={{ transform: `translate(-50%, -50%) translate(${x}px, ${y}px)` }}
+            className={`canvas-edge-label nodrag nopan${props.selected ? " selected" : ""}`}
+            style={{ transform: `translate(-50%, -50%) translate(${x}px, ${y}px)`, pointerEvents: "all" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onLabel(props.id);
+            }}
           >
             {data.text}
           </span>
@@ -315,6 +326,7 @@ function Canvas(props: ModelCanvasProps) {
     let relationship: string | null = null;
     if (choice.kind === "subClassOf") ok = !!(await run("relate", "AddSubClassOf", { child: from, parent: to }));
     else if (choice.kind === "broader") ok = !!(await run("relate", "AddBroader", { concept: from, broader: to }));
+    else if (choice.kind === "related") ok = !!(await run("relate", "AddRelated", { concept: from, related: to }));
     else if (choice.kind === "newRelationship") {
       const result = await run(
         "relate",
@@ -365,15 +377,26 @@ function Canvas(props: ModelCanvasProps) {
     );
   };
 
-  /** Why a subclass or broader line is not changed here: an end of the
-   *  project's other kind (D-089; found in review, where Delete and the link
-   *  panel still removed a link between two read-only concepts). */
+  /** Why a line is not changed here: an end of the project's other kind
+   *  (D-089; found in review, where Delete and the link panel still removed
+   *  a link between two read-only concepts); a relationship in a taxonomy,
+   *  which is the other kind too (5.10 item 2); or a narrower end that is
+   *  imported, whose statement is the import's (item 6). */
   const fixedLink = (edge: CanvasView["edges"][number]): string | null => {
-    if (!view || edge.kind === "relationship") return null;
+    if (!view) return null;
+    if (edge.kind === "relationship") {
+      return view.kind === "taxonomy"
+        ? `${edge.label ?? "This relationship"} is a relationship, read-only in a taxonomy. Edit it in Turtle, or change the project to an ontology.`
+        : null;
+    }
     for (const iri of [edge.source, edge.target]) {
       const box = view.nodes.find((n) => n.iri === iri);
       const reason = box && !box.imported ? otherKindRefusal(view, box) : null;
       if (reason) return reason;
+    }
+    const child = view.nodes.find((n) => n.iri === edge.source);
+    if (child?.imported && edge.kind !== "related") {
+      return `${child.label} comes from ${child.imported === "outside" ? "outside this model" : child.imported} and is read-only; this link is changed where it is defined.`;
     }
     return null;
   };
@@ -388,9 +411,58 @@ function Canvas(props: ModelCanvasProps) {
     }
     if (edge.kind === "subClassOf") await run("edge", "RemoveSubClassOf", { child: edge.source, parent: edge.target });
     else if (edge.kind === "broader") await run("edge", "RemoveBroader", { concept: edge.source, broader: edge.target });
+    else if (edge.kind === "related") await run("edge", "RemoveRelated", { concept: edge.source, related: edge.target });
     else if (edge.property) setDeleting({ iri: edge.property, label: edge.label ?? edge.property });
     setSelectedEdge(null);
   };
+
+  /** A line clicked, or its label (5.10 item 7). A click on a line focuses
+   *  nothing, so the Delete key went to the page and never reached this
+   *  canvas (PR #47 review): focus the surface, where the key handler is,
+   *  and say what Delete will do. And show what the line is (5.2): a
+   *  relationship's form, or the link panel for a subclass, broader or
+   *  related line, read-only when it cannot be changed here. */
+  const clickLine = (id: string) => {
+    if (!view) return;
+    const line = view.edges.find((e) => edgeId(e) === id);
+    if (!line) return;
+    const fixed = fixedLink(line);
+    const words =
+      line.kind === "relationship"
+        ? `${label(view, line.source)} ${line.label} ${label(view, line.target)}`
+        : linkSentence(line.kind, label(view, line.source), label(view, line.target));
+    setSelectedEdge(id);
+    setHint(fixed ?? `${words} selected. Delete removes it.`);
+    wrapper.current?.focus();
+    if (line.kind === "relationship" && line.property) {
+      edgeSelection.current = line.property;
+      selectHere(line.property);
+    } else if (line.kind !== "relationship") {
+      edgeSelection.current = null;
+      onSelectLink?.({
+        kind: line.kind,
+        source: line.source,
+        target: line.target,
+        sourceLabel: label(view, line.source),
+        targetLabel: label(view, line.target),
+        ...(fixed ? { readOnly: fixed } : {}),
+      });
+    }
+  };
+  const clickLineNow = useRef(clickLine);
+  clickLineNow.current = clickLine;
+  // Stable, so the lines are not rebuilt for it.
+  const clickLabel = useCallback((id: string) => clickLineNow.current(id), []);
+
+  // What was selected when the line was: once anything else is selected --
+  // a box, a tree row -- the line is not the selection any more, and its
+  // highlight goes with it (5.10 item 1).
+  // Only on a change of selection: a line clicked before its selection has
+  // reached this canvas must not be cleared by its own click.
+  const edgeSelection = useRef<string | null>(null);
+  useEffect(() => {
+    if (selected !== edgeSelection.current) setSelectedEdge(null);
+  }, [selected]);
 
   // --- what React Flow draws ------------------------------------------------------
 
@@ -409,6 +481,7 @@ function Canvas(props: ModelCanvasProps) {
             busy,
             onRenameDone: (iri, value) => void onRenameDone(iri, value),
             onAddAttribute,
+            onSelectAttribute: selectHere,
           };
           return {
             id: n.iri,
@@ -427,7 +500,7 @@ function Canvas(props: ModelCanvasProps) {
       boxes.sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x);
       return boxes;
     });
-  }, [view, positions, selected, renaming, dropTarget, busy, onRenameDone, onAddAttribute]);
+  }, [view, positions, selected, renaming, dropTarget, busy, onRenameDone, onAddAttribute, selectHere]);
 
   const edges = useMemo<Edge[]>(() => {
     if (!view) return [];
@@ -447,26 +520,32 @@ function Canvas(props: ModelCanvasProps) {
         // selection, however it was selected: by the line, the tree or a link.
         selected: id === selectedEdge || (relationship && e.property === selected),
         ariaLabel:
-          e.kind === "subClassOf"
-            ? `${label(view, e.source)} is a kind of ${label(view, e.target)}`
-            : e.kind === "broader"
-              ? `${label(view, e.source)} is narrower than ${label(view, e.target)}`
-              : `${label(view, e.source)} ${e.label} ${label(view, e.target)}`,
+          e.kind === "relationship"
+            ? `${label(view, e.source)} ${e.label} ${label(view, e.target)}`
+            : linkSentence(e.kind, label(view, e.source), label(view, e.target)),
         // A hollow triangle at the parent for a subclass (5.4); an arrow for
-        // the others. The hollow one is ours: React Flow draws only filled
-        // and open arrows.
-        markerEnd: e.kind === "subClassOf" ? "canvas-hollow" : { type: relationship ? MarkerType.ArrowClosed : MarkerType.Arrow },
+        // broader and relationships; none for related, which reads the same
+        // both ways (5.8). The hollow one is ours: React Flow draws only
+        // filled and open arrows.
+        markerEnd:
+          e.kind === "subClassOf"
+            ? "canvas-hollow"
+            : e.kind === "related"
+              ? undefined
+              : { type: relationship ? MarkerType.ArrowClosed : MarkerType.Arrow },
         data: {
-          text: relationship ? (e.label ?? "") : e.kind === "subClassOf" ? "is a kind of" : "narrower than",
+          text: e.kind === "relationship" ? (e.label ?? "") : LINE_WORDS[e.kind],
           always: relationship,
           hover: hover === id,
           pair: e.pair ?? 0,
           pairs: e.pairs ?? 1,
           forward: e.source < e.target,
+          dashed: e.kind === "related",
+          onLabel: clickLabel,
         },
       };
     });
-  }, [view, hover, selectedEdge, positions, selected]);
+  }, [view, hover, selectedEdge, positions, selected, clickLabel]);
 
   // --- selection made elsewhere pans here (D-047) ------------------------------------
 
@@ -602,11 +681,17 @@ function Canvas(props: ModelCanvasProps) {
     setDraftName("");
   };
 
-  /** The palette by keyboard or click: a new box in the middle of the view. */
+  /** The palette by keyboard or click: a new box in the free space nearest
+   *  the middle of the view, never on top of another (5.10 item 3). */
   const startDraft = (kind: "class" | "concept") => {
     const box = wrapper.current?.getBoundingClientRect();
     const at = flow.screenToFlowPosition({ x: (box?.left ?? 0) + (box?.width ?? 0) / 2, y: (box?.top ?? 0) + (box?.height ?? 0) / 2 });
-    setDraft({ kind, at: [at.x, at.y] });
+    const taken = nodes.map((n) => ({
+      at: [n.position.x, n.position.y] as [number, number],
+      width: n.measured?.width,
+      height: n.measured?.height,
+    }));
+    setDraft({ kind, at: freeSpot([at.x, at.y], taken) });
     setDraftName("");
   };
 
@@ -791,30 +876,7 @@ function Canvas(props: ModelCanvasProps) {
             setAnchor({ x: point.clientX - (box?.left ?? 0), y: point.clientY - (box?.top ?? 0) });
           }}
           onNodeClick={(_, node) => selectHere(node.id)}
-          onEdgeClick={(_, edge) => {
-            // A click on a line focuses nothing, so the Delete key went to the
-            // page and never reached this canvas (PR #47 review): focus the
-            // surface, where the key handler is, and say what Delete will do.
-            const line = view.edges.find((e) => edgeId(e) === edge.id);
-            const fixed = line ? fixedLink(line) : null;
-            setSelectedEdge(edge.id);
-            setHint(fixed ?? `${edge.ariaLabel ?? "Line"} selected. Delete removes it.`);
-            wrapper.current?.focus();
-            // And show what the line is (5.2): a relationship's form, or the
-            // link panel for a subclass or broader line, read-only when an
-            // end is of the project's other kind.
-            if (line?.kind === "relationship" && line.property) selectHere(line.property);
-            else if (line && line.kind !== "relationship") {
-              onSelectLink?.({
-                kind: line.kind,
-                source: line.source,
-                target: line.target,
-                sourceLabel: label(view, line.source),
-                targetLabel: label(view, line.target),
-                ...(fixed ? { readOnly: fixed } : {}),
-              });
-            }
-          }}
+          onEdgeClick={(_, edge) => clickLine(edge.id)}
           onEdgeMouseEnter={(_, edge) => setHover(edge.id)}
           onEdgeMouseLeave={() => setHover(null)}
           onPaneClick={() => {
@@ -877,6 +939,7 @@ function Canvas(props: ModelCanvasProps) {
             choices={relate.choices}
             notes={relate.notes}
             refusal={relate.refusal ?? null}
+            loop={relate.from === relate.to}
             onSwap={swap}
             anchor={anchor}
             busy={busy}
@@ -936,6 +999,13 @@ function sides(from?: [number, number], to?: [number, number]): ["t" | "r" | "b"
   if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? ["r", "l"] : ["l", "r"];
   return dy > 0 ? ["b", "t"] : ["t", "b"];
 }
+
+/** What a hierarchy or related line says, on hover and when selected. */
+const LINE_WORDS: Record<Exclude<CanvasView["edges"][number]["kind"], "relationship">, string> = {
+  subClassOf: "is a kind of",
+  broader: "narrower than",
+  related: "related to",
+};
 
 const UNDRAWN_WHY: Record<CanvasView["undrawn"][number]["missing"], string> = {
   domain: "no domain",

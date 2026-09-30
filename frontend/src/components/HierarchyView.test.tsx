@@ -819,6 +819,15 @@ describe("HierarchyView, relationships Stage A (AC-2, AC-6)", () => {
     expect(screen.getByText(/This taxonomy also contains 2 classes\./)).toBeTruthy();
   });
 
+  it("a taxonomy lists its relationships and attributes without actions (5.10 item 2)", async () => {
+    renderKind("taxonomy");
+    await screen.findByText("likes");
+    for (const label of ["member of", "likes", "name"]) {
+      expect(itemByLabel(label)!.querySelector(".hierarchy-menu-btn")).toBeNull();
+      expect(itemByLabel(label)!.getAttribute("aria-keyshortcuts")).toBeNull();
+    }
+  });
+
   it("an empty taxonomy keeps its concept section, where New concept lives", async () => {
     renderKind("taxonomy", hierarchyOf(EMPTY, EMPTY));
     expect(await screen.findByRole("button", { name: "New concept" })).toBeTruthy();

@@ -32,6 +32,8 @@ INPUTS / INPUT SOURCES (props)
     - from, to: the two boxes' names, in the line's direction.
     - choices, notes: from relateChoices; refusal: the swapped direction's,
       when it cannot mean anything.
+    - loop: the line runs from a box to itself, so there is no Swap
+      (relationships 5.10 item 4).
     - onSwap: ask again the other way round.
     - anchor: where the line ended, in the canvas's own coordinates.
     - busy, error: the command in flight, and its refusal.
@@ -53,6 +55,8 @@ interface Props {
   choices: RelateChoice[];
   notes: string[];
   refusal?: string | null;
+  /** A line from a box to itself: there is no other way round to swap to. */
+  loop?: boolean;
   onSwap: () => void;
   anchor: { x: number; y: number };
   busy: boolean;
@@ -67,6 +71,7 @@ export default function RelateMenu({
   choices,
   notes,
   refusal = null,
+  loop = false,
   onSwap,
   anchor,
   busy,
@@ -113,16 +118,18 @@ export default function RelateMenu({
           {from} <span aria-hidden="true">…</span>
           <span className="visually-hidden">to</span> {to}
         </p>
-        <button
-          type="button"
-          className="ghost relate-swap"
-          aria-disabled={busy}
-          onClick={() => !busy && onSwap()}
-          aria-label={`Swap: from ${to} to ${from}`}
-          title="Swap the direction"
-        >
-          <span aria-hidden="true">⇄</span> Swap
-        </button>
+        {!loop && (
+          <button
+            type="button"
+            className="ghost relate-swap"
+            aria-disabled={busy}
+            onClick={() => !busy && onSwap()}
+            aria-label={`Swap: from ${to} to ${from}`}
+            title="Swap the direction"
+          >
+            <span aria-hidden="true">⇄</span> Swap
+          </button>
+        )}
       </div>
       {naming && newRelationship ? (
         <form

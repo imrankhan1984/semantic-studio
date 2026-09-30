@@ -31,6 +31,8 @@ EXPECTED OUTPUT
     - layered(boxes, links) -> { iri: [x, y] } for every box.
     - placeMissing(boxes, links, saved) -> saved plus a place for each box
       without one.
+    - freeSpot(centre, taken) -> the free place nearest the middle of the
+      view, for a box added by clicking the palette.
 ================================================================================
 */
 
@@ -158,4 +160,55 @@ export function placeMissing(boxes: Box[], links: Link[], saved: Positions): Pos
     out[box.iri] = place;
   }
   return out;
+}
+
+/**
+ * Where a box made from the palette by a click goes (relationships 5.10 item
+ * 3): the free place nearest `centre`, the middle of the view, so it never
+ * lands on another box. Candidates are laid on a grid one box and a gap
+ * apart, around the middle; the nearest that overlaps nothing wins, and ties
+ * go up then left, so the choice is the same every time.
+ *
+ * `taken` holds each box's top-left corner and its size as drawn, since a
+ * class with attributes is taller than BOX_HEIGHT.
+ */
+export function freeSpot(
+  centre: [number, number],
+  taken: { at: [number, number]; width?: number; height?: number }[],
+): [number, number] {
+  const start: [number, number] = [centre[0] - BOX_WIDTH / 2, centre[1] - BOX_HEIGHT / 2];
+  const margin = 24;
+  const clear = ([x, y]: [number, number]) =>
+    taken.every(({ at, width = BOX_WIDTH, height = BOX_HEIGHT }) => {
+      return (
+        x + BOX_WIDTH + margin <= at[0] ||
+        at[0] + width + margin <= x ||
+        y + BOX_HEIGHT + margin <= at[1] ||
+        at[1] + height + margin <= y
+      );
+    });
+  if (clear(start)) return start;
+  const stepX = BOX_WIDTH / 2 + margin;
+  const stepY = BOX_HEIGHT / 2 + margin;
+  let best: [number, number] | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  // Rings outward until one holds a free place; every candidate of a ring is
+  // compared, so the nearest wins, not the first found.
+  for (let ring = 1; ring <= 40 && best === null; ring++) {
+    for (let i = -ring; i <= ring; i++) {
+      for (let j = -ring; j <= ring; j++) {
+        if (Math.max(Math.abs(i), Math.abs(j)) !== ring) continue;
+        const spot: [number, number] = [start[0] + i * stepX, start[1] + j * stepY];
+        const distance = Math.hypot(i * stepX, j * stepY);
+        const better =
+          distance < bestDistance ||
+          (distance === bestDistance && best !== null && (spot[1] < best[1] || (spot[1] === best[1] && spot[0] < best[0])));
+        if (better && clear(spot)) {
+          best = spot;
+          bestDistance = distance;
+        }
+      }
+    }
+  }
+  return best ?? start;
 }
