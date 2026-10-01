@@ -221,4 +221,19 @@ describe("TurtleEditor, found in code review", () => {
     expect(box.value).toContain("sh:");
     expect(box.readOnly).toBe(false);
   });
+
+  it("Edit in Turtle moves the caret to the shape once, and not on a later visit (shacl-authoring 5.5)", async () => {
+    // Found in review: the target was never spent, so every later editor
+    // took focus and jumped back to the old shape.
+    projectStore.showInEditor([":C"]);
+    getDocumentSource.mockResolvedValue({ text: EDITED, revision: 0, fromEditor: true });
+    await renderEditor();
+    expect(document.activeElement).toBe(editor());
+    expect(editor().selectionStart).toBe(EDITED.indexOf(":C"));
+    expect(projectStore.getSnapshot().editorTarget).toBeNull();
+    cleanup();
+    (document.activeElement as HTMLElement | null)?.blur();
+    await renderEditor();
+    expect(document.activeElement).not.toBe(editor());
+  });
 });

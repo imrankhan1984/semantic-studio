@@ -111,6 +111,8 @@ const PENDING_HEADING: Record<AppMode, string> = {
   query: "Choose an ontology to query",
   view: "Choose an ontology to view",
   hierarchy: "Choose an ontology to see its hierarchy",
+  // Never pending in practice: the Shapes tab shows only with a project open.
+  shapes: "Open a project to work on its shapes",
   home: "Library (read-only)",
 };
 

@@ -86,7 +86,7 @@ export type Theme = "dark" | "light";
 // on none of them and is why it is not a tab. Home is a VIEW rather than a reset
 // — switching to it keeps the loaded ontology, the selection and any query in
 // progress. See D-026. `hierarchy` is the tree view over subClassOf / broader.
-export type AppMode = "view" | "explore" | "query" | "home" | "hierarchy";
+export type AppMode = "view" | "explore" | "query" | "home" | "hierarchy" | "shapes";
 
 // Response of GET /source: the file text plus render/truncation metadata.
 export interface OntologySource {
@@ -877,3 +877,125 @@ export interface CanvasSet {
   hide: (iri: string) => Promise<void> | void;
 }
 
+
+// --- SHACL shapes and validation (shacl-authoring Stage A) -------------------
+
+// One value of an "allowed values" list, as the server reads and takes it.
+export interface ShapeValue {
+  kind: "text" | "typed" | "link";
+  value: string;
+  lang?: string;
+  datatype?: string;
+  label?: string;
+}
+
+// A number or date bound, with the type it is written in.
+export interface ShapeBound {
+  value: string;
+  datatype: string;
+}
+
+export type ShapePathKind = "attribute" | "relationship" | "name" | "definition" | "other";
+
+// One rule: a path and every kind checked on it (5.3). `path` is one IRI,
+// or the IRIs of an alternative (a definition is skos:definition or
+// rdfs:comment).
+export interface ShapeRule {
+  path: string[];
+  pathLabel?: string;
+  pathKind?: ShapePathKind;
+  minCount?: number;
+  maxCount?: number;
+  datatype?: string;
+  class?: string;
+  classLabel?: string;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  minInclusive?: ShapeBound;
+  maxInclusive?: ShapeBound;
+  in?: ShapeValue[];
+  languageIn?: string[];
+  uniqueLang?: boolean;
+  requiredLanguages?: string[];
+}
+
+export interface ShapeTarget {
+  iri: string;
+  label: string;
+  // "every class" or "every concept" for a model check, otherwise null.
+  every: string | null;
+}
+
+// A listed shape as the form reads it, or read-only with why (5.5).
+export interface ShapeForm {
+  id: string;
+  iri: string | null;
+  name: string;
+  named: boolean;
+  target: ShapeTarget | null;
+  severity: "violation" | "warning" | "info";
+  message: string | null;
+  rules: ShapeRule[];
+  editable: boolean;
+  unsupported: string[];
+}
+
+export interface ShapesListing {
+  revision: number | null;
+  modelRevision: number;
+  kind: ProjectKind | null;
+  shapes: ShapeForm[];
+}
+
+// What a rule can be about for a target class (5.3).
+export interface ShapePath {
+  path: string[];
+  label: string;
+  kind: ShapePathKind;
+  functional?: boolean;
+  datatype?: string | null;
+  range?: string | null;
+  rangeLabel?: string | null;
+}
+
+export interface ShapeSuggestions {
+  paths: ShapePath[];
+  suggestions: { id: string; rule: ShapeRule }[];
+}
+
+export type PanelState = "fails" | "passes" | "warnings" | "nothing" | "error";
+
+export interface ValidationProblem {
+  // The individual's IRI, the link's target; null for a blank node.
+  focus: string | null;
+  focusLabel: string;
+  group: string;
+  sentence: string;
+  value: string | null;
+  severity: "violation" | "warning" | "info";
+}
+
+export interface ValidationPanel {
+  id: string;
+  name: string;
+  state: PanelState;
+  target: { iri: string; label: string; one: string; many: string } | null;
+  focusCount: number;
+  failingCount: number;
+  problemCount: number;
+  warningCount: number;
+  problems: ValidationProblem[];
+  problemsTotal: number;
+  error: string | null;
+}
+
+export interface ValidationResult {
+  stopped: boolean;
+  statements: number;
+  shapeCount: number;
+  shapes: ValidationPanel[];
+  durationMs: number;
+  // The revisions checked: a newer one on either document makes it stale.
+  revisions: { model: number; shapes: number | null };
+}

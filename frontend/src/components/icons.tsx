@@ -5,7 +5,8 @@ FILE: frontend/src/components/icons.tsx
 
 SUMMARY
     A set of small inline SVG icons used in the header nav and toolbar (Home,
-    Load, View, Explore, Query, About, sun/moon theme toggle, close, trash).
+    Load, View, Explore, Query, Hierarchy, Shapes, About, Network, sun/moon
+    theme toggle, close, trash).
 
 BASIC IDEA
     Inlining a handful of stroked icons avoids an icon-font/library dependency.
@@ -96,6 +97,17 @@ export function IconHierarchy() {
       <rect x="3" y="2.5" width="4" height="3" rx="0.6" />
       <rect x="9" y="9.5" width="4" height="3" rx="0.6" />
       <rect x="9" y="17.5" width="4" height="3" rx="0.6" />
+    </svg>
+  );
+}
+
+/* Shapes (shacl-authoring 5.1): a shield with a tick, what a check on the
+   data looks like, distinct from the tree of Hierarchy beside it. */
+export function IconShapes() {
+  return (
+    <svg {...base}>
+      <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" />
+      <path d="M8.5 12l2.5 2.5 4.5-5" />
     </svg>
   );
 }

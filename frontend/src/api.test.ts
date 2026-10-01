@@ -123,6 +123,9 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   downloadDocumentCopy: () => api.downloadDocumentCopy("prj-1", "model"),
   recoverProject: () => api.recoverProject("prj-1", "discard"),
   getLanguageReport: () => api.getLanguageReport("prj-1", "model"),
+  getShapes: () => api.getShapes("prj-1"),
+  getShapeSuggestions: () => api.getShapeSuggestions("prj-1", "http://example.org/A", "http://example.org/S"),
+  validateProject: () => api.validateProject("prj-1"),
   previewDelete: () => api.previewDelete("prj-1", "model", "http://example.org/A"),
   getAnnotationProperties: () => api.getAnnotationProperties("prj-1", "model"),
   getCanvas: () => api.getCanvas("prj-1", "model"),
@@ -154,11 +157,11 @@ describe("api client header (S-6)", () => {
     // Ten POSTs and three DELETEs before projects; projects add ten POSTs,
     // a DELETE, a PATCH (rename, languages) and a PUT (the Turtle apply);
     // the editing form adds one POST (the delete's dry run); the canvas one
-    // PUT (its layout).
+    // PUT (its layout); validation one POST (shacl-authoring 5.6).
     const expected = [
       ...Array(4).fill("DELETE"),
       "PATCH",
-      ...Array(21).fill("POST"),
+      ...Array(22).fill("POST"),
       "PUT",
       "PUT",
       "PUT",

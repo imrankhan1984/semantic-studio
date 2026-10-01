@@ -101,7 +101,10 @@ them by clicking, without writing SPARQL by hand.
   to a draft, and a crash offers to recover them. Names can be kept in several
   languages, with a switch for which one the views show. You do not need to
   write Turtle: the **detail panel is an editing form** and the **Hierarchy
-  tree has New class, New concept and a menu on every row**. See
+  tree has New class, New concept and a menu on every row**. The **Shapes**
+  tab says what good data looks like, as SHACL rules made from a form
+  (*every Person must have exactly one name*), and **Validate** checks the
+  model against them, one panel per rule set, in plain sentences. See
   [Projects](#projects).
 
 ## Quick start (Docker)
@@ -413,6 +416,23 @@ of them open as fast as none.
 - **Only web addresses are links.** An identifier from a file is a link only
   when it starts `http:` or `https:`; anything else is shown as text you can
   copy.
+- **Rules for good data, and a check on demand.** The *Shapes* tab lists the
+  project's SHACL shapes (`shapes.ttl`). *+* adds rules for a class (or for
+  concepts, in a taxonomy), or *Check my model*: every class has a name and a
+  definition. A shape is edited one rule at a time, each read as a sentence
+  (*must have between 1 and 3 phone numbers, each text of at most 20
+  characters*): how many, the type of value, which class a relationship
+  points to, text length and pattern, a number or date range, allowed values,
+  and languages. The model suggests rules too. **Validate** checks the model,
+  unsaved changes and resolved imports included, against every shape, and
+  shows one panel per shape: red when it fails, green when it passes, amber
+  for warnings, grey when there was nothing to check yet, a red outline when
+  the shape itself could not be checked. Each problem is a sentence (*Bob has
+  no name; every Person must have at least 1.*) and the name takes you to
+  Bob. Shapes written in Turtle are validated the same way, and shown
+  read-only in the form when they use more than it edits. Nothing is checked
+  until you press Validate, nothing leaves your machine, and results are not
+  saved.
 - Queries saved while a project is open are kept in its `queries/` folder.
 
 ## Where your ontologies are stored
@@ -544,5 +564,7 @@ All dependencies are permissive open source:
 | rdflib | BSD-3-Clause |
 | uvicorn | BSD-3-Clause |
 | httpx | BSD-3-Clause |
+| pySHACL, SHACL validation | Apache-2.0 |
+| OWL-RL (installed with pySHACL) | W3C Software License |
 
 This project itself is MIT licensed — see [LICENSE](LICENSE).

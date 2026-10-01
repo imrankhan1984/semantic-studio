@@ -80,6 +80,9 @@ import type {
   NetworkCapability,
   NetworkGrant,
   NetworkPolicy,
+  ShapesListing,
+  ShapeSuggestions,
+  ValidationResult,
 } from "./types";
 
 /**
@@ -838,4 +841,24 @@ export function recoverProject(
 // How many entities lack a name in each project language.
 export function getLanguageReport(pid: string, doc: ProjectDocName): Promise<LanguageReport> {
   return send(documentUrl(pid, doc, "/languages")).then((r) => handle<LanguageReport>(r));
+}
+
+// The shapes in shapes.ttl in the form's structure (shacl-authoring 5.1, 5.5).
+export function getShapes(pid: string): Promise<ShapesListing> {
+  return send(projectUrl(pid, "/shapes")).then((r) => handle<ShapesListing>(r));
+}
+
+// What a rule can be about for a target, and what the model suggests (5.4).
+export function getShapeSuggestions(pid: string, target: string, shape?: string): Promise<ShapeSuggestions> {
+  const params = new URLSearchParams({ target });
+  if (shape) params.set("shape", shape);
+  return send(projectUrl(pid, `/shapes/suggestions?${params}`)).then((r) => handle<ShapeSuggestions>(r));
+}
+
+// Validate on demand (5.6). A POST that changes nothing; it carries the
+// client header because local_guard asks it of every POST.
+export function validateProject(pid: string): Promise<ValidationResult> {
+  return send(projectUrl(pid, "/validate"), { method: "POST", headers: { ...CLIENT_HEADER } }).then((r) =>
+    handle<ValidationResult>(r),
+  );
 }

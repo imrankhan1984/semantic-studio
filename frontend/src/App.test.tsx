@@ -104,6 +104,8 @@ const {
   saveDocument,
   recoverProject,
   updateProject,
+  getShapes,
+  validateProject,
 } = vi.hoisted(() => ({
   listOntologies: vi.fn(),
   getGraph: vi.fn(),
@@ -145,6 +147,9 @@ const {
   recoverProject: vi.fn(),
   // relationships Stage A: changing a project's kind from its card.
   updateProject: vi.fn(),
+  // shacl-authoring Stage A: the Shapes view's list and validation.
+  getShapes: vi.fn(),
+  validateProject: vi.fn(),
 }));
 
 // importOriginal rather than a bare factory, so ApiError stays the real class.
@@ -184,6 +189,8 @@ vi.mock("./api", async (importOriginal) => ({
   saveDocument,
   recoverProject,
   updateProject,
+  getShapes,
+  validateProject,
 }));
 
 /** Every mocked client function, so a test can count what mount actually did. */
@@ -219,6 +226,8 @@ const ALL_API = {
   saveDocument,
   recoverProject,
   updateProject,
+  getShapes,
+  validateProject,
 };
 
 // Sigma needs a WebGL context; jsdom has none. Nothing here asserts on the
@@ -2963,5 +2972,85 @@ describe("App project kinds (relationships Stage A)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(updateProject).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("App Shapes view (shacl-authoring Stage A)", () => {
+  const SHAPES_OID = "prj-0123456789ab-shapes";
+  const withShapes = () => ({
+    project: PROJECT,
+    documents: [
+      docState(),
+      { ...docState(), doc: "shapes" as const, ontologyId: SHAPES_OID, canUndo: true, undoLabel: "Created shape Person rules" },
+    ],
+    recovery: { available: false, draftTime: null },
+  });
+
+  async function openShapes() {
+    listProjects.mockResolvedValue([PROJECT]);
+    openProject.mockResolvedValue(withShapes());
+    getShapes.mockResolvedValue({ revision: 0, modelRevision: 0, kind: "ontology", shapes: [] });
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open Invoices" }));
+    });
+    await act(async () => {
+      fireEvent.click(tab("Shapes"));
+    });
+  }
+
+  it("has no Shapes tab for a library ontology, and one for a project (AC-1)", async () => {
+    await renderAppOpened();
+    expect(screen.queryByRole("tab", { name: /Shapes/ })).toBeNull();
+    cleanup();
+    projectStore._reset();
+    await openShapes();
+    expect(tab("Shapes").getAttribute("aria-selected")).toBe("true");
+    expect(getShapes).toHaveBeenCalledWith(PROJECT.id);
+    expect(screen.getByRole("heading", { level: 2, name: "Shapes" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Validate" })).toBeTruthy();
+  });
+
+  it("points the header at shapes.ttl, so Undo undoes a shape change, and back to the model on leaving", async () => {
+    await openShapes();
+    expect(projectStore.getSnapshot().activeDoc).toBe("shapes");
+    undoChange.mockResolvedValue({ revision: 1, label: "Created shape Person rules", state: { ...withShapes().documents[1], revision: 1, canUndo: false } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Undo: Created shape Person rules" }));
+    });
+    expect(undoChange).toHaveBeenCalledWith(PROJECT.id, "shapes");
+    await act(async () => {
+      fireEvent.click(tab("Hierarchy"));
+    });
+    expect(projectStore.getSnapshot().activeDoc).toBe("model");
+  });
+
+  it("validates only when asked, and a problem's link selects the individual in the model (AC-6)", async () => {
+    await openShapes();
+    expect(validateProject).not.toHaveBeenCalled();
+    validateProject.mockResolvedValue({
+      stopped: false, statements: 20, shapeCount: 1, durationMs: 2, revisions: { model: 0, shapes: 0 },
+      shapes: [{
+        id: "http://example.org/invoices#PersonRules", name: "Person rules", state: "fails",
+        target: { iri: "http://example.org/invoices#Person", label: "Person", one: "person", many: "people" },
+        focusCount: 2, failingCount: 1, problemCount: 1, warningCount: 0, problemsTotal: 1, error: null,
+        problems: [{ focus: "http://example.org/invoices#bob", focusLabel: "Bob", group: "name",
+          sentence: "Bob has no name; every Person must have at least 1.", value: null, severity: "violation" }],
+      }],
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Validate" }));
+    });
+    expect(validateProject).toHaveBeenCalledWith(PROJECT.id);
+    fireEvent.click(screen.getByRole("button", { name: /Fails\. Person rules/ }));
+    getNodeDetails.mockResolvedValue({ iri: "http://example.org/invoices#bob", label: "Bob", outgoing: [], incoming: [] });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Bob" }));
+    });
+    expect(tab("Explore").getAttribute("aria-selected")).toBe("true");
+    expect(projectStore.getSnapshot().activeDoc).toBe("model");
+    const last = getNodeDetails.mock.calls[getNodeDetails.mock.calls.length - 1];
+    expect(last[0]).toBe(OID);
+    expect(last[1]).toBe("http://example.org/invoices#bob");
   });
 });

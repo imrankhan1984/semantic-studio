@@ -42,7 +42,7 @@ EXPECTED OUTPUT
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { projectStore } from "../state/projectStore";
-import type { ChangeResult } from "../types";
+import type { ChangeResult, ProjectDocName } from "../types";
 
 /** Run one command for one field: its busy flag and its refusal. */
 export interface Runner {
@@ -59,7 +59,9 @@ export interface Runner {
   alive: () => boolean;
 }
 
-export function useRunner(): Runner {
+/** `doc` names the document the commands go to; the open one by default.
+ *  The Shapes view passes "shapes" (shacl-authoring 5.3). */
+export function useRunner(doc?: ProjectDocName): Runner {
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   // A ref as well as the state: two submits in one tick both see busy as
@@ -84,7 +86,7 @@ export function useRunner(): Runner {
       setBusy(true);
       setErrors((e) => ({ ...e, [field]: "" }));
       try {
-        return await projectStore.command(command, args, announcement);
+        return await projectStore.command(command, args, announcement, doc);
       } catch (e) {
         if (mounted.current) {
           setErrors((prev) => ({ ...prev, [field]: e instanceof Error ? e.message : String(e) }));
@@ -95,7 +97,7 @@ export function useRunner(): Runner {
         if (mounted.current) setBusy(false);
       }
     },
-    [],
+    [doc],
   );
   const clear = useCallback((field: string) => setErrors((e) => ({ ...e, [field]: "" })), []);
   const alive = useCallback(() => mounted.current, []);

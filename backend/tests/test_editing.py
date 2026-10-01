@@ -10,6 +10,9 @@ SUMMARY
     isomorphism up to the 200-step cap; the Turtle apply and its parse errors;
     the save format rule and the one-time comments backup; autosave off the
     request path; recovery; saved queries in a project; the Section 10 budgets.
+    And the nine shape commands of shacl-authoring Stage A on shapes.ttl:
+    exact triples, refusals that change nothing, one undo step each, save
+    and reload (row S20), and the first one creating the file.
 
 BASIC IDEA
     Through the HTTP API, as the frontend drives it, with the service's state
@@ -28,6 +31,7 @@ EXPECTED OUTPUT
       clean, nothing to recover) and AC-9 (apply, undo, save writes the file
       byte for byte), and what the form needs from the server: the created
       IRI, plain literals, search by kind, kinds in project details.
+    - shacl-authoring Stage A: AC-2 as the server sees it, row S20.
 ================================================================================
 """
 
@@ -239,7 +243,9 @@ def test_every_command_produces_its_triples_label_and_a_new_revision(pid):
         # The delta names exactly what changed, and the undo restores it.
         assert result["delta"]["addedTotal"] == len(set(graph) - set(before))
         assert result["delta"]["removedTotal"] == len(set(before) - set(graph))
-    assert seen == set(editing.COMMANDS), "a command in 5.4 has no case"
+    # The shape commands act on shapes.ttl and have their own cases below
+    # (shacl-authoring Stage A).
+    assert seen == set(editing.COMMANDS) - set(editing.SHAPE_COMMANDS), "a command in 5.4 has no case"
 
 
 @pytest.mark.parametrize(
@@ -1155,3 +1161,273 @@ def test_the_delete_impact_names_each_property_kind(pid):
     impact = run(pid, "DeleteEntity", dry_run=True, iri="shop:Person").json()["impact"]
     kinds = {p["label"]: (p["kind"], p["role"]) for p in impact["properties"]}
     assert kinds == {"member of": ("object property", "domain"), "age": ("datatype property", "domain")}
+
+
+# --- shacl-authoring Stage A: the nine shape commands (5.2, 5.3, row S20) -------------------
+
+SH = editing.SH
+
+
+def shapes_run(pid: str, command: str, **args):
+    return client.post(f"/api/projects/{pid}/documents/shapes/commands", json={"command": command, "args": args})
+
+
+def shapes_ok(pid: str, command: str, **args) -> dict:
+    response = shapes_run(pid, command, **args)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def shapes_graph(pid: str) -> Graph:
+    copy = Graph()
+    for t in editing_service.document(pid, "shapes").graph:
+        copy.add(t)
+    return copy
+
+
+def _rule_node(g: Graph, shape: URIRef, path: URIRef):
+    return next(p for p in g.objects(shape, SH.property) if g.value(p, SH.path) == path)
+
+
+def test_the_first_shape_command_creates_shapes_ttl(pid):
+    assert not (project_store.folder(pid) / "shapes.ttl").exists()
+    result = shapes_ok(pid, "CreateShape", target="shop:Person")
+    assert result["created"] == EX + "PersonRules"
+    assert result["label"] == "Created shape Person rules"
+    assert (project_store.folder(pid) / "shapes.ttl").exists()
+    manifest = project_store.manifest(pid)
+    assert {"file": "shapes.ttl", "role": "shapes"} in manifest["documents"]
+    g = shapes_graph(pid)
+    shape = U("PersonRules")
+    assert (shape, RDF.type, SH.NodeShape) in g
+    assert (shape, RDFS.label, Literal("Person rules", lang="en")) in g
+    assert (shape, SH.targetClass, U("Person")) in g
+    assert len(g) == 3
+
+
+def test_a_second_shape_on_the_same_class_gets_its_own_iri(pid):
+    shapes_ok(pid, "CreateShape", target="shop:Person")
+    assert shapes_ok(pid, "CreateShape", target="shop:Person")["created"] == EX + "PersonRules2"
+
+
+def test_check_my_model_is_a_ready_shape_on_every_class(pid):
+    sid = shapes_ok(pid, "CreateShape", preset="modelCheck")["created"]
+    g = shapes_graph(pid)
+    shape = URIRef(sid)
+    assert (shape, SH.targetClass, OWL.Class) in g
+    assert (shape, RDFS.label, Literal("Check my model", lang="en")) in g
+    rules = list(g.objects(shape, SH.property))
+    assert len(rules) == 2
+    qualified = next(p for p in rules if (p, SH.qualifiedMinCount, None) in g)
+    assert g.value(qualified, SH.path) == RDFS.label
+    definition = next(p for p in rules if (p, SH.minCount, None) in g)
+    alternatives = list(g.items(g.value(g.value(definition, SH.path), SH.alternativePath)))
+    assert alternatives == [SKOS.definition, RDFS.comment]
+
+
+def test_a_rule_with_several_kinds_is_one_property_shape_with_exact_triples(pid):
+    sid = shapes_ok(pid, "CreateShape", target="shop:Person")["created"]
+    before = shapes_graph(pid)
+    result = shapes_ok(pid, "AddRule", shape=sid, rule={
+        "path": ["shop:memberOf"], "minCount": 1, "maxCount": 3, "class": "shop:Organization",
+    })
+    assert result["label"] == "Added a rule on member of to Person rules"
+    g = shapes_graph(pid)
+    shape = URIRef(sid)
+    prop = _rule_node(g, shape, U("memberOf"))
+    assert set(g.predicate_objects(prop)) == {
+        (SH.path, U("memberOf")),
+        (SH.minCount, Literal(1, datatype=XSD.integer)),
+        (SH.maxCount, Literal(3, datatype=XSD.integer)),
+        (SH["class"], U("Organization")),
+    }
+    assert len(g) == len(before) + 5
+    # One undo step: undo restores the graph exactly, redo puts it back.
+    client.post(f"/api/projects/{pid}/documents/shapes/undo")
+    assert isomorphic(shapes_graph(pid), before)
+    client.post(f"/api/projects/{pid}/documents/shapes/redo")
+    assert isomorphic(shapes_graph(pid), g)
+
+
+def test_every_shape_command_is_one_undo_step_and_survives_save_and_reload(pid):
+    sid = shapes_ok(pid, "CreateShape", target="shop:Person")["created"]
+    steps = [
+        ("AddRule", {"shape": sid, "rule": {"path": [str(RDFS.label)], "uniqueLang": True,
+                                            "languageIn": ["en"], "requiredLanguages": ["en"]}}),
+        ("AddRule", {"shape": sid, "rule": {"path": ["shop:memberOf"], "maxCount": 1}}),
+        ("ReplaceRule", {"shape": sid, "path": ["shop:memberOf"],
+                         "rule": {"path": ["shop:memberOf"], "minCount": 1, "class": "shop:Organization"}}),
+        ("SetShapeTarget", {"shape": sid, "target": "shop:Organization"}),
+        ("SetShapeName", {"shape": sid, "value": "People rules"}),
+        ("SetShapeSeverity", {"shape": sid, "severity": "warning"}),
+        ("SetShapeMessage", {"shape": sid, "value": "Please check."}),
+        ("SetShapeMessage", {"shape": sid, "value": ""}),
+        ("SetShapeSeverity", {"shape": sid, "severity": "violation"}),
+        ("RemoveRule", {"shape": sid, "path": ["shop:memberOf"]}),
+        ("DeleteShape", {"shape": sid}),
+    ]
+    assert {"CreateShape", *(c for c, _ in steps)} == set(editing.SHAPE_COMMANDS), "a shape command has no case"
+    graphs = [shapes_graph(pid)]
+    for command, args in steps:
+        shapes_ok(pid, command, **args)
+        graphs.append(shapes_graph(pid))
+        assert not isomorphic(graphs[-1], graphs[-2]), command
+    for expected in reversed(graphs[:-1]):
+        assert client.post(f"/api/projects/{pid}/documents/shapes/undo").status_code == 200
+        assert isomorphic(shapes_graph(pid), expected)
+    for expected in graphs[1:]:
+        assert client.post(f"/api/projects/{pid}/documents/shapes/redo").status_code == 200
+        assert isomorphic(shapes_graph(pid), expected)
+    # Back to the shape with its rules, then save, close and reopen: the
+    # file holds exactly the same SHACL.
+    for _ in range(5):
+        client.post(f"/api/projects/{pid}/documents/shapes/undo")
+    kept = shapes_graph(pid)
+    assert client.post(f"/api/projects/{pid}/documents/shapes/save", json={}).status_code == 200
+    editing_service.close(pid)
+    client.post(f"/api/projects/{pid}/open")
+    assert isomorphic(shapes_graph(pid), kept)
+    text = (project_store.folder(pid) / "shapes.ttl").read_text(encoding="utf-8")
+    assert "sh:NodeShape" in text and "sh:targetClass shop:Organization" in text
+
+
+def test_severity_is_written_on_the_shape_and_every_rule(pid):
+    sid = shapes_ok(pid, "CreateShape", target="shop:Person")["created"]
+    shapes_ok(pid, "AddRule", shape=sid, rule={"path": ["shop:memberOf"], "maxCount": 1})
+    shapes_ok(pid, "SetShapeSeverity", shape=sid, severity="warning")
+    g = shapes_graph(pid)
+    shape = URIRef(sid)
+    assert (shape, SH.severity, SH.Warning) in g
+    assert (_rule_node(g, shape, U("memberOf")), SH.severity, SH.Warning) in g
+    # A rule added afterwards takes the shape's severity too.
+    shapes_ok(pid, "AddRule", shape=sid, rule={"path": [str(RDFS.label)], "minCount": 1})
+    g = shapes_graph(pid)
+    assert (_rule_node(g, shape, RDFS.label), SH.severity, SH.Warning) in g
+
+
+def test_add_rule_with_merge_joins_the_rule_on_that_path(pid):
+    sid = shapes_ok(pid, "CreateShape", target="shop:Person")["created"]
+    shapes_ok(pid, "AddRule", shape=sid, rule={"path": ["shop:memberOf"], "class": "shop:Organization"})
+    refused = shapes_run(pid, "AddRule", shape=sid, rule={"path": ["shop:memberOf"], "maxCount": 1})
+    assert refused.status_code == 422
+    assert "already a rule on member of" in refused.json()["detail"]
+    shapes_ok(pid, "AddRule", shape=sid, merge=True, rule={"path": ["shop:memberOf"], "maxCount": 1})
+    g = shapes_graph(pid)
+    props = list(g.objects(URIRef(sid), SH.property))
+    assert len(props) == 1
+    assert (props[0], SH["class"], U("Organization")) in g
+    assert (props[0], SH.maxCount, Literal(1, datatype=XSD.integer)) in g
+
+
+@pytest.mark.parametrize(
+    ("command", "args", "fragment"),
+    [
+        ("CreateShape", {"target": "shop:Nothing"}, "no class shop:Nothing"),
+        ("CreateShape", {"target": "shop:Person", "name": "  "}, "cannot be empty"),
+        ("CreateShape", {"preset": "everything"}, "preset is modelCheck"),
+        ("SetShapeName", {"shape": "http://example.org/none", "value": "x"}, "no such shape"),
+        ("AddRule", {"rule": {"path": ["shop:memberOf"]}}, "at least one thing to check"),
+        ("AddRule", {"rule": {"path": ["shop:memberOf"], "minCount": 3, "maxCount": 1}}, "could never be met"),
+        ("AddRule", {"rule": {"path": ["shop:memberOf"], "minCount": -1}}, "whole number"),
+        ("AddRule", {"rule": {"path": ["shop:memberOf"], "pattern": "("}}, "not a regular expression"),
+        ("AddRule", {"rule": {"path": ["shop:memberOf"], "datatype": "xsd:gYear"}}, "not one of the offered"),
+        ("AddRule", {"rule": {"path": ["shop:memberOf"], "class": "shop:Nothing"}}, "no class shop:Nothing"),
+        ("AddRule", {"rule": {"path": ["shop:memberOf"], "languageIn": ["not a tag!"]}}, "well-formed language tag"),
+        ("AddRule", {"rule": {"path": ["shop:memberOf"], "in": []}}, "at least one allowed value"),
+        ("AddRule", {"rule": {"path": ["shop:memberOf"], "minInclusive": {"value": "soon", "datatype": "xsd:date"}}},
+         "not a valid date"),
+        ("AddRule", {"rule": {"path": ["shop:memberOf"], "minInclusive": {"value": "5", "datatype": "xsd:integer"},
+                              "maxInclusive": {"value": "2", "datatype": "xsd:integer"}}}, "minimum is above"),
+        ("AddRule", {"rule": {}}, "attribute or relationship"),
+        ("SetShapeSeverity", {"severity": "fatal"}, "violation (a problem) or warning"),
+        ("RemoveRule", {"path": ["shop:memberOf"]}, "no rule on that path"),
+        ("ReplaceRule", {"path": ["shop:memberOf"], "rule": {"path": ["shop:memberOf"], "minCount": 1}},
+         "no rule on that path"),
+        ("SetShapeMessage", {"value": ""}, "no message to remove"),
+    ],
+)
+def test_a_refused_shape_command_says_why_and_changes_nothing(pid, command, args, fragment):
+    sid = shapes_ok(pid, "CreateShape", target="shop:Person")["created"]
+    if command != "CreateShape":
+        args = {"shape": sid, **args}
+    before = shapes_graph(pid)
+    revision_before = editing_service.document(pid, "shapes").ontology.revision
+    response = shapes_run(pid, command, **args)
+    assert response.status_code == 422, response.text
+    assert fragment in response.json()["detail"]
+    assert isomorphic(shapes_graph(pid), before)
+    assert editing_service.document(pid, "shapes").ontology.revision == revision_before
+
+
+def test_shape_commands_belong_to_the_shapes_document(pid):
+    response = run(pid, "CreateShape", target="shop:Person")
+    assert response.status_code == 422
+    assert "shapes.ttl" in response.json()["detail"]
+
+
+def test_a_read_only_shape_is_refused_by_the_form_but_can_be_deleted(pid):
+    client.post(f"/api/projects/{pid}/documents", json={"role": "shapes"})
+    text = f"""@prefix shop: <{EX}> . @prefix sh: <http://www.w3.org/ns/shacl#> .
+shop:Either a sh:NodeShape ; sh:targetClass shop:Person ;
+    sh:or ( [ sh:path shop:memberOf ; sh:minCount 1 ] [ sh:path shop:name ; sh:minCount 1 ] ) .
+"""
+    assert client.put(f"/api/projects/{pid}/documents/shapes/source", json={"text": text}).status_code == 200
+    before = shapes_graph(pid)
+    refused = shapes_run(pid, "SetShapeName", shape=EX + "Either", value="Mine now")
+    assert refused.status_code == 422
+    assert "Turtle editor" in refused.json()["detail"] and "uses sh:or" in refused.json()["detail"]
+    assert isomorphic(shapes_graph(pid), before)
+    shapes_ok(pid, "DeleteShape", shape=EX + "Either")
+    # The shape and everything only it reached: the sh:or list and its shapes.
+    assert len(shapes_graph(pid)) == 0
+
+
+def test_form_edits_rewrite_the_shapes_file_and_text_edits_stay_as_typed(pid):
+    client.post(f"/api/projects/{pid}/documents", json={"role": "shapes"})
+    typed = f"""@prefix shop: <{EX}> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+# Written by hand.
+shop:S a sh:NodeShape ; sh:targetClass shop:Person .
+"""
+    client.put(f"/api/projects/{pid}/documents/shapes/source", json={"text": typed})
+    client.post(f"/api/projects/{pid}/documents/shapes/save", json={})
+    assert (project_store.folder(pid) / "shapes.ttl").read_text(encoding="utf-8") == typed
+    shapes_ok(pid, "SetShapeName", shape=EX + "S", value="Person rules")
+    answer = client.post(f"/api/projects/{pid}/documents/shapes/save", json={}).json()
+    # D-083 holds for shapes.ttl as for the model: a comment is warned about once.
+    assert answer.get("needsCommentsWarning") is True
+    client.post(f"/api/projects/{pid}/documents/shapes/save", json={"confirmRewrite": True})
+    written = (project_store.folder(pid) / "shapes.ttl").read_text(encoding="utf-8")
+    assert "# Written by hand." not in written and '"Person rules"@en' in written
+
+
+def test_a_refused_first_shape_command_leaves_no_shapes_ttl(pid):
+    # Found in review: the file was made before the command was checked.
+    response = shapes_run(pid, "CreateShape", target="shop:Nothing")
+    assert response.status_code == 422
+    assert not (project_store.folder(pid) / "shapes.ttl").exists()
+    assert all(d["role"] != "shapes" for d in project_store.manifest(pid)["documents"])
+    dry = client.post(f"/api/projects/{pid}/documents/shapes/commands",
+                      json={"command": "CreateShape", "args": {"target": "shop:Person"}, "dryRun": True})
+    assert dry.status_code == 422
+    assert not (project_store.folder(pid) / "shapes.ttl").exists()
+
+
+def test_two_first_shape_commands_at_once_make_shapes_ttl_once(pid):
+    import threading
+
+    answers = []
+    barrier = threading.Barrier(2)
+
+    def first():
+        barrier.wait()
+        answers.append(shapes_run(pid, "CreateShape", target="shop:Person").status_code)
+
+    threads = [threading.Thread(target=first) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert answers == [200, 200]
+    assert [d["role"] for d in project_store.manifest(pid)["documents"]].count("shapes") == 1
+    assert len(list(shapes_graph(pid).subjects(RDF.type, SH.NodeShape))) == 2

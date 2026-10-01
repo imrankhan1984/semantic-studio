@@ -88,6 +88,7 @@ EXPECTED OUTPUT
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import json
 import re
@@ -117,7 +118,7 @@ from .projects import (
     graph_counts,
     valid_lang,
 )
-from . import modeling_checks
+from . import modeling_checks, shacl, shapes_form
 from .canvas import build_canvas, restrict
 from .imports import imports_service, load_state
 from .store import Ontology, OntologyStore, ParseTimeout
@@ -544,14 +545,34 @@ class Change:
 class Context:
     """What a command reads: the graph, the project, and name resolution."""
 
-    def __init__(self, graph: Graph, manifest: dict, imported: Callable[[], Optional[Graph]]):
+    def __init__(
+        self,
+        graph: Graph,
+        manifest: dict,
+        imported: Callable[[], Optional[Graph]],
+        doc: str = "model",
+        model: Optional[Callable[[], Graph]] = None,
+    ):
         self.graph = graph
         self.manifest = manifest
         self.primary = manifest.get("primaryLanguage", "en")
+        self.languages = [self.primary, *manifest.get("languages", [])]
         self.base = manifest["baseIri"]
+        self.doc = doc
         self._imported = imported
         self._imported_view: Optional[Graph] = None
         self._imported_read = False
+        self._model = model
+        self._model_view: Optional[Graph] = None
+
+    @property
+    def model(self) -> Graph:
+        """What a shape is about (shacl-authoring 5.3): the model document
+        with its resolved imports, for target classes, paths and names. The
+        document itself when it is the model."""
+        if self._model_view is None:
+            self._model_view = self._model() if self._model is not None else self.graph
+        return self._model_view
 
     @property
     def imported(self) -> Optional[Graph]:
@@ -1479,6 +1500,416 @@ def cmd_delete_entity(ctx: Context, a: dict) -> Change:
     return delete_plan(ctx, a)[0]
 
 
+# --- SHACL shapes, one shape and one rule at a time (shacl-authoring 5.2, 5.3, D-093) ----
+
+SH = shapes_form.SH
+SEVERITY_TERMS = {"violation": SH.Violation, "warning": SH.Warning}
+_COUNTS = ("minCount", "maxCount", "minLength", "maxLength")
+
+
+def _shapes_ctx(ctx: Context) -> None:
+    if ctx.doc != "shapes":
+        raise CommandError("Shapes live in shapes.ttl; run shape commands on the shapes document.")
+
+
+def _model_name(ctx: Context, iri) -> str:
+    return pick_label_in(ctx.model, iri, ctx.languages)[0]
+
+
+def _closure(g: Graph, root) -> set:
+    """Every triple reachable from a blank node through blank-node objects:
+    one rule's property shape with its lists and qualified shapes."""
+    found: set = set()
+    queue = [root]
+    seen = set()
+    while queue:
+        node = queue.pop()
+        if node in seen or not isinstance(node, BNode):
+            continue
+        seen.add(node)
+        for t in g.triples((node, None, None)):
+            found.add(t)
+            queue.append(t[2])
+    return found
+
+
+def _shape(ctx: Context, a: dict, editable: bool = True):
+    """The shape a command names, refused when the form cannot edit it (5.5)."""
+    _shapes_ctx(ctx)
+    node = shapes_form.find_shape(ctx.graph, a.get("shape"))
+    if node is None:
+        raise CommandError("There is no such shape in shapes.ttl.")
+    if editable:
+        shape = shapes_form.read_shape(ctx.graph, node, ctx.model, lambda i: _model_name(ctx, i), ctx.languages)
+        if not shape["editable"]:
+            raise CommandError(
+                f"{shape['name']} is written in Turtle with parts the form cannot edit "
+                f"({'; '.join(shape['unsupported'])}). Change it in the Turtle editor."
+            )
+    return node
+
+
+def _shape_label(ctx: Context, node) -> str:
+    label = ctx.graph.value(node, RDFS.label)
+    return str(label) if label is not None else ctx.short(node) if isinstance(node, URIRef) else "the shape"
+
+
+def _rdf_list(items: list) -> tuple:
+    """An RDF list's head and its triples, on fresh blank nodes."""
+    if not items:
+        return RDF.nil, []
+    cells = [BNode() for _ in items]
+    triples = []
+    for i, (cell, item) in enumerate(zip(cells, items)):
+        triples.append((cell, RDF.first, item))
+        triples.append((cell, RDF.rest, cells[i + 1] if i + 1 < len(cells) else RDF.nil))
+    return cells[0], triples
+
+
+def _path_node(path: tuple) -> tuple:
+    if len(path) == 1:
+        return path[0], []
+    head, triples = _rdf_list(list(path))
+    node = BNode()
+    return node, [(node, SH.alternativePath, head), *triples]
+
+
+def _rule_path(ctx: Context, value) -> tuple:
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list) or not value or not all(isinstance(v, str) for v in value):
+        raise CommandError("A rule needs the attribute or relationship it is about.")
+    return tuple(ctx.iri(v, "path") for v in value)
+
+
+def _count(value, what: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise CommandError(f"The {what} is a whole number, 0 or more.")
+    return value
+
+
+def _bound(value, what: str) -> Literal:
+    if not isinstance(value, dict) or not isinstance(value.get("value"), str) or not value["value"].strip():
+        raise CommandError(f"The {what} needs a value.")
+    name = _datatype_name(value.get("datatype") or "decimal")
+    if name not in ("integer", "decimal", "date", "dateTime"):
+        raise CommandError(f"The {what} is a number or a date.")
+    raw = value["value"].strip()
+    check_lexical(raw, name)
+    return Literal(raw, datatype=OFFERED_DATATYPES[name])
+
+
+def _languages(value, what: str) -> list:
+    if not isinstance(value, list) or not value:
+        raise CommandError(f"Choose at least one language for {what}.")
+    out = []
+    for tag in value:
+        if not isinstance(tag, str) or not valid_lang(tag):
+            raise CommandError(f'"{tag}" is not a well-formed language tag (for example en or fr).')
+        if tag not in out:
+            out.append(tag)
+    return out
+
+
+def _rule_triples(ctx: Context, node, rule, severity) -> tuple[tuple, list]:
+    """One rule as SHACL (5.3): one property shape on the path with every
+    kind chosen, and one more per language required (shapes_form)."""
+    if not isinstance(rule, dict):
+        raise CommandError("A rule is an object: the path and what is checked on it.")
+    path = _rule_path(ctx, rule.get("path"))
+    prop = BNode()
+    path_node, triples = _path_node(path)
+    body = [(prop, SH.path, path_node), *triples]
+    counts = {key: _count(rule[key], key) for key in _COUNTS if rule.get(key) is not None}
+    words = {"minCount": "at least", "maxCount": "at most"}
+    if "minCount" in counts and "maxCount" in counts and counts["minCount"] > counts["maxCount"]:
+        raise CommandError(
+            f"{words['minCount'].capitalize()} {counts['minCount']} is more than "
+            f"{words['maxCount']} {counts['maxCount']}; the rule could never be met."
+        )
+    if "minLength" in counts and "maxLength" in counts and counts["minLength"] > counts["maxLength"]:
+        raise CommandError("The shortest length is longer than the longest; the rule could never be met.")
+    for key in _COUNTS:
+        if key in counts:
+            body.append((prop, SH[key], Literal(counts[key], datatype=XSD.integer)))
+    if rule.get("datatype"):
+        value = rule["datatype"]
+        datatype = RDF.langString if value in ("rdf:langString", str(RDF.langString)) else (
+            OFFERED_DATATYPES[_datatype_name(value)])
+        body.append((prop, SH.datatype, datatype))
+    if rule.get("class"):
+        cls = ctx.iri(rule["class"], "class")
+        if not ((cls, None, None) in ctx.model or str(cls).startswith(tuple(WELL_KNOWN.values()))):
+            raise CommandError(f"There is no class {ctx.short(cls)} in the model or its imports.")
+        body.append((prop, SH["class"], cls))
+    if rule.get("pattern"):
+        pattern = rule["pattern"]
+        if not isinstance(pattern, str):
+            raise CommandError("A pattern is a regular expression.")
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise CommandError(f"The pattern is not a regular expression this tool can read: {exc}.") from exc
+        body.append((prop, SH.pattern, Literal(pattern)))
+    low = _bound(rule["minInclusive"], "minimum") if rule.get("minInclusive") else None
+    high = _bound(rule["maxInclusive"], "maximum") if rule.get("maxInclusive") else None
+    if low is not None and high is not None:
+        try:
+            if low.toPython() > high.toPython():
+                raise CommandError("The minimum is above the maximum; the rule could never be met.")
+        except TypeError:
+            raise CommandError("The minimum and the maximum must be the same kind of value.") from None
+    if low is not None:
+        body.append((prop, SH.minInclusive, low))
+    if high is not None:
+        body.append((prop, SH.maxInclusive, high))
+    if rule.get("in") is not None:
+        values = rule["in"]
+        if not isinstance(values, list) or not values:
+            raise CommandError("List at least one allowed value.")
+        terms = [parse_value(v, ctx.primary, lambda raw: ctx.iri(raw, "value")) for v in values]
+        # sh:in compares terms exactly, and rdflib keeps Turtle's "active"
+        # apart from "active"^^xsd:string though RDF 1.1 makes them one
+        # value: a list of xsd:string refused every value typed in Turtle.
+        # Written plain, as Turtle writes text.
+        terms = [Literal(str(t)) if isinstance(t, Literal) and t.datatype == XSD.string else t for t in terms]
+        head, cells = _rdf_list(list(dict.fromkeys(terms)))
+        body += [(prop, SH["in"], head), *cells]
+    if rule.get("languageIn") is not None:
+        tags = _languages(rule["languageIn"], "the allowed languages")
+        head, cells = _rdf_list([Literal(t) for t in tags])
+        body += [(prop, SH.languageIn, head), *cells]
+    if rule.get("uniqueLang"):
+        body.append((prop, SH.uniqueLang, Literal(True)))
+    extra: list = []
+    if rule.get("requiredLanguages") is not None:
+        for tag in _languages(rule["requiredLanguages"], "a name in each language"):
+            q, inner = BNode(), BNode()
+            q_path, q_triples = _path_node(path)
+            head, cells = _rdf_list([Literal(tag)])
+            extra += [
+                (node, SH.property, q), (q, SH.path, q_path), *q_triples,
+                (q, SH.qualifiedValueShape, inner), (inner, SH.languageIn, head), *cells,
+                (q, SH.qualifiedMinCount, Literal(1, datatype=XSD.integer)),
+            ]
+            if severity is not None:
+                extra.append((q, SH.severity, severity))
+    if len(body) == 1 + len(triples) and not extra:
+        raise CommandError("A rule needs at least one thing to check.")
+    if len(body) > 1 + len(triples):
+        body.append((node, SH.property, prop))
+        if severity is not None:
+            body.append((prop, SH.severity, severity))
+    else:
+        body = []
+    return path, body + extra
+
+
+def _rules_on(ctx: Context, node, path: tuple) -> list:
+    """Every property shape of the shape on this path, as its triples."""
+    triples = []
+    for prop in ctx.graph.objects(node, SH.property):
+        if shapes_form.path_of(ctx.graph, ctx.graph.value(prop, SH.path)) == path:
+            triples.append((node, SH.property, prop))
+            triples += _closure(ctx.graph, prop)
+    return triples
+
+
+def _severity_of(ctx: Context, node):
+    value = ctx.graph.value(node, SH.severity)
+    return value if value == SH.Warning else None
+
+
+def _read_rules(ctx: Context, node) -> dict:
+    rules = shapes_form.read_rules(ctx.graph, node, ctx.model, lambda i: _model_name(ctx, i), ctx.languages)[0]
+    return {tuple(URIRef(p) for p in r["path"]): r for r in rules}
+
+
+def _bind_shapes(ctx: Context) -> None:
+    """The prefixes a shapes file reads well with. Not a statement, so not
+    part of the delta; longturtle writes them on the next save."""
+    for prefix, namespace in (("sh", SH), ("xsd", XSD), ("rdfs", RDFS), ("owl", OWL), ("skos", SKOS)):
+        ctx.graph.bind(prefix, namespace, override=False)
+    if ctx.manifest.get("prefix"):
+        ctx.graph.bind(ctx.manifest["prefix"], ctx.base, override=False)
+
+
+def cmd_create_shape(ctx: Context, a: dict) -> Change:
+    """A shape for a class (or concepts), or the ready model check (5.2)."""
+    _shapes_ctx(ctx)
+    preset = a.get("preset")
+    if preset not in (None, "modelCheck"):
+        raise CommandError("The preset is modelCheck, or none.")
+    taxonomy = ctx.manifest.get("kind") == "taxonomy"
+    if preset == "modelCheck":
+        target = SKOS.Concept if taxonomy else OWL.Class
+    else:
+        target = ctx.iri(a.get("target"), "class")
+        if target not in (SKOS.Concept, OWL.Class) and (target, None, None) not in ctx.model:
+            raise CommandError(f"There is no class {ctx.short(target)} in the model or its imports.")
+    name = a.get("name")
+    if name is not None and (not isinstance(name, str) or not name.strip()):
+        raise CommandError("A shape's name cannot be empty.")
+    if name is None:
+        name = ("Check my model" if preset else
+                "Concept rules" if target == SKOS.Concept else f"{_model_name(ctx, target)} rules")
+    name = name.strip()
+    local = shapes_form.local_name(name) or "Shape"
+    iri = URIRef(ctx.base + local)
+    n = 2
+    while ctx.mentioned(iri) or (iri, None, None) in ctx.model:
+        iri = URIRef(f"{ctx.base}{local}{n}")
+        n += 1
+    adds = [
+        (iri, RDF.type, SH.NodeShape),
+        (iri, RDFS.label, Literal(name, lang=ctx.primary)),
+        (iri, SH.targetClass, target),
+    ]
+    if preset == "modelCheck":
+        definition = {"path": [str(p) for p in shapes_form.DEFINITION_PATH], "minCount": 1}
+        if taxonomy:
+            names = {"path": [str(SKOS.prefLabel)], "requiredLanguages": list(ctx.languages)}
+        else:
+            names = {"path": [str(RDFS.label)], "requiredLanguages": [ctx.primary]}
+        for rule in (names, definition):
+            adds += _rule_triples(ctx, iri, rule, None)[1]
+    _bind_shapes(ctx)
+    return _created(_change(ctx.graph, f"Created shape {name}", adds), iri)
+
+
+def cmd_set_shape_target(ctx: Context, a: dict) -> Change:
+    node = _shape(ctx, a)
+    target = ctx.iri(a.get("target"), "class")
+    if target not in (SKOS.Concept, OWL.Class) and (target, None, None) not in ctx.model:
+        raise CommandError(f"There is no class {ctx.short(target)} in the model or its imports.")
+    old = [(node, SH.targetClass, o) for o in ctx.graph.objects(node, SH.targetClass)]
+    return _change(
+        ctx.graph, f"Made {_shape_label(ctx, node)} apply to {_model_name(ctx, target)}",
+        [(node, SH.targetClass, target)], old,
+    )
+
+
+def cmd_set_shape_name(ctx: Context, a: dict) -> Change:
+    node = _shape(ctx, a)
+    value = a.get("value")
+    if not isinstance(value, str) or not value.strip():
+        raise CommandError("A shape's name cannot be empty.")
+    old = [(node, RDFS.label, o) for o in ctx.graph.objects(node, RDFS.label)]
+    return _change(
+        ctx.graph, f"Renamed shape {_shape_label(ctx, node)} to {value.strip()}",
+        [(node, RDFS.label, Literal(value.strip(), lang=ctx.primary))], old,
+    )
+
+
+def cmd_set_shape_severity(ctx: Context, a: dict) -> Change:
+    """Problem or Warning (5.3). SHACL reads a severity per shape, so it is
+    written on the node shape and on every rule's property shape."""
+    node = _shape(ctx, a)
+    severity = a.get("severity")
+    if severity not in SEVERITY_TERMS:
+        raise CommandError("The severity is violation (a problem) or warning.")
+    props = list(ctx.graph.objects(node, SH.property))
+    removes = [(s, SH.severity, o) for s in (node, *props) for o in ctx.graph.objects(s, SH.severity)]
+    adds = [] if severity == "violation" else [(s, SH.severity, SH.Warning) for s in (node, *props)]
+    word = "a problem" if severity == "violation" else "a warning"
+    return _change(ctx.graph, f"Made a failure of {_shape_label(ctx, node)} {word}", adds, removes)
+
+
+def cmd_set_shape_message(ctx: Context, a: dict) -> Change:
+    node = _shape(ctx, a)
+    value = a.get("value")
+    if value is not None and not isinstance(value, str):
+        raise CommandError("A message is text.")
+    old = [(node, SH.message, o) for o in ctx.graph.objects(node, SH.message)]
+    if not value or not value.strip():
+        if not old:
+            raise CommandError(f"{_shape_label(ctx, node)} has no message to remove.")
+        return _change(ctx.graph, f"Removed the message of {_shape_label(ctx, node)}", removes=old)
+    return _change(
+        ctx.graph, f"Set the message of {_shape_label(ctx, node)}",
+        [(node, SH.message, Literal(value.strip(), lang=ctx.primary))], old,
+    )
+
+
+def _merged(existing: dict, rule: dict) -> dict:
+    out = {k: v for k, v in existing.items() if k not in ("pathLabel", "pathKind", "classLabel")}
+    for key, value in rule.items():
+        if key in ("requiredLanguages", "languageIn") and out.get(key):
+            out[key] = list(dict.fromkeys([*out[key], *value]))
+        elif key not in ("pathLabel", "pathKind", "classLabel"):
+            out[key] = value
+    return out
+
+
+def cmd_add_rule(ctx: Context, a: dict) -> Change:
+    """One rule (5.3). With `merge`, a rule already on the path takes the new
+    parts in the same step -- what Add on a suggestion does (5.4)."""
+    node = _shape(ctx, a)
+    rule = a.get("rule")
+    if not isinstance(rule, dict):
+        raise CommandError("A rule is an object: the path and what is checked on it.")
+    path = _rule_path(ctx, rule.get("path"))
+    existing = _read_rules(ctx, node).get(path)
+    removes: list = []
+    if existing is not None:
+        if not a.get("merge"):
+            raise CommandError(f"There is already a rule on {existing['pathLabel']}; edit that one.")
+        rule = _merged(existing, rule)
+        removes = _rules_on(ctx, node, path)
+    _, adds = _rule_triples(ctx, node, rule, _severity_of(ctx, node))
+    label = shapes_form.path_label(ctx.model, path, ctx.languages)
+    return _change(ctx.graph, f"Added a rule on {label} to {_shape_label(ctx, node)}", adds, removes)
+
+
+def cmd_replace_rule(ctx: Context, a: dict) -> Change:
+    node = _shape(ctx, a)
+    path = _rule_path(ctx, a.get("path"))
+    rules = _read_rules(ctx, node)
+    if path not in rules:
+        raise CommandError(f"{_shape_label(ctx, node)} has no rule on that path to change.")
+    new_path, adds = _rule_triples(ctx, node, a.get("rule"), _severity_of(ctx, node))
+    if new_path != path and new_path in rules:
+        raise CommandError(f"There is already a rule on {rules[new_path]['pathLabel']}; edit that one.")
+    label = shapes_form.path_label(ctx.model, new_path, ctx.languages)
+    return _change(ctx.graph, f"Changed the rule on {label} of {_shape_label(ctx, node)}",
+                   adds, _rules_on(ctx, node, path))
+
+
+def cmd_remove_rule(ctx: Context, a: dict) -> Change:
+    node = _shape(ctx, a)
+    path = _rule_path(ctx, a.get("path"))
+    removes = _rules_on(ctx, node, path)
+    if not removes:
+        raise CommandError(f"{_shape_label(ctx, node)} has no rule on that path to remove.")
+    label = shapes_form.path_label(ctx.model, path, ctx.languages)
+    return _change(ctx.graph, f"Removed the rule on {label} from {_shape_label(ctx, node)}", removes=removes)
+
+
+def cmd_delete_shape(ctx: Context, a: dict) -> Change:
+    """The shape, its rules and what only they reached. Allowed for a shape
+    written in Turtle too: deleting is not rewriting what the form cannot
+    read, and the dialog has counted the rules first."""
+    node = _shape(ctx, a, editable=False)
+    g = ctx.graph
+    removes = set(g.triples((node, None, None))) | set(g.triples((None, None, node)))
+    for _, _, o in g.triples((node, None, None)):
+        removes |= _closure(g, o)
+    return _change(g, f"Deleted shape {_shape_label(ctx, node)}", removes=list(removes))
+
+
+SHAPE_COMMANDS = {
+    "CreateShape": cmd_create_shape,
+    "SetShapeTarget": cmd_set_shape_target,
+    "SetShapeName": cmd_set_shape_name,
+    "SetShapeSeverity": cmd_set_shape_severity,
+    "SetShapeMessage": cmd_set_shape_message,
+    "AddRule": cmd_add_rule,
+    "ReplaceRule": cmd_replace_rule,
+    "RemoveRule": cmd_remove_rule,
+    "DeleteShape": cmd_delete_shape,
+}
+
+
 COMMANDS: dict[str, Callable[[Context, dict], Change]] = {
     "CreateClass": cmd_create_class,
     "CreateObjectProperty": cmd_create_object_property,
@@ -1511,6 +1942,7 @@ COMMANDS: dict[str, Callable[[Context, dict], Change]] = {
     "RemoveMapping": cmd_remove_mapping,
     "RenameIri": cmd_rename_iri,
     "DeleteEntity": cmd_delete_entity,
+    **SHAPE_COMMANDS,
 }
 
 
@@ -1745,7 +2177,19 @@ class EditingService:
                 return None
             return imports_service.merged(document.ontology)["graph"]
 
-        return Context(document.graph, manifest, imported)
+        model = None
+        if document.doc != "model":
+            model_doc = self._open[document.pid]["model"]
+            model = lambda: self._model_view(model_doc)  # noqa: E731
+        return Context(document.graph, manifest, imported, document.doc, model)
+
+    @staticmethod
+    def _model_view(model_doc: "OpenDocument") -> Graph:
+        """The model with its resolved imports, read only (D-068), or the
+        model alone while none are resolved."""
+        if load_state(model_doc.ontology):
+            return imports_service.merged(model_doc.ontology)["graph"]
+        return model_doc.graph
 
     def _apply(self, document: OpenDocument, change: Change, *, origin: str) -> None:
         graph = document.graph
@@ -1763,13 +2207,19 @@ class EditingService:
         self._arm(document)
 
     def command(self, pid: str, doc: str, name: str, args: dict, dry_run: bool = False) -> dict:
-        document = self.document(pid, doc)
         handler = COMMANDS.get(name)
         if handler is None:
             raise CommandError(f"There is no command called {name}.")
         if not isinstance(args, dict):
             raise CommandError("A command's arguments are an object.")
-        with document.lock:
+        if doc == "shapes" and name in SHAPE_COMMANDS and pid in self._open and "shapes" not in self._open[pid]:
+            self._first_shapes_command(pid, handler, args, dry_run)
+        document = self.document(pid, doc)
+        # A shape command reads the model (targets, paths, names) as well:
+        # its lock too, always after the shapes document's, so a model edit
+        # never changes what the command is checking against.
+        model_lock = self._open[pid]["model"].lock if doc != "model" else contextlib.nullcontext()
+        with document.lock, model_lock:
             ctx = self._context(document)
             if name == "DeleteEntity":
                 change, impact = delete_plan(ctx, args)
@@ -1798,6 +2248,27 @@ class EditingService:
             if change.created is not None:
                 result["created"] = str(change.created)
             return result
+
+    def _first_shapes_command(self, pid: str, handler, args: dict, dry_run: bool) -> None:
+        """The first shape command creates shapes.ttl (shacl-authoring 8) --
+        only once it is known to succeed. It is checked first against an
+        empty shapes document, so a refused command or a dry run leaves no
+        file behind, and the file is made under the service lock, so two
+        first commands at once make it once (both found in review)."""
+        if dry_run:
+            raise CommandError("Only DeleteEntity has a dry run.")
+        model_doc = self._open[pid]["model"]
+        manifest = self.projects.manifest(pid)
+        with model_doc.lock:
+            probe = Context(Graph(), manifest, lambda: None, "shapes", lambda: self._model_view(model_doc))
+            handler(probe, args)  # raises CommandError, the sentence, before anything is made
+        with self._lock:
+            if "shapes" in self._open.get(pid, {}):
+                return
+            self.projects.add_document(pid, "shapes")
+            document = self._load(pid, "shapes", self.projects.manifest(pid))
+            self._open[pid]["shapes"] = document
+        self.store.register_document(document.ontology)
 
     def apply_text(self, pid: str, doc: str, text: str, timeout: Optional[float]) -> dict:
         document = self.document(pid, doc)
@@ -2105,6 +2576,93 @@ class EditingService:
         if kept != layout["positions"] or shown != layout["shown"]:
             layout["positions"], layout["shown"] = kept, shown
             self.projects.write_layout(document.pid, document.doc, layout)
+
+    # --- SHACL shapes and validation (shacl-authoring 5.1 to 5.7) ---------------------
+
+    def _project_documents(self, pid: str) -> dict:
+        documents = self._open.get(pid)
+        if documents is None:
+            self.projects.folder(pid)  # UnknownProject first, if it is that
+            raise NotOpen(pid)
+        return documents
+
+    def shapes_view(self, pid: str) -> dict:
+        """Every listed shape in the form's structure (5.1, 5.5). An empty
+        list, not an error, while the project has no shapes.ttl."""
+        documents = self._project_documents(pid)
+        manifest = self.projects.manifest(pid)
+        languages = [manifest.get("primaryLanguage", "en"), *manifest.get("languages", [])]
+        model_doc = documents["model"]
+        shapes_doc = documents.get("shapes")
+        if shapes_doc is None:
+            return {"revision": None, "modelRevision": model_doc.ontology.revision,
+                    "kind": manifest.get("kind"), "shapes": []}
+        with shapes_doc.lock, model_doc.lock:
+            model = self._model_view(model_doc)
+            names = lambda iri: pick_label_in(model, iri, languages)[0]  # noqa: E731
+            shapes = [
+                shapes_form.read_shape(shapes_doc.graph, node, model, names, languages)
+                for node in shapes_form.listed_shapes(shapes_doc.graph)
+            ]
+            return {
+                "revision": shapes_doc.ontology.revision,
+                "modelRevision": model_doc.ontology.revision,
+                "kind": manifest.get("kind"),
+                "shapes": shapes,
+            }
+
+    def shape_suggestions(self, pid: str, target: Optional[str], shape: Optional[str] = None) -> dict:
+        """What a rule can be about for a target, and the rules the model
+        suggests that the shape does not already have (5.4)."""
+        documents = self._project_documents(pid)
+        manifest = self.projects.manifest(pid)
+        languages = [manifest.get("primaryLanguage", "en"), *manifest.get("languages", [])]
+        model_doc = documents["model"]
+        shapes_doc = documents.get("shapes")
+        # The shapes document's lock before the model's, the order every
+        # shape command takes them in.
+        shapes_lock = shapes_doc.lock if shapes_doc is not None else contextlib.nullcontext()
+        with shapes_lock, model_doc.lock:
+            model = self._model_view(model_doc)
+            ctx = Context(model_doc.graph, manifest, lambda: None)
+            target_iri = ctx.iri(target, "class")
+            names = lambda iri: pick_label_in(model, iri, languages)[0]  # noqa: E731
+            existing: list = []
+            if shape and shapes_doc is not None:
+                node = shapes_form.find_shape(shapes_doc.graph, shape)
+                if node is not None:
+                    existing = shapes_form.read_rules(shapes_doc.graph, node, model, names, languages)[0]
+            return shapes_form.suggestions(model, target_iri, existing, names, languages)
+
+    def validate(self, pid: str, timeout: Optional[float] = None) -> dict:
+        """Check the model, unsaved changes and resolved imports included,
+        against every shape (5.6). Copies are taken under each document's
+        lock, one at a time, and checked outside both, so a long check never
+        holds up an edit and an edit never changes a check half way."""
+        documents = self._project_documents(pid)
+        manifest = self.projects.manifest(pid)
+        languages = [manifest.get("primaryLanguage", "en"), *manifest.get("languages", [])]
+        model_doc = documents["model"]
+        data = Graph()
+        with model_doc.lock:
+            for prefix, namespace in model_doc.graph.namespaces():
+                data.bind(prefix, namespace)
+            for t in self._model_view(model_doc):
+                data.add(t)
+            model_revision = model_doc.ontology.revision
+        shapes = Graph()
+        shapes_revision = None
+        shapes_doc = documents.get("shapes")
+        if shapes_doc is not None:
+            with shapes_doc.lock:
+                for prefix, namespace in shapes_doc.graph.namespaces():
+                    shapes.bind(prefix, namespace)
+                for t in shapes_doc.graph:
+                    shapes.add(t)
+                shapes_revision = shapes_doc.ontology.revision
+        result = shacl.validate(data, shapes, languages, timeout)
+        result["revisions"] = {"model": model_revision, "shapes": shapes_revision}
+        return result
 
     # --- what the forms and the language menu read --------------------------------
 

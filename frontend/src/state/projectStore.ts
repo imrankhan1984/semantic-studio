@@ -7,8 +7,9 @@ SUMMARY
     The open project and its documents, as a small external store read through
     useSyncExternalStore (D-084): which project is open, each document's
     revision and dirty flag, the undo and redo labels, the save status, the
-    display language, the editor's unapplied text, and the sentence the live
-    region last announced.
+    display language, the editor's unapplied text, the sentence the live
+    region last announced, and the last SHACL validation (shacl-authoring
+    5.6), which lives for the session and is never saved.
 
 BASIC IDEA
     New state only. App.tsx keeps everything it held before; this holds what
@@ -22,7 +23,9 @@ BASIC IDEA
     never one counted in the browser (D-081). The actions are plain async
     functions; a component calls them and re-renders from the snapshot.
     `command` is the editing form's and the tree's one way to change the
-    model (visual-modeling 5.1, 5.2): the same bookkeeping as an undo.
+    model (visual-modeling 5.1, 5.2): the same bookkeeping as an undo. It
+    takes a document as well, for the Shapes view's commands on shapes.ttl;
+    the first one creates that file, and the store then tracks it.
 
     Something holding writes for the open project -- the canvas, which saves
     its layout a second after a move -- registers a flush, and close() awaits
@@ -55,12 +58,15 @@ import {
   setDisplayLanguage as setApiLanguage,
   undoChange,
   updateProject,
+  validateProject,
 } from "../api";
+import { validationSummary } from "../modeling/shapeSentences";
 import type {
   ChangeResult,
   ProjectDocName,
   ProjectDocumentState,
   ProjectSummary,
+  ValidationResult,
 } from "../types";
 
 export type SaveStatus = "saved" | "unsaved" | "saving";
@@ -81,6 +87,15 @@ export interface ProjectSnapshot {
    *  changes." A counter beside it so the same sentence twice is announced
    *  twice. */
   announcement: { text: string; id: number };
+  /** The last validation (shacl-authoring 5.6, D-094): kept for the session
+   *  only, never written to disk, and shown in the Shapes view and under the
+   *  Turtle editor alike. */
+  validation: ValidationResult | null;
+  validating: boolean;
+  /** Where the Turtle editor should put its cursor once it has its text:
+   *  what a shape is written as (its prefixed name, its IRI), for *Edit in
+   *  Turtle* (5.5). Searched with indexOf, never as a pattern. */
+  editorTarget: { find: string[]; token: number } | null;
 }
 
 const EMPTY: ProjectSnapshot = {
@@ -93,6 +108,9 @@ const EMPTY: ProjectSnapshot = {
   commentsWarning: null,
   editorDraft: null,
   announcement: { text: "", id: 0 },
+  validation: null,
+  validating: false,
+  editorTarget: null,
 };
 
 let snapshot: ProjectSnapshot = EMPTY;
@@ -270,9 +288,17 @@ export const projectStore = {
     name: string,
     args: Record<string, unknown>,
     announcement?: (result: ChangeResult) => string,
+    doc?: ProjectDocName,
   ): Promise<ChangeResult> {
     const project = requireProject();
-    const result = await runCommand(project.id, snapshot.activeDoc, name, args);
+    const target = doc ?? snapshot.activeDoc;
+    const result = await runCommand(project.id, target, name, args);
+    if (!snapshot.documents.some((d) => d.doc === target)) {
+      // The first shape command made shapes.ttl (shacl-authoring 8): track
+      // it from a fresh open, as Add shapes.ttl does.
+      const opened = await openProject(project.id);
+      set({ project: opened.project, documents: opened.documents });
+    }
     if (announcement) {
       set({ documents: withDocument(result.state) });
       announce(announcement(result));
@@ -280,6 +306,34 @@ export const projectStore = {
       afterChange(result, "");
     }
     return result;
+  },
+
+  /** Validate the open project, on demand only (5.6). The previous result
+   *  stays, dimmed by the views, until this one replaces it; the live region
+   *  reads the summary (Section 6). */
+  async validate(): Promise<ValidationResult> {
+    const project = requireProject();
+    set({ validating: true });
+    announce("Validating…");
+    try {
+      const result = await validateProject(project.id);
+      if (snapshot.project?.id === project.id) set({ validation: result });
+      announce(validationSummary(result));
+      return result;
+    } finally {
+      set({ validating: false });
+    }
+  },
+
+  /** Ask the Turtle editor to move to what a shape is written as. */
+  showInEditor(find: string[]): void {
+    set({ editorTarget: { find, token: (snapshot.editorTarget?.token ?? 0) + 1 } });
+  },
+
+  /** The editor has moved to the target: it is spent, so a later visit to
+   *  the editor does not move the caret again (found in review). */
+  editorTargetShown(): void {
+    if (snapshot.editorTarget !== null) set({ editorTarget: null });
   },
 
   setEditorDraft(text: string | null): void {
