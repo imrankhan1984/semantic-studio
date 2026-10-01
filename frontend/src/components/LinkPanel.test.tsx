@@ -139,4 +139,39 @@ describe("LinkPanel", () => {
     expect(screen.getByText(reason)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Remove this link" })).toBeNull();
   });
+
+  it("reads a related line and removes it both ways with one RemoveRelated (5.8)", async () => {
+    runCommand.mockResolvedValue({ revision: 3, label: "Removed", state: STATE });
+    render(
+      <LinkPanel
+        link={{ kind: "related", source: EX + "Apple", target: EX + "Orchard", sourceLabel: "Apple", targetLabel: "Orchard" }}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Apple is related to Orchard" })).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove this link" }));
+    });
+    expect(runCommand.mock.calls[0].slice(2)).toEqual(["RemoveRelated", { concept: EX + "Apple", related: EX + "Orchard" }]);
+  });
+
+  it("item 5: a refusal for one line is gone when another line is shown", async () => {
+    runCommand.mockRejectedValueOnce(new Error("Employee is not a subclass of Person."));
+    const { rerender } = render(<LinkPanel link={SUBCLASS} onSelect={vi.fn()} onClose={vi.fn()} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove this link" }));
+    });
+    expect(screen.getByRole("alert")).toBeTruthy();
+    await act(async () => {
+      rerender(
+        <LinkPanel
+          link={{ kind: "broader", source: EX + "Apple", target: EX + "Fruit", sourceLabel: "Apple", targetLabel: "Fruit" }}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />,
+      );
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });

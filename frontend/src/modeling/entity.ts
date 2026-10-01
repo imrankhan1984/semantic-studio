@@ -8,7 +8,9 @@ SUMMARY
     of the detail panel's statements: its kind, whether it can be edited here,
     its names per project language, its definition, its other annotations, and
     its structure (parents, attributes, relationships, domain and range,
-    broader concepts).
+    broader concepts), and for Stage B of relationships-and-project-kinds a
+    property's other way round, characteristics and more general property,
+    and a concept's related concepts, mappings and top-concept schemes.
 
 BASIC IDEA
     The detail panel already fetches every statement about the entity, and
@@ -22,8 +24,8 @@ BASIC IDEA
 
     The annotations block is every statement that is not already a block of
     its own: not a name shown under Names, not the definition, not structure
-    (rdf:type, subClassOf, domain, range, broader, scheme), and not an OWL
-    axiom. What is left is exactly what AddAnnotation, ReplaceAnnotation and
+    (rdf:type, subClassOf, domain, range, broader, scheme, related, the
+    mappings), and not an OWL axiom. What is left is exactly what AddAnnotation, ReplaceAnnotation and
     RemoveAnnotation can address. A value whose datatype is not one of the
     seven the command layer offers is listed but not editable here; Turtle
     edits it.
@@ -38,6 +40,7 @@ EXPECTED OUTPUT
 */
 
 import type { AnnotationValue, NodeDetails, TermRef } from "../types";
+import type { Characteristic } from "./sentences";
 import { datatypeName } from "./values";
 
 const RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
@@ -60,7 +63,29 @@ export const P = {
   inScheme: `${SKOS}inScheme`,
   topConceptOf: `${SKOS}topConceptOf`,
   hasTopConcept: `${SKOS}hasTopConcept`,
+  inverseOf: `${OWL}inverseOf`,
+  related: `${SKOS}related`,
 } as const;
+
+/** The characteristics a property can carry, by the rdf:type each is (5.6). */
+export const CHARACTERISTIC_TYPES: Record<string, Characteristic> = {
+  [`${OWL}FunctionalProperty`]: "functional",
+  [`${OWL}InverseFunctionalProperty`]: "inverseFunctional",
+  [`${OWL}SymmetricProperty`]: "symmetric",
+  [`${OWL}TransitiveProperty`]: "transitive",
+  [`${OWL}AsymmetricProperty`]: "asymmetric",
+  [`${OWL}IrreflexiveProperty`]: "irreflexive",
+  [`${OWL}ReflexiveProperty`]: "reflexive",
+};
+
+/** The five SKOS mapping properties, by the name the commands take (5.8). */
+export const MAPPING_PROPERTIES: Record<string, string> = {
+  [`${SKOS}exactMatch`]: "exactMatch",
+  [`${SKOS}closeMatch`]: "closeMatch",
+  [`${SKOS}broadMatch`]: "broadMatch",
+  [`${SKOS}narrowMatch`]: "narrowMatch",
+  [`${SKOS}relatedMatch`]: "relatedMatch",
+};
 
 const STRUCTURE = new Set<string>([
   P.type,
@@ -73,6 +98,8 @@ const STRUCTURE = new Set<string>([
   P.inScheme,
   P.topConceptOf,
   P.hasTopConcept,
+  P.related,
+  ...Object.keys(MAPPING_PROPERTIES),
 ]);
 
 export interface Ref {
@@ -114,6 +141,16 @@ export interface EntityModel {
   broader: Ref[];
   narrower: Ref[];
   schemes: Ref[];
+  /** The schemes it is a top concept of, written either way round (5.8). */
+  topOf: Ref[];
+  /** owl:inverseOf, read either way round (5.6). */
+  inverses: Ref[];
+  characteristics: Set<Characteristic>;
+  /** rdfs:subPropertyOf: the more general relationship or attribute. */
+  superProperties: Ref[];
+  /** skos:related, read either way round. */
+  related: Ref[];
+  mappings: { kind: string; target: Ref }[];
   /** The panel loads at most 500 statements each way; past that the lists
    *  above are read from part of them, and the form has to say so. */
   partial: boolean;
@@ -245,6 +282,18 @@ export function entityModel(details: NodeDetails, primary: string, languages: st
     broader: uniq([...objects(P.broader), ...subjects(P.narrower)]),
     narrower: uniq([...subjects(P.broader), ...objects(P.narrower)]),
     schemes: uniq([...objects(P.inScheme), ...objects(P.topConceptOf)]),
+    topOf: uniq([...objects(P.topConceptOf), ...subjects(P.hasTopConcept)]),
+    inverses: uniq([...objects(P.inverseOf), ...subjects(P.inverseOf)]).filter((r) => r.iri !== details.iri),
+    characteristics: new Set(
+      out
+        .filter((r) => r.predicate.value === P.type && r.object.type === "uri" && CHARACTERISTIC_TYPES[r.object.value])
+        .map((r) => CHARACTERISTIC_TYPES[r.object.value]),
+    ),
+    superProperties: uniq(objects(P.subPropertyOf)),
+    related: uniq([...objects(P.related), ...subjects(P.related)]).filter((r) => r.iri !== details.iri),
+    mappings: out
+      .filter((r) => MAPPING_PROPERTIES[r.predicate.value] && r.object.type === "uri")
+      .map((r) => ({ kind: MAPPING_PROPERTIES[r.predicate.value], target: ref(r.object) })),
     partial: details.outgoingTotal > out.length || details.incomingTotal > inc.length,
   };
 }

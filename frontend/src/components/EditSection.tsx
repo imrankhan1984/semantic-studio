@@ -31,7 +31,9 @@ BASIC IDEA
     shapes.ttl are decided by DetailPanel, which does not render this at all
     for them.
 
-    The structure blocks are in EditStructure.tsx, the annotation adder in
+    A relationship or an attribute opens on its sentence, PropertyHead in
+    RelationshipForm.tsx; the warnings of the modeling checks stand under the
+    blocks they concern (relationships 5.6, 5.9). The structure blocks are in EditStructure.tsx, the annotation adder in
     AnnotationAdder.tsx, the delete flow in DeleteDialog.tsx, and the pieces
     they share in EditParts.tsx: the spec's "split by block if it grows past
     400 lines".
@@ -57,7 +59,7 @@ EXPECTED OUTPUT
 
 import { useMemo, useState } from "react";
 import { linkTarget } from "../links";
-import { entityModel, type Annotation } from "../modeling/entity";
+import { entityModel, structureOf, type Annotation } from "../modeling/entity";
 import { otherKindReason } from "../modeling/sentences";
 import { describeValue, typeOfValue, valueProblem, toValue } from "../modeling/values";
 import type { CanvasSet, NodeDetails, ProjectKind } from "../types";
@@ -66,6 +68,7 @@ import DeleteDialog from "./DeleteDialog";
 import { Block, InlineText, useCopy, useReturnFocus, useRunner, type Runner } from "./EditParts";
 import EditStructure from "./EditStructure";
 import NewEntityForm from "./NewEntityForm";
+import { PropertyHead } from "./RelationshipForm";
 
 interface Props {
   ontologyId: string;
@@ -226,6 +229,13 @@ export default function EditSection({
         </p>
       )}
 
+      {structureOf(model.kind) === "property" && (
+        // The sentence first (5.6): what the blocks below say. The 5.9
+        // warnings stand under the blocks they concern, and are said when
+        // a change brings one (v0.6).
+        <PropertyHead model={model} name={name} iri={iri} warnings={details.warnings ?? []} />
+      )}
+
       <Block title="Names">
         <dl className="detail-names">
           {model.names.map((n, i) => (
@@ -301,6 +311,7 @@ export default function EditSection({
         runner={runner}
         onSelect={onSelect}
         follow={follow}
+        warnings={details.warnings ?? []}
       />
 
       <Block title="Identifier">

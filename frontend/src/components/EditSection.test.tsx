@@ -360,17 +360,17 @@ describe("Structure (AC-1, AC-3)", () => {
     ]);
   });
 
-  it("changes a datatype property's range to one of the seven datatypes", async () => {
+  it("changes an attribute's type of value to one of the seven datatypes (5.7)", async () => {
     await renderForm(
       details("total", "datatypeProperty", [
         [P.type, uri(OWL + "DatatypeProperty")],
         [P.domain, uri(EX + "Invoice", "class")],
       ]),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Set range" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change the type of value of total" }));
     fireEvent.change(screen.getByRole("combobox", { name: "Type of value" }), { target: { value: "xsd:decimal" } });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Set range" }));
+      fireEvent.click(screen.getByRole("button", { name: "Set type" }));
     });
     expect(lastCommand()).toEqual(["SetRange", { property: EX + "total", target: "xsd:decimal" }]);
   });
@@ -378,8 +378,8 @@ describe("Structure (AC-1, AC-3)", () => {
   it("changes a relationship's domain through a class picker", async () => {
     searchNodes.mockResolvedValue([{ id: EX + "Order", label: "Order", kind: "class", degree: 1 }]);
     await renderForm(details("billedTo", "objectProperty", [[P.type, uri(OWL + "ObjectProperty")]]));
-    fireEvent.click(screen.getByRole("button", { name: "Set domain" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "Domain of billedTo" }), { target: { value: "Or" } });
+    fireEvent.click(screen.getByRole("button", { name: "Set the start of billedTo" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "From (a class)" }), { target: { value: "Or" } });
     const option = await screen.findByRole("option", { name: "Order" });
     await act(async () => {
       fireEvent.mouseDown(option);
@@ -537,7 +537,7 @@ describe("found in review", () => {
     let finish: (value: unknown) => void = () => {};
     runCommand.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
     await renderForm(details("total", "datatypeProperty", [[P.type, uri(OWL + "DatatypeProperty")]]));
-    fireEvent.click(screen.getByRole("button", { name: "Set range" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change the type of value of total" }));
     const form = screen.getByRole("combobox", { name: "Type of value" }).closest("form")!;
     await act(async () => {
       fireEvent.submit(form);
@@ -696,14 +696,14 @@ describe("Stage 2 follow-ups (visual-modeling 5.8)", () => {
     expect(within(dialog).getAllByRole("button").map((b) => b.textContent)).toEqual(["Cancel"]);
   });
 
-  it("item 9: Change range starts on the range the attribute has", async () => {
+  it("item 9: Change type starts on the type the attribute has", async () => {
     await renderForm(
       details("total", "datatypeProperty", [
         [P.type, uri(OWL + "DatatypeProperty")],
         [P.range, uri("http://www.w3.org/2001/XMLSchema#decimal")],
       ]),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Change range" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change the type of value of total" }));
     expect((screen.getByRole("combobox", { name: "Type of value" }) as HTMLSelectElement).value).toBe("xsd:decimal");
   });
 
@@ -800,5 +800,427 @@ describe("the project's kind (relationships AC-2)", () => {
     cleanup();
     await renderKind(paid(), "taxonomy");
     expect(screen.getByRole("button", { name: "Add broader concept" })).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// relationships-and-project-kinds Stage B: the relationship form (5.6), the
+// attribute form (5.7), concepts (5.8) and the warnings of 5.9
+// ---------------------------------------------------------------------------
+
+const worksFor = (more: [string, TermRef][] = [], incoming: [TermRef, string][] = [], extra: Partial<NodeDetails> = {}) =>
+  details(
+    "worksFor",
+    "objectProperty",
+    [
+      [P.type, uri(OWL + "ObjectProperty")],
+      [P.label, lit("works for", "en")],
+      [P.domain, uri(EX + "Person", "class")],
+      [P.range, uri(EX + "Organization", "class")],
+      ...more,
+    ],
+    incoming,
+    { label: "works for", ...extra },
+  );
+
+describe("relationship form (AC-7)", () => {
+  beforeEach(() => runCommand.mockImplementation(async (_p, _d, command: string) => changed(command)));
+
+  it("opens on the sentence the ends make", async () => {
+    await renderForm(worksFor());
+    expect(screen.getByText("A Person works for an Organization.")).toBeTruthy();
+  });
+
+  it("says which end is missing", async () => {
+    await renderForm(details("likes", "objectProperty", [[P.type, uri(OWL + "ObjectProperty")]], [], { label: "likes" }));
+    expect(screen.getByText("(no start yet) likes (no end yet).")).toBeTruthy();
+  });
+
+  it("swaps and clears the ends, one command each", async () => {
+    await renderForm(worksFor());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Swap/ }));
+    });
+    expect(lastCommand()).toEqual(["SwapEnds", { property: EX + "worksFor" }]);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Clear the end of works for" }));
+    });
+    expect(lastCommand()).toEqual(["ClearRange", { property: EX + "worksFor" }]);
+  });
+
+  it("offers Swap as unavailable when both ends are one class", async () => {
+    await renderForm(
+      details("knows", "objectProperty", [
+        [P.type, uri(OWL + "ObjectProperty")],
+        [P.domain, uri(EX + "Person", "class")],
+        [P.range, uri(EX + "Person", "class")],
+      ]),
+    );
+    const swap = screen.getByRole("button", { name: /Swap/ });
+    expect(swap.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(swap);
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("shows every characteristic as a checkbox described by its example, three behind More", async () => {
+    await renderForm(worksFor());
+    const box = screen.getByRole("checkbox", { name: /At most one/ });
+    expect(document.getElementById(box.getAttribute("aria-describedby")!)!.textContent).toBe(
+      "A Person works for at most one Organization.",
+    );
+    const more = screen.getByRole("button", { name: "More" });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("checkbox", { name: /Always to itself/ })).toBeNull();
+    fireEvent.click(more);
+    expect(more.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getAllByRole("checkbox")).toHaveLength(7);
+  });
+
+  it("opens More at once when one of its three is set, so nothing set is hidden", async () => {
+    await renderForm(worksFor([[P.type, uri(OWL + "ReflexiveProperty")]]));
+    expect((screen.getByRole("checkbox", { name: /Always to itself/ }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("sends SetCharacteristic on and off, and shows a refusal's sentence under the block", async () => {
+    await renderForm(worksFor([[P.type, uri(OWL + "TransitiveProperty")]]));
+    expect((screen.getByRole("checkbox", { name: /Chains/ }) as HTMLInputElement).checked).toBe(true);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("checkbox", { name: /Chains/ }));
+    });
+    expect(lastCommand()).toEqual([
+      "SetCharacteristic",
+      { property: EX + "worksFor", characteristic: "transitive", on: false },
+    ]);
+    const sentence = 'A relationship that chains cannot also be "at most one" in OWL 2. Choose one.';
+    runCommand.mockRejectedValueOnce(new Error(sentence));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("checkbox", { name: /At most one/ }));
+    });
+    expect(screen.getByRole("alert").textContent).toBe(sentence);
+    // The box shows the model, which the refusal did not change.
+    expect((screen.getByRole("checkbox", { name: /At most one/ }) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("names the other way round with the sentence it will make, as one SetInverse", async () => {
+    await renderForm(worksFor());
+    fireEvent.click(screen.getByRole("button", { name: "Name the other way round…" }));
+    const field = screen.getByRole("textbox", { name: "Name of the other way round (en)" });
+    fireEvent.change(field, { target: { value: "employs" } });
+    expect(document.getElementById(field.getAttribute("aria-describedby")!)!.textContent).toBe(
+      "An Organization employs a Person.",
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    });
+    expect(lastCommand()).toEqual(["SetInverse", { property: EX + "worksFor", label: "employs" }]);
+  });
+
+  it("picks an existing relationship as the other way round", async () => {
+    searchNodes.mockResolvedValue([{ id: EX + "employs", label: "employs", kind: "objectProperty", degree: 1 }]);
+    await renderForm(worksFor());
+    fireEvent.click(screen.getByRole("button", { name: "Name the other way round…" }));
+    fireEvent.click(screen.getByRole("button", { name: "or choose an existing relationship" }));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "em" } });
+    const option = await screen.findByRole("option", { name: "employs" });
+    expect(searchNodes).toHaveBeenLastCalledWith(OID, "em", true, "objectProperty");
+    await act(async () => {
+      fireEvent.mouseDown(option);
+    });
+    expect(lastCommand()).toEqual(["SetInverse", { property: EX + "worksFor", inverse: EX + "employs" }]);
+  });
+
+  it("shows the other way round read from either side, and removes it", async () => {
+    await renderForm(worksFor([], [[uri(EX + "employs", "objectProperty"), P.inverseOf]]));
+    expect(screen.getByRole("button", { name: "An Organization employs a Person." })).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove employs as the other way round of works for" }));
+    });
+    // Only that one: Turtle can give a relationship two (review).
+    expect(lastCommand()).toEqual(["ClearInverse", { property: EX + "worksFor", inverse: EX + "employs" }]);
+  });
+
+  it("adds and removes a more general relationship (R11 through the form)", async () => {
+    searchNodes.mockResolvedValue([{ id: EX + "memberOf", label: "member of", kind: "objectProperty", degree: 1 }]);
+    await renderForm(worksFor());
+    fireEvent.click(screen.getByRole("button", { name: "Add a more general relationship" }));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "mem" } });
+    const option = await screen.findByRole("option", { name: "member of" });
+    await act(async () => {
+      fireEvent.mouseDown(option);
+    });
+    expect(lastCommand()).toEqual(["AddSubPropertyOf", { child: EX + "worksFor", parent: EX + "memberOf" }]);
+    cleanup();
+    await renderForm(worksFor([[P.subPropertyOf, { ...uri(EX + "memberOf"), label: "member of" }]]));
+    expect(screen.getByText("works for is a more specific kind of member of")).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove member of as more general than works for" }));
+    });
+    expect(lastCommand()).toEqual(["RemoveSubPropertyOf", { child: EX + "worksFor", parent: EX + "memberOf" }]);
+  });
+
+  it("shows a 5.9 warning under the sentence, and its Fix sends the command it names (R8)", async () => {
+    const fix = {
+      command: "SetEnds",
+      args: { property: EX + "employs", domain: EX + "Organization", range: EX + "Person" },
+      label: "Set employs from Organization to Person",
+    };
+    await renderForm(
+      worksFor([], [], {
+        warnings: [{ text: "employs should go from Organization to Person.", fix }, { text: "Another warning." }],
+      }),
+    );
+    const list = screen.getByRole("list", { name: "Warnings" });
+    expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "employs should go from Organization to Person.Fix",
+      "Another warning.",
+    ]);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Fix: Set employs from Organization to Person" }));
+    });
+    expect(lastCommand()).toEqual(["SetEnds", fix.args]);
+  });
+
+  it("shows each warning under the block it concerns (v0.6)", async () => {
+    await renderForm(
+      worksFor([], [], {
+        warnings: [
+          { text: "employs should go from Organization to Person.", block: "inverse" },
+          { text: "Works both ways means an Organization can also be linked by works for to a Person.", block: "characteristics" },
+        ],
+      }),
+    );
+    const blockOf = (text: string) => screen.getByText(text).closest(".edit-block")!.querySelector("h4")!.textContent;
+    expect(blockOf("employs should go from Organization to Person.")).toBe("The other way round");
+    expect(blockOf("Works both ways means an Organization can also be linked by works for to a Person.")).toBe(
+      "What else is true",
+    );
+  });
+
+  it("says a warning in the live region when a change brings it, not when the form opens (v0.6)", async () => {
+    const opened = worksFor([], [], { warnings: [{ text: "Already here.", block: "characteristics" }] });
+    let rerender!: (ui: React.ReactElement) => void;
+    await act(async () => {
+      ({ rerender } = render(
+        <EditSection ontologyId={OID} details={opened} primaryLanguage="en" languages={[]} onSelect={onSelect} onDeleted={onDeleted} />,
+      ));
+    });
+    expect(projectStore.getSnapshot().announcement.text).not.toContain("Already here.");
+    const changed = worksFor([], [], {
+      warnings: [
+        { text: "Already here.", block: "characteristics" },
+        { text: "Works both ways means an Organization can also be linked by works for to a Person.", block: "characteristics" },
+      ],
+    });
+    await act(async () => {
+      rerender(<EditSection ontologyId={OID} details={changed} primaryLanguage="en" languages={[]} onSelect={onSelect} onDeleted={onDeleted} />);
+    });
+    expect(projectStore.getSnapshot().announcement.text).toBe(
+      "Warning: Works both ways means an Organization can also be linked by works for to a Person.",
+    );
+  });
+
+  it("marks the checkboxes aria-disabled while a change saves, and sends one command (v0.6)", async () => {
+    let finish: (value: unknown) => void = () => {};
+    runCommand.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    await renderForm(worksFor());
+    const most = () => screen.getByRole("checkbox", { name: /At most one/ });
+    expect(most().getAttribute("aria-disabled")).toBe("false");
+    await act(async () => {
+      fireEvent.click(most());
+    });
+    expect(most().getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByRole("checkbox", { name: /Chains/ }).getAttribute("aria-disabled")).toBe("true");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("checkbox", { name: /Chains/ }));
+    });
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    await act(async () => finish(changed("SetCharacteristic")));
+    expect(most().getAttribute("aria-disabled")).toBe("false");
+  });
+
+  it("points to restrictions and shapes for what a relationship cannot say", async () => {
+    await renderForm(worksFor());
+    expect(screen.getByText(/see Restrictions \(coming with axioms\)/)).toBeTruthy();
+    expect(screen.getByText("To require values in data, see Shapes (SHACL).")).toBeTruthy();
+  });
+
+  it("is read-only in a taxonomy, with the note (5.10 item 2)", async () => {
+    await act(async () => {
+      render(
+        <EditSection
+          ontologyId={OID}
+          details={worksFor()}
+          primaryLanguage="en"
+          languages={[]}
+          projectKind="taxonomy"
+          onSelect={onSelect}
+          onDeleted={onDeleted}
+        />,
+      );
+    });
+    expect(screen.getByText(/A relationship, read-only in a taxonomy/)).toBeTruthy();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+});
+
+describe("attribute form (AC-8)", () => {
+  beforeEach(() => runCommand.mockImplementation(async (_p, _d, command: string) => changed(command)));
+  const name = (more: [string, TermRef][] = []) =>
+    details(
+      "name",
+      "datatypeProperty",
+      [
+        [P.type, uri(OWL + "DatatypeProperty")],
+        [P.domain, uri(EX + "Person", "class")],
+        [P.range, uri("http://www.w3.org/2001/XMLSchema#string")],
+        ...more,
+      ],
+      [],
+      { label: "name" },
+    );
+
+  it("reads as a sentence and marks one value only with its example", async () => {
+    await renderForm(name());
+    expect(screen.getByText("A Person has a name, as text.")).toBeTruthy();
+    const box = screen.getByRole("checkbox", { name: /One value only/ });
+    expect(document.getElementById(box.getAttribute("aria-describedby")!)!.textContent).toBe(
+      "A Person has at most one name.",
+    );
+    await act(async () => {
+      fireEvent.click(box);
+    });
+    expect(lastCommand()).toEqual(["SetCharacteristic", { property: EX + "name", characteristic: "functional", on: true }]);
+  });
+
+  it("marks One value only aria-disabled while a change saves (v0.6)", async () => {
+    let finish: (value: unknown) => void = () => {};
+    runCommand.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    await renderForm(name());
+    const box = () => screen.getByRole("checkbox", { name: /One value only/ });
+    await act(async () => {
+      fireEvent.click(box());
+    });
+    expect(box().getAttribute("aria-disabled")).toBe("true");
+    await act(async () => finish(changed("SetCharacteristic")));
+    expect(box().getAttribute("aria-disabled")).toBe("false");
+  });
+
+  it("offers no relationship characteristic", async () => {
+    await renderForm(name([[P.type, uri(OWL + "FunctionalProperty")]]));
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("clears the class it belongs to", async () => {
+    await renderForm(name());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Clear the class name belongs to" }));
+    });
+    expect(lastCommand()).toEqual(["ClearDomain", { property: EX + "name" }]);
+  });
+});
+
+describe("concept relations (AC-9)", () => {
+  beforeEach(() => runCommand.mockImplementation(async (_p, _d, command: string) => changed(command)));
+  const apple = (more: [string, TermRef][] = [], incoming: [TermRef, string][] = []) =>
+    details("Apple", "concept", [[P.type, uri(SKOS + "Concept")], [P.prefLabel, lit("Apple", "en")], ...more], incoming);
+
+  it("says it is a top concept, which the server keeps", async () => {
+    await renderForm(apple([], [[uri(EX + "Fruits"), P.hasTopConcept]]));
+    expect(screen.getByText("Top concept of Fruits")).toBeTruthy();
+  });
+
+  it("adds and removes a related concept", async () => {
+    searchNodes.mockResolvedValue([{ id: EX + "Orchard", label: "Orchard", kind: "concept", degree: 1 }]);
+    await renderForm(apple());
+    fireEvent.click(screen.getByRole("button", { name: "Add related concept" }));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Or" } });
+    const option = await screen.findByRole("option", { name: "Orchard" });
+    await act(async () => {
+      fireEvent.mouseDown(option);
+    });
+    expect(lastCommand()).toEqual(["AddRelated", { concept: EX + "Apple", related: EX + "Orchard" }]);
+    cleanup();
+    await renderForm(apple([], [[uri(EX + "Orchard", "concept"), P.related]]));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove Orchard as related to Apple" }));
+    });
+    expect(lastCommand()).toEqual(["RemoveRelated", { concept: EX + "Apple", related: EX + "Orchard" }]);
+  });
+
+  it("adds a mapping of the chosen kind to a link, each kind explained", async () => {
+    await renderForm(apple());
+    fireEvent.click(screen.getByRole("button", { name: "Add mapping" }));
+    const kind = screen.getByRole("combobox", { name: "Kind of mapping" });
+    expect(document.getElementById(kind.getAttribute("aria-describedby")!)!.textContent).toBe(
+      "The same concept, and it can be used in place of this one.",
+    );
+    fireEvent.change(kind, { target: { value: "closeMatch" } });
+    expect(document.getElementById(kind.getAttribute("aria-describedby")!)!.textContent).toMatch(/^Close enough/);
+    fireEvent.change(screen.getByRole("textbox", { name: "Link to the other concept" }), {
+      target: { value: "http://dbpedia.org/resource/Apple" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add mapping" }));
+    });
+    expect(lastCommand()).toEqual([
+      "AddMapping",
+      { concept: EX + "Apple", kind: "closeMatch", target: "http://dbpedia.org/resource/Apple" },
+    ]);
+  });
+
+  it("maps to a concept from an import through the picker", async () => {
+    searchNodes.mockResolvedValue([
+      // The project's own Pear is not offered: a mapping points to another
+      // vocabulary (5.8, v0.6).
+      { id: EX + "Pear", label: "Pear", kind: "concept", degree: 1 },
+      { id: "http://example.org/imported#Apple", label: "Malus", kind: "concept", degree: 1, importedFrom: "Fruits" },
+    ]);
+    await renderForm(apple());
+    fireEvent.click(screen.getByRole("button", { name: "Add mapping" }));
+    fireEvent.click(screen.getByRole("button", { name: "or choose a concept from an import" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "A concept from an import" }), { target: { value: "Ap" } });
+    const option = await screen.findByRole("option", { name: /Malus/ });
+    // The picker's own list, not the mapping kind's select.
+    const offered = [...document.querySelectorAll(".entity-picker-list [role=option]")].map((o) => o.textContent);
+    expect(offered).toEqual(["Malus, from Fruits"]);
+    await act(async () => {
+      fireEvent.mouseDown(option);
+    });
+    expect(lastCommand()).toEqual([
+      "AddMapping",
+      { concept: EX + "Apple", kind: "exactMatch", target: "http://example.org/imported#Apple" },
+    ]);
+  });
+
+  it("says why when only the project's own concepts match (5.8, v0.6)", async () => {
+    searchNodes.mockResolvedValue([{ id: EX + "Pear", label: "Pear", kind: "concept", degree: 1 }]);
+    await renderForm(apple());
+    fireEvent.click(screen.getByRole("button", { name: "Add mapping" }));
+    fireEvent.click(screen.getByRole("button", { name: "or choose a concept from an import" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "A concept from an import" }), { target: { value: "Pe" } });
+    expect(await screen.findByText(/No concept from an import matches/)).toBeTruthy();
+    expect(document.querySelectorAll(".entity-picker-list [role=option]")).toHaveLength(0);
+  });
+
+  it("shows a web mapping as a link and any other as text (D-088), and removes one", async () => {
+    await renderForm(
+      apple([
+        [SKOS + "exactMatch", uri("http://dbpedia.org/resource/Apple")],
+        [SKOS + "relatedMatch", uri("javascript:alert(1)")],
+      ]),
+    );
+    expect(screen.getByRole("link", { name: "http://dbpedia.org/resource/Apple" }).getAttribute("href")).toBe(
+      "http://dbpedia.org/resource/Apple",
+    );
+    expect(screen.queryByRole("link", { name: "javascript:alert(1)" })).toBeNull();
+    expect(screen.getByText("javascript:alert(1)")).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove the exact match http://dbpedia.org/resource/Apple" }));
+    });
+    expect(lastCommand()).toEqual([
+      "RemoveMapping",
+      { concept: EX + "Apple", kind: "exactMatch", target: "http://dbpedia.org/resource/Apple" },
+    ]);
   });
 });

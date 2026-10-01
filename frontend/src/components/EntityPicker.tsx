@@ -27,6 +27,8 @@ INPUTS / INPUT SOURCES (props)
     - label: the field's accessible name ("Parent class").
     - exclude: IRIs not to offer (the entity itself, parents it already has).
     - onPick(iri, label), onCancel.
+    - importedOnly: offer only what an import defines (a mapping's target,
+      relationships 5.8), and say so when nothing else matches.
     - error: the server's sentence when the pick was refused.
 
 EXPECTED OUTPUT
@@ -47,6 +49,9 @@ interface Props {
   error?: string | null;
   onPick: (iri: string, label: string) => void;
   onCancel: () => void;
+  /** Offer only what an import defines: a mapping points to another
+   *  vocabulary, never to the project's own concepts (relationships 5.8). */
+  importedOnly?: boolean;
 }
 
 /** How long typing rests before a search is sent. */
@@ -61,6 +66,7 @@ export default function EntityPicker({
   error = null,
   onPick,
   onCancel,
+  importedOnly = false,
 }: Props) {
   const id = useId();
   const listId = `${id}-list`;
@@ -68,6 +74,8 @@ export default function EntityPicker({
   const [results, setResults] = useState<VizNode[]>([]);
   const [active, setActive] = useState(-1);
   const [searchError, setSearchError] = useState<string | null>(null);
+  // The query last answered, so an empty answer can say why.
+  const [answered, setAnswered] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -86,8 +94,9 @@ export default function EntityPicker({
       searchNodes(ontologyId, q, true, kind)
         .then((found) => {
           if (cancelled) return;
-          const shown = found.filter((n) => !exclude.includes(n.id));
+          const shown = found.filter((n) => !exclude.includes(n.id) && (!importedOnly || n.importedFrom));
           setResults(shown);
+          setAnswered(q);
           setActive(shown.length ? 0 : -1);
           setSearchError(null);
         })
@@ -99,7 +108,7 @@ export default function EntityPicker({
     };
     // exclude is a fresh array on every render of the caller; its content is
     // what matters and it only changes with the entity, which remounts this.
-  }, [query, ontologyId, kind]);
+  }, [query, ontologyId, kind, importedOnly]);
 
   const open = results.length > 0;
   const pick = (node: VizNode) => {
@@ -179,7 +188,9 @@ export default function EntityPicker({
       </ul>
       {query.trim() && !open && !searchError && (
         <p className="detail-note" role="status">
-          No match yet.
+          {importedOnly && answered === query.trim()
+            ? "No concept from an import matches. Only other vocabularies are offered here; resolve an import to map to one of its concepts."
+            : "No match yet."}
         </p>
       )}
       {shownError && (

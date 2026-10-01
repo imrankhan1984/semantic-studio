@@ -422,7 +422,8 @@ describe("relating (AC-12)", () => {
   });
 
   it("concept to concept: narrower than runs AddBroader", async () => {
-    await renderCanvas();
+    // Without the drawn Paid narrower than Status, which would make it a loop.
+    await renderCanvas(viewOf({ edges: viewOf().edges.filter((e) => e.kind !== "broader") }));
     await draw(EX + "Status", EX + "Paid");
     await act(async () => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Status is narrower than Paid" }));
@@ -1187,4 +1188,167 @@ describe("relationships Stage A: the project's kind (AC-2)", () => {
       flow.props.onConnectEnd({ clientX: 40, clientY: 50 });
     });
   }
+});
+
+describe("relationships Stage B: related lines and the Stage A follow-ups (5.8, 5.10)", () => {
+  async function draw(from: string, to: string) {
+    await act(async () => {
+      flow.props.onConnect({ source: from, target: to, sourceHandle: null, targetHandle: null });
+      flow.props.onConnectEnd({ clientX: 40, clientY: 50 });
+    });
+  }
+  const edge = (kind: string) => (flow.props.edges as any[]).find((e) => e.id.startsWith(kind));
+  const related = { kind: "related" as const, source: EX + "Paid", target: EX + "Status", pair: 0, pairs: 1 };
+  const withRelated = () => viewOf({ edges: [...viewOf().edges, related] });
+  const rerenderWith = async (rerender: (ui: React.ReactElement) => void, selected: string | null) => {
+    await act(async () => {
+      rerender(
+        <ModelCanvas
+          projectId={PID}
+          doc="model"
+          revision={2}
+          language="en"
+          primaryLanguage="en"
+          selected={selected}
+          onSelect={onSelect}
+          onSelectLink={onSelectLink}
+          onDeleted={onDeleted}
+        />,
+      );
+    });
+  };
+
+  it("draws related to dashed, with no arrowhead, named as a sentence (R17)", async () => {
+    await renderCanvas(withRelated());
+    const line = edge("related");
+    expect(line.data.dashed).toBe(true);
+    expect(line.markerEnd).toBeUndefined();
+    expect(line.ariaLabel).toBe("Paid is related to Status");
+    expect(line.data.text).toBe("related to");
+    expect(edge("broader").data.dashed).toBe(false);
+  });
+
+  it("concept to concept offers related to, which runs AddRelated", async () => {
+    await renderCanvas(viewOf({ edges: [] }));
+    await draw(EX + "Paid", EX + "Status");
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "Paid is narrower than Status",
+      "Paid is related to Status",
+    ]);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Paid is related to Status" }));
+    });
+    expect(lastCommand()).toEqual(["AddRelated", { concept: EX + "Paid", related: EX + "Status" }]);
+  });
+
+  it("a server refusal of related to stays in the menu as its sentence (R18)", async () => {
+    await renderCanvas(viewOf({ edges: [] }));
+    await draw(EX + "Status", EX + "Paid");
+    const sentence = "Paid is already narrower than Status; SKOS does not allow them to be related as well.";
+    runCommand.mockRejectedValueOnce(new Error(sentence));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Status is related to Paid" }));
+    });
+    expect(screen.getByRole("alert").textContent).toBe(sentence);
+  });
+
+  it("a related line opens the link panel, and Delete removes it both ways in one command", async () => {
+    await renderCanvas(withRelated());
+    await act(async () => flow.props.onEdgeClick({}, edge("related")));
+    expect(onSelectLink).toHaveBeenLastCalledWith({
+      kind: "related", source: EX + "Paid", target: EX + "Status", sourceLabel: "Paid", targetLabel: "Status",
+    });
+    await act(async () => {
+      fireEvent.keyDown(document.querySelector(".react-flow")!, { key: "Delete" });
+    });
+    expect(lastCommand()).toEqual(["RemoveRelated", { concept: EX + "Paid", related: EX + "Status" }]);
+  });
+
+  it("item 1: a selected line's highlight goes when a box or a tree row is selected", async () => {
+    const { rerender } = await renderCanvas();
+    await act(async () => flow.props.onEdgeClick({}, edge("subClassOf")));
+    expect(edge("subClassOf").selected).toBe(true);
+    await rerenderWith(rerender, EX + "Document");
+    expect(edge("subClassOf").selected).toBe(false);
+  });
+
+  it("item 1: a relationship's line stays lit while it is the selection, and not after", async () => {
+    const { rerender } = await renderCanvas();
+    await act(async () => flow.props.onEdgeClick({}, edge("relationship")));
+    // Its own click must not clear it before App's selection arrives.
+    expect(edge("relationship").selected).toBe(true);
+    await rerenderWith(rerender, EX + "billedTo");
+    expect(edge("relationship").selected).toBe(true);
+    await rerenderWith(rerender, EX + "Invoice");
+    expect(edge("relationship").selected).toBe(false);
+  });
+
+  it("item 2: in a taxonomy a relationship's line is read-only, by Delete and the form's note", async () => {
+    await renderCanvas(viewOf({ kind: "taxonomy" }));
+    await act(async () => flow.props.onEdgeClick({}, edge("relationship")));
+    expect(onSelect).toHaveBeenLastCalledWith(EX + "billedTo");
+    const reason = "billed to is a relationship, read-only in a taxonomy. Edit it in Turtle, or change the project to an ontology.";
+    expect(screen.getByRole("status").textContent).toBe(reason);
+    await act(async () => {
+      fireEvent.keyDown(document.querySelector(".react-flow")!, { key: "Delete" });
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("item 3: a box added by clicking the palette lands clear of every box", async () => {
+    runCommand.mockResolvedValueOnce({ revision: 3, label: "Created class Receipt", state: STATE, created: EX + "Receipt" });
+    await renderCanvas();
+    const taken = (flow.props.nodes as { position: { x: number; y: number } }[]).map((n) => n.position);
+    fireEvent.click(screen.getByRole("button", { name: "Class" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name of the new class" }), { target: { value: "Receipt" } });
+    await act(async () => {
+      fireEvent.keyDown(screen.getByRole("textbox", { name: "Name of the new class" }), { key: "Enter" });
+    });
+    const saved = putLayout.mock.calls[putLayout.mock.calls.length - 1][2];
+    const [x, y] = saved.positions[EX + "Receipt"];
+    for (const p of taken) {
+      expect(Math.abs(p.x - x) >= 190 || Math.abs(p.y - y) >= 90).toBe(true);
+    }
+  });
+
+  it("item 4: the menu for a loop has no Swap and no notes about other lines", async () => {
+    await renderCanvas();
+    await draw(EX + "Invoice", EX + "Invoice");
+    expect(screen.queryByRole("button", { name: /^Swap/ })).toBeNull();
+    expect(document.querySelector(".relate-menu")!.textContent).not.toContain("already links");
+  });
+
+  it("item 6: a link whose narrower end is imported is shown read-only in the panel", async () => {
+    await renderCanvas(
+      viewOf({
+        edges: [{ kind: "subClassOf", source: "http://xmlns.com/foaf/0.1/Agent", target: EX + "Document", pair: 0, pairs: 1 }],
+      }),
+    );
+    await act(async () => flow.props.onEdgeClick({}, edge("subClassOf")));
+    expect(onSelectLink).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        readOnly: "Agent comes from FOAF and is read-only; this link is changed where it is defined.",
+      }),
+    );
+    await act(async () => {
+      fireEvent.keyDown(document.querySelector(".react-flow")!, { key: "Delete" });
+    });
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("item 7: a click on a line's label is a click on its line", async () => {
+    await renderCanvas();
+    await act(async () => edge("relationship").data.onLabel(edge("relationship").id));
+    expect(onSelect).toHaveBeenLastCalledWith(EX + "billedTo");
+    await act(async () => edge("subClassOf").data.onLabel(edge("subClassOf").id));
+    expect(onSelectLink).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "subClassOf" }));
+  });
+
+  it("5.7: an attribute row in a box opens the attribute, not the class", async () => {
+    await renderCanvas();
+    fireEvent.click(within(box("Invoice (en)")).getByRole("button", { name: "total : xsd:decimal" }));
+    expect(onSelect).toHaveBeenLastCalledWith(EX + "total");
+    expect(onSelect).not.toHaveBeenCalledWith(EX + "Invoice");
+  });
 });

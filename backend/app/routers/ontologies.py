@@ -68,6 +68,7 @@ from urllib.parse import urlparse
 # query params, HTTPException for error responses, APIRouter to group endpoints.
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field  # declares/validates JSON request bodies
+from rdflib import URIRef
 from starlette.concurrency import run_in_threadpool
 
 # Delegate the real work to the domain modules.
@@ -75,7 +76,16 @@ from .. import provenance
 from ..docs_export import DocsExportError, build_zip
 from ..embedded_queries import MAX_TEXT_CHARS as MAX_QUERY_CHARS
 from ..embedded_queries import list_embedded_queries
-from ..graph_builder import budget_viz, neighborhood_viz, node_details, search_nodes
+from ..graph_builder import (
+    KIND_DATATYPE_PROPERTY,
+    KIND_OBJECT_PROPERTY,
+    budget_viz,
+    labeler,
+    neighborhood_viz,
+    node_details,
+    search_nodes,
+)
+from .. import modeling_checks
 from .. import imports as imports_mod
 from ..imports import imports_service
 from ..net_guard import BlockedAddress
@@ -83,6 +93,8 @@ from ..network_broker import FetchFailed, TooLarge, TooManyRedirects, broker
 from ..query_schema import describe_query_node
 from ..sparql_exec import QueryError, QueryTimeout, execute_select
 from ..store import ParseError, ParseTimeout, detect_format, saved_queries, store
+
+PROPERTY_KINDS = (KIND_OBJECT_PROPERTY, KIND_DATATYPE_PROPERTY)
 
 # All routes below hang off /api/ontologies; "tags" groups them in the docs.
 router = APIRouter(prefix="/api/ontologies", tags=["ontologies"])
@@ -562,6 +574,11 @@ def get_node(
             langs=ontology.label_langs(lang),
             languages=ontology.languages,
         )
+        # A project's relationship or attribute carries the 5.9 warnings,
+        # read from the document itself: its Fix changes only what is there.
+        if details is not None and ontology.editable and details.get("kind") in PROPERTY_KINDS:
+            name = labeler(ontology.graph, ontology.label_langs(lang))
+            details["warnings"] = modeling_checks.warnings(ontology.graph, URIRef(iri), name)
     if details is None:
         raise HTTPException(status_code=404, detail=f"No triples found for {iri}")
     if imports:

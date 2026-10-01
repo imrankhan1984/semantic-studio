@@ -19,7 +19,10 @@ BASIC IDEA
     with no domain and no range, or with one end already this line's. One
     already linking other classes is never offered, because SetDomain would
     silently change what it means elsewhere; the menu says so instead.
-    Concept to concept offers *narrower than*. A class and a concept cannot be
+    Concept to concept offers *narrower than* and *related to* (relationships
+    5.8), each only where the server would accept it: not when the target is
+    already narrower than the source, directly or through others, and not
+    *narrower than* between two related concepts. A class and a concept cannot be
     linked here at all. A line that would change an imported box is refused
     with a sentence. A link that already exists is not offered again.
 
@@ -49,6 +52,7 @@ import type { CanvasNode, CanvasView } from "../types";
 export type RelateChoice =
   | { kind: "subClassOf"; label: string }
   | { kind: "broader"; label: string }
+  | { kind: "related"; label: string }
   | { kind: "newRelationship"; label: string }
   | {
       kind: "existing";
@@ -101,8 +105,29 @@ export function relateChoices(view: CanvasView, fromIri: string, toIri: string):
     view.edges.some((e) => e.kind === kind && e.source === from.iri && e.target === to.iri);
 
   if (from.kind === "concept") {
+    // Narrower than, and related to (5.8), offered only where the server
+    // would accept them (the analyst's review of PR #49): what the drawn
+    // lines already say decides, through other concepts as well.
+    const related = view.edges.some(
+      (e) => e.kind === "related" && ((e.source === from.iri && e.target === to.iri) || (e.source === to.iri && e.target === from.iri)),
+    );
     if (has("broader")) return { refusal: `${from.label} is already narrower than ${to.label}.` };
-    return { choices: [{ kind: "broader", label: linkSentence("broader", from.label, to.label) }], notes: [] };
+    // The target already under the source: *narrower than* would make a
+    // loop, and SKOS keeps *related* apart from the hierarchy.
+    if (narrowerThan(view, to.iri, from.iri)) return { refusal: `${to.label} is already narrower than ${from.label}.` };
+    const choices: RelateChoice[] = [];
+    // Two related concepts cannot be put one under the other (5.9).
+    if (!related) choices.push({ kind: "broader", label: linkSentence("broader", from.label, to.label) });
+    // The source already under the target, through others: related refused.
+    if (!related && !narrowerThan(view, from.iri, to.iri)) {
+      choices.push({ kind: "related", label: linkSentence("related", from.label, to.label) });
+    }
+    if (choices.length === 0) {
+      return {
+        refusal: `${from.label} is related to ${to.label}; SKOS does not allow one to be narrower than the other as well.`,
+      };
+    }
+    return { choices, notes: [] };
   }
 
   const choices: RelateChoice[] = [];
@@ -128,8 +153,10 @@ export function relateChoices(view: CanvasView, fromIri: string, toIri: string):
     });
   }
   // Drawn relationships sharing an end with this line are not offered, and
-  // the menu says why, so the learner does not look for them in vain.
-  const notes = view.edges
+  // the menu says why, so the learner does not look for them in vain. A
+  // loop shares both ends with every relationship on its box, and none of
+  // them could be completed by it, so it lists none (5.10 item 4).
+  const notes = self ? [] : view.edges
     .filter(
       (e) =>
         e.kind === "relationship" &&
@@ -143,6 +170,24 @@ export function relateChoices(view: CanvasView, fromIri: string, toIri: string):
       return `${e.label} already links ${a} to ${b}; create a new relationship instead.`;
     });
   return { choices, notes };
+}
+
+/** `low` is under `high` by the drawn narrower-than lines, directly or
+ *  through other concepts. Each concept is visited once, so a loop already
+ *  in the data ends the walk. */
+function narrowerThan(view: CanvasView, low: string, high: string): boolean {
+  const seen = new Set<string>();
+  const queue = [low];
+  while (queue.length) {
+    const at = queue.pop()!;
+    for (const e of view.edges) {
+      if (e.kind !== "broader" || e.source !== at || seen.has(e.target)) continue;
+      if (e.target === high) return true;
+      seen.add(e.target);
+      queue.push(e.target);
+    }
+  }
+  return false;
 }
 
 /** A box read aloud as the tree reads a row. */

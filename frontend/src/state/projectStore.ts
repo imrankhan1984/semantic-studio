@@ -191,6 +191,12 @@ function requireProject(): ProjectSummary {
 export const projectStore = {
   getSnapshot,
 
+  /** Say something in the project's polite live region: a warning of the
+   *  modeling checks that a change has just brought (relationships 5.9). */
+  say(text: string): void {
+    announce(text);
+  },
+
   /** Open a project and make it current. Returns the model's ontology id. */
   async open(pid: string): Promise<string> {
     const opened = await openProject(pid);

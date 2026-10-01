@@ -28,7 +28,8 @@ INPUTS / INPUT SOURCES
     - data: see BoxData.
 
 EXPECTED OUTPUT
-    - The box; the rename and attribute callbacks.
+    - The box; the rename and attribute callbacks; an attribute row's click
+      selects the attribute, so its form opens (relationships 5.7).
 ================================================================================
 */
 
@@ -47,6 +48,8 @@ export interface BoxData extends Record<string, unknown> {
   busy: boolean;
   onRenameDone: (iri: string, value: string | null) => void;
   onAddAttribute: (iri: string, name: string, datatype: string) => Promise<boolean>;
+  // An attribute row clicked: its form opens (relationships 5.7).
+  onSelectAttribute?: (iri: string) => void;
 }
 
 export type BoxNode = Node<BoxData, "class" | "concept">;
@@ -151,7 +154,21 @@ function ClassNode({ data, selected }: NodeProps<BoxNode>) {
         <ul className="canvas-attributes">
           {node.attributes.map((a) => (
             <li key={a.iri}>
-              {a.label} : {a.datatype ?? "no type"}
+              {/* A button, so the row is a control a pointer can use; not
+                  a tab stop, as a box's lines are not: the tree and the
+                  class's form reach every attribute by keyboard (D-078). */}
+              <button
+                type="button"
+                className="canvas-attr nodrag"
+                tabIndex={-1}
+                onClick={(e) => {
+                  // The box's own click would select the class instead.
+                  e.stopPropagation();
+                  data.onSelectAttribute?.(a.iri);
+                }}
+              >
+                {a.label} : {a.datatype ?? "no type"}
+              </button>
             </li>
           ))}
         </ul>

@@ -6,9 +6,11 @@ FILE: frontend/src/components/EditStructure.tsx
 SUMMARY
     The Structure block of the editing form (visual-modeling 5.1), one shape
     per kind of entity: a class's parents, subclasses, attributes and
-    relationships; a property's domain and range; a concept's broader and
-    narrower concepts and its scheme. It is the form half of every canvas
-    action's keyboard route (5.2, D-078).
+    relationships; a concept's broader and narrower concepts, its scheme,
+    and (ConceptRelations) its related concepts and mappings. A relationship
+    or an attribute has a form of its own, RelationshipForm or AttributeForm
+    (relationships 5.6, 5.7), which this hands over to. It is the form half
+    of every canvas action's keyboard route (5.2, D-078).
 
 BASIC IDEA
     Each list names what is there, as links that select it, with Remove where
@@ -18,8 +20,7 @@ BASIC IDEA
 
     A relationship made here gets this class as its domain and, if one is
     chosen, a range, in one CreateObjectProperty: one undo step, as the canvas
-    will make it. A datatype property's range is one of the seven datatypes,
-    chosen from a list rather than searched for.
+    will make it.
 
 INPUTS / INPUT SOURCES (props)
     - ontologyId, iri, name, model: the entity and its blocks.
@@ -29,22 +30,23 @@ INPUTS / INPUT SOURCES (props)
       the user went elsewhere while it ran (5.8 item 4).
 
     A closed form gives focus back to the button that opened it (5.8 item
-    2). *Change range* on an attribute starts on the range it has (item 9),
-    and *Add relationship* waits for a range, as 5.1 says (item 10).
+    2). *Add relationship* waits for a range, as 5.1 says (item 10).
 
 EXPECTED OUTPUT
-    - Commands through the runner; the block's markup (or nothing for a kind
-      with no structure to edit).
+    - Commands through the runner; the block's markup, a property's form, or
+      nothing for a kind with no structure to edit.
 ================================================================================
 */
 
 import { useRef, useState } from "react";
 import { structureOf, type EntityModel, type Ref } from "../modeling/entity";
-import { DATATYPES } from "../modeling/values";
-import type { SearchKind } from "../types";
+import type { ModelWarning, SearchKind } from "../types";
+import AttributeForm from "./AttributeForm";
+import ConceptRelations from "./ConceptRelations";
 import { Block, type Runner } from "./EditParts";
 import EntityPicker from "./EntityPicker";
 import NewEntityForm from "./NewEntityForm";
+import RelationshipForm from "./RelationshipForm";
 
 interface Props {
   ontologyId: string;
@@ -55,6 +57,8 @@ interface Props {
   runner: Runner;
   onSelect: (iri: string) => void;
   follow: (created: string | undefined) => void;
+  /** A property's 5.9 warnings, shown under the block each concerns. */
+  warnings?: ModelWarning[];
 }
 
 /** Which small form is open: at most one at a time. */
@@ -64,8 +68,6 @@ type Open =
   | "subclass"
   | "attribute"
   | "relationship"
-  | "domain"
-  | "range"
   | "broader"
   | "narrower";
 
@@ -114,6 +116,7 @@ export default function EditStructure({
   runner,
   onSelect,
   follow,
+  warnings = [],
 }: Props) {
   const { busy, errors, run, clear } = runner;
   const [open, setOpen] = useState<Open>(null);
@@ -271,64 +274,28 @@ export default function EditStructure({
   }
 
   if (shape === "property") {
-    const datatypeProperty = model.kind === "datatypeProperty";
-    // Start on the range it has (5.8 item 9), as xsd:local.
-    const XSD = "http://www.w3.org/2001/XMLSchema#";
-    const currentDatatype =
-      model.range && model.range.iri.startsWith(XSD) ? `xsd:${model.range.iri.slice(XSD.length)}` : "xsd:string";
-    return (
-      <Block title="Structure">
-        <h5>Domain (what it describes)</h5>
-        <Links refs={model.domain ? [model.domain] : []} empty="No domain." onSelect={onSelect} />
-        {open === "domain"
-          ? picker("domain", "class", `Domain of ${name}`, [], (target) =>
-              run("domain", "SetDomain", { property: iri, target }),
-            )
-          : button("domain", model.domain ? "Change domain" : "Set domain")}
-
-        <h5>Range ({datatypeProperty ? "type of value" : "what it points to"})</h5>
-        <Links refs={model.range ? [model.range] : []} empty="No range." onSelect={onSelect} />
-        {open === "range" ? (
-          datatypeProperty ? (
-            <form
-              className="edit-range"
-              onSubmit={async (e) => {
-                e.preventDefault();
-                // aria-disabled does not stop a second Enter (found in review).
-                if (busy) return;
-                const target = new FormData(e.currentTarget).get("datatype");
-                if (await run("range", "SetRange", { property: iri, target })) close();
-              }}
-            >
-              <label className="edit-field-label" htmlFor="edit-range-datatype">
-                Type of value
-              </label>
-              <select id="edit-range-datatype" name="datatype" autoFocus defaultValue={currentDatatype}>
-                {DATATYPES.map((d) => (
-                  <option key={d} value={`xsd:${d}`}>
-                    xsd:{d}
-                  </option>
-                ))}
-              </select>
-              {errors.range && <p className="edit-error">{errors.range}</p>}
-              <div className="edit-actions">
-                <button type="submit" className="primary" aria-disabled={busy}>
-                  Set range
-                </button>
-                <button type="button" className="ghost" onClick={close}>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          ) : (
-            picker("range", "class", `Range of ${name}`, [], (target) =>
-              run("range", "SetRange", { property: iri, target }),
-            )
-          )
-        ) : (
-          button("range", model.range ? "Change range" : "Set range")
-        )}
-      </Block>
+    // Relationships Stage B: each kind of property has its own form (5.6, 5.7).
+    return model.kind === "datatypeProperty" ? (
+      <AttributeForm
+        ontologyId={ontologyId}
+        iri={iri}
+        name={name}
+        model={model}
+        runner={runner}
+        onSelect={onSelect}
+        warnings={warnings}
+      />
+    ) : (
+      <RelationshipForm
+        ontologyId={ontologyId}
+        iri={iri}
+        name={name}
+        model={model}
+        primaryLanguage={primaryLanguage}
+        runner={runner}
+        onSelect={onSelect}
+        warnings={warnings}
+      />
     );
   }
 
@@ -375,6 +342,8 @@ export default function EditStructure({
           <Links refs={model.schemes} empty="" onSelect={onSelect} />
         </>
       )}
+
+      <ConceptRelations ontologyId={ontologyId} iri={iri} name={name} model={model} runner={runner} onSelect={onSelect} />
     </Block>
   );
 }

@@ -448,6 +448,17 @@ export interface NodeDetails {
   names?: { lang: string; value: string | null }[];
   // A project document: the entity's own kind, from its rdf:type.
   kind?: string;
+  // A project's relationship or attribute: the modeling checks' warnings
+  // (relationships 5.9), each with the command that fixes it, if one does.
+  warnings?: ModelWarning[];
+}
+
+export interface ModelWarning {
+  text: string;
+  // The block it concerns, where the form shows it: "characteristics" (What
+  // else is true, How many values) or "inverse" (The other way round).
+  block?: "characteristics" | "inverse";
+  fix?: { command: string; args: Record<string, unknown>; label: string };
 }
 
 /* --- theme-aware palettes ------------------------------------------------ */
@@ -804,7 +815,9 @@ export interface CanvasNode {
 }
 
 export interface CanvasEdge {
-  kind: "subClassOf" | "broader" | "relationship";
+  // "related": skos:related, one line per pair, drawn dashed with no arrow
+  // because it reads the same both ways (relationships 5.8).
+  kind: "subClassOf" | "broader" | "relationship" | "related";
   source: string;
   target: string;
   property?: string;
@@ -816,15 +829,16 @@ export interface CanvasEdge {
   pairs: number;
 }
 
-// A subclass or broader line the user clicked: the link panel's subject
-// (relationships 5.2). A relationship's line selects the relationship instead.
+// A subclass, broader or related line the user clicked: the link panel's
+// subject (relationships 5.2). A relationship's line selects the relationship.
 export interface CanvasLink {
-  kind: "subClassOf" | "broader";
+  kind: "subClassOf" | "broader" | "related";
   source: string;
   target: string;
   sourceLabel: string;
   targetLabel: string;
-  // Why it cannot be removed here: an end of the project's other kind.
+  // Why it cannot be removed here: an end of the project's other kind, or
+  // the narrower end imported (5.10 item 6).
   readOnly?: string;
 }
 

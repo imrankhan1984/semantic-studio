@@ -6,7 +6,8 @@ FILE: backend/app/canvas.py
 SUMMARY
     What the modeling canvas draws for a project document (visual-modeling
     5.4): its classes and concepts as boxes, each class's attributes, the
-    subclass, relationship and broader links between them, the imported
+    subclass, relationship, broader and related links between them (one
+    line per related pair, relationships 5.8), the imported
     entities those links reach, and the relationships that cannot be drawn
     for want of a domain or a range. Also the size rule of 5.6: past
     CANVAS_MAX_BOXES, only the boxes the user chose and their direct links.
@@ -153,6 +154,18 @@ def build_canvas(
     for narrow, broad in sorted(broader_pairs):
         if (narrow in concepts or end(narrow, "concept")) and end(broad, "concept"):
             edges.append({"kind": "broader", "source": str(narrow), "target": str(broad)})
+
+    # *Related to* is symmetric, and written both ways (relationships 5.8):
+    # one line per pair, from the IRI that sorts first, however many of the
+    # two statements the document holds.
+    related_pairs = set()
+    for concept in concepts:
+        for other in graph.objects(concept, SKOS.related):
+            if isinstance(other, URIRef) and other != concept:
+                related_pairs.add(tuple(sorted((concept, other))))
+    for first, second in sorted(related_pairs):
+        if end(first, "concept") and end(second, "concept"):
+            edges.append({"kind": "related", "source": str(first), "target": str(second)})
 
     for prop in sorted(_typed(graph, (OWL.ObjectProperty,))):
         domain, rng, expression = ends(prop)

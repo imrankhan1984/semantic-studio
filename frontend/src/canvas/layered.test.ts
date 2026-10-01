@@ -23,7 +23,7 @@ EXPECTED OUTPUT
 
 import { describe, expect, it } from "vitest";
 import { limitMs } from "../budget";
-import { BOX_HEIGHT, BOX_WIDTH, layered, placeMissing, type Box, type Link } from "./layered";
+import { BOX_HEIGHT, BOX_WIDTH, freeSpot, layered, placeMissing, type Box, type Link } from "./layered";
 
 const box = (iri: string, imported = false): Box => ({ iri, label: iri, imported });
 
@@ -122,5 +122,38 @@ describe("placeMissing", () => {
     }).sort((a, b) => a - b);
     const median = samples[3];
     expect(median, `median ${median.toFixed(2)} ms`).toBeLessThan(limitMs(30));
+  });
+});
+
+describe("freeSpot (relationships 5.10 item 3)", () => {
+  const overlaps = (a: [number, number], b: [number, number]) =>
+    Math.abs(a[0] - b[0]) < BOX_WIDTH && Math.abs(a[1] - b[1]) < BOX_HEIGHT;
+
+  it("centres the box on the middle of the view when it is free", () => {
+    expect(freeSpot([500, 300], [])).toEqual([500 - BOX_WIDTH / 2, 300 - BOX_HEIGHT / 2]);
+  });
+
+  it("never lands on a box already in the middle", () => {
+    const middle: [number, number] = [500 - BOX_WIDTH / 2, 300 - BOX_HEIGHT / 2];
+    const spot = freeSpot([500, 300], [{ at: middle }]);
+    expect(overlaps(spot, middle)).toBe(false);
+    // The nearest free place: one step off the middle, not somewhere far.
+    expect(Math.hypot(spot[0] - middle[0], spot[1] - middle[1])).toBeLessThan(BOX_WIDTH * 1.5);
+  });
+
+  it("finds free space among many boxes, and chooses the same place every time", () => {
+    const taken = [];
+    for (let i = -2; i <= 2; i++) for (let j = -1; j <= 1; j++) taken.push({ at: [i * 200, j * 100] as [number, number] });
+    const spot = freeSpot([0, 0], taken);
+    for (const t of taken) expect(overlaps(spot, t.at)).toBe(false);
+    expect(freeSpot([0, 0], taken)).toEqual(spot);
+  });
+
+  it("respects a box taller than the default, one with attributes", () => {
+    const tall = { at: [500 - BOX_WIDTH / 2, 300 - BOX_HEIGHT / 2 - 150] as [number, number], height: 400 };
+    const spot = freeSpot([500, 300], [tall]);
+    const clear =
+      spot[0] + BOX_WIDTH <= tall.at[0] || tall.at[0] + BOX_WIDTH <= spot[0] || spot[1] >= tall.at[1] + 400 || spot[1] + BOX_HEIGHT <= tall.at[1];
+    expect(clear).toBe(true);
   });
 });

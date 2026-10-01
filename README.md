@@ -393,6 +393,15 @@ of them open as fast as none.
   concepts draws the ones you choose (*Show on canvas*). The *Canvas* switch
   above the tree hides it; everything it does can be done from the tree and
   the form.
+- **Say what a relationship means.** A relationship's form reads it back as a
+  sentence and edits its two ends (swap, change, clear), its other way round
+  (*An Organization employs a Person*, made from a name or picked), seven
+  characteristics each explained with your own names (*A Person works for at
+  most one Organization*), and a more general relationship. An attribute has
+  its type of value and *one value only*. In a taxonomy, concepts can be
+  *related to* each other (a dashed line) and mapped to other vocabularies,
+  and top concepts are kept right for you. Combinations that make no sense
+  are refused, or warned about, in plain words.
 - **The Hierarchy tree builds too.** *New class* (or, in a taxonomy, *New
   concept*) sits at the top of its section, every relationship and attribute
   is listed with its ends (*works for (Person → Organization)*), and each row's menu (the `⋯` button, or `Shift+F10`
