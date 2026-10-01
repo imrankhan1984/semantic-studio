@@ -208,6 +208,9 @@ export default function ConceptRelations({ ontologyId, iri, name, model, runner,
               ontologyId={ontologyId}
               kind="concept"
               label="A concept from an import"
+              // Only other vocabularies: a mapping never points at this
+              // project's own concepts (5.8).
+              importedOnly
               exclude={[iri]}
               busy={busy}
               error={errors.mapping || null}

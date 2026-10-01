@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 767 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 995 tests, vitest
+cd backend  && python -m pytest tests    # 786 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1002 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -293,6 +293,8 @@ leaves one behind.
 - Top concepts are kept by the commands in the same undo step, never marked by hand (D-091). [Stage B]
 - A characteristic's checkbox shows the model, not the click: a refusal leaves it unticked. [Stage B]
 - A selected line's highlight clears on a change of selection only; a line's label is a click on its line. [Stage B]
+- The chaining rule compares violations before and after a change: one written in Turtle warns, it never blocks another change. [chaining rule]
+- A warning carries its `block` and stands under it; only a warning a change brings is announced. [chaining rule]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

@@ -980,6 +980,64 @@ describe("relationship form (AC-7)", () => {
     expect(lastCommand()).toEqual(["SetEnds", fix.args]);
   });
 
+  it("shows each warning under the block it concerns (v0.6)", async () => {
+    await renderForm(
+      worksFor([], [], {
+        warnings: [
+          { text: "employs should go from Organization to Person.", block: "inverse" },
+          { text: "Works both ways means an Organization can also be linked by works for to a Person.", block: "characteristics" },
+        ],
+      }),
+    );
+    const blockOf = (text: string) => screen.getByText(text).closest(".edit-block")!.querySelector("h4")!.textContent;
+    expect(blockOf("employs should go from Organization to Person.")).toBe("The other way round");
+    expect(blockOf("Works both ways means an Organization can also be linked by works for to a Person.")).toBe(
+      "What else is true",
+    );
+  });
+
+  it("says a warning in the live region when a change brings it, not when the form opens (v0.6)", async () => {
+    const opened = worksFor([], [], { warnings: [{ text: "Already here.", block: "characteristics" }] });
+    let rerender!: (ui: React.ReactElement) => void;
+    await act(async () => {
+      ({ rerender } = render(
+        <EditSection ontologyId={OID} details={opened} primaryLanguage="en" languages={[]} onSelect={onSelect} onDeleted={onDeleted} />,
+      ));
+    });
+    expect(projectStore.getSnapshot().announcement.text).not.toContain("Already here.");
+    const changed = worksFor([], [], {
+      warnings: [
+        { text: "Already here.", block: "characteristics" },
+        { text: "Works both ways means an Organization can also be linked by works for to a Person.", block: "characteristics" },
+      ],
+    });
+    await act(async () => {
+      rerender(<EditSection ontologyId={OID} details={changed} primaryLanguage="en" languages={[]} onSelect={onSelect} onDeleted={onDeleted} />);
+    });
+    expect(projectStore.getSnapshot().announcement.text).toBe(
+      "Warning: Works both ways means an Organization can also be linked by works for to a Person.",
+    );
+  });
+
+  it("marks the checkboxes aria-disabled while a change saves, and sends one command (v0.6)", async () => {
+    let finish: (value: unknown) => void = () => {};
+    runCommand.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    await renderForm(worksFor());
+    const most = () => screen.getByRole("checkbox", { name: /At most one/ });
+    expect(most().getAttribute("aria-disabled")).toBe("false");
+    await act(async () => {
+      fireEvent.click(most());
+    });
+    expect(most().getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByRole("checkbox", { name: /Chains/ }).getAttribute("aria-disabled")).toBe("true");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("checkbox", { name: /Chains/ }));
+    });
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    await act(async () => finish(changed("SetCharacteristic")));
+    expect(most().getAttribute("aria-disabled")).toBe("false");
+  });
+
   it("points to restrictions and shapes for what a relationship cannot say", async () => {
     await renderForm(worksFor());
     expect(screen.getByText(/see Restrictions \(coming with axioms\)/)).toBeTruthy();
@@ -1032,6 +1090,19 @@ describe("attribute form (AC-8)", () => {
       fireEvent.click(box);
     });
     expect(lastCommand()).toEqual(["SetCharacteristic", { property: EX + "name", characteristic: "functional", on: true }]);
+  });
+
+  it("marks One value only aria-disabled while a change saves (v0.6)", async () => {
+    let finish: (value: unknown) => void = () => {};
+    runCommand.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    await renderForm(name());
+    const box = () => screen.getByRole("checkbox", { name: /One value only/ });
+    await act(async () => {
+      fireEvent.click(box());
+    });
+    expect(box().getAttribute("aria-disabled")).toBe("true");
+    await act(async () => finish(changed("SetCharacteristic")));
+    expect(box().getAttribute("aria-disabled")).toBe("false");
   });
 
   it("offers no relationship characteristic", async () => {
@@ -1100,13 +1171,19 @@ describe("concept relations (AC-9)", () => {
 
   it("maps to a concept from an import through the picker", async () => {
     searchNodes.mockResolvedValue([
-      { id: "http://example.org/imported#Apple", label: "Apple, from Fruits", kind: "concept", degree: 1 },
+      // The project's own Pear is not offered: a mapping points to another
+      // vocabulary (5.8, v0.6).
+      { id: EX + "Pear", label: "Pear", kind: "concept", degree: 1 },
+      { id: "http://example.org/imported#Apple", label: "Malus", kind: "concept", degree: 1, importedFrom: "Fruits" },
     ]);
     await renderForm(apple());
     fireEvent.click(screen.getByRole("button", { name: "Add mapping" }));
     fireEvent.click(screen.getByRole("button", { name: "or choose a concept from an import" }));
     fireEvent.change(screen.getByRole("combobox", { name: "A concept from an import" }), { target: { value: "Ap" } });
-    const option = await screen.findByRole("option", { name: /Apple/ });
+    const option = await screen.findByRole("option", { name: /Malus/ });
+    // The picker's own list, not the mapping kind's select.
+    const offered = [...document.querySelectorAll(".entity-picker-list [role=option]")].map((o) => o.textContent);
+    expect(offered).toEqual(["Malus, from Fruits"]);
     await act(async () => {
       fireEvent.mouseDown(option);
     });
@@ -1114,6 +1191,16 @@ describe("concept relations (AC-9)", () => {
       "AddMapping",
       { concept: EX + "Apple", kind: "exactMatch", target: "http://example.org/imported#Apple" },
     ]);
+  });
+
+  it("says why when only the project's own concepts match (5.8, v0.6)", async () => {
+    searchNodes.mockResolvedValue([{ id: EX + "Pear", label: "Pear", kind: "concept", degree: 1 }]);
+    await renderForm(apple());
+    fireEvent.click(screen.getByRole("button", { name: "Add mapping" }));
+    fireEvent.click(screen.getByRole("button", { name: "or choose a concept from an import" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "A concept from an import" }), { target: { value: "Pe" } });
+    expect(await screen.findByText(/No concept from an import matches/)).toBeTruthy();
+    expect(document.querySelectorAll(".entity-picker-list [role=option]")).toHaveLength(0);
   });
 
   it("shows a web mapping as a link and any other as text (D-088), and removes one", async () => {

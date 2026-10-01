@@ -8,7 +8,9 @@ SUMMARY
     property of the open project's model: *Belongs to* (its domain, changed
     or cleared), *Type of value* (one of the seven types of E-6), and **One
     value only**, with its example in the attribute's own names. The sentence
-    at the top is RelationshipForm's PropertyHead.
+    at the top is RelationshipForm's PropertyHead; a warning is shown under
+    *How many values* by its Warnings, and the checkbox is aria-disabled
+    while a change is saving.
 
 BASIC IDEA
     The same shape as the relationship form, smaller: every control is one
@@ -34,7 +36,8 @@ import { oneValueExample, typeWord } from "../modeling/sentences";
 import { DATATYPES } from "../modeling/values";
 import { Block, type Runner } from "./EditParts";
 import EntityPicker from "./EntityPicker";
-import { datatypeOf } from "./RelationshipForm";
+import { datatypeOf, Warnings } from "./RelationshipForm";
+import type { ModelWarning } from "../types";
 
 interface Props {
   ontologyId: string;
@@ -43,9 +46,10 @@ interface Props {
   model: EntityModel;
   runner: Runner;
   onSelect: (iri: string) => void;
+  warnings?: ModelWarning[];
 }
 
-export default function AttributeForm({ ontologyId, iri, name, model, runner, onSelect }: Props) {
+export default function AttributeForm({ ontologyId, iri, name, model, runner, onSelect, warnings = [] }: Props) {
   const { busy, errors, run, clear } = runner;
   const id = useId();
   const [open, setOpen] = useState<null | "domain" | "type">(null);
@@ -172,6 +176,8 @@ export default function AttributeForm({ ontologyId, iri, name, model, runner, on
             type="checkbox"
             checked={model.characteristics.has("functional")}
             aria-describedby={`${id}-one`}
+            // A click while a change saves would be dropped; say so (v0.6).
+            aria-disabled={busy}
             onChange={(e) =>
               !busy &&
               void run("functional", "SetCharacteristic", { property: iri, characteristic: "functional", on: e.target.checked })
@@ -182,6 +188,7 @@ export default function AttributeForm({ ontologyId, iri, name, model, runner, on
         <p id={`${id}-one`} className="characteristic-example">
           {oneValueExample(domain?.label ?? null, name)}
         </p>
+        <Warnings warnings={warnings} block="characteristics" runner={runner} />
         {errors.functional && (
           <p className="edit-error" role="alert">
             {errors.functional}

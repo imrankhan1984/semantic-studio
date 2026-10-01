@@ -30,7 +30,8 @@ BASIC IDEA
     targets exist, a new IRI is not taken, a value is valid for its datatype.
     A refusal is a CommandError carrying a sentence, and the graph is untouched.
     The modeling checks of relationships 5.9 -- contradicting characteristics,
-    a relationship as its own inverse, related concepts one broader than the
+    the OWL 2 rule for chaining relationships (SetCharacteristic,
+    AddSubPropertyOf and SetInverse), a relationship as its own inverse, related concepts one broader than the
     other, a loop of broader or sub-relationship links -- are modeling_checks'
     sentences, raised the same way.
 
@@ -1047,6 +1048,11 @@ def cmd_set_inverse(ctx: Context, a: dict) -> Change:
             raise CommandError(f"{ctx.name(inverse)} is not a relationship, so it cannot be the other way round.")
         if (inverse, OWL.inverseOf, prop) in ctx.graph or (prop, OWL.inverseOf, inverse) in ctx.graph:
             raise CommandError(f"{ctx.name(inverse)} is already the other way round of {ctx.name(prop)}.")
+        # The other way round of a chaining relationship is not simple either
+        # (5.9). One made from a name has no characteristics, so it is fine.
+        refusal = modeling_checks.inverse_chaining_refusal(ctx.graph, prop, inverse, ctx.name)
+        if refusal:
+            raise CommandError(refusal)
         removes += _inverse_triples(ctx, inverse)
         adds.append((inverse, OWL.inverseOf, prop))
         target_name = ctx.name(inverse)
@@ -1098,7 +1104,7 @@ def cmd_set_characteristic(ctx: Context, a: dict) -> Change:
             f'{ctx.name(prop)} is an attribute; an attribute can only be "one value only". '
             "The others describe links between things."
         )
-    refusal = modeling_checks.characteristic_refusal(ctx.graph, prop, name, on)
+    refusal = modeling_checks.characteristic_refusal(ctx.graph, prop, name, on, ctx.name)
     if refusal:
         raise CommandError(refusal)
     triple = (prop, RDF.type, modeling_checks.CHARACTERISTICS[name])
@@ -1139,6 +1145,8 @@ def _sub_pair(ctx: Context, a: dict) -> tuple[URIRef, URIRef]:
 def cmd_add_subproperty(ctx: Context, a: dict) -> Change:
     child, parent = _sub_pair(ctx, a)
     refusal = modeling_checks.subproperty_loop_refusal(ctx.graph, child, parent, ctx.name)
+    # A chaining relationship under one that must stay simple (5.9).
+    refusal = refusal or modeling_checks.subproperty_chaining_refusal(ctx.graph, child, parent, ctx.name)
     if refusal:
         raise CommandError(refusal)
     if (child, RDFS.subPropertyOf, parent) in ctx.graph:

@@ -132,13 +132,21 @@ def refused(pid: str, command: str, sentence: str, **args) -> None:
 
 
 def warnings(pid: str, iri: str) -> list[dict]:
+    """The warnings as the form reads them: the sentence, and its Fix; the
+    block each goes under is asserted where it matters."""
     response = client.get(f"/api/ontologies/{pid}-model/node", params={"iri": iri})
     assert response.status_code == 200, response.text
-    return response.json()["warnings"]
+    return [{k: v for k, v in w.items() if k != "block"} for w in response.json()["warnings"]]
+
+
+def blocks(pid: str, iri: str) -> dict:
+    response = client.get(f"/api/ontologies/{pid}-model/node", params={"iri": iri})
+    return {w["text"]: w["block"] for w in response.json()["warnings"]}
 
 
 CONTRADICTIONS = [
-    ("transitive", "functional", 'A relationship that chains cannot also be "at most one" in OWL 2. Choose one.'),
+    ("transitive", "functional",
+     'A relationship that chains cannot also be "at most one" in OWL 2; reasoners such as HermiT reject the file. Choose one.'),
     ("symmetric", "asymmetric", '"Works both ways" and "never both ways" contradict each other.'),
     ("reflexive", "irreflexive", '"Always to itself" and "never to itself" contradict each other.'),
 ]
@@ -173,6 +181,98 @@ def test_both_written_in_turtle_stay_visible_as_a_warning(pid, first, second, se
     assert {"text": sentence} in warnings(pid, EX + "knows")
 
 
+# --- the OWL 2 rule for chaining relationships (5.9, v0.6: the first three rows) ----------
+
+SIMPLE_ONLY = [
+    ("functional", "at most one"),
+    ("inverseFunctional", "identifies its start"),
+    ("asymmetric", "never both ways"),
+    ("irreflexive", "never to itself"),
+]
+
+
+def chains_sentence(word: str) -> str:
+    return f'A relationship that chains cannot also be "{word}" in OWL 2; reasoners such as HermiT reject the file. Choose one.'
+
+
+@pytest.mark.parametrize("name,word", SIMPLE_ONLY)
+@pytest.mark.parametrize("chains_first", [True, False])
+def test_chains_with_any_of_the_four_is_refused_naming_the_other_box(pid, name, word, chains_first):
+    first, second = ("transitive", name) if chains_first else (name, "transitive")
+    assert run(pid, "SetCharacteristic", property="shop:knows", characteristic=first, on=True).status_code == 200
+    refused(pid, "SetCharacteristic", chains_sentence(word), property="shop:knows", characteristic=second, on=True)
+
+
+@pytest.mark.parametrize("name", ["symmetric", "reflexive"])
+def test_chains_with_the_other_two_is_allowed(pid, name):
+    assert run(pid, "SetCharacteristic", property="shop:knows", characteristic="transitive", on=True).status_code == 200
+    assert run(pid, "SetCharacteristic", property="shop:knows", characteristic=name, on=True).status_code == 200
+
+
+@pytest.mark.parametrize("name,word", SIMPLE_ONLY)
+def test_one_with_a_chaining_relationship_under_it_cannot_have_the_four(pid, name, word):
+    """Second row: part of is under member of, and part of chains."""
+    assert run(pid, "SetCharacteristic", property="shop:partOf", characteristic="transitive", on=True).status_code == 200
+    refused(
+        pid, "SetCharacteristic",
+        f'member of has a relationship under it that chains, so it cannot also be "{word}" in OWL 2.',
+        property="shop:memberOf", characteristic=name, on=True,
+    )
+
+
+def test_one_whose_other_way_round_chains_cannot_have_the_four(pid):
+    """Second row, the other way round: employs is the inverse of works for."""
+    assert run(pid, "SetInverse", property="shop:worksFor", inverse="shop:employs").status_code == 200
+    assert run(pid, "SetCharacteristic", property="shop:worksFor", characteristic="transitive", on=True).status_code == 200
+    refused(
+        pid, "SetCharacteristic",
+        'The other way round of employs chains, so it cannot also be "at most one" in OWL 2.',
+        property="shop:employs", characteristic="functional", on=True,
+    )
+
+
+def test_a_chaining_one_is_not_put_under_one_that_has_the_four(pid):
+    """Third row, by AddSubPropertyOf: manages chains, member of is at most one."""
+    text = MODEL + 'shop:manages a owl:ObjectProperty, owl:TransitiveProperty ; rdfs:label "manages"@en .\nshop:memberOf a owl:FunctionalProperty .\n'
+    assert apply(pid, text).status_code == 200
+    refused(
+        pid, "AddSubPropertyOf",
+        'manages chains, and member of is "at most one"; in OWL 2 a relationship above a chaining one cannot be.',
+        child="shop:manages", parent="shop:memberOf",
+    )
+
+
+def test_a_chaining_one_is_not_made_the_other_way_round_of_one_that_has_the_four(pid):
+    """Third row, by SetInverse."""
+    assert run(pid, "SetCharacteristic", property="shop:employs", characteristic="functional", on=True).status_code == 200
+    assert run(pid, "SetCharacteristic", property="shop:worksFor", characteristic="transitive", on=True).status_code == 200
+    refused(
+        pid, "SetInverse",
+        'works for chains, and employs is "at most one"; in OWL 2 a relationship that is the other way round of a chaining one cannot be.',
+        property="shop:worksFor", inverse="shop:employs",
+    )
+
+
+def test_making_one_chain_below_one_that_has_the_four_is_refused(pid):
+    """Third row, by SetCharacteristic: the violation is above, not here."""
+    assert run(pid, "SetCharacteristic", property="shop:memberOf", characteristic="functional", on=True).status_code == 200
+    refused(
+        pid, "SetCharacteristic",
+        'part of chains, and member of is "at most one"; in OWL 2 a relationship above a chaining one cannot be.',
+        property="shop:partOf", characteristic="transitive", on=True,
+    )
+
+
+def test_the_rule_written_in_turtle_is_a_warning_under_what_else_is_true(pid):
+    text = MODEL + "shop:partOf a owl:TransitiveProperty .\nshop:memberOf a owl:IrreflexiveProperty .\n"
+    assert apply(pid, text).status_code == 200
+    sentence = 'member of has a relationship under it that chains, so it cannot also be "never to itself" in OWL 2.'
+    assert {"text": sentence} in warnings(pid, EX + "memberOf")
+    assert blocks(pid, EX + "memberOf")[sentence] == "characteristics"
+    # And a change elsewhere is not refused because of it.
+    assert run(pid, "SetCharacteristic", property="shop:knows", characteristic="functional", on=True).status_code == 200
+
+
 def test_turning_a_characteristic_off_is_never_refused(pid):
     for name in modeling_checks.CHARACTERISTICS:
         assert run(pid, "SetCharacteristic", property="shop:knows", characteristic=name, on=True).status_code in (200, 422)
@@ -200,6 +300,8 @@ def test_r8_an_inverse_with_the_wrong_ends_warns_and_its_fix_sets_them(pid):
     assert (U("employs"), OWL.inverseOf, U("worksFor")) in graph(pid)
     found = warnings(pid, EX + "worksFor")
     assert [w["text"] for w in found] == ["employs should go from Organization to Person."]
+    # Shown under the block it concerns (v0.6).
+    assert blocks(pid, EX + "worksFor") == {"employs should go from Organization to Person.": "inverse"}
     fix = found[0]["fix"]
     assert fix["command"] == "SetEnds"
     assert run(pid, fix["command"], **fix["args"]).status_code == 200

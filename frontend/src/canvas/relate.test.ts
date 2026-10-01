@@ -84,9 +84,17 @@ describe("relateChoices", () => {
     expect(result.choices[0].kind).toBe("newRelationship");
   });
 
-  it("offers narrower than and related to between concepts (5.8)", () => {
-    const result = relateChoices(view, "Status", "Paid");
-    expect(result).toEqual({
+  // Concepts: Late is narrower than Paid, which is narrower than Status.
+  const concepts = (...extra: CanvasView["edges"]): CanvasView => ({
+    ...view,
+    nodes: [...view.nodes, { iri: "Late", kind: "concept", label: "Late", fallback: false, attributes: [] }],
+    edges: [...view.edges, { kind: "broader", source: "Late", target: "Paid", pair: 0, pairs: 1 }, ...extra],
+  });
+  const kinds = (result: ReturnType<typeof relateChoices>) => ("choices" in result ? result.choices.map((c) => c.kind) : result.refusal);
+
+  it("offers narrower than and related to between unlinked concepts (5.8)", () => {
+    const free = { ...view, edges: view.edges.filter((e) => e.kind !== "broader") };
+    expect(relateChoices(free, "Status", "Paid")).toEqual({
       choices: [
         { kind: "broader", label: "Status is narrower than Paid" },
         { kind: "related", label: "Status is related to Paid" },
@@ -95,10 +103,23 @@ describe("relateChoices", () => {
     });
   });
 
-  it("does not offer related to again for a pair already related, either way round", () => {
-    const related = { ...view, edges: [...view.edges, { kind: "related" as const, source: "Paid", target: "Status", pair: 0, pairs: 1 }] };
-    const result = relateChoices(related, "Status", "Paid");
-    expect("choices" in result && result.choices.map((c) => c.kind)).toEqual(["broader"]);
+  it("offers nothing the server refuses: the target already narrower than the source, directly or through others", () => {
+    expect(relateChoices(concepts(), "Status", "Paid")).toEqual({ refusal: "Paid is already narrower than Status." });
+    expect(relateChoices(concepts(), "Status", "Late")).toEqual({ refusal: "Late is already narrower than Status." });
+  });
+
+  it("offers only narrower than when the source is already under the target through others", () => {
+    expect(kinds(relateChoices(concepts(), "Late", "Status"))).toEqual(["broader"]);
+  });
+
+  it("offers neither between two related concepts, either way round", () => {
+    const related = { kind: "related" as const, source: "Late", target: "Status", pair: 0, pairs: 1 };
+    const free = { ...view, edges: [related], nodes: concepts().nodes };
+    const sentence = "Status is related to Late; SKOS does not allow one to be narrower than the other as well.";
+    expect(relateChoices(free, "Status", "Late")).toEqual({ refusal: sentence });
+    expect(kinds(relateChoices(free, "Late", "Status"))).toEqual(
+      "Late is related to Status; SKOS does not allow one to be narrower than the other as well.",
+    );
   });
 
   it("gives a loop no notes about other relationships on its box (5.10 item 4)", () => {
@@ -173,6 +194,7 @@ describe("relateChoices, relationships Stage A", () => {
 
   it("offers each kind's own lines", () => {
     expect("choices" in relateChoices({ ...view, kind: "ontology" }, "Order", "Inv")).toBe(true);
-    expect("choices" in relateChoices({ ...view, kind: "taxonomy" }, "Status", "Paid")).toBe(true);
+    const free = view.edges.filter((e) => e.kind !== "broader");
+    expect("choices" in relateChoices({ ...view, kind: "taxonomy", edges: free }, "Status", "Paid")).toBe(true);
   });
 });

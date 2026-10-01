@@ -455,6 +455,9 @@ export interface NodeDetails {
 
 export interface ModelWarning {
   text: string;
+  // The block it concerns, where the form shows it: "characteristics" (What
+  // else is true, How many values) or "inverse" (The other way round).
+  block?: "characteristics" | "inverse";
   fix?: { command: string; args: Record<string, unknown>; label: string };
 }
 

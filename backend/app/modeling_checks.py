@@ -78,12 +78,9 @@ WORDS = {
 }
 
 # The pairs that contradict each other, and what the learner reads (5.9).
+# Chains with the four that need a simple relationship is the chaining rule
+# below, which also sees relationships under this one and its other way round.
 CONFLICTS = [
-    (
-        "transitive",
-        "functional",
-        'A relationship that chains cannot also be "at most one" in OWL 2. Choose one.',
-    ),
     ("symmetric", "asymmetric", '"Works both ways" and "never both ways" contradict each other.'),
     ("reflexive", "irreflexive", '"Always to itself" and "never to itself" contradict each other.'),
 ]
@@ -99,16 +96,135 @@ def characteristics(graph: Graph, prop: URIRef) -> set[str]:
     return {name for name, iri in CHARACTERISTICS.items() if iri in types}
 
 
-def characteristic_refusal(graph: Graph, prop: URIRef, name: str, on: bool) -> Optional[str]:
-    """Turning `name` on next to the one it contradicts is refused; turning
-    anything off never is."""
+def characteristic_refusal(
+    graph: Graph, prop: URIRef, name: str, on: bool, label: Name = str
+) -> Optional[str]:
+    """Turning `name` on next to the one it contradicts is refused, and so is
+    anything the chaining rule forbids; turning anything off never is."""
     if not on:
         return None
     has = characteristics(graph, prop)
     for a, b, sentence in CONFLICTS:
         if (name == a and b in has) or (name == b and a in has):
             return sentence
-    return None
+    return _Facts(graph).refusal(prop, label, lambda f: f.chars.setdefault(prop, set()).add(name))
+
+
+# --- the OWL 2 rule for chaining relationships (5.9, the first three rows) --------------
+#
+# OWL 2 DL lets these four apply only to a *simple* relationship: one that
+# does not chain, has no chaining relationship under it, and whose other way
+# round is simple too (the structural specification, Section 11.2). A file
+# that breaks it is not OWL 2 DL, and reasoners such as HermiT reject it.
+
+SIMPLE_ONLY = ("functional", "inverseFunctional", "asymmetric", "irreflexive")
+
+
+class _Facts:
+    """The property facts the rule reads, each from one scan of its predicate,
+    so a command can try its change on a copy before anything moves."""
+
+    def __init__(self, graph: Optional[Graph] = None) -> None:
+        self.chars: dict = {}
+        self.parents: dict = {}
+        self.inverses: dict = {}
+        if graph is None:
+            return
+        for name, iri in CHARACTERISTICS.items():
+            for s in graph.subjects(RDF.type, iri):
+                self.chars.setdefault(s, set()).add(name)
+        for child, parent in graph.subject_objects(RDFS.subPropertyOf):
+            self.parents.setdefault(child, set()).add(parent)
+        for a, b in graph.subject_objects(OWL.inverseOf):
+            self.inverses.setdefault(a, set()).add(b)
+            self.inverses.setdefault(b, set()).add(a)
+
+    def copy(self) -> "_Facts":
+        other = _Facts()
+        other.chars = {k: set(v) for k, v in self.chars.items()}
+        other.parents = {k: set(v) for k, v in self.parents.items()}
+        other.inverses = {k: set(v) for k, v in self.inverses.items()}
+        return other
+
+    def not_simple(self) -> dict:
+        """Every relationship that is not simple, with why: the chaining one it
+        comes from, and "self", "under" (a chaining one is below it) or
+        "inverse" (its other way round is not simple)."""
+        why: dict = {}
+        queue = []
+        for prop in sorted(self.chars):
+            if "transitive" in self.chars[prop]:
+                why[prop] = (prop, "self")
+                queue.append(prop)
+        while queue:
+            prop = queue.pop(0)
+            source = why[prop][0]
+            for up in sorted(self.parents.get(prop, ())):
+                if up not in why:
+                    why[up] = (source, "under")
+                    queue.append(up)
+            for other in sorted(self.inverses.get(prop, ())):
+                if other not in why:
+                    why[other] = (source, "inverse")
+                    queue.append(other)
+        return why
+
+    def violations(self) -> list:
+        why = self.not_simple()
+        return [
+            (prop, name, why[prop])
+            for prop in sorted(why)
+            for name in SIMPLE_ONLY
+            if name in self.chars.get(prop, ())
+        ]
+
+    def refusal(self, subject, label: Name, change: Callable[["_Facts"], None]) -> Optional[str]:
+        """The sentence for the first violation `change` would add, one on
+        `subject` itself first; None when it adds none. A violation already
+        there (written in Turtle) is a warning, not a reason to refuse."""
+        before = {(prop, name) for prop, name, _ in self.violations()}
+        after = self.copy()
+        change(after)
+        new = [v for v in after.violations() if (v[0], v[1]) not in before]
+        if not new:
+            return None
+        new.sort(key=lambda v: v[0] != subject)
+        return chaining_sentence(*new[0], label, subject)
+
+
+def chaining_sentence(prop, name: str, why: tuple, label: Name, subject=None) -> str:
+    """5.9's three sentences, naming the checkbox that cannot stay."""
+    source, how = why
+    word = WORDS[name]
+    if how == "self":
+        return (
+            f'A relationship that chains cannot also be "{word}" in OWL 2; '
+            "reasoners such as HermiT reject the file. Choose one."
+        )
+    if subject is not None and prop != subject:
+        # The change made a chaining relationship the child or the other way
+        # round of one that has one of the four (the third row).
+        where = "above a chaining one" if how == "under" else "that is the other way round of a chaining one"
+        return f'{label(source)} chains, and {label(prop)} is "{word}"; in OWL 2 a relationship {where} cannot be.'
+    if how == "under":
+        return f'{label(prop)} has a relationship under it that chains, so it cannot also be "{word}" in OWL 2.'
+    return f'The other way round of {label(prop)} chains, so it cannot also be "{word}" in OWL 2.'
+
+
+def subproperty_chaining_refusal(graph: Graph, child: URIRef, parent: URIRef, label: Name) -> Optional[str]:
+    return _Facts(graph).refusal(child, label, lambda f: f.parents.setdefault(child, set()).add(parent))
+
+
+def inverse_chaining_refusal(graph: Graph, prop: URIRef, inverse: URIRef, label: Name) -> Optional[str]:
+    """SetInverse replaces the inverses both sides had, so the copy does too."""
+    def change(f: "_Facts") -> None:
+        for side in (prop, inverse):
+            for other in f.inverses.pop(side, set()):
+                f.inverses.get(other, set()).discard(side)
+        f.inverses.setdefault(prop, set()).add(inverse)
+        f.inverses.setdefault(inverse, set()).add(prop)
+
+    return _Facts(graph).refusal(prop, label, change)
 
 
 def own_inverse_refusal(prop: URIRef, inverse: URIRef, name: str) -> Optional[str]:
@@ -225,9 +341,14 @@ def warnings(graph: Graph, prop: URIRef, name: Name) -> list[dict]:
     """What the form shows under a relationship or an attribute (5.9)."""
     out: list[dict] = []
     has = characteristics(graph, prop)
+    # `block` is where the form shows it: under the block it concerns.
     for a, b, sentence in CONFLICTS:
         if a in has and b in has:
-            out.append({"text": sentence})
+            out.append({"text": sentence, "block": "characteristics"})
+    # The chaining rule, for a combination written in Turtle (D-089).
+    for bad, what, why in _Facts(graph).violations():
+        if bad == prop:
+            out.append({"text": chaining_sentence(bad, what, why, name), "block": "characteristics"})
     domain = _named(graph.objects(prop, RDFS.domain))
     rng = _named(graph.objects(prop, RDFS.range))
     label = name(prop)
@@ -237,6 +358,7 @@ def warnings(graph: Graph, prop: URIRef, name: Name) -> list[dict]:
         # example does, so no grammar is guessed.
         start, end = name(domain), name(rng)
         out.append({
+            "block": "characteristics",
             "text": (
                 f"Works both ways means {article(end)} {end} can also be linked by {label} "
                 f"to {article(start)} {start}. Usually start and end are the same class."
@@ -244,6 +366,7 @@ def warnings(graph: Graph, prop: URIRef, name: Name) -> list[dict]:
         })
     if "reflexive" in has and domain is not None:
         out.append({
+            "block": "characteristics",
             "text": f'"Always to itself" makes every thing {article(name(domain))} {name(domain)}. '
             "This is rarely what is meant."
         })
@@ -252,7 +375,7 @@ def warnings(graph: Graph, prop: URIRef, name: Name) -> list[dict]:
             ends = (_named(graph.objects(inverse, RDFS.domain)), _named(graph.objects(inverse, RDFS.range)))
             if ends == (rng, domain):
                 continue
-            warning = {"text": f"{name(inverse)} should go from {name(rng)} to {name(domain)}."}
+            warning = {"text": f"{name(inverse)} should go from {name(rng)} to {name(domain)}.", "block": "inverse"}
             # Fixed here only when it is this document's: an imported one is
             # changed where it is defined.
             if (inverse, RDF.type, OWL.ObjectProperty) in graph:

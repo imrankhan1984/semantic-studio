@@ -9,8 +9,8 @@ SUMMARY
     swapped, changed or cleared), its other way round, the seven
     characteristics each with an example in the relationship's own names,
     its more general relationship, and pointers to what it cannot say. Also
-    PropertyHead, the sentence and the 5.9 warnings at the top of both
-    property forms.
+    PropertyHead, the sentence at the top of both property forms, and
+    Warnings, the 5.9 warnings shown under the block each concerns.
 
 BASIC IDEA
     Every control is one command, so one labelled undo step, sent through
@@ -29,21 +29,29 @@ BASIC IDEA
     *Name the other way round…* makes a new relationship with the ends
     swapped (SetInverse with a label), with the sentence it will read as
     under the field; *or choose an existing one* picks any relationship.
-    A warning that has a Fix (an inverse with the wrong ends) offers it as a
-    button that sends the command the server named.
+    A warning stands under the block it concerns (the server says which):
+    a characteristic's under *What else is true*, an inverse's under *The
+    other way round*. It has a Fix when one command resolves it (an inverse
+    with the wrong ends), which sends the command the server named. A warning
+    that a change brings is also said in the project's live region, once; the
+    ones already there when the form opens are read with the form.
+
+    While a change is saving the checkboxes are aria-disabled: a click then
+    would be dropped, and a screen reader says why instead of nothing.
 
 INPUTS / INPUT SOURCES (props)
     - ontologyId, iri, name, model: the relationship and its blocks.
     - primaryLanguage: the name field's language.
     - runner: EditSection's; onSelect: select an entity named here.
-    PropertyHead: model, name, warnings, runner.
+    PropertyHead: model, name, iri, warnings (announced when new).
+    Warnings: the warnings, the block to show, runner.
 
 EXPECTED OUTPUT
     - Commands through the runner; the blocks' markup.
 ================================================================================
 */
 
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { EntityModel, Ref } from "../modeling/entity";
 import {
   attributeSentence,
@@ -55,6 +63,7 @@ import {
   parentSentence,
   type Characteristic,
 } from "../modeling/sentences";
+import { projectStore } from "../state/projectStore";
 import type { ModelWarning } from "../types";
 import { Block, type Runner } from "./EditParts";
 import EntityPicker from "./EntityPicker";
@@ -70,19 +79,37 @@ export function datatypeOf(range: Ref | null): string | null {
   return range.label;
 }
 
-/** The sentence and the warnings, at the top of a property's form. */
+/** Say each warning a change brings, once, in the project's live region.
+ *  Those there when the entity is opened are not: they are read with the
+ *  form. Keyed by entity, so moving to another does not announce its own. */
+function useWarningAnnouncer(iri: string, warnings: ModelWarning[]) {
+  const seen = useRef<{ iri: string; texts: Set<string> } | null>(null);
+  const texts = warnings.map((w) => w.text).join("\n");
+  useEffect(() => {
+    const now = new Set(texts ? texts.split("\n") : []);
+    const before = seen.current;
+    if (before && before.iri === iri) {
+      const fresh = [...now].filter((t) => !before.texts.has(t));
+      if (fresh.length) projectStore.say(`Warning: ${fresh.join(" ")}`);
+    }
+    seen.current = { iri, texts: now };
+  }, [iri, texts]);
+}
+
+/** The sentence at the top of a property's form; its warnings are said as
+ *  they appear, and shown under their own blocks by Warnings. */
 export function PropertyHead({
   model,
   name,
+  iri,
   warnings,
-  runner,
 }: {
   model: EntityModel;
   name: string;
+  iri: string;
   warnings: ModelWarning[];
-  runner: Runner;
 }) {
-  const { busy, errors, run } = runner;
+  useWarningAnnouncer(iri, warnings);
   const attribute = model.kind === "datatypeProperty";
   const sentence = attribute
     ? attributeSentence(model.domain?.label ?? null, name, datatypeOf(model.range))
@@ -90,28 +117,46 @@ export function PropertyHead({
   return (
     <Block title="Sentence">
       <p className="form-sentence">{sentence}</p>
-      {warnings.length > 0 && (
-        <ul className="form-warnings" aria-label="Warnings">
-          {warnings.map((w) => (
-            <li key={w.text} className="form-warning">
-              <span>{w.text}</span>
-              {w.fix && (
-                <button
-                  type="button"
-                  className="ghost edit-btn"
-                  aria-disabled={busy}
-                  aria-label={`Fix: ${w.fix.label}`}
-                  onClick={() => !busy && void run("fix", w.fix!.command, w.fix!.args)}
-                >
-                  Fix
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      {errors.fix && <p className="edit-error">{errors.fix}</p>}
     </Block>
+  );
+}
+
+/** The warnings of one block, each with its Fix when it has one. */
+export function Warnings({
+  warnings,
+  block,
+  runner,
+}: {
+  warnings: ModelWarning[];
+  block: NonNullable<ModelWarning["block"]>;
+  runner: Runner;
+}) {
+  const { busy, errors, run } = runner;
+  // One without a block (an older server) goes with the characteristics.
+  const mine = warnings.filter((w) => (w.block ?? "characteristics") === block);
+  if (mine.length === 0) return null;
+  return (
+    <>
+      <ul className="form-warnings" aria-label="Warnings">
+        {mine.map((w) => (
+          <li key={w.text} className="form-warning">
+            <span>{w.text}</span>
+            {w.fix && (
+              <button
+                type="button"
+                className="ghost edit-btn"
+                aria-disabled={busy}
+                aria-label={`Fix: ${w.fix.label}`}
+                onClick={() => !busy && void run("fix", w.fix!.command, w.fix!.args)}
+              >
+                Fix
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {errors.fix && <p className="edit-error">{errors.fix}</p>}
+    </>
   );
 }
 
@@ -123,12 +168,22 @@ interface Props {
   primaryLanguage: string;
   runner: Runner;
   onSelect: (iri: string) => void;
+  warnings?: ModelWarning[];
 }
 
 /** Which small form is open: at most one at a time. */
 type Open = null | "domain" | "range" | "inverseName" | "inversePick" | "parent";
 
-export default function RelationshipForm({ ontologyId, iri, name, model, primaryLanguage, runner, onSelect }: Props) {
+export default function RelationshipForm({
+  ontologyId,
+  iri,
+  name,
+  model,
+  primaryLanguage,
+  runner,
+  onSelect,
+  warnings = [],
+}: Props) {
   const { busy, errors, run, clear } = runner;
   const [open, setOpen] = useState<Open>(null);
   const [more, setMore] = useState(() => CHARACTERISTICS.some((c) => c.more && model.characteristics.has(c.id)));
@@ -220,6 +275,7 @@ export default function RelationshipForm({ ontologyId, iri, name, model, primary
             type="checkbox"
             checked={model.characteristics.has(c.id)}
             aria-describedby={exampleId}
+            aria-disabled={busy}
             onChange={(e) => toggle(c.id, e.target.checked)}
           />{" "}
           {c.name} <span className="owl-term">{c.owl}</span>
@@ -275,6 +331,7 @@ export default function RelationshipForm({ ontologyId, iri, name, model, primary
             ))}
           </ul>
         )}
+        <Warnings warnings={warnings} block="inverse" runner={runner} />
         {errors.inverse && <p className="edit-error">{errors.inverse}</p>}
         {open === "inverseName" ? (
           <form
@@ -347,6 +404,7 @@ export default function RelationshipForm({ ontologyId, iri, name, model, primary
             {CHARACTERISTICS.filter((c) => c.more).map(box)}
           </ul>
         </fieldset>
+        <Warnings warnings={warnings} block="characteristics" runner={runner} />
         {errors.characteristic && (
           <p className="edit-error" role="alert">
             {errors.characteristic}

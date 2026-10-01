@@ -1180,3 +1180,34 @@ EXPECTED OUTPUT
   container, which React Flow puts back at once, so the click lands about
   11 px from its target. It looked like *+ attribute* never opening; it was
   the harness. Elements on the canvas are clicked where they are drawn.
+
+- **The chaining rule, and four review fixes** (2026-10-01, E-8 Stage B, spec
+  v0.6, from the analyst's review of PR #49).
+
+  **The chaining rule compares before and after.** OWL 2 allows *at most
+  one*, *identifies its start*, *never both ways* and *never to itself* only
+  on a simple relationship: one that does not chain, has no chaining one
+  under it, and whose other way round is simple. `modeling_checks._Facts`
+  reads the characteristics, `subPropertyOf` and `inverseOf` once, works out
+  every relationship that is not simple and why, and a command is refused
+  only for a violation its change would add. A violation written in Turtle
+  (D-089) is a warning on that relationship; refusing every later change
+  because of it would lock a learner out of an unrelated fix.
+  `SetCharacteristic`, `AddSubPropertyOf` and `SetInverse` all ask it, since
+  each can make a relationship not simple.
+
+  **A warning says which block it belongs to.** The server sends `block`
+  (*characteristics* or *inverse*) and the form shows each under that block.
+  Only a warning a change brings is said in the live region
+  (`projectStore.say`); those already there when the entity opens are read
+  with the form, and moving to another entity announces nothing.
+
+  **The relate menu offers only what the server accepts,** read from the
+  drawn lines, through other concepts too: nothing when the target is
+  already narrower than the source, no *related to* when the source is
+  already under the target, no *narrower than* between related concepts.
+  Two canvas tests had drawn exactly the loop-making line and passed.
+
+  **Checkboxes are aria-disabled while a change saves:** the click is still
+  dropped, as the runner allows one command at a time, but a screen reader
+  now says why.

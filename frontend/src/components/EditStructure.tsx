@@ -40,7 +40,7 @@ EXPECTED OUTPUT
 
 import { useRef, useState } from "react";
 import { structureOf, type EntityModel, type Ref } from "../modeling/entity";
-import type { SearchKind } from "../types";
+import type { ModelWarning, SearchKind } from "../types";
 import AttributeForm from "./AttributeForm";
 import ConceptRelations from "./ConceptRelations";
 import { Block, type Runner } from "./EditParts";
@@ -57,6 +57,8 @@ interface Props {
   runner: Runner;
   onSelect: (iri: string) => void;
   follow: (created: string | undefined) => void;
+  /** A property's 5.9 warnings, shown under the block each concerns. */
+  warnings?: ModelWarning[];
 }
 
 /** Which small form is open: at most one at a time. */
@@ -114,6 +116,7 @@ export default function EditStructure({
   runner,
   onSelect,
   follow,
+  warnings = [],
 }: Props) {
   const { busy, errors, run, clear } = runner;
   const [open, setOpen] = useState<Open>(null);
@@ -273,7 +276,15 @@ export default function EditStructure({
   if (shape === "property") {
     // Relationships Stage B: each kind of property has its own form (5.6, 5.7).
     return model.kind === "datatypeProperty" ? (
-      <AttributeForm ontologyId={ontologyId} iri={iri} name={name} model={model} runner={runner} onSelect={onSelect} />
+      <AttributeForm
+        ontologyId={ontologyId}
+        iri={iri}
+        name={name}
+        model={model}
+        runner={runner}
+        onSelect={onSelect}
+        warnings={warnings}
+      />
     ) : (
       <RelationshipForm
         ontologyId={ontologyId}
@@ -283,6 +294,7 @@ export default function EditStructure({
         primaryLanguage={primaryLanguage}
         runner={runner}
         onSelect={onSelect}
+        warnings={warnings}
       />
     );
   }

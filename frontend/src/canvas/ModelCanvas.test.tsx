@@ -422,7 +422,8 @@ describe("relating (AC-12)", () => {
   });
 
   it("concept to concept: narrower than runs AddBroader", async () => {
-    await renderCanvas();
+    // Without the drawn Paid narrower than Status, which would make it a loop.
+    await renderCanvas(viewOf({ edges: viewOf().edges.filter((e) => e.kind !== "broader") }));
     await draw(EX + "Status", EX + "Paid");
     await act(async () => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Status is narrower than Paid" }));
