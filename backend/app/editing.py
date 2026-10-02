@@ -1587,9 +1587,30 @@ def _example_value(ctx: Context, a: dict, key: str = "value") -> tuple[URIRef, U
             raise CommandError(f"A value of {name} is another example, by its IRI.")
         term = parse_value(spec, ctx.primary, lambda v: ctx.iri(v, "example"))
         ctx.require(term, "example")
+        # Only an individual of the end class, or of a class below it: the
+        # picker offers no other, and a request that names one is refused
+        # here too (PR #51 review). No end class, no check.
+        end = classes.value(prop, RDFS.range)
+        if isinstance(end, URIRef) and not set(classes.objects(term, RDF.type)) & examples.subclasses(classes, end):
+            target = pick_label_in(classes, term, ctx.languages)[0]
+            kind = pick_label_in(classes, end, ctx.languages)[0]
+            article = "an" if kind[:1].lower() in "aeiou" else "a"
+            raise CommandError(f"{target} is not {article} {kind}; {name} links only to {article} {kind}.")
+        return iri, prop, term, name
+    rng = classes.value(prop, RDFS.range)
+    if isinstance(rng, URIRef) and rng not in _DATATYPE_BY_IRI and rng != RDF.langString and rng != RDFS.Literal:
+        # A type outside the seven offered (xsd:float, xsd:gYear from an
+        # import): the value is sent typed with that type, never as text in
+        # a language, and checked where rdflib knows the type (PR #51 review).
+        if not isinstance(spec, dict) or spec.get("kind") != "typed" or not isinstance(spec.get("value"), str):
+            raise CommandError(f"{name} is a value of type {ctx.short(rng)}; give a value of that type.")
+        if ctx.iri(spec.get("datatype") or "", "datatype") != rng:
+            raise CommandError(f"{name} is a value of type {ctx.short(rng)}; give a value of that type.")
+        term = Literal(spec["value"].strip(), datatype=rng)
+        if not spec["value"].strip() or term.ill_typed:
+            raise CommandError(f'"{spec["value"]}" is not a valid {ctx.short(rng)}.')
         return iri, prop, term, name
     term = parse_value(spec, ctx.primary, lambda v: ctx.iri(v, "link"))
-    rng = classes.value(prop, RDFS.range)
     if rng in _DATATYPE_BY_IRI and rng != XSD.string:
         # A typed attribute takes a value of its type, checked lexically: the
         # form says so before sending (S22), and this says it again.

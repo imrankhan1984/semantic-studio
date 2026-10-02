@@ -247,3 +247,91 @@ describe("an example's form (5.8)", () => {
     expect(within(screen.getByRole("group", { name: /birth date/ })).getByText("1990-05-01")).toBeTruthy();
   });
 });
+
+describe("an example's form: PR #51 review", () => {
+  it("sends a type outside the seven with its datatype, the hint naming it (item 1)", async () => {
+    const FLOAT = "http://www.w3.org/2001/XMLSchema#float";
+    await renderForm(bob([{ ...BIRTH, property: `${EX}height`, label: "height", functional: false, datatype: FLOAT }]));
+    const field = screen.getByRole("group", { name: /height/ });
+    expect(within(field).getByText(/a value of type xsd:float/)).toBeTruthy();
+    fireEvent.change(within(field).getByLabelText("height"), { target: { value: "1.75" } });
+    await act(async () => {
+      fireEvent.click(within(field).getByRole("button", { name: "Add height" }));
+    });
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "AddExampleValue", {
+      iri: `${EX}bob`, property: `${EX}height`, value: { kind: "typed", value: "1.75", datatype: FLOAT },
+    });
+  });
+
+  it("starts a yes/no field at yes, ready to add (item 4)", async () => {
+    await renderForm(bob([{ ...BIRTH, property: `${EX}active`, label: "active", datatype: "xsd:boolean" }]));
+    const field = screen.getByRole("group", { name: /active/ });
+    expect(within(field).getByRole("switch").getAttribute("aria-checked")).toBe("true");
+    const add = within(field).getByRole("button", { name: "Add active" });
+    expect(add.getAttribute("aria-disabled")).toBe("false");
+    await act(async () => {
+      fireEvent.click(add);
+    });
+    expect(runCommand.mock.calls[0][3].value).toEqual({ kind: "typed", value: "true", datatype: "xsd:boolean" });
+  });
+
+  it("returns focus to the field's heading when the last choice has been linked (item 3)", async () => {
+    let view!: ReturnType<typeof render>;
+    const one = { ...MEMBER, values: [MEMBER.values[0]] };
+    await act(async () => {
+      view = render(
+        <EditSection ontologyId={OID} details={bob([one])} primaryLanguage="en" languages={["fr"]} onSelect={onSelect} onDeleted={vi.fn()} />,
+      );
+    });
+    const field = () => screen.getByRole("group", { name: /member of/ });
+    fireEvent.change(within(field()).getByLabelText("Link to"), { target: { value: `${EX}initech` } });
+    within(field()).getByRole("button", { name: "Link member of" }).focus();
+    await act(async () => {
+      fireEvent.click(within(field()).getByRole("button", { name: "Link member of" }));
+    });
+    await settle();
+    // The panel refetches: Initech is linked, no choice is left, the select
+    // and its button go, and focus would fall to the page.
+    const linked = { ...MEMBER, values: [...MEMBER.values, { kind: "link" as const, value: `${EX}initech`, label: "Initech" }] };
+    await act(async () => {
+      view.rerender(
+        <EditSection ontologyId={OID} details={bob([linked])} primaryLanguage="en" languages={["fr"]} onSelect={onSelect} onDeleted={vi.fn()} />,
+      );
+    });
+    await settle();
+    expect(within(field()).queryByLabelText("Link to")).toBeNull();
+    expect(document.activeElement).toBe(within(field()).getByRole("heading", { name: /member of/ }));
+  });
+
+  it("keeps focus in the field after Remove when no control is left to take it (item 3)", async () => {
+    // Every Organization is linked, so the field has no select: removing a
+    // link takes away the button that had focus and leaves nothing else.
+    const full = {
+      ...MEMBER,
+      values: [...MEMBER.values, { kind: "link" as const, value: `${EX}initech`, label: "Initech" }],
+    };
+    let view!: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(
+        <EditSection ontologyId={OID} details={bob([full])} primaryLanguage="en" languages={["fr"]} onSelect={onSelect} onDeleted={vi.fn()} />,
+      );
+    });
+    const field = () => screen.getByRole("group", { name: /member of/ });
+    expect(within(field()).queryByLabelText("Link to")).toBeNull();
+    const remove = within(field()).getByRole("button", { name: "Remove Acme from member of of Bob" });
+    remove.focus();
+    await act(async () => {
+      fireEvent.click(remove);
+    });
+    await settle();
+    // The refetch: Acme is gone and is a choice again.
+    await act(async () => {
+      view.rerender(
+        <EditSection ontologyId={OID} details={bob([{ ...full, values: [full.values[1]] }])} primaryLanguage="en" languages={["fr"]} onSelect={onSelect} onDeleted={vi.fn()} />,
+      );
+    });
+    await settle();
+    expect(document.activeElement).not.toBe(document.body);
+    expect(field().contains(document.activeElement)).toBe(true);
+  });
+});

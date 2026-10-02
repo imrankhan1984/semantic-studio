@@ -22,7 +22,7 @@ EXPECTED OUTPUT
 
 import { describe, expect, it } from "vitest";
 import type { ExampleField, NodeDetails, TermRef } from "../types";
-import { examplesOf, fieldCommand, fieldProblem, fieldType, fieldValue, typeWords } from "./examples";
+import { examplesOf, fieldCommand, fieldProblem, fieldStart, fieldType, fieldValue, otherType, typeWords } from "./examples";
 
 const TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 const X = "http://x#";
@@ -80,5 +80,26 @@ describe("a field's type of value", () => {
   it("sets a one-value field and adds to any other", () => {
     expect(fieldCommand(field({ functional: true }))).toBe("SetExampleValue");
     expect(fieldCommand(field({}))).toBe("AddExampleValue");
+  });
+});
+
+describe("PR #51 review", () => {
+  const FLOAT = "http://www.w3.org/2001/XMLSchema#float";
+
+  it("sends a type outside the seven typed with its own datatype, and names it (item 1)", () => {
+    const height = field({ label: "height", datatype: FLOAT });
+    expect(otherType(height)).toBe("xsd:float");
+    expect(fieldType(height)).toEqual({ kind: "typed", datatype: FLOAT });
+    expect(typeWords(height)).toBe("a value of type xsd:float");
+    expect(fieldValue(height, " 1.75 ")).toEqual({ kind: "typed", value: "1.75", datatype: FLOAT });
+    // The browser does not know the type; the server checks it.
+    expect(fieldProblem(height, "tall")).toBeNull();
+    expect(otherType(field({ datatype: "rdf:langString" }))).toBeNull();
+    expect(otherType(field({ datatype: "http://www.w3.org/2000/01/rdf-schema#Literal" }))).toBeNull();
+  });
+
+  it("starts a yes/no field at yes, and nothing else (item 4)", () => {
+    expect(fieldStart(field({ datatype: "xsd:boolean" }))).toBe("true");
+    expect(fieldStart(field({}))).toBe("");
   });
 });

@@ -446,3 +446,53 @@ shop:alice shop:birthDate "yesterday"^^xsd:date , "2020"^^xsd:gYear ;
     g = graph(pid)
     assert (U("alice"), U("birthDate"), None) not in g
     assert (U("alice"), U("memberOf"), None) not in g
+
+
+# --- PR #51 review ---------------------------------------------------------------
+
+FLOAT_AND_YEAR = """
+shop:height a owl:DatatypeProperty ; rdfs:label "height"@en ; rdfs:domain shop:Person ; rdfs:range xsd:float .
+shop:since a owl:DatatypeProperty ; rdfs:label "since"@en ; rdfs:domain shop:Person ; rdfs:range xsd:gYear .
+"""
+
+
+def test_a_type_outside_the_seven_is_stored_typed_and_checked_where_it_can_be(pid):
+    # PR #51 review, item 1: an xsd:float was saved as text in a language.
+    with_turtle(pid, FLOAT_AND_YEAR)
+    ok(pid, "SetExampleValue", iri="shop:alice", property="shop:height",
+       value={"kind": "typed", "value": "1.75", "datatype": str(XSD.float)})
+    ok(pid, "SetExampleValue", iri="shop:alice", property="shop:since",
+       value={"kind": "typed", "value": "2020", "datatype": "xsd:gYear"})
+    g = graph(pid)
+    assert (U("alice"), U("height"), Literal("1.75", datatype=XSD.float)) in g
+    assert (U("alice"), U("since"), Literal("2020", datatype=XSD.gYear)) in g
+    fields = {f["label"]: f for f in node(pid, EX + "alice")["example"]["fields"]}
+    assert fields["height"]["datatype"] == str(XSD.float)
+    for value, fragment in (
+        ({"kind": "typed", "value": "tall", "datatype": str(XSD.float)}, '"tall" is not a valid xsd:float.'),
+        ({"kind": "text", "value": "1.80", "lang": "en"}, "height is a value of type xsd:float"),
+        ({"kind": "typed", "value": "1.80", "datatype": "xsd:decimal"}, "height is a value of type xsd:float"),
+    ):
+        before, rev = copy(pid), revision(pid)
+        response = run(pid, "SetExampleValue", iri="shop:alice", property="shop:height", value=value)
+        assert response.status_code == 422 and fragment in response.json()["detail"], response.text
+        assert revision(pid) == rev and isomorphic(graph(pid), before)
+
+
+def test_a_link_only_reaches_an_individual_of_the_end_class_or_below(pid):
+    # PR #51 review, item 2: the server took any individual.
+    with_turtle(pid, """
+shop:Company a owl:Class ; rdfs:label "Company"@en ; rdfs:subClassOf shop:Organization .
+shop:initech a shop:Company ; rdfs:label "Initech"@en .
+shop:bob a shop:Person ; rdfs:label "Bob"@en .
+""")
+    for command in ("AddExampleValue", "SetExampleValue"):
+        before, rev = copy(pid), revision(pid)
+        response = run(pid, command, iri="shop:alice", property="shop:memberOf", value={"kind": "link", "value": "shop:bob"})
+        assert response.status_code == 422
+        assert response.json()["detail"] == "Bob is not an Organization; member of links only to an Organization."
+        assert revision(pid) == rev and isomorphic(graph(pid), before)
+    # Of the end class, or of a class below it, is fine.
+    ok(pid, "AddExampleValue", iri="shop:alice", property="shop:memberOf", value={"kind": "link", "value": "shop:acme"})
+    ok(pid, "SetExampleValue", iri="shop:alice", property="shop:memberOf", value={"kind": "link", "value": "shop:initech"})
+    assert set(graph(pid).objects(U("alice"), U("memberOf"))) == {U("initech")}

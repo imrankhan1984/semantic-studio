@@ -21,8 +21,10 @@ BASIC IDEA
     and the same words the server would answer with. aria-disabled rather
     than disabled, so a keyboard user standing on it keeps their place.
 
-    After Remove the focus goes to the field's input, which is still there,
-    rather than to the page: the value's own button has gone.
+    After Remove, and after a link that used the last choice, the button
+    that had focus is gone: focus goes to the field's next control, or to
+    its heading when it has none left, never to the page (PR #51 review).
+    A yes/no field starts at yes, as the annotation adder does.
 
 INPUTS / INPUT SOURCES (props)
     - iri, name, example: the example and its classes and fields.
@@ -34,8 +36,8 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useId, useRef, useState } from "react";
-import { fieldCommand, fieldProblem, fieldType, fieldValue, typeWords } from "../modeling/examples";
+import { useEffect, useId, useRef, useState } from "react";
+import { fieldCommand, fieldProblem, fieldStart, fieldType, fieldValue, typeWords } from "../modeling/examples";
 import type { ExampleField, ExampleInfo } from "../types";
 import { ValueInput } from "./AnnotationAdder";
 import { Block, type Runner } from "./EditParts";
@@ -110,30 +112,54 @@ function FieldEditor({ iri, name, field, primaryLanguage, languages, runner, onS
   const id = useId();
   const { busy, errors, run } = runner;
   const key = `example:${field.property}`;
-  const [raw, setRaw] = useState("");
+  const [raw, setRaw] = useState(() => fieldStart(field));
   const [lang, setLang] = useState(primaryLanguage);
   // What the learner has typed is judged once they have typed something; an
   // empty field is not yet wrong, only not ready.
   const problem = fieldProblem(field, raw, lang);
   const shown = raw !== "" && field.kind === "attribute" ? problem : null;
   const inputArea = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const relationship = field.kind === "relationship";
   const command = fieldCommand(field);
   const verb = command === "SetExampleValue" && field.values.length ? "Change" : relationship ? "Link" : "Add";
   const options = (field.options ?? []).filter((o) => !field.values.some((v) => v.value === o.iri));
 
-  const focusInput = () =>
-    window.setTimeout(() => inputArea.current?.querySelector<HTMLElement>("input, textarea, select, button")?.focus(), 0);
+  /** The field's next control once the one that had focus has gone, or its
+   *  heading when the field has none left. */
+  const focusField = () =>
+    window.setTimeout(() => {
+      const next = inputArea.current?.querySelector<HTMLElement>("input, textarea, select, button");
+      (next ?? headingRef.current)?.focus();
+    }, 0);
+  // The panel refetches after a change, and the new field may have lost the
+  // control focus was just given (the last choice linked): once it arrives,
+  // focus that has fallen to the page comes back to the field.
+  const placing = useRef(false);
+  const settle = () => {
+    placing.current = true;
+    focusField();
+  };
+  useEffect(() => {
+    if (!placing.current) return;
+    placing.current = false;
+    const now = document.activeElement;
+    if (!now || now === document.body) focusField();
+  }, [field]);
 
   const submit = async () => {
     if (busy || problem) return;
     const result = await run(key, command, { iri, property: field.property, value: fieldValue(field, raw, lang) });
-    if (result) setRaw("");
+    if (result) {
+      setRaw(fieldStart(field));
+      // The last choice linked takes the select and its button with it.
+      if (relationship) settle();
+    }
   };
 
   return (
     <div className="example-field" role="group" aria-labelledby={`${id}-name`}>
-      <h5 id={`${id}-name`}>
+      <h5 id={`${id}-name`} ref={headingRef} tabIndex={-1}>
         {field.label}
         <span className="detail-note">
           {" "}
@@ -163,7 +189,7 @@ function FieldEditor({ iri, name, field, primaryLanguage, languages, runner, onS
                 onClick={async () => {
                   if (busy) return;
                   const value = v.kind === "link" ? { kind: "link", value: v.value } : v;
-                  if (await run(key, "RemoveExampleValue", { iri, property: field.property, value })) focusInput();
+                  if (await run(key, "RemoveExampleValue", { iri, property: field.property, value })) settle();
                 }}
               >
                 Remove
