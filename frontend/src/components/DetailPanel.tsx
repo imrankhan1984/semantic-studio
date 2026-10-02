@@ -33,7 +33,9 @@ INPUTS / INPUT SOURCES (props)
       whether that request is in flight.
     - imports: describe the entity from the merged view (external-access
       Stage 2). An entity defined only in an import says so, in text, under
-      its name: "Imported from FOAF (read-only)".
+      its name: "Imported from FOAF (read-only)". An individual from a data
+      snapshot says where it came from and its row, a sample's words
+      included, and is read-only too (csv-data-import 5.6).
     - revision: a project document's revision (authoring-foundations); the
       details are fetched again when it moves, so an edit shows at once. A
       project document's details also carry `names`, shown as a Names block
@@ -61,6 +63,7 @@ EXPECTED OUTPUT
 import { useEffect, useRef, useState } from "react";
 import { getNodeDetails } from "../api";
 import { linkTarget } from "../links";
+import { dataLabel } from "../modeling/dataSentences";
 import type { CanvasSet, NodeDetails, TermRef, ProjectKind } from "../types";
 import EditSection from "./EditSection";
 
@@ -207,6 +210,14 @@ export default function DetailPanel({
           <div className="detail-prefixed">{details?.prefixed}</div>
           {details?.importedFrom && (
             <p className="detail-imported">Imported from {details.importedFrom} (read-only)</p>
+          )}
+          {details?.fromData && (
+            // Snapshot data, never mistaken for the model (csv-data-import
+            // 5.6): where it came from, its row, and that it is read-only.
+            <p className="detail-imported detail-data">
+              Data {dataLabel(details.fromData)}
+              {details.fromData.row !== null ? `, row ${details.fromData.row.toLocaleString("en-US")}` : ""} (read-only)
+            </p>
           )}
         </div>
         <button className="icon-btn" onClick={onClose} title="Close panel">✕</button>

@@ -91,6 +91,11 @@ describe("ProjectsSection", () => {
     expect(screen.getByText(/^Changed /)).toBeTruthy();
   });
 
+  it("gives each data snapshot a line on the card, a sample's words included (csv-data-import 5.7)", () => {
+    renderSection({ projects: [{ ...PROJECT, data: [{ ...{ id: "people-abc123", source: "people.csv", importedAt: "2026-10-02T12:00:00Z", rows: 2000, total: 12480, sample: true }, enabled: false }] }] });
+    expect(screen.getByText("Data from people.csv, imported 2 October 2026; sample: first 2,000 of 12,480 rows (off)")).toBeTruthy();
+  });
+
   it("Open is named for its project and hands over the id", () => {
     const { onOpen } = renderSection();
     fireEvent.click(screen.getByRole("button", { name: "Open Invoices" }));

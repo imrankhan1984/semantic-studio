@@ -929,4 +929,34 @@ describe("HierarchyView, examples (shacl-authoring 5.8)", () => {
     await screen.findByRole("heading", { name: "Class hierarchy" });
     expect(screen.queryByRole("heading", { name: "Examples" })).toBeNull();
   });
+  it("labels a data snapshot's rows, a sample's words included, and gives them no actions (csv-data-import 5.6)", async () => {
+    const tree = withExamples();
+    tree.examples!.nodes[EX + "data/person/7"] = { ...node("Person 7", "individual"), fromData: "people-abc123" };
+    tree.examples!.children[EX + "Person"].push({ id: EX + "data/person/7", origin: "asserted" });
+    fetchHierarchy.mockResolvedValue(tree);
+    const source = { id: "people-abc123", source: "people.csv", importedAt: "2026-10-02T12:00:00Z", rows: 2000, total: 12480, sample: true };
+    render(
+      <HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en" }}
+        dataSources={[source]} onImportData={vi.fn()} />,
+    );
+    await screen.findByRole("heading", { name: "Examples" });
+    const row = within(examplesTree()).getAllByRole("treeitem").find((r) => r.textContent?.includes("Person 7"))!;
+    expect(row.querySelector(".hierarchy-data")?.textContent).toBe(
+      "from people.csv, imported 2 October 2026; sample: first 2,000 of 12,480 rows",
+    );
+    expect(row.querySelector(".hierarchy-menu-btn")).toBeNull();
+  });
+
+  it("offers Import data from CSV in the Examples section, there before the first example", async () => {
+    fetchHierarchy.mockResolvedValue(hierarchyOf(withExamples().classes, EMPTY));
+    const onImportData = vi.fn();
+    render(
+      <HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en" }}
+        onImportData={onImportData} />,
+    );
+    await screen.findByRole("heading", { name: "Examples" });
+    expect(screen.getByText("No examples or imported data yet.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Import data from CSV…" }));
+    expect(onImportData).toHaveBeenCalledTimes(1);
+  });
 });

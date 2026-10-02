@@ -29,6 +29,12 @@ BASIC IDEA
     means any action that can reach the network -- including a GET whose lazy
     parse needs a JSON-LD context -- asks the same way.
 
+    Data snapshots (csv-data-import) come last. A data file is multipart, as
+    an upload is, with the wizard's options and choices as JSON fields beside
+    it; the wizard holds the File and sends it again for each step, so the
+    server keeps nothing until the import. "Change the mapping" names the
+    snapshot instead, whose copy the browser does not have.
+
     Projects (authoring-foundations) add their own calls at the foot. An open
     project document is read through the same ontology calls under its
     prj-<hex>-<doc> id; the five that show names also carry the project's
@@ -83,6 +89,13 @@ import type {
   ShapesListing,
   ShapeSuggestions,
   ValidationResult,
+  DataChoices,
+  DataInspection,
+  DataOptions,
+  DataPreview,
+  RefreshResult,
+  SnapshotListing,
+  SnapshotSummary,
 } from "./types";
 
 /**
@@ -204,6 +217,9 @@ async function handle<T>(response: Response): Promise<T> {
           .map((d: { msg?: unknown }) => (typeof d?.msg === "string" ? d.msg : ""))
           .filter(Boolean)
           .join("; ") || detail;
+      } else if (typeof body.detail?.message === "string") {
+        // A refused data file says why in `message` (csv-data-import 5.2).
+        detail = body.detail.message;
       } else if (body.detail) detail = String(body.detail);
     } catch {
       /* keep statusText */
@@ -861,4 +877,95 @@ export function validateProject(pid: string): Promise<ValidationResult> {
   return send(projectUrl(pid, "/validate"), { method: "POST", headers: { ...CLIENT_HEADER } }).then((r) =>
     handle<ValidationResult>(r),
   );
+}
+
+/* --- data snapshots (csv-data-import) ---------------------------------------- */
+
+/** What a wizard step reads: the file the user chose, or a snapshot's own
+ *  copy (Change the mapping). */
+export type DataSourceRef = { file: File } | { snapshot: string };
+
+function dataForm(source: DataSourceRef | File, fields: Record<string, unknown>): FormData {
+  const form = new FormData();
+  if (source instanceof File) form.append("file", source);
+  else if ("file" in source) form.append("file", source.file);
+  else form.append("snapshot", source.snapshot);
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== undefined) form.append(key, JSON.stringify(value));
+  }
+  return form;
+}
+
+function postForm<T>(url: string, form: FormData): Promise<T> {
+  return send(url, { method: "POST", headers: { ...CLIENT_HEADER }, body: form }).then((r) => handle<T>(r));
+}
+
+// Step 1 (5.2): detections, the first rows and the row count. Nothing kept.
+export function inspectData(pid: string, source: DataSourceRef, options?: DataOptions): Promise<DataInspection> {
+  return postForm(projectUrl(pid, "/data/inspect"), dataForm(source, { options }));
+}
+
+// Steps 2 to 4 (5.3 to 5.5): the identifier check, the column choices with
+// suggestions, and the first rows as sentences with the report to expect.
+export function previewData(
+  pid: string,
+  source: DataSourceRef,
+  options: DataOptions,
+  choices: Partial<DataChoices>,
+): Promise<DataPreview> {
+  return postForm(projectUrl(pid, "/data/preview"), dataForm(source, { options, choices }));
+}
+
+// Import: a new snapshot, switched on.
+export function importData(
+  pid: string,
+  file: File,
+  options: DataOptions,
+  choices: DataChoices,
+): Promise<{ snapshot: SnapshotSummary; generation: number }> {
+  return postForm(projectUrl(pid, "/data"), dataForm(file, { options, choices }));
+}
+
+export function listData(pid: string): Promise<SnapshotListing> {
+  return send(projectUrl(pid, "/data")).then((r) => handle<SnapshotListing>(r));
+}
+
+// Refresh (5.7): the same mapping on a new file, or `choices` for it after a
+// mismatch.
+export function refreshData(
+  pid: string,
+  sid: string,
+  file: File,
+  options: DataOptions,
+  choices?: DataChoices,
+): Promise<RefreshResult> {
+  return postForm(
+    projectUrl(pid, `/data/${encodeURIComponent(sid)}/refresh`),
+    dataForm(file, { options, choices }),
+  );
+}
+
+// Switch a snapshot on or off, change its mapping, or apply an edited RML
+// mapping. None of them is a model change: no revision, no undo step.
+export function updateData(
+  pid: string,
+  sid: string,
+  change: { enabled: boolean } | { choices: DataChoices } | { mapping: string },
+): Promise<{ snapshot: SnapshotSummary; generation: number }> {
+  return send(projectUrl(pid, `/data/${encodeURIComponent(sid)}`), {
+    method: "PATCH",
+    headers: JSON_WRITE,
+    body: JSON.stringify(change),
+  }).then((r) => handle<{ snapshot: SnapshotSummary; generation: number }>(r));
+}
+
+// Remove: the folder goes to the project's .trash/.
+export function removeData(
+  pid: string,
+  sid: string,
+): Promise<{ removed: string; statements: number; location: string; generation: number }> {
+  return send(projectUrl(pid, `/data/${encodeURIComponent(sid)}`), {
+    method: "DELETE",
+    headers: { ...CLIENT_HEADER },
+  }).then((r) => handle<{ removed: string; statements: number; location: string; generation: number }>(r));
 }

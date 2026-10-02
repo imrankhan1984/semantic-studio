@@ -29,8 +29,8 @@ INPUTS / INPUT SOURCES
     - Environment variable STATIC_DIR: optional override for where the built
       frontend lives. In Docker this is set to /app/static.
     - The upload cap, read from the ontologies router at request time.
-    - The four router modules (ontologies, queries, network, projects) which
-      define the actual endpoints.
+    - The five router modules (ontologies, queries, network, projects, data)
+      which define the actual endpoints.
 
 EXPECTED OUTPUT
     - A configured `app` object that uvicorn imports and runs (see the Docker
@@ -70,7 +70,8 @@ from fastapi.staticfiles import StaticFiles
 # (ontologies vs saved queries) keeps this file small.
 from .local_guard import LocalOnlyMiddleware
 from .network_broker import ApprovalRequired, GrantScopeMiddleware, HostBlocked, Offline
-from .routers import network, ontologies, projects, queries
+from . import tabular
+from .routers import data, network, ontologies, projects, queries
 
 # Create the application. The title/version surface in the auto-generated
 # OpenAPI docs at /docs.
@@ -109,9 +110,11 @@ async def refuse_oversized_bodies(request: Request, call_next):
 
     The Turtle editor's apply (authoring-foundations) is a third: typed Turtle
     is the same input as an uploaded file and keeps the upload cap. The canvas
-    layout (visual-modeling Stage 2) is a fourth, at 1 MB.
+    layout (visual-modeling Stage 2) is a fourth, at 1 MB. A data file for
+    the import wizard (csv-data-import Section 9) is a fifth, at 5 MB, on the
+    four routes that take one; an edited mapping a sixth, at 1 MB.
     """
-    if request.method not in ("POST", "PUT"):
+    if request.method not in ("POST", "PUT", "PATCH"):
         return await call_next(request)
     path = request.url.path
     limit: Optional[int] = None
@@ -125,6 +128,12 @@ async def refuse_oversized_bodies(request: Request, call_next):
             # the CHUNK_BYTES allowance below is for the upload envelopes.
             if _declared(request) > projects.LAYOUT_MAX_BYTES:
                 return JSONResponse(status_code=413, content={"detail": projects.LAYOUT_TOO_LARGE})
+    elif request.method == "PATCH":
+        if _DATA_PATCH_PATH.match(path) and _declared(request) > data.PATCH_MAX_BYTES:
+            return JSONResponse(status_code=413, content={"detail": data.PATCH_TOO_LARGE})
+    elif _DATA_FILE_PATH.match(path):
+        limit = tabular.MAX_BYTES
+        detail = {"message": data.FILE_TOO_LARGE, "kind": "too-large"}
     elif path == "/api/ontologies/upload":
         limit = ontologies.MAX_UPLOAD_BYTES
         detail = ontologies.too_large_detail(limit, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES")
@@ -146,6 +155,9 @@ async def refuse_oversized_bodies(request: Request, call_next):
 _IMPORT_FILES_PATH = re.compile(r"^/api/ontologies/[^/]+/imports/files$")
 _SOURCE_PATH = re.compile(r"^/api/projects/[^/]+/documents/[^/]+/source$")
 _LAYOUT_PATH = re.compile(r"^/api/projects/[^/]+/documents/[^/]+/layout$")
+# The data wizard's file routes: inspect, preview, import and refresh.
+_DATA_FILE_PATH = re.compile(r"^/api/projects/[^/]+/data(/inspect|/preview|/[^/]+/refresh)?$")
+_DATA_PATCH_PATH = re.compile(r"^/api/projects/[^/]+/data/[^/]+$")
 
 
 def _declared(request: Request) -> int:
@@ -171,6 +183,7 @@ app.include_router(ontologies.router)
 app.include_router(queries.router)
 app.include_router(network.router)
 app.include_router(projects.router)
+app.include_router(data.router)
 
 
 # The broker's three policy decisions, mapped once for every route. They can

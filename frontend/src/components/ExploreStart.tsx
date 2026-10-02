@@ -27,6 +27,9 @@ INPUTS / INPUT SOURCES (props)
     - loading: whether the graph request is still in flight.
     - theme: for the kind swatches, via the same kindColor the legend uses.
     - onSelect: select an entity, exactly as clicking its node does.
+    - dataSources: a project's switched-on data snapshots, each named on a
+      source line under the summary with its label, a sample's words
+      included (csv-data-import 5.6).
 
 EXPECTED OUTPUT
     - The rendered starting panel, or nothing when there is no graph to describe.
@@ -36,7 +39,8 @@ EXPECTED OUTPUT
 
 import { useMemo } from "react";
 import { describeContents, suggestedEntities } from "../explore/suggestions";
-import type { Theme, VizGraph } from "../types";
+import { dataLabel } from "../modeling/dataSentences";
+import type { DataSource, Theme, VizGraph } from "../types";
 import { KIND_LABELS, kindColor } from "../types";
 
 interface Props {
@@ -44,12 +48,13 @@ interface Props {
   loading: boolean;
   theme: Theme;
   onSelect: (iri: string) => void;
+  dataSources?: DataSource[];
 }
 
 /** The heading this panel is named by, referenced from its own aria-labelledby. */
 const HEADING_ID = "explore-start-heading";
 
-export default function ExploreStart({ graph, loading, theme, onSelect }: Props) {
+export default function ExploreStart({ graph, loading, theme, onSelect, dataSources = [] }: Props) {
   // Both memos are keyed on the graph object, which changes only when a graph is
   // fetched. The ranking is a pass over every node — 40,000 of them for the
   // largest ontology measured — and App re-renders on things as ordinary as a
@@ -82,6 +87,11 @@ export default function ExploreStart({ graph, loading, theme, onSelect }: Props)
         Explore
       </h2>
       <p className="explore-summary">{summary}</p>
+      {dataSources.map((source) => (
+        <p key={source.id} className="data-source-line">
+          Includes data {dataLabel(source)}.
+        </p>
+      ))}
 
       {suggestions.length > 0 && (
         <section>

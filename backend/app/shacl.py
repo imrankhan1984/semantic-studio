@@ -53,6 +53,8 @@ INPUTS / INPUT SOURCES
     - The data graph and the shapes graph, as copies editing.py took under
       the documents' locks.
     - The project's languages, primary first, for names and sentences.
+    - Optionally, which data snapshot each individual came from, so a panel
+      can name the data it checked (csv-data-import 5.6).
 
 EXPECTED OUTPUT
     - validate(...) -> {"stopped", "shapes": [panel...], "statements",
@@ -502,7 +504,7 @@ def named_shapes(shapes: Graph, listed: list) -> tuple[Graph, list, dict]:
 
 def panels(
     data: Graph, shapes: Graph, listed: list, results: list, errors: dict, languages: list,
-    ids: Optional[dict] = None,
+    ids: Optional[dict] = None, sources: Optional[dict] = None,
 ) -> list[dict]:
     sentences = Sentences(data, shapes, languages)
     owner_of = _owners(shapes, listed)
@@ -527,6 +529,9 @@ def panels(
             "problems": [],
             "problemsTotal": 0,
             "error": None,
+            # The data snapshots whose individuals this shape checked
+            # (csv-data-import 5.6), so the panel can say so.
+            "data": [],
         }
         if node in errors:
             panel["state"] = "error"
@@ -538,6 +543,8 @@ def panels(
         focus.update(r["focus"] for r in found if r["focus"] is not None)
         violations = [r for r in found if r["severity"] in (None, SH.Violation)]
         panel["focusCount"] = len(focus)
+        if sources:
+            panel["data"] = sorted({sources[f] for f in focus if f in sources})
         panel["failingCount"] = len({r["focus"] for r in violations})
         panel["problemCount"] = len(violations)
         panel["warningCount"] = len(found) - len(violations)
@@ -567,7 +574,10 @@ def panels(
     return out
 
 
-def validate(data: Graph, shapes: Graph, languages: list, timeout: Optional[float] = None) -> dict:
+def validate(
+    data: Graph, shapes: Graph, languages: list, timeout: Optional[float] = None,
+    sources: Optional[dict] = None,
+) -> dict:
     """Check the data against every shape, under the time limit (5.6)."""
     # A plain Graph, never a Dataset: rdflib follows a SPARQL constraint's
     # FROM <file:///...> or FROM <http://...> only on a dataset, through a
@@ -582,7 +592,7 @@ def validate(data: Graph, shapes: Graph, languages: list, timeout: Optional[floa
     def work() -> list:
         named, run_listed, ids = named_shapes(shapes, listed)
         results, errors = run_shapes(data, named, run_listed) if listed else ([], {})
-        return panels(data, named, run_listed, results, errors, languages, ids)
+        return panels(data, named, run_listed, results, errors, languages, ids, sources)
 
     base = {"statements": len(data), "shapeCount": len(listed)}
     pool = ThreadPoolExecutor(max_workers=1)

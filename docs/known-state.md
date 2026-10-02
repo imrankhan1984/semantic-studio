@@ -1332,3 +1332,76 @@ EXPECTED OUTPUT
   the two rules into one. It reads *name (label)* then, found by index
   lookups on the label so the shapes list stays inside its budget, and the
   plural goes before the brackets.
+
+- **Data snapshots** (2026-10-02, X-10 Stage A, `csv-data-import.md` 5.1 to
+  5.7, D-096 to D-099).
+
+  **The 2,000-row limit is the engine's, not only the wizard's.** D-098 says
+  no path ever produces data from more than 2,000 rows. The reader keeps at
+  most 2,000 and counts the rest, the import refuses a larger file unless
+  the sample was chosen, and `rml.run` itself takes `table.rows[:MAX_ROWS]`,
+  so a refresh, a changed mapping and an edited mapping stop there too. A
+  test writes 3,000 rows into a snapshot's copy behind its back and asserts
+  an edited mapping still makes 2,000. `MAX_ROWS` reads no environment, and
+  a test asserts the module imports no `os`.
+
+  **An edited mapping's source is checked first and on its own.** `rml.read`
+  refuses anything outside the subset, and a mapping outside it is kept as
+  written with its reason (it runs in other RML tools). A mapping that
+  named `../model.ttl` beside an `rml:function` would have been kept that
+  way, harmlessly, since the engine never opens a file -- but kept all the
+  same. So `edit_mapping` checks every `rml:source` before anything else and
+  refuses the whole mapping, keeping nothing (D10). The engine is handed the
+  table the snapshot read; a test patches `open` to fail and runs it.
+
+  **The copy is written, not copied.** `source.csv` is the table as imported:
+  the header as the mapping names it (an empty or repeated name renamed, a
+  header-less file given `column 1`...), a `row` column when rows are
+  identified by number, the first 2,000 rows only, values trimmed, in the
+  dialect the mapping declares and without a byte-order mark. That is what
+  makes RMLMapper 8.1.0, run on the folder, give the app's statements
+  exactly (D13), and what lets every import take one path: write the copy,
+  read the mapping back from its text, run it on the copy.
+
+  **A value that does not fit is plain text, never ill-typed (D-097).**
+  `lexical.py` holds the patterns the editing form refuses by, so what the
+  form refuses is exactly what an import keeps as text; rdflib alone is not
+  strict enough (it reads `2026-1-5` as a date). RMLMapper, by contrast,
+  writes `"yesterday"^^xsd:date`: on such a file the two engines differ in
+  exactly those values, by design.
+
+  **Snapshots move the generation, never the revision.** They are not model
+  changes (5.7): no revision, no dirty flag, no undo step. The server counts
+  their changes in a per-project generation, the model's data view is cached
+  on revision and generation, and App keys the model's views (graph, tree,
+  detail panel, query builder) on the sum of the two, which grows whenever
+  either does. The canvas and the Turtle editor keep the revision: they show
+  the model alone.
+
+  **Data joins the view whatever the imports switch says.** The merged view
+  was opt-in, so data behind it would have vanished with the switch off.
+  `ImportsService.reading` serves the model plus data with the switch off,
+  and model plus imports plus data with it on; the editing commands and the
+  canvas keep `merged()`, without data, so a command never targets a row.
+
+  **A snapshot's individual is read-only everywhere.** The detail panel's
+  edit section first offered Rename, Change identifier and Delete on one,
+  found in Chrome: the model view held its type, so it looked defined here.
+  `fromData` now makes the section read-only, as `importedFrom` does, the
+  example form is never built for one, and its tree row has no actions.
+
+  **`data.ttl` is read by `read_ntriples`.** rdflib's N-Triples parser took
+  0.64 s for one full snapshot (40,000 statements); opening a project with
+  two measured 956 ms against the 1 s budget. The file is the app's own
+  output, so a strict line reader takes it in 0.39 s (open: 695 ms), and any
+  line it does not recognise sends the whole file to rdflib as Turtle.
+
+  **The card's line is written from the folders when the project is shut.**
+  A switch or a remove does not need the project open, and the manifest's
+  `data` list was built from the snapshots in memory -- none, when closed --
+  which emptied the card. Found in review.
+
+  **The data routes look at the project before the body.** FastAPI refused a
+  JSON body sent where a file was expected with 422 before the route ran,
+  so an id not issued answered 422, not 404; the generic route test caught
+  it. Each route now checks the project (and snapshot) first.

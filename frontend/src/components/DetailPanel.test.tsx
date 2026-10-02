@@ -272,6 +272,11 @@ describe("DetailPanel imports (external-access Stage 2)", () => {
     expect(screen.getByText("Imported from FOAF (read-only)")).toBeTruthy();
   });
 
+  it("says where a snapshot's individual came from, its row and that it is read-only (csv-data-import 5.6)", async () => {
+    await renderPanel({ ...detailsWith(1), fromData: { ...{ id: "people-abc123", source: "people.csv", importedAt: "2026-10-02T12:00:00Z", rows: 2000, total: 12480, sample: true }, row: 7 } });
+    expect(screen.getByText("Data from people.csv, imported 2 October 2026; sample: first 2,000 of 12,480 rows, row 7 (read-only)")).toBeTruthy();
+  });
+
   it("says nothing of the kind for the ontology's own entity", async () => {
     await renderPanel(detailsWith(1));
     expect(screen.queryByText(/Imported from/)).toBeNull();

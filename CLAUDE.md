@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 924 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1113 tests, vitest
+cd backend  && python -m pytest tests    # 1022 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1157 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -62,7 +62,7 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Twenty-two backend tests carry
+**Timing budgets are separated, not deleted.** Twenty-six backend tests carry
 `@pytest.mark.perf`; ten frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
@@ -85,7 +85,7 @@ per file and `vi.mock` over `api.ts`. For the graph, stub `GraphView` (see
 `App.test.tsx`), stub the two WebGL globals (`GraphView.test.tsx`), or stub the
 `sigma` module and read the settings its constructor was handed, which tests
 the shipped reducers. **Untested:** `Logo.tsx`, `PathBar.tsx`, `icons.tsx`, the
-Legend's colours, `SourceView` beyond its target, `LoadDialog`'s tabs, and
+Legend's colours, `SourceView` beyond its target, and
 `QueryPanel` beyond a foothold. A change to one adds its first test.
 
 **jsdom fails silently where a browser would not.** It does not blur a focused
@@ -167,6 +167,12 @@ backend/app/
   shacl.py           Validation on demand with pySHACL: one panel per shape, sentences
   shapes_form.py     A SHACL shape as the form reads it, read-only parts, suggestions
   queries_store.py   Saved queries, visual or text, one JSON file each
+  tabular.py         A CSV read for the data import: dialect detected, the fixed
+                     limits (2,000 rows, D-098), the copy written
+  rml.py             The RML subset: written, read (refused outside it), run (D-099)
+  snapshots.py       Data snapshots in data/<sid>/: import, refresh, switch,
+                     remap, edit as RML, remove; the graphs the views join
+  lexical.py         What fits an XML Schema type, shared by editing and the import
   hierarchy.py       subClassOf / broader / subPropertyOf forests for the tree view
   docs_export.py     The documentation-site zip (with docs_assets/)
   provenance.py      Activity records for exports
@@ -187,7 +193,9 @@ frontend/src/
                      and validation
   modeling/          Pure editing-form logic: an entity's blocks read out of
                      its statements, annotation value types and checks, and
-                     the sentences a relationship reads as (sentences.ts)
+                     the sentences a relationship reads as (sentences.ts),
+                     and the data wizard's words and choices
+                     (dataSentences.ts, dataChoices.ts)
   links.ts           linkTarget: the one gate an IRI passes to become a link
   canvas/            The modeling canvas (D-086): ModelCanvas on React Flow,
                      its boxes and relate menu, and the pure layered layout,
@@ -313,6 +321,18 @@ leaves one behind.
 - The tree's Examples section keeps its own expansion: a class IRI is in two forests, and sharing the set opened both. [example data]
 - A validation that outlives its project is ignored, result, announcement and failure alike; one check runs at a time. [example data]
 - The Small template ships starter shapes (D-095); a test needing a Small project without them uses `test_editing.py`'s `bare`. [example data]
+
+**Data snapshots**
+- The engine stops at row 2,000 itself (`rml.run`); `MAX_ROWS` is no setting (D-098). [Data snapshots]
+- An edited mapping's `rml:source` is checked before anything is kept; the engine never opens a file. [Data snapshots]
+- A value that does not fit its type is a plain literal, never ill-typed; the rules are `lexical.py`'s (D-097). [Data snapshots]
+- `source.csv` is written by the server in the mapping's dialect, so RMLMapper gives the app's statements. [Data snapshots]
+- Snapshot actions move the generation, never the revision; the model's views key on the two summed. [Data snapshots]
+- Data joins the read views with the imports switch off too; commands and the canvas keep `merged()`. [Data snapshots]
+- A snapshot's individual is read-only: `fromData` is checked beside `importedFrom`. [Data snapshots]
+- `data.ttl` is read by `read_ntriples`, rdflib the fallback: the open budget depends on it. [Data snapshots]
+- The card's `data` line is written from the folders when the project is closed. [Data snapshots]
+- The data routes check the project and snapshot before the body: an id not issued is 404. [Data snapshots]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

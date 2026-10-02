@@ -35,10 +35,15 @@ BASIC IDEA
     A problem's name is a button: following it selects the individual and
     moves focus to its form (Section 6), which App arranges.
 
+    A panel that checked individuals from a data snapshot says so under its
+    header, with the snapshot's label -- a sample's words included -- in
+    view whether the panel is open or not (csv-data-import 5.6). A change to
+    the snapshots since the check makes the result stale, as an edit does.
+
 INPUTS / INPUT SOURCES (props)
     - onSelect(iri): follow a problem's link.
     Plus the project store: the result, whether a check is running, and the
-    documents' revisions for the stale line.
+    documents' revisions and the data generation for the stale line.
 
 EXPECTED OUTPUT
     - ValidateButton and ResultPanels.
@@ -52,8 +57,9 @@ import {
   panelHeader,
   panelName,
 } from "../modeling/shapeSentences";
-import { projectStore, useProjectSelector } from "../state/projectStore";
-import type { ProjectDocumentState, ValidationPanel, ValidationResult } from "../types";
+import { dataLabel } from "../modeling/dataSentences";
+import { dataGenerationOf, projectStore, useProjectSelector } from "../state/projectStore";
+import type { DataSource, ProjectDocumentState, ValidationPanel, ValidationResult } from "../types";
 
 // A shape on every class or every concept checks the model itself, where an
 // example is not what is missing.
@@ -63,11 +69,17 @@ const MODEL_TARGETS = new Set([
   "http://www.w3.org/2004/02/skos/core#Concept",
 ]);
 
-/** A result is stale when either document has moved past what it checked. */
-export function isStale(result: ValidationResult | null, documents: ProjectDocumentState[]): boolean {
+/** A result is stale when either document has moved past what it checked,
+ *  or the data snapshots have (`generation`, when it is known). */
+export function isStale(
+  result: ValidationResult | null,
+  documents: ProjectDocumentState[],
+  generation: number | null = null,
+): boolean {
   if (!result) return false;
   const rev = (doc: string) => documents.find((d) => d.doc === doc)?.revision ?? null;
-  return rev("model") !== result.revisions.model || rev("shapes") !== result.revisions.shapes;
+  const data = generation !== null && result.revisions.data !== undefined && generation !== result.revisions.data;
+  return rev("model") !== result.revisions.model || rev("shapes") !== result.revisions.shapes || data;
 }
 
 interface ButtonProps {
@@ -115,11 +127,13 @@ export default function ResultPanels({ onSelect }: Props) {
   const result = useProjectSelector((s) => s.validation);
   const validating = useProjectSelector((s) => s.validating);
   const documents = useProjectSelector((s) => s.documents);
+  const generation = useProjectSelector((s) => (s.data ? dataGenerationOf(s) : null));
   const [open, setOpen] = useState<Set<string>>(new Set());
   // A new result starts collapsed again: the old one's open panels may be
   // other shapes now.
   useEffect(() => setOpen(new Set()), [result]);
-  const stale = isStale(result, documents);
+  const stale = isStale(result, documents, generation);
+  const sources = new Map((result?.dataSources ?? []).map((d) => [d.id, d]));
 
   if (!result) {
     return (
@@ -138,7 +152,7 @@ export default function ResultPanels({ onSelect }: Props) {
   return (
     <div className={validating ? "result-panels busy" : "result-panels"} aria-busy={validating}>
       {stale && (
-        <p className="results-stale">The model or the shapes changed since this check. Validate again.</p>
+        <p className="results-stale">The model, the shapes or the data changed since this check. Validate again.</p>
       )}
       {result.stopped ? (
         <p className="results-stopped" role="alert">
@@ -165,6 +179,7 @@ export default function ResultPanels({ onSelect }: Props) {
                 expanded={open.has(panel.id)}
                 onToggle={() => toggle(panel.id)}
                 onSelect={onSelect}
+                data={(panel.data ?? []).map((id) => sources.get(id)).filter((d): d is DataSource => !!d)}
               />
             ))}
           </ul>
@@ -179,9 +194,11 @@ interface PanelProps {
   expanded: boolean;
   onToggle: () => void;
   onSelect: (iri: string) => void;
+  /** The data snapshots whose individuals this shape checked. */
+  data?: DataSource[];
 }
 
-function Panel({ panel, expanded, onToggle, onSelect }: PanelProps) {
+function Panel({ panel, expanded, onToggle, onSelect, data = [] }: PanelProps) {
   const id = useId();
   return (
     <li className={`result-panel result-${panel.state}`}>
@@ -201,6 +218,11 @@ function Panel({ panel, expanded, onToggle, onSelect }: PanelProps) {
           <span className="result-text">{panelHeader(panel)}</span>
         </button>
       </h4>
+      {data.map((source) => (
+        <p key={source.id} className="result-data">
+          Checked data {dataLabel(source)}
+        </p>
+      ))}
       <div id={`${id}-body`} className="result-panel-body" hidden={!expanded}>
         {expanded && <PanelBody panel={panel} onSelect={onSelect} />}
       </div>

@@ -448,6 +448,14 @@ describe("read-only cases (AC-4)", () => {
     expect(screen.getByText("Defined outside this document, read-only.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Delete/ })).toBeNull();
   });
+
+  it("keeps a data snapshot's individual read-only, typed though it is (csv-data-import 5.6)", async () => {
+    const source = { id: "people-abc123", source: "people.csv", importedAt: "2026-10-02T12:00:00Z", rows: 3, total: 3, sample: false, row: 7 };
+    await renderForm(details("Person 7", "individual", [[P.type, uri(EX + "Invoice", "class")]], [], { fromData: source }));
+    expect(screen.getByText("Imported data, read-only: change people.csv and refresh it from the project's Data.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Delete|Change identifier/ })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Names" })).toBeNull();
+  });
 });
 
 describe("DeleteFlow (AC-6)", () => {
