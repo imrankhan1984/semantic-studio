@@ -1405,3 +1405,15 @@ EXPECTED OUTPUT
   JSON body sent where a file was expected with 422 before the route ran,
   so an id not issued answered 422, not 404; the generic route test caught
   it. Each route now checks the project (and snapshot) first.
+
+  **The wizard's class reading belongs to its class (PR #53 review).** The
+  identifier check, the fields and the suggestions were held without the
+  class they were read for, so a class changed on step 2 carried the old
+  class's columns into step 3, which the server then refused. The reading is
+  now held with its class and identifier and used only while both are still
+  chosen; until the new one arrives, or after it fails, Next waits with its
+  reason and a failure offers Try again. A second file's id suggestion was
+  lost the same way, to a closure holding the first file's identifier: the
+  reset values are now passed into the read. Leaving past step 3 asked only
+  from Cancel; the dialog's close button and its tabs dropped the mapping
+  without a word, and now ask too.

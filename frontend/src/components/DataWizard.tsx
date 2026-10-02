@@ -32,14 +32,24 @@ BASIC IDEA
 
     The wizard is one region with a heading per step, and the heading takes
     focus when a step opens (Section 6). Next is aria-disabled, never
-    disabled, with its reason in text beside it. Cancel asks first only once
-    the columns have been mapped, where there is work to lose.
+    disabled, with its reason in text beside it, and so is Import: a press
+    while either says it cannot is ignored. Cancel asks first only once the
+    columns have been mapped, where there is work to lose, and the wizard
+    tells its dialog when that is, so the dialog's ✕ and its tabs ask too.
+
+    The server's reading of the chosen class -- the identifier check, the
+    class's fields and the suggestions -- is held with the class and
+    identifier it was read for, and used only while they are still the
+    chosen ones: a class changed on step 2 waits for its own reading rather
+    than offering the old class's columns. A reading that fails says so
+    with Try again, and Next waits (PR #53 review).
 
 INPUTS / INPUT SOURCES (props)
     - projectId, modelOntologyId, taxonomy: the open project.
     - start: a new import, a snapshot's mapping to change, or a refresh to
       finish after a header mismatch.
     - onClose, onValidate, onShowData: leaving, and the report's next steps.
+    - onDirtyChange: told whether leaving would lose a mapping (step 3 or 4).
     Plus api.ts and the project store.
 
 EXPECTED OUTPUT
@@ -98,6 +108,7 @@ interface Props {
   onClose: () => void;
   onValidate?: () => void;
   onShowData?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 type Step = 1 | 2 | 3 | 4 | "report";
@@ -121,6 +132,7 @@ export default function DataWizard({
   onClose,
   onValidate,
   onShowData,
+  onDirtyChange,
 }: Props) {
   const [step, setStep] = useState<Step>(start.kind === "new" ? 1 : start.kind === "remap" ? 2 : 3);
   const [file, setFile] = useState<File | null>(start.kind === "refresh" ? start.file : null);
@@ -137,10 +149,14 @@ export default function DataWizard({
   const [idColumn, setIdColumn] = useState<string | null>(earlier ? earlier.idColumn : null);
   const [rowNumber, setRowNumber] = useState(earlier ? earlier.idColumn === null : false);
   const [previous, setPrevious] = useState<Record<string, ColumnChoice> | null>(earlier?.columns ?? null);
-  const [basis, setBasis] = useState<DataPreview | null>(null);
+  // The class reading, with the class and identifier it was read for.
+  const [classReading, setClassReading] = useState<{ key: string; preview: DataPreview } | null>(null);
+  const [basisFailed, setBasisFailed] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
   const [columns, setColumns] = useState<Record<string, ColumnChoice> | null>(null);
   const [suggested, setSuggested] = useState<string[]>([]);
   const [preview, setPreview] = useState<DataPreview | null>(null);
+  const [previewFailed, setPreviewFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<SnapshotSummary | null>(null);
@@ -179,7 +195,14 @@ export default function DataWizard({
     headingRef.current?.focus();
   }, [step]);
 
-  const read = async (chosen: File, nextOptions: DataOptions) => {
+  // The identifier is passed in rather than read from this render: a new
+  // file resets it in the same event, and the closure would still hold the
+  // last file's, which lost the new file's suggestion (PR #53 review).
+  const read = async (
+    chosen: File,
+    nextOptions: DataOptions,
+    id: { idColumn: string | null; rowNumber: boolean },
+  ) => {
     setReading(true);
     setFileProblem(null);
     setError(null);
@@ -187,8 +210,10 @@ export default function DataWizard({
       const found = await inspectData(projectId, { file: chosen }, nextOptions);
       setInspection(found);
       // Keep the identifier only while the file still has that column.
-      if (idColumn !== null && !found.columns.some((c) => c.name === idColumn)) setIdColumn(null);
-      if (idColumn === null && !rowNumber) setIdColumn(found.idSuggestion);
+      let kept = id.idColumn;
+      if (kept !== null && !found.columns.some((c) => c.name === kept)) kept = null;
+      if (kept === null && !id.rowNumber) kept = found.idSuggestion;
+      setIdColumn(kept);
       setColumns(null);
     } catch (e: unknown) {
       setInspection(null);
@@ -204,7 +229,7 @@ export default function DataWizard({
     setOptions(fresh);
     setIdColumn(null);
     setRowNumber(false);
-    void read(chosen, fresh);
+    void read(chosen, fresh, { idColumn: null, rowNumber: false });
   };
 
   const changeOptions = (changes: DataOptions) => {
@@ -212,24 +237,28 @@ export default function DataWizard({
     // the sample question is asked again of what it holds.
     const next = { ...options, ...changes, sample: changes.sample ?? false };
     setOptions(next);
-    if (file) void read(file, next);
+    if (file) void read(file, next, { idColumn, rowNumber });
   };
 
   const effectiveId = rowNumber ? null : idColumn;
+  const basisKey = `${classIri ?? ""}|${effectiveId ?? ""}`;
+  const basis = classReading && classReading.key === basisKey ? classReading.preview : null;
 
   // Step 2 onwards: the identifier check, the fields of the row's class and
   // the suggestions, again whenever the class or the identifier changes.
   useEffect(() => {
     if (step === 1 || step === "report" || !source || !classIri || !inspection) return;
     let live = true;
+    const key = basisKey;
+    setBasisFailed(null);
     previewData(projectId, source, options, { classIri, idColumn: effectiveId, columns: {} })
-      .then((found) => live && setBasis(found))
-      .catch((e: unknown) => live && setError(message(e)));
+      .then((found) => live && setClassReading({ key, preview: found }))
+      .catch((e: unknown) => live && setBasisFailed(message(e)));
     return () => {
       live = false;
     };
     // `source` is derived from file and start; listing them keeps the key stable.
-  }, [step === 1, projectId, file, start, classIri, effectiveId, inspection, options]);
+  }, [step === 1, projectId, file, start, classIri, effectiveId, inspection, options, retry]);
 
   // Step 3 starts from the suggestions, or the choices made before.
   useEffect(() => {
@@ -251,15 +280,36 @@ export default function DataWizard({
     if (step !== 4 || !source || !choices) return;
     let live = true;
     setPreview(null);
+    setPreviewFailed(false);
     previewData(projectId, source, options, choices)
       .then((found) => live && setPreview(found))
-      .catch((e: unknown) => live && setError(message(e)));
+      .catch((e: unknown) => {
+        if (!live) return;
+        setPreviewFailed(true);
+        setError(message(e));
+      });
     return () => {
       live = false;
     };
-  }, [step]);
+  }, [step, retry]);
 
-  const blocked = typeof step === "number" ? stepBlocked(step, { inspection, options, classIri }) : null;
+  // Leaving now would lose a mapping: the dialog asks before its ✕ or a tab.
+  useEffect(() => {
+    onDirtyChange?.(step === 3 || step === 4);
+  }, [step, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+
+  const blocked =
+    typeof step === "number"
+      ? stepBlocked(step, {
+          inspection,
+          options,
+          classIri,
+          basis: basis ? "ready" : basisFailed ? "failed" : "reading",
+          columnsReady: choices !== null,
+        })
+      : null;
+  const retryShown = (step === 2 || step === 3) && basisFailed !== null && !basis;
 
   const goNext = () => {
     if (blocked || typeof step !== "number" || step >= 4) return;
@@ -274,7 +324,8 @@ export default function DataWizard({
   };
 
   const doImport = async () => {
-    if (!choices || busy) return;
+    // aria-disabled, not disabled: a press while it says so does nothing.
+    if (!choices || busy || !preview) return;
     setBusy(true);
     setError(null);
     try {
@@ -349,12 +400,17 @@ export default function DataWizard({
           onClass={(iri) => {
             setClassIri(iri);
             setColumns(null);
+            setSuggested([]);
           }}
           onIdColumn={(column) => {
             setIdColumn(column);
             setRowNumber(false);
+            setColumns(null);
           }}
-          onRowNumber={setRowNumber}
+          onRowNumber={(on) => {
+            setRowNumber(on);
+            setColumns(null);
+          }}
           onError={setError}
         />
       )}
@@ -379,8 +435,9 @@ export default function DataWizard({
             );
             setSuggested((current) => current.filter((c) => c !== column));
             if (source && classIri) {
+              const key = basisKey;
               void previewData(projectId, source, options, { classIri, idColumn: effectiveId, columns: {} })
-                .then(setBasis)
+                .then((found) => setClassReading({ key, preview: found }))
                 .catch((e: unknown) => setError(message(e)));
             }
           }}
@@ -392,6 +449,27 @@ export default function DataWizard({
         <ImportReport snapshot={done} announce onValidate={onValidate} onShowData={onShowData} />
       )}
 
+      {retryShown && (
+        <p className="detail-error" role="alert">
+          {basisFailed}{" "}
+          <button type="button" onClick={() => setRetry((n) => n + 1)}>
+            Try again
+          </button>
+        </p>
+      )}
+      {step === 4 && previewFailed && (
+        <p>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              setRetry((n) => n + 1);
+            }}
+          >
+            Try again
+          </button>
+        </p>
+      )}
       {error && (
         <p className="detail-error" role="alert">
           {error}

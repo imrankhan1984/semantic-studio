@@ -50,7 +50,7 @@ app writes into the real per-user ontology library.
 
 ```bash
 cd backend  && python -m pytest tests    # 1022 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1157 tests, vitest
+cd frontend && npm run test              # 1165 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -333,6 +333,7 @@ leaves one behind.
 - `data.ttl` is read by `read_ntriples`, rdflib the fallback: the open budget depends on it. [Data snapshots]
 - The card's `data` line is written from the folders when the project is closed. [Data snapshots]
 - The data routes check the project and snapshot before the body: an id not issued is 404. [Data snapshots]
+- The wizard uses a class reading only for the class and id it was read for, and every exit past step 3 asks. [Data snapshots]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

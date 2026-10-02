@@ -1,3 +1,27 @@
+/*
+================================================================================
+FILE: frontend/src/modeling/dataChoices.test.ts
+================================================================================
+
+SUMMARY
+    The data wizard's choice rules (csv-data-import 5.2 to 5.4): what each
+    column starts as, one name per row, a choice in a select, a new
+    attribute's suggested type, and why Next waits on each step -- for the
+    sample choice, for the chosen class's own reading, and for the columns'
+    choices before step 4.
+
+BASIC IDEA
+    Pure functions, tested without rendering, as the module is kept out of
+    the component for.
+
+INPUTS / INPUT SOURCES
+    - modeling/dataChoices.ts, on values built here.
+
+EXPECTED OUTPUT
+    - Pass/fail per assertion.
+================================================================================
+*/
+
 import { describe, expect, it } from "vitest";
 import {
   NEW_ATTRIBUTE,
@@ -84,8 +108,22 @@ describe("why Next waits", () => {
     expect(stepBlocked(1, { inspection, options: { sample: true }, classIri: null })).toBeNull();
     expect(stepBlocked(1, { inspection: null, options: {}, classIri: null })).toBe("Choose a file first.");
   });
-  it("waits for what a row is", () => {
-    expect(stepBlocked(2, { inspection, options: { sample: true }, classIri: null })).toBe("Choose what each row is.");
-    expect(stepBlocked(2, { inspection, options: { sample: true }, classIri: `${P}Person` })).toBeNull();
+  it("waits for what a row is, and for that class's own reading (PR #53 review)", () => {
+    const base = { inspection, options: { sample: true } };
+    expect(stepBlocked(2, { ...base, classIri: null })).toBe("Choose what each row is.");
+    expect(stepBlocked(2, { ...base, classIri: `${P}Person`, basis: "reading" })).toBe("Checking the identifier…");
+    expect(stepBlocked(2, { ...base, classIri: `${P}Person`, basis: "failed" })).toBe(
+      "The identifier could not be checked. Try again.",
+    );
+    expect(stepBlocked(2, { ...base, classIri: `${P}Person`, basis: "ready" })).toBeNull();
+  });
+
+  it("waits on step 3 until the columns have choices, so step 4 always has them", () => {
+    const base = { inspection, options: { sample: true }, classIri: `${P}Person` };
+    expect(stepBlocked(3, { ...base, basis: "reading", columnsReady: false })).toBe("Reading what each column can become…");
+    expect(stepBlocked(3, { ...base, basis: "failed", columnsReady: false })).toBe(
+      "What each column can become could not be read. Try again.",
+    );
+    expect(stepBlocked(3, { ...base, basis: "ready", columnsReady: true })).toBeNull();
   });
 });

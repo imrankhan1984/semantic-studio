@@ -1,3 +1,25 @@
+/*
+================================================================================
+FILE: frontend/src/modeling/dataSentences.test.ts
+================================================================================
+
+SUMMARY
+    The words the data import says (csv-data-import 5.2 to 5.7): the label on
+    snapshot data with a sample's words in it, row lists, the preview's
+    sentences, the import report's lines and word, and the identifier check.
+
+BASIC IDEA
+    Pure functions, tested without rendering. Dates are fixed at midday UTC
+    so the date in words is the same in every time zone the suite runs in.
+
+INPUTS / INPUT SOURCES
+    - modeling/dataSentences.ts, on values built here.
+
+EXPECTED OUTPUT
+    - Pass/fail per assertion.
+================================================================================
+*/
+
 import { describe, expect, it } from "vitest";
 import {
   dataLabel,

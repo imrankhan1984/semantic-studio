@@ -22,6 +22,12 @@ BASIC IDEA
     headers changed. It opens on Data when the project's tree asked for an
     import, with the wizard already started.
 
+    Once the wizard has columns mapped (step 3 or 4) it says so, and leaving
+    then asks first whichever way it is done: the wizard's own Cancel, the
+    dialog's ✕, or another tab, which would unmount the wizard and lose the
+    mapping as surely as closing (PR #53 review). A click outside does
+    nothing while a wizard runs.
+
 INPUTS / INPUT SOURCES (props)
     - onLoaded: called with the new ontology's summary on success.
     - onClose: dismiss the dialog.
@@ -77,6 +83,22 @@ export default function LoadDialog({
 }: Props) {
   const [tab, setTab] = useState<LoadTab>(initialTab === "data" && !project ? "suggested" : initialTab);
   const [wizard, setWizard] = useState<WizardStart | null>(startImport && project ? { kind: "new" } : null);
+  // The wizard has a mapping to lose; and what to do once leaving is confirmed.
+  const [wizardDirty, setWizardDirty] = useState(false);
+  const [leaving, setLeaving] = useState<(() => void) | null>(null);
+
+  const guard = (action: () => void) => {
+    if (tab === "data" && wizard && wizardDirty) setLeaving(() => action);
+    else action();
+  };
+  const switchTab = (next: LoadTab) => {
+    if (next === tab) return;
+    guard(() => {
+      // Leaving the Data tab unmounts the wizard: it starts again on return.
+      if (tab === "data") setWizard(null);
+      setTab(next);
+    });
+  };
   const [fetching, setFetching] = useState<string | null>(null);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
@@ -129,28 +151,50 @@ export default function LoadDialog({
       <div className={tab === "data" ? "modal modal-wide" : "modal"} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2>{tab === "data" && project ? `Data for ${project.name}` : "Load ontology"}</h2>
-          <button className="icon-btn" onClick={onClose} title="Close">✕</button>
+          <button className="icon-btn" onClick={() => guard(onClose)} title="Close" aria-label="Close">
+            ✕
+          </button>
         </div>
 
         <div className="tabs">
           <button
             className={tab === "suggested" ? "tab active" : "tab"}
-            onClick={() => setTab("suggested")}
+            onClick={() => switchTab("suggested")}
           >
             Suggested
           </button>
-          <button className={tab === "file" ? "tab active" : "tab"} onClick={() => setTab("file")}>
+          <button className={tab === "file" ? "tab active" : "tab"} onClick={() => switchTab("file")}>
             Local file
           </button>
-          <button className={tab === "url" ? "tab active" : "tab"} onClick={() => setTab("url")}>
+          <button className={tab === "url" ? "tab active" : "tab"} onClick={() => switchTab("url")}>
             URL / GitHub
           </button>
           {project && (
-            <button className={tab === "data" ? "tab active" : "tab"} onClick={() => setTab("data")}>
+            <button className={tab === "data" ? "tab active" : "tab"} onClick={() => switchTab("data")}>
               Data for this project
             </button>
           )}
         </div>
+
+        {leaving && (
+          <div className="wizard-actions wizard-leave" role="group" aria-label="Leave the wizard?">
+            <span>Leave without importing? The mapping chosen so far is lost.</span>
+            <button
+              type="button"
+              onClick={() => {
+                const action = leaving;
+                setLeaving(null);
+                setWizardDirty(false);
+                action();
+              }}
+            >
+              Leave
+            </button>
+            <button type="button" className="primary" autoFocus onClick={() => setLeaving(null)}>
+              Keep going
+            </button>
+          </div>
+        )}
 
         {tab === "data" &&
           project &&
@@ -165,6 +209,7 @@ export default function LoadDialog({
               onClose={() => setWizard(null)}
               onValidate={onValidate}
               onShowData={onShowData}
+              onDirtyChange={setWizardDirty}
             />
           ) : (
             <SnapshotList

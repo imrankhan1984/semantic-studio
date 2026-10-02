@@ -272,6 +272,82 @@ describe("steps 2 to 4 (5.3 to 5.5)", () => {
   });
 });
 
+describe("the PR #53 review fixes", () => {
+  const TWO_CLASSES = {
+    classes: {
+      nodes: {
+        [`${X}Person`]: { label: "Person", prefixed: "shop:Person", kind: "class", hasChildren: false },
+        [`${X}Organization`]: { label: "Organization", prefixed: "shop:Organization", kind: "class", hasChildren: false },
+      },
+      children: {}, roots: [`${X}Person`, `${X}Organization`],
+    },
+    concepts: { nodes: {}, children: {}, roots: [] }, counts: { classes: 2, concepts: 0 }, truncated: false,
+  };
+
+  async function toStep2() {
+    await setup();
+    fetchHierarchy.mockResolvedValue(TWO_CLASSES);
+    await chooseFile();
+    await press(next());
+  }
+
+  const classSelect = () => screen.getByLabelText("Each row is") as HTMLSelectElement;
+  async function chooseClass(iri: string) {
+    await act(async () => {
+      fireEvent.change(classSelect(), { target: { value: iri } });
+    });
+  }
+
+  it("1. a second file gets its own id suggested, not the row number", async () => {
+    await setup();
+    await chooseFile();
+    await chooseFile(inspection({ columns: [profile("code"), profile("id", { wholeNumbers: true }), profile("name")] }));
+    await press(next());
+    expect((screen.getByLabelText(/Each row is identified by column/) as HTMLSelectElement).value).toBe("id");
+  });
+
+  it("2. a class change waits for that class's own reading before Next", async () => {
+    await toStep2();
+    await chooseClass(`${X}Person`);
+    expect(next().getAttribute("aria-disabled")).toBe("false");
+    previewData.mockReturnValue(new Promise(() => {}));
+    await chooseClass(`${X}Organization`);
+    expect(next().getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByText("Checking the identifier…")).toBeTruthy();
+    await press(next());
+    expect(screen.getByRole("heading", { name: "Step 2 of 4: what a row is" })).toBeTruthy();
+  });
+
+  it("3. a failed reading says so with Try again, and Next waits for it", async () => {
+    await toStep2();
+    previewData.mockRejectedValueOnce(new Error("The server did not answer."));
+    await chooseClass(`${X}Person`);
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("The server did not answer.");
+    expect(next().getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByText("The identifier could not be checked. Try again.")).toBeTruthy();
+    await press(next());
+    expect(screen.getByRole("heading", { name: "Step 2 of 4: what a row is" })).toBeTruthy();
+    previewData.mockResolvedValue(preview());
+    await press(within(alert).getByRole("button", { name: "Try again" }));
+    expect(next().getAttribute("aria-disabled")).toBe("false");
+    await press(next());
+    expect(screen.getByRole("heading", { name: "Step 3 of 4: the columns" })).toBeTruthy();
+  });
+
+  it("4. Import does nothing while the preview it waits for is not there", async () => {
+    await toStep2();
+    await chooseClass(`${X}Person`);
+    await press(next());
+    previewData.mockReturnValue(new Promise(() => {}));
+    await press(next());
+    const button = screen.getByRole("button", { name: "Import" });
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    await press(button);
+    expect(importData).not.toHaveBeenCalled();
+  });
+});
+
 describe("Change the mapping (5.7)", () => {
   it("starts at step 2 on the copy kept, with the choices made before", async () => {
     openProject.mockResolvedValue({ project: PROJECT, documents: [MODEL], recovery: { available: false, draftTime: null } });

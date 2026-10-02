@@ -124,10 +124,23 @@ export function parseChoice(value: string): ColumnChoice | typeof NEW_ATTRIBUTE 
   return { as: "ignore" };
 }
 
-/** Why Next cannot be pressed on a step, or null when it can (Section 6). */
+/** Why Next cannot be pressed on a step, or null when it can (Section 6).
+ *
+ *  Steps 2 and 3 wait for the server's reading of the chosen class: the
+ *  identifier check and the fields (`basis`), as they are for the class
+ *  and identifier now chosen -- never those of a class chosen before --
+ *  and, on step 3, the columns' choices made from it. A failed reading
+ *  says so and waits for Try again, so step 4 is never reached without
+ *  choices (PR #53 review). */
 export function stepBlocked(
   step: number,
-  state: { inspection: DataInspection | null; options: DataOptions; classIri: string | null },
+  state: {
+    inspection: DataInspection | null;
+    options: DataOptions;
+    classIri: string | null;
+    basis?: "ready" | "reading" | "failed";
+    columnsReady?: boolean;
+  },
 ): string | null {
   if (step === 1) {
     if (!state.inspection) return "Choose a file first.";
@@ -136,6 +149,15 @@ export function stepBlocked(
     }
     if (state.inspection.kept === 0) return "This file has no rows to import.";
   }
-  if (step === 2 && !state.classIri) return "Choose what each row is.";
+  if (step === 2) {
+    if (!state.classIri) return "Choose what each row is.";
+    if (state.basis === "failed") return "The identifier could not be checked. Try again.";
+    if (state.basis !== "ready") return "Checking the identifier…";
+  }
+  if (step === 3 && !state.columnsReady) {
+    return state.basis === "failed"
+      ? "What each column can become could not be read. Try again."
+      : "Reading what each column can become…";
+  }
   return null;
 }
