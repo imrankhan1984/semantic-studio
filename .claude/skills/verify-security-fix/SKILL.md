@@ -12,7 +12,9 @@ process, or that the work never started.
 
 Run the app in-process with an isolated data directory so nothing touches a real
 library. Set `SEMANTIC_STUDIO_DATA_DIR` to a temporary path **before** importing
-`app.main`, then drive it with `fastapi.testclient.TestClient`. Importing first
+`app.main`, then drive it with `fastapi.testclient.TestClient(app,
+base_url="http://localhost", headers={"X-Semantic-Studio": "1"})`: without both,
+`local_guard` refuses the request and a "refused" assertion proves nothing. Importing first
 and setting the variable afterward will use the real library, which is a mistake
 worth avoiding.
 
@@ -57,6 +59,7 @@ defeated by comments, casing, and whitespace.
 - Add every case above as a permanent test in `backend/tests/`.
 - Do not add them to `test_fetch_restrictions.py`. That file's name already
   overpromises; it tests GitHub Enterprise name detection and blob URL
-  rewriting. Create `test_network_restrictions.py` instead.
-- Update the state column in Section 7 of `CLAUDE.md` from Not met to Met, and
-  add a decision log entry in `architecture.md` if the fix changed a boundary.
+  rewriting. Add them to `test_network_restrictions.py`.
+- Update the state column in Section 7 of the specifications folder's
+  `CLAUDE.md` from Not met to Met, and append a decision to `decisions.md` in
+  the specifications folder if the fix changed a boundary.

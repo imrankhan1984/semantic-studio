@@ -21,7 +21,7 @@ than typing.
 | RDF | rdflib, graphs held in memory |
 | Packaging | Docker and Docker Compose |
 
-Roughly 26,000 lines of source and as many again of tests. One FastAPI process
+Roughly 40,000 lines of source and 30,000 of tests. One FastAPI process
 serves the API and, in production, the built frontend as static files.
 
 ## Running it

@@ -46,4 +46,4 @@ it never recovered. Switching ontologies and resizing the window did the same.
 - The budget becomes a test that fails when exceeded, not a note in a document.
 - Measure before and after, and put both numbers in the pull request.
 - If a change cannot meet the budget, say so and raise the budget deliberately
-  with a decision log entry in `architecture.md`. Do not silently exceed it.
+  with a decision appended to `decisions.md`. Do not silently exceed it.
