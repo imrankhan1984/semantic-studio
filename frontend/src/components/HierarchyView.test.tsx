@@ -843,3 +843,90 @@ describe("HierarchyView, relationships Stage A (AC-2, AC-6)", () => {
     expect(document.querySelector(".hierarchy-other-kind")).toBeNull();
   });
 });
+
+describe("HierarchyView, examples (shacl-authoring 5.8)", () => {
+  const PID = "prj-0123456789ab";
+  const STATE = {
+    doc: "model" as const, ontologyId: `${PID}-model`, revision: 2, dirty: true,
+    canUndo: true, undoLabel: "x", canRedo: false, redoLabel: null, triples: 10,
+  };
+
+  beforeEach(async () => {
+    projectStore._reset();
+    for (const mock of [openProject, runCommand, previewDelete]) mock.mockReset();
+    openProject.mockResolvedValue({
+      project: {
+        id: PID, name: "Shop", createdAt: "", updatedAt: "", baseIri: EX, prefix: "ex",
+        primaryLanguage: "en", languages: [], documents: [{ file: "model.ttl", role: "model" }], counts: {},
+      },
+      documents: [STATE],
+      recovery: { available: false, draftTime: null },
+    });
+    await projectStore.open(PID);
+  });
+
+  afterEach(() => projectStore._reset());
+
+  /** Person has a subclass, Employee, in the class tree; Bob is a Person. */
+  function withExamples(): Hierarchy {
+    const classes = forestOf(
+      { [EX + "Person"]: node("Person", "class", true), [EX + "Employee"]: node("Employee") },
+      { [EX + "Person"]: [EX + "Employee"] },
+      [EX + "Person"],
+    );
+    const examples = forestOf(
+      { [EX + "Person"]: node("Person", "class", true), [EX + "bob"]: node("Bob", "individual") },
+      { [EX + "Person"]: [EX + "bob"] },
+      [EX + "Person"],
+    );
+    return { ...hierarchyOf(classes, EMPTY), examples, counts: { classes: 2, concepts: 0, examples: 1 } };
+  }
+
+  function renderProject(hierarchy: Hierarchy, onSelect = vi.fn()) {
+    fetchHierarchy.mockResolvedValue(hierarchy);
+    render(
+      <HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={onSelect} editing={{ primaryLanguage: "en" }} />,
+    );
+    return { onSelect };
+  }
+
+  const examplesTree = () => screen.getByRole("tree", { name: "Examples" });
+
+  it("lists a project's examples under their class, open from the start", async () => {
+    const { onSelect } = renderProject(withExamples());
+    await screen.findByRole("heading", { name: "Examples" });
+    const rows = within(examplesTree()).getAllByRole("treeitem");
+    expect(rows.map((r) => r.querySelector(".hierarchy-label")?.textContent)).toEqual(["Person", "Bob"]);
+    fireEvent.click(rows[1]);
+    expect(onSelect).toHaveBeenCalledWith(EX + "bob");
+  });
+
+  it("keeps its own expansion: closing Person here leaves the class tree alone", async () => {
+    renderProject(withExamples());
+    await screen.findByRole("heading", { name: "Examples" });
+    const classTree = screen.getByRole("tree", { name: "Class hierarchy" });
+    const classPerson = within(classTree).getAllByRole("treeitem")[0];
+    fireEvent.click(classPerson.querySelector<HTMLElement>(".hierarchy-twistie")!);
+    expect(within(classTree).getAllByRole("treeitem")).toHaveLength(2);
+    const examplePerson = within(examplesTree()).getAllByRole("treeitem")[0];
+    expect(examplePerson.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(examplePerson.querySelector<HTMLElement>(".hierarchy-twistie")!);
+    expect(within(examplesTree()).getAllByRole("treeitem")).toHaveLength(1);
+    expect(within(classTree).getAllByRole("treeitem")).toHaveLength(2);
+  });
+
+  it("gives an example row Rename and Delete, and a class heading row nothing", async () => {
+    renderProject(withExamples());
+    await screen.findByRole("heading", { name: "Examples" });
+    const [personRow, bobRow] = within(examplesTree()).getAllByRole("treeitem");
+    expect(personRow.querySelector(".hierarchy-menu-btn")).toBeNull();
+    fireEvent.click(bobRow.querySelector<HTMLElement>(".hierarchy-menu-btn")!);
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Rename", "Delete…"]);
+  });
+
+  it("has no Examples section when the project has no examples", async () => {
+    renderProject(hierarchyOf(withExamples().classes, EMPTY));
+    await screen.findByRole("heading", { name: "Class hierarchy" });
+    expect(screen.queryByRole("heading", { name: "Examples" })).toBeNull();
+  });
+});

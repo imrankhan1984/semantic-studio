@@ -80,6 +80,24 @@ def pid() -> str:
     return project
 
 
+@pytest.fixture
+def bare() -> str:
+    """A small-template project as Stage A knew it, open: no shapes.ttl yet.
+    Stage B's starter shapes (5.8, row S23) would make the first shape
+    command a second one, which is not what these tests are about."""
+    response = client.post(
+        "/api/projects", json={"name": "Shop", "template": "small", "baseIri": EX, "prefix": "shop"}
+    )
+    assert response.status_code == 200, response.text
+    project = response.json()["id"]
+    manifest = project_store.manifest(project)
+    manifest["documents"] = [d for d in manifest["documents"] if d["role"] != "shapes"]
+    project_store.write_manifest(project, manifest)
+    (project_store.folder(project) / "shapes.ttl").unlink()
+    assert client.post(f"/api/projects/{project}/open").status_code == 200
+    return project
+
+
 def run(pid: str, command: str, dry_run: bool = False, **args):
     return client.post(
         f"/api/projects/{pid}/documents/model/commands",
@@ -222,6 +240,22 @@ COMMAND_CASES = [
      [(U("total"), RDF.type, OWL.DatatypeProperty)], "Renamed shop:total to shop:amount"),
     ("DeleteEntity", {"iri": "shop:amount", "strategy": "orphan"},
      [], [(U("amount"), RDF.type, OWL.DatatypeProperty)], "Deleted datatype property total"),
+    # shacl-authoring Stage B (5.8): an example of a class, filled in. The
+    # small template brings Alice and Acme; Bob is made here (row S21).
+    ("CreateExample", {"class": "shop:Person", "label": "Bob"},
+     [(U("bob"), RDF.type, U("Person")), (U("bob"), RDF.type, OWL.NamedIndividual),
+      (U("bob"), RDFS.label, Literal("Bob", lang="en"))], [], "Created example Bob of Person"),
+    ("CreateDatatypeProperty", {"label": "birth date", "domain": "shop:Person", "datatype": "xsd:date"},
+     [(U("birthDate"), RDFS.range, XSD.date)], [], "Created datatype property birth date"),
+    ("SetExampleValue", {"iri": "shop:bob", "property": "shop:birthDate",
+                         "value": {"kind": "typed", "value": "1990-05-01", "datatype": "xsd:date"}},
+     [(U("bob"), U("birthDate"), Literal("1990-05-01", datatype=XSD.date))], [], "Set birth date of Bob"),
+    ("AddExampleValue", {"iri": "shop:bob", "property": "shop:memberOf",
+                         "value": {"kind": "link", "value": "shop:acme"}},
+     [(U("bob"), U("memberOf"), U("acme"))], [], "Linked Bob to Acme by member of"),
+    ("RemoveExampleValue", {"iri": "shop:bob", "property": "shop:memberOf",
+                            "value": {"kind": "link", "value": "shop:acme"}},
+     [], [(U("bob"), U("memberOf"), U("acme"))], "Removed the link from Bob to Acme by member of"),
 ]
 
 
@@ -1189,7 +1223,8 @@ def _rule_node(g: Graph, shape: URIRef, path: URIRef):
     return next(p for p in g.objects(shape, SH.property) if g.value(p, SH.path) == path)
 
 
-def test_the_first_shape_command_creates_shapes_ttl(pid):
+def test_the_first_shape_command_creates_shapes_ttl(bare):
+    pid = bare
     assert not (project_store.folder(pid) / "shapes.ttl").exists()
     result = shapes_ok(pid, "CreateShape", target="shop:Person")
     assert result["created"] == EX + "PersonRules"
@@ -1205,7 +1240,8 @@ def test_the_first_shape_command_creates_shapes_ttl(pid):
     assert len(g) == 3
 
 
-def test_a_second_shape_on_the_same_class_gets_its_own_iri(pid):
+def test_a_second_shape_on_the_same_class_gets_its_own_iri(bare):
+    pid = bare
     shapes_ok(pid, "CreateShape", target="shop:Person")
     assert shapes_ok(pid, "CreateShape", target="shop:Person")["created"] == EX + "PersonRules2"
 
@@ -1401,7 +1437,8 @@ shop:S a sh:NodeShape ; sh:targetClass shop:Person .
     assert "# Written by hand." not in written and '"Person rules"@en' in written
 
 
-def test_a_refused_first_shape_command_leaves_no_shapes_ttl(pid):
+def test_a_refused_first_shape_command_leaves_no_shapes_ttl(bare):
+    pid = bare
     # Found in review: the file was made before the command was checked.
     response = shapes_run(pid, "CreateShape", target="shop:Nothing")
     assert response.status_code == 422
@@ -1413,7 +1450,8 @@ def test_a_refused_first_shape_command_leaves_no_shapes_ttl(pid):
     assert not (project_store.folder(pid) / "shapes.ttl").exists()
 
 
-def test_two_first_shape_commands_at_once_make_shapes_ttl_once(pid):
+def test_two_first_shape_commands_at_once_make_shapes_ttl_once(bare):
+    pid = bare
     import threading
 
     answers = []

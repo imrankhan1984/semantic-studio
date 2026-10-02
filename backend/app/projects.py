@@ -28,6 +28,10 @@ BASIC IDEA
     free-text value and is escaped as a Turtle string; base and prefix are
     validated first, so neither can close the IRI or the prefix declaration
     they sit in. Every template is written in the project's primary language.
+    A template may ship starter shapes beside it, <template>.shapes.ttl,
+    rendered the same way and written as the project's shapes.ttl: the Small
+    one does, with two examples in its model, so a learner's first Validate
+    already shows red and green (shacl-authoring 5.8, row S23).
 
     Delete never destroys: the folder moves into projects/.trash/, and the
     trash is emptied by hand (open question 3, closed as recommended).
@@ -60,7 +64,8 @@ INPUTS / INPUT SOURCES
     - A library ontology's graph, for "Start a project from this".
 
 EXPECTED OUTPUT
-    - Project folders and manifests on disk, and manifest dicts for the API.
+    - Project folders and manifests on disk, and manifest dicts for the API;
+      a template's starter shapes.ttl where it has one.
     - <doc>.layout.json, read, validated and written atomically.
     - Raises ProjectError (400, a sentence), UnknownProject and UnknownDocument
       (404).
@@ -292,12 +297,20 @@ def infer_kind(graph: Graph) -> str:
     return "taxonomy" if counts["concepts"] and not counts["classes"] else "ontology"
 
 
+def template_shapes(template: str) -> Optional[Path]:
+    """The starter shapes a template ships, or None: the Small template has
+    them, so a first Validate already shows a mix of results (S23)."""
+    path = TEMPLATE_DIR / f"{template}.shapes.ttl"
+    return path if template in TEMPLATES and path.is_file() else None
+
+
 def render_template(
-    template: str, *, name: str, base_iri: str, prefix: str, lang: str
+    template: str, *, name: str, base_iri: str, prefix: str, lang: str, part: str = ""
 ) -> str:
+    """A template's model, or with part=".shapes" its starter shapes."""
     if template not in TEMPLATES:
         raise ProjectError(f"There is no template called {template!r}.")
-    text = (TEMPLATE_DIR / f"{template}.ttl").read_text(encoding="utf-8")
+    text = (TEMPLATE_DIR / f"{template}{part}.ttl").read_text(encoding="utf-8")
     # The ontology's own IRI is the base without its separator, the usual
     # shape: http://example.org/invoices# names <http://example.org/invoices>.
     replacements = {
@@ -507,6 +520,14 @@ class ProjectStore:
         folder = self.dir / pid
         folder.mkdir()
         (folder / "model.ttl").write_text(text, encoding="utf-8")
+        documents = [{"file": "model.ttl", "role": "model"}]
+        if not copied and template_shapes(template or "empty") is not None:
+            shapes = render_template(
+                template or "empty", name=name, base_iri=base_iri, prefix=prefix,
+                lang=primary_language, part=".shapes",
+            )
+            (folder / DOCUMENTS["shapes"]).write_text(shapes, encoding="utf-8")
+            documents.append({"file": "shapes.ttl", "role": "shapes"})
         now = _now()
         manifest = {
             "id": pid,
@@ -517,7 +538,7 @@ class ProjectStore:
             "prefix": prefix,
             "primaryLanguage": primary_language,
             "languages": [],
-            "documents": [{"file": "model.ttl", "role": "model"}],
+            "documents": documents,
             "counts": graph_counts(graph),
             # A template names its kind; a library copy is judged from what
             # it holds (D-089).

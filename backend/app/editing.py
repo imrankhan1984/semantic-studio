@@ -35,6 +35,14 @@ BASIC IDEA
     other, a loop of broader or sub-relationship links -- are modeling_checks'
     sentences, raised the same way.
 
+    Examples (shacl-authoring 5.8) are individuals of the model's classes,
+    made so a shape has something to check: CreateExample types one with its
+    class and owl:NamedIndividual, and SetExampleValue, AddExampleValue and
+    RemoveExampleValue fill its attributes and relationships, an attribute's
+    value checked against its type of value as an annotation's is, so a
+    wrong one is refused with the type's sentence (row S22). What counts as
+    an example is examples.py's to say.
+
     A concept's place at the top of its scheme is kept by the commands, never
     by hand (D-091): CreateConcept joins the scheme and is a top concept when
     nothing above it is in the scheme, and AddBroader, RemoveBroader and a
@@ -75,7 +83,8 @@ INPUTS / INPUT SOURCES
       for the delete impact's import mentions.
 
 EXPECTED OUTPUT
-    - Mutated document graphs, new revisions, undo labels; a create or rename
+    - Mutated document graphs, new revisions, undo labels; a create (an
+      example's too) or rename
       command's result names the entity's IRI (`created`), so the interface
       can select it.
     - Files: <doc>.ttl on save, <doc>.original.ttl once, .draft/<doc>.ttl and
@@ -118,7 +127,7 @@ from .projects import (
     graph_counts,
     valid_lang,
 )
-from . import modeling_checks, shacl, shapes_form
+from . import examples, modeling_checks, shacl, shapes_form
 from .canvas import build_canvas, restrict
 from .imports import imports_service, load_state
 from .store import Ontology, OntologyStore, ParseTimeout
@@ -678,6 +687,8 @@ class Context:
             return "concept"
         if SKOS.ConceptScheme in types:
             return "concept scheme"
+        if examples.is_example(self.graph, iri):
+            return "example"
         return "entity"
 
 
@@ -1471,7 +1482,7 @@ def delete_plan(ctx: Context, a: dict) -> tuple[Change, dict]:
     ]
     individuals = sorted(
         s for s in g.subjects(RDF.type, iri)
-        if isinstance(s, URIRef) and ctx.kind(s) == "entity"
+        if isinstance(s, URIRef) and ctx.kind(s) in ("entity", "example")
     )
     import_mentions = 0
     if ctx.imported is not None:
@@ -1498,6 +1509,168 @@ def delete_plan(ctx: Context, a: dict) -> tuple[Change, dict]:
 
 def cmd_delete_entity(ctx: Context, a: dict) -> Change:
     return delete_plan(ctx, a)[0]
+
+
+# --- examples, so a shape has something to check (shacl-authoring 5.8) ---------
+
+
+def _model_doc(ctx: Context) -> None:
+    if ctx.doc != "model":
+        raise CommandError("Examples live in model.ttl; run example commands on the model document.")
+
+
+def _class_graph(ctx: Context) -> Graph:
+    """Where a class may be defined: the imports' merged view when there is
+    one (it carries the document), else the document."""
+    return ctx.imported if ctx.imported is not None else ctx.graph
+
+
+def cmd_create_example(ctx: Context, a: dict) -> Change:
+    """An individual of a class, named in the primary language (5.8). Typed
+    owl:NamedIndividual as well, so every view knows it for an example."""
+    _model_doc(ctx)
+    cls = ctx.iri(a.get("class"), "class")
+    if not examples.is_class(_class_graph(ctx), cls):
+        raise CommandError(f"{ctx.short(cls)} is not a class of this model; an example belongs to a class.")
+    label = ctx.primary_label(a)
+    iri = ctx.minted(a, label, lower_first=True)
+    ctx.require_new(iri)
+    adds = [
+        (iri, RDF.type, cls),
+        (iri, RDF.type, OWL.NamedIndividual),
+        (iri, RDFS.label, Literal(label, lang=ctx.primary)),
+    ]
+    return _created(
+        _change(ctx.graph, f"Created example {label} of {pick_label_in(_class_graph(ctx), cls, ctx.languages)[0]}", adds),
+        iri,
+    )
+
+
+# A type of value as the learner reads it, the rule editor's words.
+_VALUE_WORDS = {
+    "string": "text",
+    "integer": "a whole number",
+    "decimal": "a number",
+    "boolean": "true or false",
+    "date": "a date",
+    "dateTime": "a date and time",
+    "anyURI": "a web address",
+}
+
+
+def _example_field(ctx: Context, a: dict) -> tuple[URIRef, URIRef, str, str]:
+    """The example and the attribute or relationship a command names, with
+    the field's name and which of the two it is."""
+    _model_doc(ctx)
+    iri = ctx.iri(a.get("iri"), "example")
+    if not examples.is_example(_class_graph(ctx), iri) or not ctx.mentioned(iri):
+        raise CommandError(f"There is no example {ctx.short(iri)} in this document.")
+    prop = ctx.iri(a.get("property"), "attribute or relationship")
+    classes = _class_graph(ctx)
+    types = set(classes.objects(prop, RDF.type))
+    what = ("relationship" if OWL.ObjectProperty in types
+            else "attribute" if OWL.DatatypeProperty in types else None)
+    if what is None:
+        raise CommandError(f"{ctx.short(prop)} is not an attribute or a relationship of this model.")
+    return iri, prop, pick_label_in(classes, prop, ctx.languages)[0], what
+
+
+def _example_value(ctx: Context, a: dict, key: str = "value") -> tuple[URIRef, URIRef, object, str]:
+    """The example, the attribute or relationship, and the value as a term,
+    checked as E-6 checks an annotation: an attribute's value against its
+    type of value, a relationship's against an entity that exists."""
+    iri, prop, name, what = _example_field(ctx, a)
+    classes = _class_graph(ctx)
+    spec = a.get(key)
+    if what == "relationship":
+        if not isinstance(spec, dict) or spec.get("kind") != "link":
+            raise CommandError(f"A value of {name} is another example, by its IRI.")
+        term = parse_value(spec, ctx.primary, lambda v: ctx.iri(v, "example"))
+        ctx.require(term, "example")
+        # Only an individual of the end class, or of a class below it: the
+        # picker offers no other, and a request that names one is refused
+        # here too (PR #51 review). No end class, no check.
+        end = classes.value(prop, RDFS.range)
+        if isinstance(end, URIRef) and not set(classes.objects(term, RDF.type)) & examples.subclasses(classes, end):
+            target = pick_label_in(classes, term, ctx.languages)[0]
+            kind = pick_label_in(classes, end, ctx.languages)[0]
+            article = "an" if kind[:1].lower() in "aeiou" else "a"
+            raise CommandError(f"{target} is not {article} {kind}; {name} links only to {article} {kind}.")
+        return iri, prop, term, name
+    rng = classes.value(prop, RDFS.range)
+    if isinstance(rng, URIRef) and rng not in _DATATYPE_BY_IRI and rng != RDF.langString and rng != RDFS.Literal:
+        # A type outside the seven offered (xsd:float, xsd:gYear from an
+        # import): the value is sent typed with that type, never as text in
+        # a language, and checked where rdflib knows the type (PR #51 review).
+        if not isinstance(spec, dict) or spec.get("kind") != "typed" or not isinstance(spec.get("value"), str):
+            raise CommandError(f"{name} is a value of type {ctx.short(rng)}; give a value of that type.")
+        if ctx.iri(spec.get("datatype") or "", "datatype") != rng:
+            raise CommandError(f"{name} is a value of type {ctx.short(rng)}; give a value of that type.")
+        term = Literal(spec["value"].strip(), datatype=rng)
+        if not spec["value"].strip() or term.ill_typed:
+            raise CommandError(f'"{spec["value"]}" is not a valid {ctx.short(rng)}.')
+        return iri, prop, term, name
+    term = parse_value(spec, ctx.primary, lambda v: ctx.iri(v, "link"))
+    if rng in _DATATYPE_BY_IRI and rng != XSD.string:
+        # A typed attribute takes a value of its type, checked lexically: the
+        # form says so before sending (S22), and this says it again.
+        if not isinstance(term, Literal) or term.datatype != rng:
+            raise CommandError(f"{name} is {_VALUE_WORDS[_DATATYPE_BY_IRI[rng]]}; give a value of that type.")
+    elif rng == RDF.langString and not (isinstance(term, Literal) and term.language):
+        raise CommandError(f"{name} is text in a language; give the text with its language.")
+    elif not isinstance(term, Literal):
+        raise CommandError(f"{name} is an attribute; its value is text or a typed value, not a link.")
+    return iri, prop, term, name
+
+
+def _linked(ctx: Context, iri: URIRef, term, name: str) -> str:
+    """A link as the undo list reads it: *Bob to Acme by member of*."""
+    return f"{ctx.name(iri)} to {pick_label_in(_class_graph(ctx), term, ctx.languages)[0]} by {name}"
+
+
+def cmd_set_example_value(ctx: Context, a: dict) -> Change:
+    """The one value of an attribute or relationship, replacing any others:
+    what a single field sets (5.8)."""
+    iri, prop, term, name = _example_value(ctx, a)
+    old = [(iri, prop, o) for o in ctx.graph.objects(iri, prop)]
+    label = f"Linked {_linked(ctx, iri, term, name)}" if isinstance(term, URIRef) else f"Set {name} of {ctx.name(iri)}"
+    return _change(ctx.graph, label, [(iri, prop, term)], old)
+
+
+def cmd_add_example_value(ctx: Context, a: dict) -> Change:
+    iri, prop, term, name = _example_value(ctx, a)
+    if (iri, prop, _stored(ctx, iri, prop, term)) in ctx.graph:
+        raise CommandError(f"{ctx.name(iri)} already has that {name}.")
+    label = f"Linked {_linked(ctx, iri, term, name)}" if isinstance(term, URIRef) else f"Added {name} to {ctx.name(iri)}"
+    return _change(ctx.graph, label, [(iri, prop, term)])
+
+
+def _stored_value(ctx: Context, spec):
+    """A value as the document holds it, judged by nothing but that. A value
+    of the wrong type, of a type the form does not offer, or a text under a
+    relationship -- written in Turtle -- is what a shape exists to flag, and
+    the form must be able to take it away (found in review)."""
+    if not isinstance(spec, dict) or not isinstance(spec.get("value"), str):
+        raise CommandError("A value needs its kind and its text.")
+    raw, kind = spec["value"], spec.get("kind")
+    if kind == "link":
+        return ctx.iri(raw, "value")
+    if kind == "text":
+        return Literal(raw, lang=spec.get("lang") or ctx.primary)
+    if kind == "typed":
+        datatype = spec.get("datatype") or "xsd:string"
+        return Literal(raw, datatype=ctx.iri(datatype, "datatype"))
+    raise CommandError("A value's kind is text, typed or link.")
+
+
+def cmd_remove_example_value(ctx: Context, a: dict) -> Change:
+    iri, prop, name, _ = _example_field(ctx, a)
+    term = _stored(ctx, iri, prop, _stored_value(ctx, a.get("value")))
+    if (iri, prop, term) not in ctx.graph:
+        raise CommandError(f"{ctx.name(iri)} has no such {name} to remove.")
+    label = (f"Removed the link from {_linked(ctx, iri, term, name)}" if isinstance(term, URIRef)
+             else f"Removed {name} from {ctx.name(iri)}")
+    return _change(ctx.graph, label, removes=[(iri, prop, term)])
 
 
 # --- SHACL shapes, one shape and one rule at a time (shacl-authoring 5.2, 5.3, D-093) ----
@@ -1942,6 +2115,10 @@ COMMANDS: dict[str, Callable[[Context, dict], Change]] = {
     "RemoveMapping": cmd_remove_mapping,
     "RenameIri": cmd_rename_iri,
     "DeleteEntity": cmd_delete_entity,
+    "CreateExample": cmd_create_example,
+    "SetExampleValue": cmd_set_example_value,
+    "AddExampleValue": cmd_add_example_value,
+    "RemoveExampleValue": cmd_remove_example_value,
     **SHAPE_COMMANDS,
 }
 

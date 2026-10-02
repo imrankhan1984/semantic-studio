@@ -114,7 +114,10 @@ shop:S a sh:NodeShape ; rdfs:label "Person rules"@en ; sh:targetClass shop:Perso
     assert shape["severity"] == "warning"
     assert shape["message"] == "Check the people."
     by_label = {r["pathLabel"]: r for r in shape["rules"]}
-    assert set(by_label) == {"birth date", "definition", "name", "works for"}
+    # The model has a *name* attribute, so the rule on rdfs:label reads *name
+    # (label)* (Stage B, follow-up 4). Both read "name" before, and this dict,
+    # keyed by label, folded the two rules into one.
+    assert set(by_label) == {"birth date", "definition", "name", "name (label)", "works for"}
     name = next(r for r in shape["rules"] if r["path"] == [EX + "name"])
     assert {k: name[k] for k in ("minCount", "maxCount", "datatype", "minLength", "maxLength", "pattern")} == {
         "minCount": 1, "maxCount": 1, "datatype": "xsd:string", "minLength": 2, "maxLength": 40, "pattern": "^[A-Z]",
@@ -203,13 +206,15 @@ def test_suggestions_come_from_the_class_and_its_parents():
     assert {"path": [EX + "worksFor"], "class": EX + "Organization", "classLabel": "Organization",
             "pathLabel": "works for", "pathKind": "relationship"} in rules
     assert {"path": [EX + "worksFor"], "maxCount": 1, "pathLabel": "works for", "pathKind": "relationship"} in rules
-    assert {"path": [str(RDFS.label)], "requiredLanguages": ["en"], "pathLabel": "name",
+    # The model's own *name* attribute is "name"; rdfs:label is "name
+    # (label)", or two paths would both read "name" (Stage B, follow-up 4).
+    assert {"path": [str(RDFS.label)], "requiredLanguages": ["en"], "pathLabel": "name (label)",
             "pathKind": "name"} in rules
-    assert {"path": [str(RDFS.label)], "uniqueLang": True, "languageIn": ["en", "fr"], "pathLabel": "name",
+    assert {"path": [str(RDFS.label)], "uniqueLang": True, "languageIn": ["en", "fr"], "pathLabel": "name (label)",
             "pathKind": "name"} in rules
     # The paths the rule editor offers: names, definitions, then the
     # attributes and relationships, own and inherited.
-    assert [p["label"] for p in out["paths"]] == ["name", "definition", "birth date", "name", "salary", "works for"]
+    assert [p["label"] for p in out["paths"]] == ["name (label)", "definition", "birth date", "name", "salary", "works for"]
 
 
 def test_a_parents_suggestions_do_not_include_a_childs_attributes():

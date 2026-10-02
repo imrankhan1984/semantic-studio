@@ -27,6 +27,12 @@ BASIC IDEA
 
     Delete counts the rules first, in a confirmation, before DeleteShape.
 
+    Focus is never left on the page (Stage B follow-up 6, row S19): Cancel in
+    the rule editor returns it to the rule's Edit, a saved rule's Edit takes
+    it, and Remove gives it to the next rule, else + Add a rule. The
+    sentence has no live region of its own: the project's announces each
+    change once (follow-up 7).
+
 INPUTS / INPUT SOURCES (props)
     - projectId, shape, modelOntologyId (the class picker searches the
       model), languages, revisions (to refetch suggestions).
@@ -39,7 +45,7 @@ EXPECTED OUTPUT
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getShapeSuggestions } from "../api";
-import { ruleSentence, shapeSentence } from "../modeling/shapeSentences";
+import { pathWords, ruleSentence, shapeSentence } from "../modeling/shapeSentences";
 import type { ShapeForm as Shape, ShapePath, ShapeRule, ShapeSuggestions } from "../types";
 import ConfirmDialog from "./ConfirmDialog";
 import { Block, InlineText, useRunner, useReturnFocus } from "./EditParts";
@@ -78,6 +84,12 @@ export default function ShapeForm({
   const [addRef, restoreAdd] = useReturnFocus();
   const [targetRef, restoreTarget] = useReturnFocus();
   const deleteRef = useRef<HTMLButtonElement>(null);
+  // Each rule's Edit button, by path: where focus goes back to after Cancel,
+  // and the next rule's after a Remove took the button that had it
+  // (Stage A follow-up 6, row S19).
+  const editButtons = useRef(new Map<string, HTMLButtonElement>());
+  const focusLater = (target: () => HTMLElement | null | undefined) =>
+    window.setTimeout(() => target()?.focus(), 0);
 
   // A different shape opens with nothing open.
   useEffect(() => {
@@ -111,7 +123,7 @@ export default function ShapeForm({
     const out = [...(suggestions?.paths ?? [])];
     for (const rule of shape.rules) {
       if (!out.some((p) => key(p.path) === key(rule.path))) {
-        out.push({ path: rule.path, label: rule.pathLabel ?? rule.path.join(" or "), kind: rule.pathKind ?? "other" });
+        out.push({ path: rule.path, label: pathWords(rule), kind: rule.pathKind ?? "other" });
       }
     }
     return out;
@@ -147,7 +159,21 @@ export default function ShapeForm({
       : await run("rule", "AddRule", { shape: shape.id, rule });
     if (result) {
       setEditing(null);
-      restoreAdd();
+      // A changed rule keeps its place: focus its Edit, once the list holds
+      // it under its (possibly new) path.
+      if (replacing) focusLater(() => editButtons.current.get(key(rule.path)) ?? addRef.current);
+      else restoreAdd();
+    }
+  };
+
+  const removeRule = async (rule: ShapeRule) => {
+    if (busy) return;
+    const keys = shape.rules.map((r) => key(r.path));
+    const at = keys.indexOf(key(rule.path));
+    // The rule after it, else the one before, else + Add a rule.
+    const next = keys[at + 1] ?? keys[at - 1] ?? null;
+    if (await run("rule", "RemoveRule", { shape: shape.id, path: rule.path })) {
+      focusLater(() => (next ? editButtons.current.get(next) : null) ?? addRef.current);
     }
   };
 
@@ -157,9 +183,7 @@ export default function ShapeForm({
       <h3 id="shape-form-heading" tabIndex={-1}>
         {shape.name}
       </h3>
-      <p className="shape-sentence" aria-live="polite">
-        {sentence}
-      </p>
+      <p className="shape-sentence">{sentence}</p>
 
       <Block title="Applies to">
         {picking ? (
@@ -207,13 +231,17 @@ export default function ShapeForm({
             editing === key(rule.path) ? (
               <li key={key(rule.path)}>
                 <RuleEditor
+                  modelOntologyId={modelOntologyId}
                   paths={paths}
                   initial={rule}
                   languages={languages}
                   busy={busy}
                   error={errors.rule}
                   onSubmit={(next) => void submitRule(next, rule)}
-                  onCancel={() => setEditing(null)}
+                  onCancel={() => {
+                    setEditing(null);
+                    focusLater(() => editButtons.current.get(key(rule.path)));
+                  }}
                 />
               </li>
             ) : (
@@ -221,9 +249,13 @@ export default function ShapeForm({
                 <span>{ruleSentence(rule)}</span>
                 <span className="shape-rule-actions">
                   <button
+                    ref={(el) => {
+                      if (el) editButtons.current.set(key(rule.path), el);
+                      else editButtons.current.delete(key(rule.path));
+                    }}
                     type="button"
                     className="ghost edit-btn"
-                    aria-label={`Edit the rule on ${rule.pathLabel}`}
+                    aria-label={`Edit the rule on ${pathWords(rule)}`}
                     onClick={() => setEditing(key(rule.path))}
                   >
                     Edit
@@ -231,9 +263,9 @@ export default function ShapeForm({
                   <button
                     type="button"
                     className="ghost edit-btn"
-                    aria-label={`Remove the rule on ${rule.pathLabel}`}
+                    aria-label={`Remove the rule on ${pathWords(rule)}`}
                     aria-disabled={busy}
-                    onClick={() => !busy && void run("rule", "RemoveRule", { shape: shape.id, path: rule.path })}
+                    onClick={() => void removeRule(rule)}
                   >
                     Remove
                   </button>
@@ -244,6 +276,7 @@ export default function ShapeForm({
         </ul>
         {editing === "new" ? (
           <RuleEditor
+            modelOntologyId={modelOntologyId}
             paths={paths}
             initial={null}
             languages={languages}

@@ -433,6 +433,14 @@ of them open as fast as none.
   read-only in the form when they use more than it edits. Nothing is checked
   until you press Validate, nothing leaves your machine, and results are not
   saved.
+- **Examples to check.** A class's form has *Add an example*: an example of
+  Person, say Bob, with its own form listing every attribute and
+  relationship Person has, a birth date entered as a date (a wrong value is
+  refused before it is sent) and *member of* chosen from the examples of
+  Organization. Examples are listed in the tree under *Examples*, by class,
+  and are not drawn on the canvas. The Small template starts with two,
+  Alice and Acme, and three shapes, so a first Validate already shows red
+  and green: Alice is not yet a member of Acme.
 - Queries saved while a project is open are kept in its `queries/` folder.
 
 ## Where your ontologies are stored

@@ -23,8 +23,11 @@ EXPECTED OUTPUT
 import { describe, expect, it } from "vitest";
 import type { ShapeRule, ValidationPanel, ValidationResult } from "../types";
 import {
+  dateTimeBound,
+  mustPhrase,
   panelHeader,
   panelName,
+  pathWords,
   plural,
   rowSentence,
   ruleProblem,
@@ -54,7 +57,8 @@ describe("ruleSentence", () => {
 
   it("reads 5.3's example", () => {
     expect(ruleSentence({ ...phone, minCount: 1, maxCount: 3, datatype: "xsd:string", maxLength: 20 })).toBe(
-      "must have between 1 and 3 phone numbers, each text, of at most 20 characters",
+      // 5.3's own words: the type and its length are one phrase (follow-up 5).
+      "must have between 1 and 3 phone numbers, each text of at most 20 characters",
     );
   });
 
@@ -96,7 +100,8 @@ describe("shapeSentence and rowSentence", () => {
 
   it("reads the whole shape back from its rules", () => {
     expect(shapeSentence(shape)).toBe(
-      "Every Person must have exactly one name, as text, and must be linked: works for an Organization.",
+      // 5.3's own words: *must work for*, not *must be linked: works for* (follow-up 5).
+      "Every Person must have exactly one name, as text, and must work for an Organization.",
     );
     expect(shapeSentence({ ...shape, rules: [] })).toBe("Every Person: no rules yet.");
     expect(shapeSentence({ target: { iri: "owl:Class", label: "Class", every: "every class" }, rules: [] })).toBe(
@@ -179,5 +184,59 @@ describe("plural", () => {
     ["phone number", "phone numbers"], ["day", "days"], ["box", "boxes"],
   ])("%s -> %s", (word, expected) => {
     expect(plural(word)).toBe(expected);
+  });
+});
+
+describe("Stage A follow-ups fixed in Stage B (5.9)", () => {
+  const name = { path: ["http://www.w3.org/2000/01/rdf-schema#label"], pathLabel: "name (label)", pathKind: "name" as const };
+
+  it("puts the plural before the brackets of name (label) (item 4)", () => {
+    expect(plural("name (label)")).toBe("names (label)");
+    expect(ruleSentence({ ...name, minCount: 2 })).toBe("must have at least 2 names (label)");
+  });
+
+  it("reads a relationship after must as a verb, or with be (item 5)", () => {
+    expect(mustPhrase("works for an Organization")).toBe("work for an Organization");
+    expect(mustPhrase("member of an Organization")).toBe("be member of an Organization");
+    expect(mustPhrase("has part a Wheel")).toBe("have part a Wheel");
+    expect(mustPhrase("is part of a Car")).toBe("be part of a Car");
+    expect(mustPhrase("teaches a Course")).toBe("teach a Course");
+    expect(mustPhrase("carries a Bag")).toBe("carry a Bag");
+    expect(mustPhrase("located in a City")).toBe("be located in a City");
+  });
+
+  it("reads 5.9's example as the follow-up asks: must be member of (item 5)", () => {
+    const member = { path: ["http://x#memberOf"], pathLabel: "member of", pathKind: "relationship" as const, class: "http://x#Org", classLabel: "Organization" };
+    expect(shapeSentence({ target: { iri: "http://x#Person", label: "Person", every: null }, rules: [member] })).toBe(
+      "Every Person must be member of an Organization.",
+    );
+  });
+
+  it("says nothing of a minimum of 0: between 0 and 3 is at most 3 (item 5)", () => {
+    const phone = { path: ["http://x#phone"], pathLabel: "phone number", pathKind: "attribute" as const };
+    expect(ruleSentence({ ...phone, minCount: 0, maxCount: 3 })).toBe("may have at most 3 phone numbers");
+    const rel = { path: ["http://x#knows"], pathLabel: "knows", pathKind: "relationship" as const };
+    expect(ruleSentence({ ...rel, minCount: 0, maxCount: 2 })).toBe("knows something, at most twice");
+  });
+
+  it("joins a type and its length into one phrase (item 5)", () => {
+    const code = { path: ["http://x#code"], pathLabel: "code", pathKind: "attribute" as const, datatype: "xsd:string", maxLength: 8 };
+    expect(ruleSentence({ ...code, maxCount: 1 })).toBe("may have at most one code, as text of at most 8 characters");
+  });
+
+  it("names a rule without a label by its path's last name (item 5)", () => {
+    expect(pathWords({ path: ["http://x#nickname"] })).toBe("nickname");
+    expect(pathWords({ path: ["http://x/a/alias", "http://x#nick"] })).toBe("alias or nick");
+    expect(ruleSentence({ path: ["http://x#nickname"], minCount: 1 })).toBe("must have a nickname");
+  });
+
+  it("adds the seconds a date-and-time field leaves out, and checks the time (item 1)", () => {
+    expect(dateTimeBound("2020-01-01T10:00")).toBe("2020-01-01T10:00:00");
+    expect(dateTimeBound("2020-01-01T10:00:30")).toBe("2020-01-01T10:00:30");
+    const at = { path: ["http://x#at"], pathLabel: "starts at", pathKind: "attribute" as const };
+    expect(ruleProblem({ ...at, minInclusive: { value: "2020-01-01", datatype: "xsd:dateTime" } })).toBe(
+      '"2020-01-01" is not a date and time (YYYY-MM-DDThh:mm:ss).',
+    );
+    expect(ruleProblem({ ...at, minInclusive: { value: "2020-01-01T10:00:00", datatype: "xsd:dateTime" } })).toBeNull();
   });
 });

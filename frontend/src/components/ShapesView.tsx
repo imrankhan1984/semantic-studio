@@ -24,6 +24,10 @@ BASIC IDEA
     (never colour alone), and marked stale when either document changed
     since.
 
+    A shape written as a blank node gets a new id with every Turtle apply;
+    the view finds it again by its name and target, so it stays selected
+    (Stage B follow-up 8).
+
     The list is a set of buttons with aria-pressed rather than a listbox:
     each row is one action (open this shape), and a keyboard user reaches it
     with Tab like every other control in the panel.
@@ -105,6 +109,20 @@ export default function ShapesView({
   // drop the shape just made (both found in the Chrome pass). Delete clears
   // it on purpose.
   const selected = shapes.find((s) => s.id === selectedId) ?? null;
+  // A shape written as a blank node has a new _: id after every Turtle
+  // apply, which re-parses the document. It is found again by what it is --
+  // its name and target, and no IRI -- when exactly one shape matches
+  // (Stage A follow-up 8); an IRI keeps its id and needs none of this.
+  const lastSelected = useRef<Shape | null>(null);
+  if (selected) lastSelected.current = selected;
+  useEffect(() => {
+    const was = lastSelected.current;
+    if (!listing || selected || !selectedId?.startsWith("_:") || was?.id !== selectedId) return;
+    const same = listing.shapes.filter(
+      (s) => s.iri === null && s.name === was.name && s.target?.iri === was.target?.iri,
+    );
+    if (same.length === 1) setSelectedId(same[0].id);
+  }, [listing, selected, selectedId]);
   // A shape just made takes focus once its form is drawn, which is after
   // the list holding it arrives, not when the command answers.
   const [focusFor, setFocusFor] = useState<string | null>(null);

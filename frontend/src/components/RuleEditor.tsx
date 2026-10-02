@@ -19,6 +19,11 @@ BASIC IDEA
     dates, allowed values for text, numbers and relationships, languages for
     names, definitions and text in a language.
 
+    *Points to* is a class picker, the relationship's end class by default
+    and available when it has none (Stage B follow-up 2); a date-and-time
+    range is entered in a date-and-time field, its seconds added when the
+    field leaves them out (follow-up 1).
+
     Invalid values keep Add aria-disabled with the sentence that says why
     (Section 6, ruleProblem), rather than sending a rule the server would
     refuse; the server checks again, and its refusal shows under the editor.
@@ -30,6 +35,7 @@ BASIC IDEA
     checked by building a RegExp, never ontology text.
 
 INPUTS / INPUT SOURCES (props)
+    - modelOntologyId: the model, which the class picker searches.
     - paths: what a rule can be about, from the suggestions route.
     - initial: the rule being edited, or null for a new one.
     - languages: the project's languages, primary first.
@@ -41,11 +47,14 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useId, useMemo, useState } from "react";
-import { OFFERED_TYPES, languageName, ruleProblem, ruleSentence } from "../modeling/shapeSentences";
+import { useId, useMemo, useRef, useState } from "react";
+import { OFFERED_TYPES, article, dateTimeBound, languageName, ruleProblem, ruleSentence } from "../modeling/shapeSentences";
 import type { ShapeBound, ShapePath, ShapeRule, ShapeValue } from "../types";
+import EntityPicker from "./EntityPicker";
 
 interface Props {
+  /** The model's ontology id, which the *points to* class picker searches. */
+  modelOntologyId: string;
   paths: ShapePath[];
   initial: ShapeRule | null;
   languages: string[];
@@ -110,8 +119,15 @@ function valueKind(path: ShapePath | undefined, datatype: string): "text" | "num
 }
 
 function boundOf(value: string, datatype: string): ShapeBound | undefined {
-  return value.trim() === "" ? undefined : { value: value.trim(), datatype };
+  if (value.trim() === "") return undefined;
+  // A date-and-time field gives no seconds when they are zero; the server
+  // rightly wants them (Stage A follow-up 1).
+  return { value: datatype === "xsd:dateTime" ? dateTimeBound(value.trim()) : value.trim(), datatype };
 }
+
+/** What a datetime-local field can show: no timezone, no fraction. Anything
+ *  else a rule says (written in Turtle) stays in a text field, as typed. */
+const LOCAL_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
 
 function parseList(text: string, kind: "text" | "number" | "link"): ShapeValue[] {
   return text
@@ -127,7 +143,7 @@ function parseList(text: string, kind: "text" | "number" | "link"): ShapeValue[]
     );
 }
 
-export default function RuleEditor({ paths, initial, languages, busy, error, onSubmit, onCancel }: Props) {
+export default function RuleEditor({ modelOntologyId, paths, initial, languages, busy, error, onSubmit, onCancel }: Props) {
   const id = useId();
   const [pathKey, setPathKey] = useState(initial ? key(initial.path) : "");
   const path = paths.find((p) => key(p.path) === pathKey);
@@ -135,7 +151,13 @@ export default function RuleEditor({ paths, initial, languages, busy, error, onS
   const [min, setMin] = useState(String(initial?.minCount ?? 1));
   const [max, setMax] = useState(String(initial?.maxCount ?? (initial?.minCount !== undefined ? initial.minCount + 2 : 3)));
   const [datatype, setDatatype] = useState(initial?.datatype ?? "");
-  const [pointsTo, setPointsTo] = useState(initial?.class !== undefined);
+  // The class each value must be (5.3, follow-up 2): a rule's own, else the
+  // relationship's end class, else none until one is chosen.
+  const [pointsTo, setPointsTo] = useState<{ iri: string; label: string } | null>(
+    initial?.class ? { iri: initial.class, label: initial.classLabel ?? initial.class } : null,
+  );
+  const [pickingClass, setPickingClass] = useState(false);
+  const classButton = useRef<HTMLButtonElement>(null);
   const [minLength, setMinLength] = useState(initial?.minLength !== undefined ? String(initial.minLength) : "");
   const [maxLength, setMaxLength] = useState(initial?.maxLength !== undefined ? String(initial.maxLength) : "");
   const [pattern, setPattern] = useState(initial?.pattern ?? "");
@@ -149,6 +171,16 @@ export default function RuleEditor({ paths, initial, languages, busy, error, onS
   const [more, setMore] = useState(Boolean(initial?.pattern));
 
   const kind = valueKind(path, datatype);
+  const dateTime = kind === "date" && (datatype || path?.datatype) === "xsd:dateTime";
+  /** The input a bound is typed in: a date, a date and time (follow-up 1),
+   *  or text -- for a number, and for a value a local field cannot show. */
+  const boundField = (value: string) => {
+    if (kind !== "date") return { type: "text" };
+    if (!dateTime) return { type: "date" };
+    return value === "" || LOCAL_DATE_TIME.test(value)
+      ? { type: "datetime-local", step: 1 }
+      : { type: "text", placeholder: "YYYY-MM-DDThh:mm:ss" };
+  };
   const offersLanguages = path?.kind === "name" || path?.kind === "definition" || datatype === "rdf:langString";
 
   const rule: ShapeRule | null = useMemo(() => {
@@ -177,12 +209,9 @@ export default function RuleEditor({ paths, initial, languages, busy, error, onS
     if (count === "atLeast" || count === "between") out.minCount = n(min);
     if (count === "atMost" || count === "between") out.maxCount = n(max);
     if (path.kind === "attribute" && datatype) out.datatype = datatype;
-    // A rule written in Turtle may point to another class than the
-    // relationship's end; editing it keeps that class.
-    const keptClass = initial?.class && key(initial.path) === pathKey ? initial : null;
-    if (path.kind === "relationship" && pointsTo && (keptClass || path.range)) {
-      out.class = keptClass?.class ?? path.range!;
-      out.classLabel = keptClass?.classLabel ?? path.rangeLabel ?? out.class;
+    if (path.kind === "relationship" && pointsTo) {
+      out.class = pointsTo.iri;
+      out.classLabel = pointsTo.label;
     }
     if (kind === "text") {
       if (minLength.trim() !== "") out.minLength = n(minLength);
@@ -227,7 +256,19 @@ export default function RuleEditor({ paths, initial, languages, busy, error, onS
     // attribute's type of value, a relationship's end.
     if (!initial && chosen) {
       setDatatype(chosen.kind === "attribute" ? chosen.datatype ?? "" : "");
-      setPointsTo(chosen.kind === "relationship" && Boolean(chosen.range));
+    }
+    // The class a value must be follows the path: a rule's own class on its
+    // own path, else the chosen relationship's end class. Kept across a path
+    // change it checked the old relationship's class (found in review).
+    if (chosen) {
+      const own = initial && key(initial.path) === next && initial.class
+        ? { iri: initial.class, label: initial.classLabel ?? initial.class }
+        : null;
+      setPointsTo(
+        own ?? (chosen.kind === "relationship" && chosen.range
+          ? { iri: chosen.range, label: chosen.rangeLabel ?? chosen.range }
+          : null),
+      );
     }
   };
 
@@ -306,14 +347,39 @@ export default function RuleEditor({ paths, initial, languages, busy, error, onS
           {path.kind === "relationship" && (
             <fieldset className="rule-kind">
               <legend>Points to</legend>
-              {path.range || initial?.class ? (
-                <label className="rule-check">
-                  <input type="checkbox" checked={pointsTo} onChange={(e) => setPointsTo(e.target.checked)} />
-                  Each value must be {/^[aeiou]/i.test(rule?.classLabel ?? path.rangeLabel ?? "") ? "an" : "a"}{" "}
-                  {initial?.classLabel ?? path.rangeLabel}
-                </label>
+              {pickingClass ? (
+                <EntityPicker
+                  ontologyId={modelOntologyId}
+                  kind="class"
+                  label="Each value must be of the class"
+                  onPick={(iri, label) => {
+                    setPointsTo({ iri, label });
+                    setPickingClass(false);
+                    window.setTimeout(() => classButton.current?.focus(), 0);
+                  }}
+                  onCancel={() => {
+                    setPickingClass(false);
+                    window.setTimeout(() => classButton.current?.focus(), 0);
+                  }}
+                />
               ) : (
-                <p className="detail-note">This relationship has no end class yet; give it one in its form first.</p>
+                <div className="edit-value">
+                  <span>
+                    {pointsTo
+                      ? `Each value must be ${article(pointsTo.label)} ${pointsTo.label}`
+                      : path.range
+                        ? "Not checked"
+                        : "Not checked: this relationship has no end class, so choose one here if you want it checked."}
+                  </span>
+                  <button ref={classButton} type="button" className="ghost edit-btn" onClick={() => setPickingClass(true)}>
+                    {pointsTo ? "Change class" : "Choose a class"}
+                  </button>
+                  {pointsTo && (
+                    <button type="button" className="ghost edit-btn" onClick={() => setPointsTo(null)}>
+                      Do not check
+                    </button>
+                  )}
+                </div>
               )}
             </fieldset>
           )}
@@ -335,26 +401,19 @@ export default function RuleEditor({ paths, initial, languages, busy, error, onS
 
           {(kind === "number" || kind === "date") && (
             <fieldset className="rule-kind">
-              <legend>{kind === "date" ? "Date range" : "Number range"}</legend>
+              <legend>{kind === "date" ? (dateTime ? "Date and time range" : "Date range") : "Number range"}</legend>
               <span className="rule-range">
-                <label>
-                  at least{" "}
-                  <input
-                    type={kind === "date" ? "date" : "text"}
-                    inputMode={kind === "number" ? "decimal" : undefined}
-                    value={low}
-                    onChange={(e) => setLow(e.target.value)}
-                  />
-                </label>
-                <label>
-                  at most{" "}
-                  <input
-                    type={kind === "date" ? "date" : "text"}
-                    inputMode={kind === "number" ? "decimal" : undefined}
-                    value={high}
-                    onChange={(e) => setHigh(e.target.value)}
-                  />
-                </label>
+                {([["at least", low, setLow], ["at most", high, setHigh]] as const).map(([word, value, set]) => (
+                  <label key={word}>
+                    {word}{" "}
+                    <input
+                      {...boundField(value)}
+                      inputMode={kind === "number" ? "decimal" : undefined}
+                      value={value}
+                      onChange={(e) => set(e.target.value)}
+                    />
+                  </label>
+                ))}
               </span>
             </fieldset>
           )}

@@ -105,7 +105,9 @@ def _create(**body) -> str:
 
 @pytest.fixture
 def pid() -> str:
-    project = _create(template="small", baseIri=EX, prefix="shop")
+    # The empty template: the model is replaced below, and the small one's
+    # starter shapes (Stage B, 5.8) would join every check.
+    project = _create(template="empty", baseIri=EX, prefix="shop")
     assert client.put(f"/api/projects/{project}/documents/model/source", json={"text": MODEL}).status_code == 200
     return project
 
@@ -246,8 +248,9 @@ def test_s9_languages_outside_the_project_and_two_names_in_one(pid):
     sid = shape(pid, EX + "Person", {"path": [str(RDFS.label)], "languageIn": ["en", "fr"], "uniqueLang": True})
     p = panel(validate(pid), sid)
     assert sorted(sentences(p)) == [
-        'Frank has 2 names in English; one per language is allowed.',
-        'Frank\'s name "Franz"@de is in German, which is not one of the project\'s languages.',
+        # rdfs:label beside the model's *name* attribute (follow-up 4).
+        'Frank has 2 names (label) in English; one per language is allowed.',
+        'Frank\'s name (label) "Franz"@de is in German, which is not one of the project\'s languages.',
     ]
 
 

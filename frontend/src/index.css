@@ -4905,6 +4905,30 @@ kbd {
   padding: 6px 10px 8px;
 }
 
+/* An example's fields (shacl-authoring 5.8): one framed group per attribute
+   or relationship, as a rule kind is framed in the rule editor. */
+.example-field {
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  margin: 6px 0;
+  padding: 6px 10px 8px;
+}
+
+.example-field h5 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.example-field-input select {
+  max-width: 100%;
+}
+
+/* Why Validate cannot run, said in text beside it (follow-up 7). */
+.validate-reason {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+}
+
 .shape-severity legend,
 .rule-kind legend {
   font-size: 12px;

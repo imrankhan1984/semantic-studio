@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 889 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1067 tests, vitest
+cd backend  && python -m pytest tests    # 924 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1113 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -309,6 +309,10 @@ leaves one behind.
 - In Shapes mode `activeId` stays the model's and only the store's `activeDoc` is `shapes.ttl`. [SHACL validation]
 - The Shapes list keeps its selection by id while the list does not hold it: undo and redo of a create, a list still on its way. [SHACL validation]
 - The rule editor sends back every field it does not show, and an untouched `sh:in` list exactly. [SHACL validation]
+- What counts as an example is `examples.py`'s alone: an individual of a model class, `owl:NamedIndividual` or not; the form, the tree and the commands ask it. [example data]
+- The tree's Examples section keeps its own expansion: a class IRI is in two forests, and sharing the set opened both. [example data]
+- A validation that outlives its project is ignored, result, announcement and failure alike; one check runs at a time. [example data]
+- The Small template ships starter shapes (D-095); a test needing a Small project without them uses `test_editing.py`'s `bare`. [example data]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]
