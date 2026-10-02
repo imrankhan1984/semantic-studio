@@ -8,7 +8,9 @@ SUMMARY
     create, rename, duplicate, trash and export projects, and change their
     kind, ontology or taxonomy (relationships 5.1); open and close them;
     run commands, apply Turtle, undo, redo, save and recover a document; and
-    the modeling canvas's view and layout (visual-modeling Stage 2).
+    the modeling canvas's view and layout (visual-modeling Stage 2); the
+    SHACL shapes in the form's structure, their suggestions, and validation
+    on demand (shacl-authoring 5.1 to 5.7).
 
 BASIC IDEA
     Thin, like the other routers: shape the request, call projects.py or
@@ -350,6 +352,31 @@ def download(pid: str, doc: str) -> Response:
 def recover(pid: str, body: Recover) -> dict:
     with _errors():
         return editing_service.recover(pid, body.action, ontologies.PARSE_TIMEOUT_SECONDS)
+
+
+@router.get("/{pid}/shapes")
+def get_shapes(pid: str) -> dict:
+    """Every shape in shapes.ttl in the form's structure, those the form
+    cannot edit marked read-only with why (shacl-authoring 5.1, 5.5)."""
+    with _errors():
+        return editing_service.shapes_view(pid)
+
+
+@router.get("/{pid}/shapes/suggestions")
+def get_shape_suggestions(pid: str, target: Optional[str] = None, shape: Optional[str] = None) -> dict:
+    """What a rule can be about for a target class, and the rules the model
+    suggests that `shape` does not already have (5.4). `target` is checked
+    after the project, so an id not issued is 404 like everywhere else."""
+    with _errors():
+        return editing_service.shape_suggestions(pid, target, shape)
+
+
+@router.post("/{pid}/validate")
+def validate(pid: str) -> dict:
+    """Check the model with its unsaved changes and resolved imports against
+    every shape, on demand only (5.6, D-094). Reads; changes nothing."""
+    with _errors():
+        return editing_service.validate(pid)
 
 
 @router.get("/{pid}/documents/{doc}/annotation-properties")

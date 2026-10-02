@@ -31,10 +31,18 @@ BASIC IDEA
     Four states, each said in text: Clean (matches the document), Edited (not
     applied; Apply enabled), Error (line and column), and Applying.
 
+    For shapes.ttl the toolbar gains Validate and the result panels show
+    below the text (shacl-authoring 5.1, 5.6), the same check the Shapes
+    view shows. Text not yet applied is not part of the document, so
+    Validate waits for Apply rather than check something other than what is
+    on screen. *Edit in Turtle* on a read-only shape leaves a target in the
+    store; once the text is here the caret goes to the first place the
+    shape is written (indexOf, never a pattern built from ontology text).
+
 INPUTS / INPUT SOURCES (props)
     - projectId, doc, revision: what to load and when to load it again.
-    - onApplied: tells App an apply succeeded (it refetches through revision
-      anyway; this is for focus and announcements).
+    - onSelectEntity, onError: a result's link and a failed check, for
+      shapes.ttl's result panels.
     Plus the project store and getDocumentSource.
 
 EXPECTED OUTPUT
@@ -46,12 +54,17 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { TurtleError, getDocumentSource } from "../api";
 import { projectStore, useProjectSelector } from "../state/projectStore";
 import type { ProjectDocName } from "../types";
+import ResultPanels, { ValidateButton } from "./ResultPanels";
 
 interface Props {
   projectId: string;
   doc: ProjectDocName;
   revision: number;
+  onSelectEntity?: (iri: string) => void;
+  onError?: (message: string) => void;
 }
+
+const NOTHING = () => undefined;
 
 const FILES: Record<ProjectDocName, string> = { model: "model.ttl", shapes: "shapes.ttl" };
 
@@ -73,8 +86,10 @@ function offsetOf(text: string, line: number, column: number): number {
   return Math.min(offset + Math.max(0, column - 1), text.length);
 }
 
-export default function TurtleEditor({ projectId, doc, revision }: Props) {
+export default function TurtleEditor({ projectId, doc, revision, onSelectEntity = NOTHING, onError = NOTHING }: Props) {
   const editorDraft = useProjectSelector((s) => s.editorDraft);
+  const editorTarget = useProjectSelector((s) => s.editorTarget);
+  const shownTarget = useRef(0);
   const [base, setBase] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
@@ -105,6 +120,22 @@ export default function TurtleEditor({ projectId, doc, revision }: Props) {
 
   const text = editorDraft ?? base ?? "";
   const edited = editorDraft !== null;
+
+  // Edit in Turtle (5.5): once, when the text is here, the caret goes to
+  // the first place the shape is written and the line is scrolled to.
+  useEffect(() => {
+    const area = textRef.current;
+    if (!editorTarget || base === null || !area || shownTarget.current === editorTarget.token) return;
+    shownTarget.current = editorTarget.token;
+    projectStore.editorTargetShown();
+    const at = editorTarget.find.map((needle) => text.indexOf(needle)).filter((i) => i >= 0);
+    area.focus();
+    if (!at.length) return;
+    const start = Math.min(...at);
+    area.setSelectionRange(start, start);
+    const line = text.slice(0, start).split("\n").length - 1;
+    area.scrollTop = Math.max(0, line - 3) * (parseFloat(getComputedStyle(area).lineHeight) || 18);
+  }, [editorTarget, base, text]);
   const lineCount = useMemo(() => text.split("\n").length, [text]);
 
   const apply = async () => {
@@ -188,6 +219,9 @@ export default function TurtleEditor({ projectId, doc, revision }: Props) {
         >
           {applying ? "Applying…" : "Apply  Ctrl+Enter"}
         </button>
+        {doc === "shapes" && (
+          <ValidateButton onError={onError} blocked={edited ? "Apply the text first, so what is checked is what you see." : null} />
+        )}
       </div>
 
       {problem && (
@@ -235,6 +269,11 @@ export default function TurtleEditor({ projectId, doc, revision }: Props) {
         Press Ctrl+Enter to apply. Tab moves to the next control. An apply is one step of Undo.
         A relative IRI such as &lt;owns&gt; is read as the project&apos;s base IRI followed by owns.
       </p>
+      {doc === "shapes" && (
+        <section className="turtle-results" aria-label="Validation results">
+          <ResultPanels onSelect={onSelectEntity} />
+        </section>
+      )}
     </section>
   );
 }

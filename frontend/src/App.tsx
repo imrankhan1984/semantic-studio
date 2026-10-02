@@ -164,6 +164,7 @@ import ExploreStart from "./components/ExploreStart";
 import GraphNotice from "./components/GraphNotice";
 import GraphView from "./components/GraphView";
 import HierarchyView from "./components/HierarchyView";
+import ShapesView from "./components/ShapesView";
 import HomeScreen from "./components/HomeScreen";
 import ImportsPanel from "./components/ImportsPanel";
 import LinkPanel from "./components/LinkPanel";
@@ -180,6 +181,7 @@ import {
   IconClose,
   IconExplore,
   IconHierarchy,
+  IconShapes,
   IconHome,
   IconLoad,
   IconMoon,
@@ -614,6 +616,38 @@ export default function App() {
       )?.focus();
     }, 0);
   }, []);
+
+  // The Shapes view (shacl-authoring 5.1) works on shapes.ttl while the
+  // views stay on the model: the header's Undo, Redo and Save follow the
+  // store's document, so it is pointed at shapes.ttl here, and activeId
+  // stays the model's, so a problem's link can select an individual without
+  // a document switch. Leaving for View shows shapes.ttl in the editor;
+  // leaving for anything else goes back to the model.
+  const hasShapesDoc = projectDocuments.some((d) => d.doc === "shapes");
+  const previousMode = useRef(mode);
+  useEffect(() => {
+    const was = previousMode.current;
+    previousMode.current = mode;
+    const snap = projectStore.getSnapshot();
+    if (!snap.project) return;
+    const model = snap.documents.find((d) => d.doc === "model");
+    const shapes = snap.documents.find((d) => d.doc === "shapes");
+    if (mode === "shapes") {
+      if (model && activeId !== model.ontologyId) setActiveId(model.ontologyId);
+      if (shapes && snap.activeDoc !== "shapes") projectStore.switchDocument("shapes");
+    } else if (was === "shapes") {
+      if (mode === "view" && shapes) setActiveId(shapes.ontologyId);
+      else if (snap.activeDoc !== "model") projectStore.switchDocument("model");
+    }
+    // activeId is read, not followed: only entering, leaving, or the first
+    // shape making shapes.ttl moves the document.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, hasShapesDoc]);
+
+  // A selection to make once the model is the active document again: the
+  // per-ontology reset clears the selection during the render that switches,
+  // so it is made in the effect after it.
+  const pendingSelection = useRef<string | null>(null);
 
   // The shared query-builder state; the schema is only fetched in Query mode.
   const builder = useQueryBuilder(activeId, mode === "query", includeImports, revision);
@@ -1198,6 +1232,51 @@ export default function App() {
     [activeId, guardEditor],
   );
 
+  // A validation problem's link (shacl-authoring 5.7): the individual is
+  // selected in the model and focus goes to its form, in Explore, whose
+  // panel takes focus on a selection (Section 6).
+  const selectFromResults = useCallback(
+    (iri: string) => {
+      guardEditor(() => {
+        const snap = projectStore.getSnapshot();
+        const model = snap.documents.find((d) => d.doc === "model");
+        if (!model) return;
+        if (snap.activeDoc !== "model") projectStore.switchDocument("model");
+        setSourceTarget(null);
+        setMode("explore");
+        if (activeId !== model.ontologyId) {
+          pendingSelection.current = iri;
+          setActiveId(model.ontologyId);
+        } else {
+          selectAndFocus(iri, true);
+        }
+      });
+    },
+    [activeId, guardEditor, selectAndFocus],
+  );
+
+  // Edit in Turtle (5.5): View on shapes.ttl, the caret at the shape.
+  const editShapeInTurtle = useCallback(
+    (shape: { iri: string | null }) => {
+      const project = projectStore.getSnapshot().project;
+      const find: string[] = [];
+      if (shape.iri && project) {
+        if (shape.iri.startsWith(project.baseIri)) find.push(`${project.prefix}:${shape.iri.slice(project.baseIri.length)}`);
+        find.push(`<${shape.iri}>`);
+      }
+      projectStore.showInEditor(find);
+      setMode("view");
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (pendingSelection.current === null) return;
+    const iri = pendingSelection.current;
+    pendingSelection.current = null;
+    selectAndFocus(iri, true);
+  }, [activeId, selectAndFocus]);
+
   // The distinct edge kinds present, for the legend's "relations" section.
   const edgeKinds = useMemo(() => {
     if (!graphData) return [];
@@ -1549,6 +1628,20 @@ export default function App() {
               <IconHierarchy />
               <span>Hierarchy</span>
             </button>
+            {/* Shapes is for projects only (shacl-authoring 5.1): a library
+                ontology has no shapes.ttl and nothing to validate. */}
+            {openProjectSummary && (
+              <button
+                role="tab"
+                aria-selected={tabSelected("shapes")}
+                className={tabSelected("shapes") ? "nav-item active" : "nav-item"}
+                onClick={() => onPickMode("shapes")}
+                title="SHACL shapes: rules for good data, and validation"
+              >
+                <IconShapes />
+                <span>Shapes</span>
+              </button>
+            )}
           </nav>
           {/* Outside the tablist on purpose. View, Explore and Query select
               between views of an ontology; About opens a dialog, and joining
@@ -1657,8 +1750,9 @@ export default function App() {
               ontology, and two search boxes on one screen meaning different
               things is worse than one. Absent in Hierarchy too: the tree has its
               own filter, and two search-like inputs meaning different things is
-              the same trap. */}
-          {!showHome && mode !== "hierarchy" && (
+              the same trap. Absent in Shapes: a pick there would select an
+              entity in a view that is not on screen. */}
+          {!showHome && mode !== "hierarchy" && mode !== "shapes" && (
             <SearchBox
               ontologyId={activeId}
               theme={theme}
@@ -1775,6 +1869,18 @@ export default function App() {
             />
           }
         />
+      ) : mode === "shapes" && openProjectSummary ? (
+        <main className="main">
+          <ShapesView
+            projectId={openProjectSummary.id}
+            kind={openProjectSummary.kind}
+            languages={[openProjectSummary.primaryLanguage, ...openProjectSummary.languages]}
+            modelOntologyId={projectDocuments.find((d) => d.doc === "model")?.ontologyId ?? activeId!}
+            onSelectEntity={selectFromResults}
+            onEditInTurtle={editShapeInTurtle}
+            onError={(message) => setError(message)}
+          />
+        </main>
       ) : mode === "hierarchy" ? (
         // Hierarchy replaces the graph rather than overlaying it: it is a tree,
         // not a view of the canvas, so it fills the main area on its own. A row
@@ -1911,6 +2017,8 @@ export default function App() {
                 projectId={openProjectSummary.id}
                 doc={projectDoc.doc}
                 revision={revision}
+                onSelectEntity={selectFromResults}
+                onError={(message) => setError(message)}
               />
             ) : (
               <SourceView

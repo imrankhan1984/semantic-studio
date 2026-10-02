@@ -1211,3 +1211,73 @@ EXPECTED OUTPUT
   **Checkboxes are aria-disabled while a change saves:** the click is still
   dropped, as the runner allows one command at a time, but a screen reader
   now says why.
+
+- **SHACL validation** (2026-10-01, V-6 Stage A, `shacl-authoring-and-validation.md`,
+  D-092 to D-094).
+
+  **pySHACL runs with everything that reaches further off.** Inference
+  `none`, `advanced=False`, `js=False`, `do_owl_imports=False`, each asserted
+  by `test_validation_runs_with_inference_advanced_js_and_imports_off`. No
+  inference is needed for what learners write: pySHACL already finds an
+  Employee through `rdfs:subClassOf` when a shape targets Person, and RDFS
+  inference cost five times the time on the spec's measurement.
+
+  **The data is a plain Graph, on purpose.** A SPARQL-based constraint is
+  core SHACL and runs whatever `advanced` says. rdflib follows a query's
+  `FROM <file:///...>` or `FROM <http://...>` only when the graph is a
+  `Dataset` or `ConjunctiveGraph`, through its own loader, which the broker
+  never sees. `editing.validate` copies the model and its imports into a
+  plain `Graph`, and `shacl.validate` refuses anything else. Keeping imports
+  as named graphs one day would open that door; the security review of this
+  build found it closed only by this. SERVICE is refused twice: by pySHACL's
+  own check, and behind it by `sparql_service`'s handler, which fails closed
+  outside the query runner (S15's recording server saw nothing).
+
+  **One broken shape must not hide the others.** pySHACL refuses a whole run
+  when one shape will not load (`sh:minCount "x"`). A refused run is
+  repeated shape by shape with `use_shapes` to find which, and the rest run
+  together. `use_shapes` takes IRIs only, so a blank-node shape is given a
+  temporary `urn:x-semantic-studio:shape:` IRI in a copy of the shapes graph
+  for the run and mapped back to its id for the panels; without it every
+  blank-node shape beside a broken one read *Could not run* (found in
+  review).
+
+  **`sh:in` text is written plain.** `sh:in` compares terms exactly, rdflib
+  keeps Turtle's `"active"` apart from `"active"^^xsd:string`, and the form
+  sends text as `xsd:string`: a list written that way refused every value
+  typed in Turtle.
+
+  **`shapes.ttl` is made by the first shape command, only once it will
+  succeed.** The command is first run against an empty shapes document, so
+  a refusal or a dry run leaves no file, and the file is made under the
+  service lock, so two first commands at once make it once (both found in
+  review). A shape command reads the model too, so it holds the shapes
+  document's lock and then the model's; the shapes list and the suggestions
+  take them in the same order, and validation takes each alone in turn.
+
+  **Shapes mode keeps the views on the model.** The store's `activeDoc` is
+  `shapes.ttl`, so the header's Undo, Redo and Save act on the shapes, but
+  `activeId` stays the model's: a problem's link selects an individual
+  without a document switch, which would clear the selection in the very
+  render that sets it. Leaving for View shows `shapes.ttl` in the editor;
+  leaving for anything else goes back to the model. From the editor's own
+  panels, which do switch, the selection waits in `pendingSelection` for the
+  effect after the switch.
+
+  **The Shapes list keeps a selection by id even when the list does not hold
+  it.** The Chrome pass found two ways the form lost its shape: a list still
+  on its way after a create, which dropped the shape just made, and undo then
+  redo of a create, which brought the shape back with nothing selected.
+  Delete clears the selection on purpose. Focus goes to a new shape's form
+  once that form is drawn, not when the command answers, or it fell to the
+  page.
+
+  **The rule editor sends back what it does not show.** It offers the kinds
+  that fit the path's kind (5.3), so a rule written in Turtle may carry a
+  check it has no field for: a datatype on a name, a class on an attribute.
+  Editing the count used to drop it; now every field the editor does not
+  show is kept, an untouched allowed-values list goes back exactly
+  (language tags and commas inside values included), and a one-sided count
+  stays one-sided rather than gaining a maximum of 3. The reader marks a
+  type of value or a bound the form does not offer (`xsd:double`) as
+  read-only, so the form never presents an edit the commands would refuse.

@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 786 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1002 tests, vitest
+cd backend  && python -m pytest tests    # 889 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1067 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -62,7 +62,7 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Nineteen backend tests carry
+**Timing budgets are separated, not deleted.** Twenty-two backend tests carry
 `@pytest.mark.perf`; ten frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
@@ -125,7 +125,8 @@ EXPECTED OUTPUT
 `query_schema.py` before writing any. The density is deliberate. Match it.
 
 **3. Do not add dependencies casually.** `frontend/package.json` carries eight
-runtime dependencies and `backend/requirements.txt` carries five. Adding one is
+runtime dependencies and `backend/requirements.txt` carries six (pySHACL the
+sixth, D-092). Adding one is
 a decision that belongs in a spec, not in a commit.
 
 **4. SPARQL execution is SELECT-only.** `prepare_select` in `sparql_exec.py` is
@@ -163,6 +164,8 @@ backend/app/
   query_schema.py    Class-level schema powering the visual query builder
   sparql_exec.py     SELECT-only execution, row cap, wall-clock timeout
   embedded_queries.py  SPARQL stored in the file (SHACL, SPIN), listed never run
+  shacl.py           Validation on demand with pySHACL: one panel per shape, sentences
+  shapes_form.py     A SHACL shape as the form reads it, read-only parts, suggestions
   queries_store.py   Saved queries, visual or text, one JSON file each
   hierarchy.py       subClassOf / broader / subPropertyOf forests for the tree view
   docs_export.py     The documentation-site zip (with docs_assets/)
@@ -295,6 +298,17 @@ leaves one behind.
 - A selected line's highlight clears on a change of selection only; a line's label is a click on its line. [Stage B]
 - The chaining rule compares violations before and after a change: one written in Turtle warns, it never blocks another change. [chaining rule]
 - A warning carries its `block` and stands under it; only a warning a change brings is announced. [chaining rule]
+
+**SHACL**
+- pySHACL runs with inference, Advanced Features, JavaScript and `owl:imports` off; a test asserts each (D-092). [SHACL validation]
+- The data checked is a plain `Graph`, never a `Dataset`: on a dataset rdflib follows a constraint's `FROM`, past the broker. [SHACL validation]
+- A refused run is repeated shape by shape, a blank-node shape under a temporary IRI: one broken shape never hides the others. [SHACL validation]
+- `sh:in` text is written plain, never `^^xsd:string`: `sh:in` compares terms, and Turtle's text is plain. [SHACL validation]
+- The first shape command is checked against an empty shapes document before `shapes.ttl` is made, under the service lock. [SHACL validation]
+- A shape command takes the shapes document's lock, then the model's; every reader of both takes them in that order. [SHACL validation]
+- In Shapes mode `activeId` stays the model's and only the store's `activeDoc` is `shapes.ttl`. [SHACL validation]
+- The Shapes list keeps its selection by id while the list does not hold it: undo and redo of a create, a list still on its way. [SHACL validation]
+- The rule editor sends back every field it does not show, and an untouched `sh:in` list exactly. [SHACL validation]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]
