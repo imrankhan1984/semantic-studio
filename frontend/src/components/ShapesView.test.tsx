@@ -498,6 +498,27 @@ describe("ShapesView: Stage A follow-ups fixed in Stage B (5.9)", () => {
     expect(runCommand.mock.calls[0][3].rule).toMatchObject({ path: [`${X}knows`], class: `${X}Person`, classLabel: "Person" });
   });
 
+  it("lets the class follow the path when an existing rule moves to another relationship (found in review)", async () => {
+    const worksFor = { path: [`${X}worksFor`], pathLabel: "works for", pathKind: "relationship" as const, class: `${X}Organization`, classLabel: "Organization" };
+    await setup([{ ...PERSON, rules: [worksFor] }]);
+    getShapeSuggestions.mockResolvedValue({
+      paths: [
+        ...SUGGESTIONS.paths,
+        { path: [`${X}knows`], label: "knows", kind: "relationship", range: `${X}Person`, rangeLabel: "Person", functional: false },
+      ],
+      suggestions: [],
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Person rules/ }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Edit the rule on works for" }));
+    fireEvent.change(screen.getByLabelText("What is the rule about?"), { target: { value: `${X}knows` } });
+    expect(screen.getByText("Each value must be a Person")).toBeTruthy();
+    // Back on its own path, the rule's own class again.
+    fireEvent.change(screen.getByLabelText("What is the rule about?"), { target: { value: `${X}worksFor` } });
+    expect(screen.getByText("Each value must be an Organization")).toBeTruthy();
+  });
+
   it("keeps a blank-node shape selected when a Turtle apply gives it a new id (item 8)", async () => {
     const blank: ShapeForm = { ...PERSON, id: "_:b1", iri: null, name: "Unnamed shape", named: false };
     await setup([blank]);

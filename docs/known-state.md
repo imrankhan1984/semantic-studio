@@ -1281,3 +1281,54 @@ EXPECTED OUTPUT
   stays one-sided rather than gaining a maximum of 3. The reader marks a
   type of value or a bound the form does not offer (`xsd:double`) as
   read-only, so the form never presents an edit the commands would refuse.
+
+- **Example data** (2026-10-02, V-6 Stage B, `shacl-authoring-and-validation.md`
+  5.8 and 5.9, D-095).
+
+  **An example is decided in one place.** A shape's `sh:targetClass` finds
+  any individual typed with the class, so an example is exactly that: a
+  named node whose rdf:type is a class of the model (or an import), or one
+  typed `owl:NamedIndividual`, and not itself a class, property, concept,
+  scheme, ontology or shape. `CreateExample` writes both types, so the graph
+  view colours it as an individual; Turtle may write only the class, and it
+  still counts. `examples.py` says so for the node route, the tree's forest
+  and the commands alike; a second rule anywhere would let a Turtle-written
+  example be checked by a shape but missing from the form.
+
+  **The Examples section has its own expansion.** The tree keeps one set of
+  open rows keyed by IRI, which was safe while every IRI was in one forest.
+  The Examples section lists each class again, as the heading its examples
+  sit under, so opening Person there opened Person in the class tree too.
+  The section's classes start open and have no actions: a class is changed
+  in the class tree.
+
+  **A validation belongs to its project.** A check still running when the
+  project was closed, or another opened, used to announce its summary in the
+  next project and free its Validate early; and a second press while one ran
+  sent a second request. The store numbers each run and moves the number on
+  at every open, close and reset: an answer from an old run sets nothing,
+  says nothing, and its failure never reaches the next project's error bar.
+
+  **The Small template's starter shapes are for row S23.** With only Alice
+  and Acme, a first Validate had no shapes, and the suggested rules all
+  passed: `sh:class` does not fail on a missing link. So the template ships
+  three shapes written as the form writes them (each opens editable), and
+  Alice is not yet member of Acme, which makes *Person rules* red until the
+  learner links her (D-095). Stage A's tests that make the first shape
+  command create `shapes.ttl` need a Small project without the file: the
+  `bare` fixture removes it from the folder and the manifest before opening.
+
+  **A blank-node shape is found again by what it is.** Its `_:` id is the
+  parse's, so Undo or Redo of a Turtle apply, from the Shapes view, swaps it
+  for the other side's id and the form lost its shape. The view remembers
+  the shape it showed and, when its id is gone, selects the one shape with
+  no IRI and the same name and target. The Chrome check mutated this away
+  and went red on Undo; Redo alone would have passed, as it brings back the
+  first id.
+
+  **`name (label)` only where it is needed.** rdfs:label reads *name*; when
+  the model has an attribute or relationship itself labelled "name", two
+  paths both read "name" and a dict keyed by label in the tests had folded
+  the two rules into one. It reads *name (label)* then, found by index
+  lookups on the label so the shapes list stays inside its budget, and the
+  plural goes before the brackets.

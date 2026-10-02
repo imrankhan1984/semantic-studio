@@ -256,10 +256,18 @@ export default function RuleEditor({ modelOntologyId, paths, initial, languages,
     // attribute's type of value, a relationship's end.
     if (!initial && chosen) {
       setDatatype(chosen.kind === "attribute" ? chosen.datatype ?? "" : "");
+    }
+    // The class a value must be follows the path: a rule's own class on its
+    // own path, else the chosen relationship's end class. Kept across a path
+    // change it checked the old relationship's class (found in review).
+    if (chosen) {
+      const own = initial && key(initial.path) === next && initial.class
+        ? { iri: initial.class, label: initial.classLabel ?? initial.class }
+        : null;
       setPointsTo(
-        chosen.kind === "relationship" && chosen.range
+        own ?? (chosen.kind === "relationship" && chosen.range
           ? { iri: chosen.range, label: chosen.rangeLabel ?? chosen.range }
-          : null,
+          : null),
       );
     }
   };

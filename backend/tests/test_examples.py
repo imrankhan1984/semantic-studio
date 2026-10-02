@@ -427,3 +427,22 @@ def test_a_name_label_plural_puts_the_s_before_the_brackets():
 
     assert plural("name (label)") == "names (label)"
     assert plural("phone number") == "phone numbers"
+
+
+def test_a_wrong_value_written_in_turtle_can_be_removed_from_the_form(pid):
+    # Found in review: Remove checked the value it removed, so the very
+    # values a shape flags -- a wrong date, a type the form does not offer,
+    # a text under a relationship -- could not be taken away.
+    with_turtle(pid, BIRTH_DATE + """
+shop:alice shop:birthDate "yesterday"^^xsd:date , "2020"^^xsd:gYear ;
+    shop:memberOf "Acme" .
+""")
+    fields = {f["label"]: f for f in node(pid, EX + "alice")["example"]["fields"]}
+    for label in ("birth date", "member of"):
+        for value in fields[label]["values"]:
+            # Exactly what the form's Remove sends: the value as /node gave it.
+            ok(pid, "RemoveExampleValue", iri="shop:alice", property=f"shop:{'birthDate' if label == 'birth date' else 'memberOf'}",
+               value=value)
+    g = graph(pid)
+    assert (U("alice"), U("birthDate"), None) not in g
+    assert (U("alice"), U("memberOf"), None) not in g

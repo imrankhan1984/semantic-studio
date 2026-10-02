@@ -1558,10 +1558,9 @@ _VALUE_WORDS = {
 }
 
 
-def _example_value(ctx: Context, a: dict, key: str = "value") -> tuple[URIRef, URIRef, object, str]:
-    """The example, the attribute or relationship, and the value as a term,
-    checked as E-6 checks an annotation: an attribute's value against its
-    type of value, a relationship's against an entity that exists."""
+def _example_field(ctx: Context, a: dict) -> tuple[URIRef, URIRef, str, str]:
+    """The example and the attribute or relationship a command names, with
+    the field's name and which of the two it is."""
     _model_doc(ctx)
     iri = ctx.iri(a.get("iri"), "example")
     if not examples.is_example(_class_graph(ctx), iri) or not ctx.mentioned(iri):
@@ -1573,7 +1572,15 @@ def _example_value(ctx: Context, a: dict, key: str = "value") -> tuple[URIRef, U
             else "attribute" if OWL.DatatypeProperty in types else None)
     if what is None:
         raise CommandError(f"{ctx.short(prop)} is not an attribute or a relationship of this model.")
-    name = pick_label_in(classes, prop, ctx.languages)[0]
+    return iri, prop, pick_label_in(classes, prop, ctx.languages)[0], what
+
+
+def _example_value(ctx: Context, a: dict, key: str = "value") -> tuple[URIRef, URIRef, object, str]:
+    """The example, the attribute or relationship, and the value as a term,
+    checked as E-6 checks an annotation: an attribute's value against its
+    type of value, a relationship's against an entity that exists."""
+    iri, prop, name, what = _example_field(ctx, a)
+    classes = _class_graph(ctx)
     spec = a.get(key)
     if what == "relationship":
         if not isinstance(spec, dict) or spec.get("kind") != "link":
@@ -1617,9 +1624,27 @@ def cmd_add_example_value(ctx: Context, a: dict) -> Change:
     return _change(ctx.graph, label, [(iri, prop, term)])
 
 
+def _stored_value(ctx: Context, spec):
+    """A value as the document holds it, judged by nothing but that. A value
+    of the wrong type, of a type the form does not offer, or a text under a
+    relationship -- written in Turtle -- is what a shape exists to flag, and
+    the form must be able to take it away (found in review)."""
+    if not isinstance(spec, dict) or not isinstance(spec.get("value"), str):
+        raise CommandError("A value needs its kind and its text.")
+    raw, kind = spec["value"], spec.get("kind")
+    if kind == "link":
+        return ctx.iri(raw, "value")
+    if kind == "text":
+        return Literal(raw, lang=spec.get("lang") or ctx.primary)
+    if kind == "typed":
+        datatype = spec.get("datatype") or "xsd:string"
+        return Literal(raw, datatype=ctx.iri(datatype, "datatype"))
+    raise CommandError("A value's kind is text, typed or link.")
+
+
 def cmd_remove_example_value(ctx: Context, a: dict) -> Change:
-    iri, prop, term, name = _example_value(ctx, a)
-    term = _stored(ctx, iri, prop, term)
+    iri, prop, name, _ = _example_field(ctx, a)
+    term = _stored(ctx, iri, prop, _stored_value(ctx, a.get("value")))
     if (iri, prop, term) not in ctx.graph:
         raise CommandError(f"{ctx.name(iri)} has no such {name} to remove.")
     label = (f"Removed the link from {_linked(ctx, iri, term, name)}" if isinstance(term, URIRef)
