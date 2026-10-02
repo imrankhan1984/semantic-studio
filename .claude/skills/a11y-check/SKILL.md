@@ -78,6 +78,6 @@ audit.
 
 ## What to write in the spec
 
-`CLAUDE.md` requires three statements for every new interactive element: how it
+The specifications folder's `CLAUDE.md` requires three statements for every new interactive element: how it
 is reached from the keyboard, what shows focus, and what a screen reader
 announces. Write those three before building, not after.

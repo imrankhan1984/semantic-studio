@@ -9,7 +9,7 @@ description: Conventions for creating RDF test data for Semantic Studio's pytest
 
 | Need | Use |
 | --- | --- |
-| A realistic mixed OWL and SKOS ontology | `examples/space-exploration.ttl` — 142 triples, 10 classes, 6 object properties, 2 datatype properties, 10 individuals, 4 SKOS concepts. Already used by six test files |
+| A realistic mixed OWL and SKOS ontology | `examples/space-exploration.ttl` — 142 triples, 10 classes, 6 object properties, 2 datatype properties, 10 individuals, 4 SKOS concepts. Already used across the suite |
 | One specific behavior | An inline Turtle string in the test, three to five triples, no more |
 | Scale | Generate N-Triples in a loop inside the test. Never commit a large file |
 | A parse failure | Inline, and make the defect obvious: a missing final full stop |

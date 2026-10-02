@@ -25,7 +25,7 @@ paths automatically; otherwise set `CHROME=<path to the binary>`).
 
 ```bash
 python -m venv backend/.venv
-backend/.venv/Scripts/pip install -r backend/requirements.txt
+backend/.venv/Scripts/pip install -r backend/requirements-dev.txt  # runtime + pytest
 npm --prefix frontend install
 ```
 
@@ -38,8 +38,8 @@ this step the API works and `/` returns 404.
 npm --prefix frontend run build
 ```
 
-Takes about 1.5 s. Verified output: `dist/index.html`, `dist/assets/index-*.css`
-(21 kB), `dist/assets/index-*.js` (413 kB).
+Takes a few seconds. Output: `dist/index.html` and `dist/assets/` (the main
+`index-*.js` and `index-*.css`, plus the lazily loaded canvas chunk).
 
 ## Run — agent path
 
@@ -131,10 +131,9 @@ cd backend && .venv/Scripts/python -m pytest tests -q
 npm --prefix frontend run test
 ```
 
-48 backend tests, 67 frontend tests, both green as of this writing. (The
-frontend count in `CLAUDE.md` says 61 — it is stale.) All frontend tests are in
-`src/sparql/`; no React component has one, so `smoke` is the only thing
-checking that a component still renders.
+The current counts are in `CLAUDE.md`. Component tests run in jsdom, which has
+no layout, WebGL or real focus order, so `smoke` is still the check that the
+built application renders.
 
 ## Gotchas
 
