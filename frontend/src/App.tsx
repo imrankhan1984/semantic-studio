@@ -111,6 +111,16 @@ BASIC IDEA
     the detail panel stands; a click on a relationship's line selects the
     relationship like any entity (5.2).
 
+    A project's data snapshots (csv-data-import 5.6) join the model's views
+    without being part of it: their changes move the server's data
+    generation, not the revision. The views of the model -- the graph, the
+    tree, the detail panel, the query builder -- are keyed on the two
+    together, so switching a snapshot off refreshes them as an edit does;
+    the canvas and the Turtle editor show the model alone and keep the
+    revision. The Load dialog is the project's Load area, with a Data tab
+    for the snapshots and the import wizard, which the tree's Examples
+    section opens too.
+
     Removal is the one destructive action here, and it counts what it will
     destroy before it asks. Deleting an ontology has always deleted every query
     saved against it; onRemove now fetches that count first, puts it in the
@@ -154,6 +164,7 @@ import TurtleEditor from "./components/TurtleEditor";
 import { triggerDownload } from "./download";
 import {
   activeDocument,
+  dataGenerationOf,
   projectStore,
   revisionOf,
   useProjectSelector,
@@ -169,7 +180,7 @@ import HomeScreen from "./components/HomeScreen";
 import ImportsPanel from "./components/ImportsPanel";
 import LinkPanel from "./components/LinkPanel";
 import Legend from "./components/Legend";
-import LoadDialog from "./components/LoadDialog";
+import LoadDialog, { type LoadTab } from "./components/LoadDialog";
 import Logo from "./components/Logo";
 import NetworkApprovalDialog from "./components/NetworkApprovalDialog";
 import NetworkPanel from "./components/NetworkPanel";
@@ -395,7 +406,10 @@ export default function App() {
   const [focusPanel, setFocusPanel] = useState(false);                    // panel takes focus?
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set()); // legend filters
   const [dialogOpen, setDialogOpen] = useState(false);                    // Load dialog open?
-  const [dialogTab, setDialogTab] = useState<"file" | "url" | "suggested">("suggested");
+  const [dialogTab, setDialogTab] = useState<LoadTab>("suggested");
+  // The tree's Examples section asked for an import: the Data tab opens with
+  // the wizard started (csv-data-import 5.1).
+  const [dialogImport, setDialogImport] = useState(false);
   // The About dialog, in the same shape as the Load dialog above: one boolean,
   // and the panel rendered only while it is true rather than rendered hidden.
   // The ref is what closing focuses back to — only App holds that element.
@@ -526,6 +540,13 @@ export default function App() {
   const projectSaving = useProjectSelector((s) => s.saving);
   const projectDoc = activeDocument({ documents: projectDocuments, activeDoc: projectActiveDoc });
   const revision = revisionOf({ documents: projectDocuments }, activeId);
+  // The model's views also show its switched-on data snapshots, which change
+  // without a revision (csv-data-import 5.6). Both numbers only ever grow,
+  // so their sum moves whenever either does, and every view keyed on it
+  // refetches. The canvas and the Turtle editor show the model alone and
+  // keep the revision.
+  const projectData = useProjectSelector((s) => s.data);
+  const dataGeneration = useProjectSelector(dataGenerationOf);
   const editingProjectDoc =
     openProjectSummary !== null && projectDocuments.some((d) => d.ontologyId === activeId);
   // Only a project document's views are named by it; a library ontology open
@@ -537,6 +558,13 @@ export default function App() {
   // blocks from the languages array, and a new array per render would
   // redo that on every keystroke anywhere in App.
   const openDocName = projectDocuments.find((d) => d.ontologyId === activeId)?.doc ?? null;
+  const viewRevision = openDocName === "model" ? revision + dataGeneration : revision;
+  // Where the model's data came from, for the Explore and Query source lines.
+  const dataSources = useMemo(
+    () => (openDocName === "model" ? (projectData?.snapshots ?? []).filter((d) => d.enabled) : []),
+    [openDocName, projectData],
+  );
+  const modelOntologyId = projectDocuments.find((d) => d.doc === "model")?.ontologyId ?? null;
   const editingModel = useMemo(
     () =>
       openProjectSummary && openDocName === "model"
@@ -650,7 +678,7 @@ export default function App() {
   const pendingSelection = useRef<string | null>(null);
 
   // The shared query-builder state; the schema is only fetched in Query mode.
-  const builder = useQueryBuilder(activeId, mode === "query", includeImports, revision);
+  const builder = useQueryBuilder(activeId, mode === "query", includeImports, viewRevision);
 
   // Apply and persist the theme whenever it changes (data-theme drives the CSS).
   useEffect(() => {
@@ -795,8 +823,9 @@ export default function App() {
     includeImports,
     includeImports ? importsVersion : 0,
     // A project document's revision and display language: an edit, an undo
-    // or a language switch refetches the graph (D-081, D-085).
-    revision,
+    // or a language switch refetches the graph (D-081, D-085); for the model,
+    // a change to its data snapshots too (csv-data-import 5.6).
+    viewRevision,
     displayLanguage,
   ]);
 
@@ -963,10 +992,19 @@ export default function App() {
   // Open the Load dialog on a named tab, so the chooser's file and URL routes
   // reuse the dialog's drag-and-drop and GitHub URL rewriting rather than
   // growing a second copy of either.
-  const openDialog = (tab: "file" | "url" | "suggested") => {
+  const openDialog = (tab: LoadTab) => {
     setDialogTab(tab);
+    setDialogImport(false);
     setDialogOpen(true);
   };
+
+  // Import data from CSV (csv-data-import 5.1): the project's Data tab, the
+  // wizard started.
+  const openDataImport = useCallback(() => {
+    setDialogTab("data");
+    setDialogImport(true);
+    setDialogOpen(true);
+  }, []);
 
   // Close About and give the control that opened it its focus back, on all
   // three dismissal routes — the close button, Escape, and the backdrop.
@@ -1904,12 +1942,14 @@ export default function App() {
             selected={selected}
             onSelect={selectFromOutsideGraph}
             imports={includeImports}
-            revision={revision}
+            revision={viewRevision}
             language={displayLanguage}
             editing={editingModel}
             onDeleted={onEntityDeleted}
             canvas={canvasLent}
             canvasSwitch={editingModel ? { on: canvasOn, onToggle: toggleCanvas } : null}
+            dataSources={projectData?.snapshots}
+            onImportData={editingModel ? openDataImport : undefined}
           />
           {showCanvas && openProjectSummary && editingModel && (
             <CanvasBoundary onRetry={() => setModelCanvas(loadCanvas)}>
@@ -1953,7 +1993,7 @@ export default function App() {
               onExpand={(entity) => void onExpand(entity)}
               expanding={expandingIri === selected}
               imports={includeImports}
-              revision={revision}
+              revision={viewRevision}
               language={displayLanguage}
               editing={editingModel}
               readOnlyNote={readOnlyNote}
@@ -2038,6 +2078,7 @@ export default function App() {
               ontologyTriples={active?.triples ?? 0}
               includeImports={includeImports}
               importsCount={importsCount}
+              dataSources={dataSources}
             />
           ) : mode === "explore" ? (
             // The two halves of the Explore column. Which one shows is decided
@@ -2050,6 +2091,7 @@ export default function App() {
                 loading={loadingGraph}
                 theme={theme}
                 onSelect={onSuggestionSelect}
+                dataSources={dataSources}
               />
             ) : (
               <DetailPanel
@@ -2061,7 +2103,7 @@ export default function App() {
                 onExpand={(entity) => void onExpand(entity)}
                 expanding={expandingIri === selected}
                 imports={includeImports}
-                revision={revision}
+                revision={viewRevision}
                 language={displayLanguage}
                 editing={editingModel}
                 readOnlyNote={readOnlyNote}
@@ -2101,6 +2143,28 @@ export default function App() {
           onLoaded={onLoaded}
           onClose={() => setDialogOpen(false)}
           initialTab={dialogTab}
+          project={
+            openProjectSummary && modelOntologyId
+              ? {
+                  id: openProjectSummary.id,
+                  name: openProjectSummary.name,
+                  modelOntologyId,
+                  taxonomy: openProjectSummary.kind === "taxonomy",
+                }
+              : null
+          }
+          startImport={dialogImport}
+          onValidate={() => {
+            // The report's next step: the Shapes view, checking at once.
+            setDialogOpen(false);
+            if (modelOntologyId) enterMode(modelOntologyId, "shapes");
+            projectStore.validate().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+          }}
+          onShowData={() => {
+            // The tree's Examples section lists the data, each row labelled.
+            setDialogOpen(false);
+            if (modelOntologyId) enterMode(modelOntologyId, "hierarchy");
+          }}
         />
       )}
 

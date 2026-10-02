@@ -59,6 +59,13 @@ EXPECTED OUTPUT
       rebuilt when a project document's revision moves.
     - Entities defined only in an import, named by the import that defines
       them, so the interface can say "Imported from FOAF".
+    - For a project model with switched-on data snapshots (csv-data-import
+      5.6), the reading view: the model, its imports when the switch is on,
+      and the snapshots' data, with each data individual named by its
+      snapshot (`dataFrom`). Cached on the Ontology's `data_cache` per value
+      of the switch, keyed on the revision and the snapshots' generation;
+      view_viz, view_hierarchy, view_query_schema and view_graph are what
+      the read endpoints call.
 ================================================================================
 """
 
@@ -1041,6 +1048,55 @@ class ImportsService:
                 cache[name] = build(view["graph"])
         return cache[name]
 
+    # --- the view with data snapshots (csv-data-import 5.6) ----------------
+
+    def reading(self, ontology: Ontology, imports: bool, parse_timeout: Optional[float] = None) -> Optional[dict]:
+        """What a read endpoint serves: None for the file alone, the merged
+        view for imports alone, and -- for a project model with switched-on
+        snapshots -- the model, its imports when the switch is on, and the
+        snapshots' data, whatever the switch says. Data is part of the
+        project, not an import, so it shows with the switch off too.
+
+        The data view is cached per value of the switch on the revision, the
+        snapshots' generation and the imports view under it: a snapshot
+        switched off or refreshed moves the generation and nothing else."""
+        generation, snapshots = snapshot_graphs(ontology)
+        if not snapshots:
+            return self.merged(ontology, parse_timeout) if imports else None
+        base = self.merged(ontology, parse_timeout) if imports else None
+        key = (ontology.revision, generation)
+        cache = ontology.data_cache or {}
+        held = cache.get(imports)
+        if held is not None and held["key"] == key and held["base"] is base:
+            return held
+        own = ontology.ensure_loaded()
+        graphs = list(base["graph"].graphs) if base is not None else [own]
+        data = [g for g, _ in snapshots]
+        with ontology.reading():
+            view = MergedView(graphs + data)
+            subjects = view.subjects_by_document()
+            # The document and the data, without the imports: where the
+            # tree's Examples section looks for individuals.
+            examples_from = MergedView([own] + data)
+        data_from: dict[str, dict] = {}
+        for (_, info), held_subjects in zip(snapshots, subjects[len(graphs):]):
+            for subject in held_subjects:
+                if isinstance(subject, URIRef):
+                    data_from.setdefault(str(subject), info)
+        built = {
+            "graph": view,
+            "importedFrom": base["importedFrom"] if base is not None else {},
+            "documents": base["documents"] if base is not None else 0,
+            "dataFrom": data_from,
+            "snapshots": [info for _, info in snapshots],
+            "examplesFrom": examples_from,
+            "key": key,
+            "base": base,
+            "derived": {},
+        }
+        ontology.data_cache = {**cache, imports: built}
+        return built
+
 
 def merged_viz(
     ontology: Ontology, parse_timeout: Optional[float] = None, lang: Optional[str] = None
@@ -1073,6 +1129,93 @@ def merged_hierarchy(
 def merged_query_schema(ontology: Ontology, parse_timeout: Optional[float] = None) -> dict:
     imports_service.merged(ontology, parse_timeout)
     return imports_service.derived(ontology, "schema", build_query_schema)
+
+
+def snapshot_graphs(ontology: Ontology) -> tuple[int, list]:
+    """(generation, [(graph, info)]): a project model's switched-on data."""
+    provider = ontology.snapshots
+    return provider() if provider is not None else (0, [])
+
+
+def _data_derived(ontology: Ontology, view: dict, name, build: Callable[[Graph], dict]) -> dict:
+    held = view["derived"]
+    if name not in held:
+        with ontology.reading():
+            held[name] = build(view["graph"])
+    return held[name]
+
+
+def view_graph(ontology: Ontology, imports: bool, parse_timeout: Optional[float] = None) -> Graph:
+    """The graph a read endpoint queries: see ImportsService.reading."""
+    view = imports_service.reading(ontology, imports, parse_timeout)
+    return ontology.ensure_loaded() if view is None else view["graph"]
+
+
+def view_viz(
+    ontology: Ontology, imports: bool, parse_timeout: Optional[float] = None, lang: Optional[str] = None
+) -> dict:
+    view = imports_service.reading(ontology, imports, parse_timeout)
+    if view is None:
+        return ontology.viz(lang)
+    if "dataFrom" not in view:
+        return merged_viz(ontology, parse_timeout, lang)
+    langs = ontology.label_langs(lang)
+    return _data_derived(
+        ontology, view, ("viz", langs),
+        lambda g: mark_data_viz(
+            mark_imported_viz(build_viz_graph(g, langs=langs), view["importedFrom"]), view["dataFrom"]
+        ),
+    )
+
+
+def view_hierarchy(
+    ontology: Ontology, imports: bool, parse_timeout: Optional[float] = None, lang: Optional[str] = None
+) -> dict:
+    view = imports_service.reading(ontology, imports, parse_timeout)
+    if view is None:
+        return ontology.hierarchy(lang)
+    if "dataFrom" not in view:
+        return merged_hierarchy(ontology, parse_timeout, lang)
+    langs = ontology.label_langs(lang)
+    return _data_derived(
+        ontology, view, ("hierarchy", langs),
+        lambda g: mark_data_hierarchy(
+            mark_imported_hierarchy(
+                build_hierarchy(g, langs=langs, own=view["examplesFrom"]), view["importedFrom"]
+            ),
+            view["dataFrom"],
+        ),
+    )
+
+
+def view_query_schema(ontology: Ontology, imports: bool, parse_timeout: Optional[float] = None) -> dict:
+    view = imports_service.reading(ontology, imports, parse_timeout)
+    if view is None:
+        return ontology.query_schema()
+    if "dataFrom" not in view:
+        return merged_query_schema(ontology, parse_timeout)
+    return _data_derived(ontology, view, "schema", build_query_schema)
+
+
+def mark_data_viz(viz: dict, data_from: dict[str, dict]) -> dict:
+    """Name the file each node imported as data came from (5.6)."""
+    for node in viz["nodes"]:
+        info = data_from.get(node["id"])
+        if info is not None:
+            node["fromData"] = info["source"]
+    return viz
+
+
+def mark_data_hierarchy(tree: dict, data_from: dict[str, dict]) -> dict:
+    """The tree's rows from a snapshot carry its id, for the label."""
+    for forest in tree.values():
+        if not isinstance(forest, dict) or "nodes" not in forest:
+            continue
+        for node_id, node in forest["nodes"].items():
+            info = data_from.get(node_id)
+            if info is not None:
+                node["fromData"] = info["id"]
+    return tree
 
 
 def _one_per_host(requests: list[dict]) -> list[dict]:

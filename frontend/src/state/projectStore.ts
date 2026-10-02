@@ -8,8 +8,9 @@ SUMMARY
     useSyncExternalStore (D-084): which project is open, each document's
     revision and dirty flag, the undo and redo labels, the save status, the
     display language, the editor's unapplied text, the sentence the live
-    region last announced, and the last SHACL validation (shacl-authoring
-    5.6), which lives for the session and is never saved.
+    region last announced, the last SHACL validation (shacl-authoring
+    5.6), which lives for the session and is never saved, and the project's
+    data snapshots with their generation (csv-data-import 5.6).
 
 BASIC IDEA
     New state only. App.tsx keeps everything it held before; this holds what
@@ -31,6 +32,13 @@ BASIC IDEA
     project -- closed, or another opened -- is ignored when it answers: its
     result, its announcement and its failure never reach the next project
     (shacl-authoring Stage B, follow-up 3).
+
+    Data snapshots are not documents: changing one moves no revision and no
+    undo step (5.7). The server counts their changes in a generation of its
+    own, which every view's fetch key carries beside the revision, so
+    switching a snapshot off refreshes Explore, Query and the tree exactly
+    as an edit does. The listing is fetched when the project opens and after
+    every snapshot action, and only kept if that project is still open.
 
     Something holding writes for the open project -- the canvas, which saves
     its layout a second after a move -- registers a flush, and close() awaits
@@ -55,6 +63,7 @@ import { useSyncExternalStore } from "react";
 import {
   applyDocumentSource,
   closeProject,
+  listData,
   openProject,
   recoverProject,
   redoChange,
@@ -71,6 +80,7 @@ import type {
   ProjectDocName,
   ProjectDocumentState,
   ProjectSummary,
+  SnapshotListing,
   ValidationResult,
 } from "../types";
 
@@ -101,6 +111,9 @@ export interface ProjectSnapshot {
    *  what a shape is written as (its prefixed name, its IRI), for *Edit in
    *  Turtle* (5.5). Searched with indexOf, never as a pattern. */
   editorTarget: { find: string[]; token: number } | null;
+  /** The project's data snapshots and the server's generation for them
+   *  (csv-data-import 5.6); null until fetched. */
+  data: SnapshotListing | null;
 }
 
 const EMPTY: ProjectSnapshot = {
@@ -116,6 +129,7 @@ const EMPTY: ProjectSnapshot = {
   validation: null,
   validating: false,
   editorTarget: null,
+  data: null,
 };
 
 let snapshot: ProjectSnapshot = EMPTY;
@@ -187,6 +201,11 @@ export function activeDocument(
   return state.documents.find((d) => d.doc === state.activeDoc) ?? null;
 }
 
+/** The data snapshots' generation, 0 before any is known. */
+export function dataGenerationOf(state: Pick<ProjectSnapshot, "data">): number {
+  return state.data?.generation ?? 0;
+}
+
 /** The revision of an ontology id, or 0 for anything that is not an open
  *  project document -- a library ontology never changes revision. */
 export function revisionOf(
@@ -241,7 +260,26 @@ export const projectStore = {
           : null,
     });
     announce(`Opened ${opened.project.name}. ${STATUS_WORDS[saveStatus(snapshot)]}.`);
+    // The snapshot list is not needed to show the project, so it follows.
+    void projectStore.loadData().catch(() => undefined);
     return opened.documents.find((d) => d.doc === "model")!.ontologyId;
+  },
+
+  /** Fetch the open project's data snapshots. Kept only if the project
+   *  asked about is still the open one. */
+  async loadData(): Promise<SnapshotListing | null> {
+    const project = requireProject();
+    const listing = await listData(project.id);
+    if (snapshot.project?.id !== project.id) return null;
+    set({ data: listing });
+    return listing;
+  },
+
+  /** A snapshot changed (5.7): say what was done, and refetch the list,
+   *  whose generation every view's fetch key carries. */
+  async dataChanged(sentence: string): Promise<void> {
+    announce(sentence);
+    await projectStore.loadData();
   },
 
   /** Close, dropping unsaved changes only when told to. Throws the server's

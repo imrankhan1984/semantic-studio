@@ -29,10 +29,11 @@ EXPECTED OUTPUT
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { openProject, validateProject, runCommand } = vi.hoisted(() => ({
+const { openProject, validateProject, runCommand, listData } = vi.hoisted(() => ({
   openProject: vi.fn(),
   validateProject: vi.fn(),
   runCommand: vi.fn(),
+  listData: vi.fn(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -40,6 +41,7 @@ vi.mock("../api", async (importOriginal) => ({
   openProject,
   validateProject,
   runCommand,
+  listData,
 }));
 
 import { projectStore } from "../state/projectStore";
@@ -87,6 +89,7 @@ let onSelect: ReturnType<typeof vi.fn<(iri: string) => void>>;
 let onError: ReturnType<typeof vi.fn<(message: string) => void>>;
 
 async function setup(result: ValidationResult = RESULT) {
+  listData.mockResolvedValue({ generation: 1, snapshots: [] });
   openProject.mockResolvedValue({ project: PROJECT, documents: [doc("model", 2), doc("shapes", 5)], recovery: { available: false, draftTime: null } });
   await projectStore.open(PROJECT.id);
   validateProject.mockResolvedValue(result);
@@ -201,10 +204,33 @@ describe("ResultPanels", () => {
     await act(async () => {
       await projectStore.command("AddRule", {}, undefined, "shapes");
     });
-    expect(screen.getByText("The model or the shapes changed since this check. Validate again.")).toBeTruthy();
+    expect(screen.getByText("The model, the shapes or the data changed since this check. Validate again.")).toBeTruthy();
     validateProject.mockResolvedValue({ ...RESULT, revisions: { model: 2, shapes: 6 } });
     await validate();
     expect(screen.queryByText(/changed since this check/)).toBeNull();
+  });
+
+  it("names the data a panel checked, a sample's words included (csv-data-import 5.6)", async () => {
+    const people = { id: "people-abc123", source: "people.csv", importedAt: "2026-10-02T12:00:00Z", rows: 2000, total: 12480, sample: true };
+    await setup({
+      ...RESULT,
+      revisions: { model: 2, shapes: 5, data: 1 },
+      dataSources: [people],
+      shapes: [panel({ data: [people.id] }), RESULT.shapes[2]],
+    });
+    await validate();
+    // Under the header, whether the panel is open or not.
+    expect(screen.getByText(
+      "Checked data from people.csv, imported 2 October 2026; sample: first 2,000 of 12,480 rows",
+    )).toBeTruthy();
+    expect(screen.getAllByText(/^Checked data/)).toHaveLength(1);
+    expect(screen.queryByText(/changed since this check/)).toBeNull();
+    // A snapshot switched off since: stale, as an edit makes it.
+    listData.mockResolvedValue({ generation: 2, snapshots: [] });
+    await act(async () => {
+      await projectStore.dataChanged("Switched off people.csv.");
+    });
+    expect(screen.getByText(/the data changed since this check/)).toBeTruthy();
   });
 
   it("says a check was stopped, with its size", async () => {

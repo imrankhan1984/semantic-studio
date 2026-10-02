@@ -41,6 +41,8 @@ INPUTS / INPUT SOURCES (props)
     - includeImports / importsCount: whether queries run over the ontology
       and its resolved imports (external-access Stage 2), and over how many
       imported documents. The panel states which, in text (AC-20).
+    - dataSources: a project's switched-on data snapshots, each named on a
+      source line, a sample's words included (csv-data-import 5.6).
 
 EXPECTED OUTPUT
     - The rendered query panel and the side effects of its controls (executing
@@ -69,8 +71,9 @@ import {
   rqFileName,
 } from "../sparql/textQuery";
 import { linkOptionsBetween } from "../sparql/useQueryBuilder";
+import { dataLabel } from "../modeling/dataSentences";
 import type { useQueryBuilder } from "../sparql/useQueryBuilder";
-import type { EmbeddedQueries, EmbeddedQuery, SavedQuery, SparqlResults, Theme } from "../types";
+import type { EmbeddedQueries, EmbeddedQuery, SavedQuery, SparqlResults, Theme, DataSource } from "../types";
 import ClassPropsMenu from "./ClassPropsMenu";
 import NextSteps from "./NextSteps";
 import PathBar from "./PathBar";
@@ -95,6 +98,9 @@ interface Props {
   includeImports?: boolean;
   /** Resolved imported documents, or null when the ontology has none known. */
   importsCount?: number | null;
+  /** A project's switched-on data snapshots, named on the source line with
+   *  their labels (csv-data-import 5.6). */
+  dataSources?: DataSource[];
 }
 
 /** What the panel says about what a query runs over. Null says nothing: an
@@ -137,6 +143,7 @@ export default function QueryPanel({
   ontologyTriples,
   includeImports = false,
   importsCount = null,
+  dataSources = [],
 }: Props) {
   const {
     schema,
@@ -562,6 +569,11 @@ export default function QueryPanel({
     // order. Backlog X-1.
     <aside className="query-panel" id="query-panel-region" aria-label="Query builder" tabIndex={-1}>
       {scope && <p className="query-scope">{scope}</p>}
+      {dataSources.map((source) => (
+        <p key={source.id} className="query-scope data-source-line">
+          Includes data {dataLabel(source)}.
+        </p>
+      ))}
       {loadingSchema && <div className="detail-note">Analysing the ontology…</div>}
       {schemaError && <p className="detail-error">{schemaError}</p>}
 

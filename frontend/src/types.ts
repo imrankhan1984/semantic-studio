@@ -177,6 +177,8 @@ export interface SparqlResults {
   importDocuments?: number;
   // Present when the query had SERVICE blocks: one entry per endpoint call.
   services?: ServiceCall[];
+  // Present when a project's data snapshots were queried (csv-data-import 5.6).
+  dataSources?: DataSource[];
 }
 
 // One SERVICE call a query made (external-access Stage 3). `truncated` means
@@ -250,6 +252,9 @@ export interface VizNode {
   // A project document's node: every name it has, in any language, which is
   // what search matched on (D-085). Absent for the library.
   names?: string[];
+  // An individual from a data snapshot: the file it was imported from
+  // (csv-data-import 5.6).
+  fromData?: string;
 }
 
 // One edge in the graph view.
@@ -369,6 +374,9 @@ export interface HierarchyNode {
   // the row to read *works for (Person → Organization)* (relationships 5.5).
   // An attribute's range is its datatype, prefixed (xsd:string).
   ends?: { domain: string | null; range: string | null };
+  // An individual from a data snapshot: the snapshot's id, which names its
+  // source in the row (csv-data-import 5.6).
+  fromData?: string;
 }
 
 // A reference from a parent to one child. `origin` is "asserted" in this
@@ -458,6 +466,9 @@ export interface NodeDetails {
   // A project's example (shacl-authoring 5.8): its classes, and one field per
   // attribute and relationship they have, own and inherited.
   example?: ExampleInfo;
+  // An individual from a data snapshot: where it came from, and its row
+  // (csv-data-import 5.6). Read-only; it has no example form.
+  fromData?: DataSource & { row: number | null };
 }
 
 export interface ExampleInfo {
@@ -720,6 +731,9 @@ export interface ProjectSummary {
   // Ontology or taxonomy (D-089): which tools the visual doors offer. Null
   // only for a project made before kinds, until it is first opened.
   kind: ProjectKind | null;
+  // The data snapshots, for the card's line (csv-data-import 5.7). Absent
+  // from a server that predates them.
+  data?: (DataSource & { enabled: boolean })[];
 }
 
 export type ProjectDocName = "model" | "shapes";
@@ -1016,6 +1030,9 @@ export interface ValidationPanel {
   problems: ValidationProblem[];
   problemsTotal: number;
   error: string | null;
+  // The data snapshots whose individuals this shape checked, by id
+  // (csv-data-import 5.6).
+  data?: string[];
 }
 
 export interface ValidationResult {
@@ -1024,6 +1041,170 @@ export interface ValidationResult {
   shapeCount: number;
   shapes: ValidationPanel[];
   durationMs: number;
-  // The revisions checked: a newer one on either document makes it stale.
-  revisions: { model: number; shapes: number | null };
+  // The revisions checked: a newer one on either document makes it stale,
+  // as does a change to the data snapshots (`data`, their generation).
+  revisions: { model: number; shapes: number | null; data?: number };
+  // The switched-on data snapshots that were checked.
+  dataSources?: DataSource[];
 }
+
+/* --- data snapshots (csv-data-import) ------------------------------------- */
+
+// Where data came from: a snapshot, as every place that labels its data
+// reads it (5.6). `sample` when the file had more rows than were imported.
+export interface DataSource {
+  id: string;
+  source: string;
+  importedAt: string;
+  rows: number;
+  total: number;
+  sample: boolean;
+}
+
+// Row numbers for a sentence: the first few, and how many in all.
+export interface RowList {
+  count: number;
+  rows: number[];
+}
+
+export interface ImportReportData {
+  rowsRead: number;
+  total: number;
+  sample: boolean;
+  individuals: number;
+  statements: number;
+  skipped: RowList;
+  repeated: RowList;
+  keptAsText: (RowList & { column: string; datatype: string })[];
+  empty: { column: string; count: number }[];
+  clean: boolean;
+}
+
+export interface SnapshotSummary extends DataSource {
+  enabled: boolean;
+  className: string | null;
+  classIri: string | null;
+  statements: number;
+  individuals: number;
+  report: ImportReportData;
+  // "outside": an edited mapping uses something the engine does not run;
+  // the last good data is kept and `message` says why.
+  mapping: { status: "ok" | "outside"; message: string | null };
+  mappingText?: string | null;
+}
+
+export interface SnapshotListing {
+  generation: number;
+  snapshots: SnapshotSummary[];
+}
+
+export interface ColumnProfile {
+  name: string;
+  empty: number;
+  unique: boolean;
+  repeats: number;
+  wholeNumbers: boolean;
+  numbers: boolean;
+  dates: boolean;
+  dateTimes: boolean;
+}
+
+export type Separator = "," | ";" | "\t";
+export type DataEncoding = "utf-8" | "utf-8-sig" | "windows-1252";
+
+export interface DataOptions {
+  separator?: Separator;
+  encoding?: DataEncoding;
+  header?: boolean;
+  // The user chose "Use the first 2,000 rows" (5.2).
+  sample?: boolean;
+}
+
+export interface DataInspection {
+  separator: Separator;
+  separatorName: string;
+  encoding: DataEncoding;
+  header: boolean;
+  columns: ColumnProfile[];
+  renamed: { index: number; from: string; to: string }[];
+  rows: string[][];
+  total: number;
+  kept: number;
+  limit: number;
+  sample: boolean;
+  limitSentence: string | null;
+  idSuggestion: string | null;
+  nameSuggestion: string | null;
+  // Inspecting a snapshot's own copy (Change the mapping): its choices.
+  choices?: DataChoices | null;
+  snapshot?: string;
+}
+
+export type ColumnUse = "name" | "attribute" | "relationship" | "ignore";
+
+export interface ColumnChoice {
+  as: ColumnUse;
+  property?: string;
+}
+
+export interface DataChoices {
+  classIri: string;
+  // null: the row number (5.3, "Use the row number instead").
+  idColumn: string | null;
+  columns: Record<string, ColumnChoice>;
+}
+
+export interface DataField {
+  property: string;
+  label: string;
+  kind: "attribute" | "relationship";
+  datatype?: string | null;
+  text?: boolean;
+  range?: string | null;
+  rangeLabel?: string | null;
+}
+
+export interface IdCheck {
+  column: string | null;
+  ok: boolean;
+  missing: RowList;
+  repeats: number;
+  repeated: RowList;
+}
+
+export interface PreviewValue {
+  column: string;
+  label: string;
+  value: string;
+  kind: "value" | "link";
+  datatype?: string | null;
+  fits?: boolean;
+  target?: string | null;
+}
+
+export interface PreviewRow {
+  row: number;
+  subject: string | null;
+  name: string | null;
+  values: PreviewValue[];
+  skipped?: boolean;
+}
+
+export interface DataPreview {
+  idCheck: IdCheck;
+  fields: DataField[];
+  suggestions: Record<string, ColumnChoice>;
+  className?: string;
+  rows?: PreviewRow[];
+  report?: ImportReportData;
+}
+
+export type RefreshResult =
+  | { status: "imported"; snapshot: SnapshotSummary; generation: number }
+  | {
+      status: "mismatch";
+      missing: string[];
+      inspection: DataInspection;
+      choices: DataChoices | null;
+      generation: number;
+    };

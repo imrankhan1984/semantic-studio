@@ -132,6 +132,15 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   getLayout: () => api.getLayout("prj-1", "model"),
   putLayout: () =>
     api.putLayout("prj-1", "model", { version: 1, generation: 0, positions: {}, shown: null, viewport: null }),
+  // csv-data-import: the wizard and the snapshot list.
+  inspectData: () => api.inspectData("prj-1", { file: new File(["a,b"], "a.csv") }),
+  previewData: () => api.previewData("prj-1", { snapshot: "people-abcdef" }, {}, { classIri: "http://example.org/A" }),
+  importData: () =>
+    api.importData("prj-1", new File(["a,b"], "a.csv"), {}, { classIri: "http://example.org/A", idColumn: null, columns: {} }),
+  listData: () => api.listData("prj-1"),
+  refreshData: () => api.refreshData("prj-1", "people-abcdef", new File(["a,b"], "a.csv"), {}),
+  updateData: () => api.updateData("prj-1", "people-abcdef", { enabled: false }),
+  removeData: () => api.removeData("prj-1", "people-abcdef"),
   // Not requests: the approval plumbing and the display language. Listed so
   // the export check holds.
   setApprovalHandler: async () => api.setApprovalHandler(null),
@@ -157,11 +166,13 @@ describe("api client header (S-6)", () => {
     // Ten POSTs and three DELETEs before projects; projects add ten POSTs,
     // a DELETE, a PATCH (rename, languages) and a PUT (the Turtle apply);
     // the editing form adds one POST (the delete's dry run); the canvas one
-    // PUT (its layout); validation one POST (shacl-authoring 5.6).
+    // PUT (its layout); validation one POST (shacl-authoring 5.6); the data
+    // wizard four POSTs, a PATCH and a DELETE (csv-data-import).
     const expected = [
-      ...Array(4).fill("DELETE"),
+      ...Array(5).fill("DELETE"),
       "PATCH",
-      ...Array(22).fill("POST"),
+      "PATCH",
+      ...Array(26).fill("POST"),
       "PUT",
       "PUT",
       "PUT",
@@ -180,6 +191,38 @@ describe("api client header (S-6)", () => {
       "Content-Type": "application/json",
       "X-Semantic-Studio": "1",
     });
+  });
+
+  it("does not set a content type on a data file either, and sends choices as JSON fields", async () => {
+    const sent: FormData[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        sent.push(init?.body as FormData);
+        recorded.push({ url: _url, method: "POST", headers: { ...((init?.headers as Record<string, string>) ?? {}) } });
+        return new Response("{}", { status: 200 });
+      }),
+    );
+    await api.previewData("prj-1", { file: new File(["a,b"], "a.csv") }, { sample: true }, { classIri: "http://x/A" });
+    expect(recorded[0].headers).toEqual({ "X-Semantic-Studio": "1" });
+    expect(sent[0].get("file")).toBeInstanceOf(File);
+    expect(JSON.parse(String(sent[0].get("options")))).toEqual({ sample: true });
+    expect(JSON.parse(String(sent[0].get("choices")))).toEqual({ classIri: "http://x/A" });
+  });
+
+  it("a refused data file reads as its sentence, with the status kept", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ detail: { message: "This file is 6.0 MB.", kind: "too-large" } }), {
+          status: 413,
+        }),
+      ),
+    );
+    const failure = await api.inspectData("prj-1", { file: new File(["x"], "a.csv") }).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(api.ApiError);
+    expect((failure as api.ApiError).message).toBe("This file is 6.0 MB.");
+    expect((failure as api.ApiError).status).toBe(413);
   });
 
   it("does not set a content type on the multipart upload", async () => {

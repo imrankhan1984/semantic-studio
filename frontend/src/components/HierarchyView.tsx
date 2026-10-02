@@ -66,6 +66,13 @@ INPUTS / INPUT SOURCES (props)
       object and datatype property with its ends -- *works for (Person →
       Organization)*, *name (Person, text)* -- so every line on the canvas
       has a row (5.5, D-078).
+      A project's data snapshots (csv-data-import 5.1, 5.6) show in the
+      Examples section beside the examples, each such row carrying its
+      snapshot's label -- *from people.csv, imported 2 October 2026*, and a
+      sample's words -- and no actions: snapshot data is read-only. The
+      section's header offers *Import data from CSV…*, and in a project
+      the section is there to offer it even before there is an example.
+
       A project's examples (shacl-authoring 5.8) have a section of their
       own, *Examples*, each under its class. The class rows there are
       headings, open from the start and with no actions, and the section
@@ -99,7 +106,8 @@ import {
   type ReactNode,
 } from "react";
 import { ApiError, fetchHierarchy } from "../api";
-import type { CanvasSet, Hierarchy, HierarchyForest, HierarchyOrigin, Theme } from "../types";
+import type { CanvasSet, DataSource, Hierarchy, HierarchyForest, HierarchyNode, HierarchyOrigin, Theme } from "../types";
+import { dataLabel } from "../modeling/dataSentences";
 import { KIND_LABELS, kindColor } from "../types";
 import type { ProjectKind } from "../types";
 import { otherKindNote, otherKindReason, rowEnds } from "../modeling/sentences";
@@ -125,6 +133,12 @@ interface Props {
   onDeleted?: (iri: string) => void;
   canvas?: CanvasSet | null;
   canvasSwitch?: { on: boolean; onToggle: () => void } | null;
+  /** The project's data snapshots, whose labels name the rows they made
+   *  (csv-data-import 5.6). */
+  dataSources?: DataSource[];
+  /** Import data from CSV (csv-data-import 5.1), offered in the Examples
+   *  section's header. */
+  onImportData?: () => void;
 }
 
 /** A "New ..." form open at the top of a section. */
@@ -220,6 +234,8 @@ interface Row {
   origin: HierarchyOrigin;
   /** The import that defines this entity, with imports on; else undefined. */
   importedFrom?: string;
+  /** A data snapshot's label, for a row its data made (csv-data-import 5.6). */
+  fromData?: string;
   /** Has children AND this occurrence is not a cycle repeat. */
   expandable: boolean;
   expanded: boolean;
@@ -268,6 +284,7 @@ function flatten(
       ends: node.ends ? rowEnds(node.ends, node.kind === "datatypeProperty") : undefined,
       origin,
       importedFrom: node.importedFrom,
+      fromData: node.fromData,
       expandable,
       expanded: isExpanded,
       childCount: keptKids.length,
@@ -319,6 +336,7 @@ function internalIds(forest: HierarchyForest): string[] {
 function sectionsOf(
   data: Hierarchy,
   editing: { kind?: ProjectKind | null } | null = null,
+  keepExamples = false,
 ): { title: string; forest: HierarchyForest }[] {
   // A project names its property sections as the learner does (5.5).
   const project = editing !== null;
@@ -329,7 +347,11 @@ function sectionsOf(
     { title: "Annotation properties", forest: data.annotationProperties },
     // A project's examples, by class (shacl-authoring 5.8). Before the
     // concepts, which a taxonomy moves to the front.
-    { title: EXAMPLES_SECTION, forest: project ? data.examples : undefined },
+    // With an import to offer, it is there before the first example.
+    {
+      title: EXAMPLES_SECTION,
+      forest: project ? (data.examples ?? (keepExamples ? EMPTY_FOREST : undefined)) : undefined,
+    },
     { title: CONCEPT_SECTION, forest: data.concepts },
   ];
   // A taxonomy leads with its scheme: it is the model (5.1).
@@ -340,8 +362,26 @@ function sectionsOf(
   const kept = !project ? null : editing?.kind === "taxonomy" ? CONCEPT_SECTION : CLASS_SECTION;
   return candidates.filter(
     (c): c is { title: string; forest: HierarchyForest } =>
-      c.forest !== undefined && (Object.keys(c.forest.nodes).length > 0 || c.title === kept),
+      c.forest !== undefined &&
+      (Object.keys(c.forest.nodes).length > 0 || c.title === kept || (keepExamples && c.title === EXAMPLES_SECTION)),
   );
+}
+
+const EMPTY_FOREST: HierarchyForest = { nodes: {}, children: {}, roots: [] };
+
+/** The tree with each snapshot row's id replaced by its snapshot's label. */
+function withDataLabels(data: Hierarchy | null, sources: DataSource[] | undefined): Hierarchy | null {
+  if (!data || !sources?.length) return data;
+  const labels = new Map(sources.map((source) => [source.id, dataLabel(source)]));
+  const relabel = (forest: HierarchyForest | undefined): HierarchyForest | undefined => {
+    if (!forest || !Object.values(forest.nodes).some((n) => n.fromData)) return forest;
+    const nodes: Record<string, HierarchyNode> = {};
+    for (const [id, node] of Object.entries(forest.nodes)) {
+      nodes[id] = node.fromData ? { ...node, fromData: labels.get(node.fromData) ?? "from imported data" } : node;
+    }
+    return { ...forest, nodes };
+  };
+  return { ...data, examples: relabel(data.examples), concepts: relabel(data.concepts)!, classes: relabel(data.classes)! };
 }
 
 const CLASS_SECTION = "Class hierarchy";
@@ -360,8 +400,12 @@ export default function HierarchyView({
   onDeleted,
   canvas = null,
   canvasSwitch = null,
+  dataSources,
+  onImportData,
 }: Props) {
-  const [data, setData] = useState<Hierarchy | null>(null);
+  const [fetched, setData] = useState<Hierarchy | null>(null);
+  // Snapshot rows named by their snapshot's label (csv-data-import 5.6).
+  const data = useMemo(() => withDataLabels(fetched, dataSources), [fetched, dataSources]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
@@ -420,7 +464,10 @@ export default function HierarchyView({
 
   // Every forest currently present, in render order. Computed once and reused by
   // expand-all, the empty-state check and the render.
-  const sections = useMemo(() => (data ? sectionsOf(data, editing) : []), [data, editing]);
+  const sections = useMemo(
+    () => (data ? sectionsOf(data, editing, onImportData !== undefined) : []),
+    [data, editing, onImportData],
+  );
   const kind = editing?.kind ?? null;
   // The other kind's content, counted for its one line (5.1).
   const otherNote = useMemo(() => {
@@ -554,6 +601,15 @@ export default function HierarchyView({
 
   const header = (title: string): ReactNode => {
     if (!editing) return null;
+    if (title === EXAMPLES_SECTION && onImportData) {
+      return (
+        <div className="hierarchy-actions">
+          <button type="button" className="ghost" onClick={onImportData}>
+            Import data from CSV…
+          </button>
+        </div>
+      );
+    }
     const section = title === CLASS_SECTION ? "class" : title === CONCEPT_SECTION ? "concept" : null;
     if (!section) return null;
     // The kind's own New button only; a project from before kinds has both.
@@ -711,7 +767,7 @@ export default function HierarchyView({
           label={menu.row.label}
           items={rowActions(
             menu.row.kind,
-            Boolean(menu.row.importedFrom),
+            Boolean(menu.row.importedFrom || menu.row.fromData),
             canvas ? { limited: canvas.limited, shown: canvas.shown.includes(menu.row.id) } : null,
             menu.fixed,
           )}
@@ -786,7 +842,8 @@ function Forest({
   reveal = null,
   onRevealed,
 }: ForestProps) {
-  const actionsOf = (row: Row) => rowActions(row.kind, Boolean(row.importedFrom), null, fixedRow?.(row) ?? false);
+  const actionsOf = (row: Row) =>
+    rowActions(row.kind, Boolean(row.importedFrom || row.fromData), null, fixedRow?.(row) ?? false);
   const appears = useMemo(() => appearanceCounts(forest), [forest]);
   const keep = useMemo(() => keepForFilter(forest, filter), [forest, filter]);
   const rows = useMemo(
@@ -960,7 +1017,9 @@ function Forest({
             ? "No matches in this section."
             : title === CONCEPT_SECTION
               ? "No concepts yet. New concept makes the first."
-              : "No classes yet. New class makes the first."}
+              : title === EXAMPLES_SECTION
+                ? "No examples or imported data yet."
+                : "No classes yet. New class makes the first."}
         </p>
       ) : (
         <div
@@ -1135,6 +1194,11 @@ function TreeRow({
         // Text, not a tint: imported and read-only has to survive being read
         // aloud (AC-21, AC-35).
         <span className="hierarchy-imported">from {row.importedFrom}</span>
+      )}
+      {row.fromData && (
+        // Snapshot data is never mistaken for the model (Section 7): its
+        // label, a sample's words included, is on the row itself.
+        <span className="hierarchy-imported hierarchy-data">{row.fromData}</span>
       )}
       {inferred && (
         // The derived channel (D-046): a badge, a non-colour cue (the dashed

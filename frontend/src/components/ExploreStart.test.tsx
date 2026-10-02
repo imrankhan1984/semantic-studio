@@ -184,6 +184,11 @@ describe("ExploreStart", () => {
     expect(panel.textContent).toMatch(/click any node in the graph, or search/i);
   });
 
+  it("names a project's data on a source line, a sample's words included (csv-data-import 5.6)", () => {
+    render(<ExploreStart graph={graphOf(NODES)} loading={false} theme="dark" onSelect={vi.fn()} dataSources={[{ id: "people-abc123", source: "people.csv", importedAt: "2026-10-02T12:00:00Z", rows: 2000, total: 12480, sample: true }]} />);
+    expect(screen.getByText("Includes data from people.csv, imported 2 October 2026; sample: first 2,000 of 12,480 rows.")).toBeTruthy();
+  });
+
   it("shows loading while the graph is loading", () => {
     // AC-9. No suggestions from a partial graph, and the panel keeps its place
     // in the layout rather than appearing once the graph arrives.

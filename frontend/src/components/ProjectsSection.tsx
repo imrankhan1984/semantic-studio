@@ -7,9 +7,11 @@ SUMMARY
     "My projects", the first section of the Home screen (authoring-foundations
     5.1): the user's own work, above the read-only library. Each project card
     shows its name, its kind (*Ontology* or *Taxonomy*, relationships 5.1),
-    when it last changed, its documents and its counts, an Open button, and
-    a menu with Rename, Change to taxonomy… (or ontology…), Duplicate,
-    Export as zip and Delete.
+    when it last changed, its documents and its counts, a line for each of
+    its data snapshots with its label (csv-data-import 5.7: *from
+    people.csv, imported 2 October 2026*, a sample's words included, and
+    *off* when switched off), an Open button, and a menu with Rename, Change
+    to taxonomy… (or ontology…), Duplicate, Export as zip and Delete.
 
 BASIC IDEA
     Everything on a card comes from the project list App fetched on mount,
@@ -35,6 +37,7 @@ EXPECTED OUTPUT
 */
 
 import { useEffect, useId, useRef, useState } from "react";
+import { dataLabel } from "../modeling/dataSentences";
 import type { ProjectSummary } from "../types";
 
 interface Props {
@@ -218,6 +221,12 @@ function ProjectCard({
           {plural(project.counts.properties, "property", "properties")},{" "}
           {plural(project.counts.concepts, "concept", "concepts")}
         </p>
+        {(project.data ?? []).map((source) => (
+          <p key={source.id} className="project-data data-label">
+            Data {dataLabel(source)}
+            {source.enabled ? "" : " (off)"}
+          </p>
+        ))}
         <p className="project-meta">
           <span>{changedOn(project.updatedAt)}</span>
           <span>{project.documents.map((d) => d.file).join(", ")}</span>

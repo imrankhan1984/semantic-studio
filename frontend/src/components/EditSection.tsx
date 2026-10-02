@@ -140,13 +140,17 @@ export default function EditSection({
   }
 
   // 5.1: not this document's to change. The header already names the import.
-  if (details.importedFrom || !model.defined) {
+  // Snapshot data is read-only too (csv-data-import 5.6): it is changed in
+  // its file and refreshed, never edited here.
+  if (details.importedFrom || details.fromData || !model.defined) {
     return (
       <section className="edit-section read-only" aria-label="Edit">
         <p className="detail-note">
           {details.importedFrom
             ? `From ${details.importedFrom}, read-only.`
-            : "Defined outside this document, read-only."}
+            : details.fromData
+              ? `Imported data, read-only: change ${details.fromData.source} and refresh it from the project's Data.`
+              : "Defined outside this document, read-only."}
         </p>
         {model.kind === "class" &&
           (subclassOfImport ? (

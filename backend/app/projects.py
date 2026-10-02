@@ -36,6 +36,11 @@ BASIC IDEA
     Delete never destroys: the folder moves into projects/.trash/, and the
     trash is emptied by hand (open question 3, closed as recommended).
 
+    A project may hold data snapshots in data/<sid>/ (csv-data-import 5.6),
+    which snapshots.py keeps; the manifest's `data` list, written there, is
+    the card's line, so listing still opens nothing else. Export and
+    duplicate carry data/ and leave the project's own .trash/ behind.
+
     A project is an ontology or a taxonomy (D-089), recorded as `kind` in the
     manifest. A template says which; a library copy, and a project made
     before kinds existed, is judged from its content -- concepts and no
@@ -438,6 +443,9 @@ class ProjectStore:
             "kind": manifest.get("kind"),
             "documents": manifest["documents"],
             "counts": manifest.get("counts", {}),
+            # The data snapshots, for the card's line (csv-data-import 5.7);
+            # written by snapshots.py whenever one changes.
+            "data": manifest.get("data", []),
         }
 
     def list(self) -> list[dict]:
@@ -610,7 +618,7 @@ class ProjectStore:
         source = self.folder(pid)
         new_id = "prj-" + uuid.uuid4().hex[:12]
         target = self.dir / new_id
-        shutil.copytree(source, target, ignore=shutil.ignore_patterns(DRAFT_DIR))
+        shutil.copytree(source, target, ignore=shutil.ignore_patterns(DRAFT_DIR, TRASH_DIR))
         manifest = json.loads((target / MANIFEST).read_text(encoding="utf-8"))
         now = _now()
         manifest.update(id=new_id, name=f"{manifest['name']} (copy)", createdAt=now, updatedAt=now)
@@ -652,13 +660,14 @@ class ProjectStore:
         return f"projects/{TRASH_DIR}/{target.name}"
 
     def export_zip(self, pid: str) -> bytes:
-        """The folder as a zip, without the autosave draft."""
+        """The folder as a zip, without the autosave draft or the snapshots
+        moved to the project's own trash."""
         folder = self.folder(pid)
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
             for path in sorted(folder.rglob("*")):
                 relative = path.relative_to(folder)
-                if relative.parts and relative.parts[0] == DRAFT_DIR:
+                if relative.parts and relative.parts[0] in (DRAFT_DIR, TRASH_DIR):
                     continue
                 if path.is_file():
                     zf.write(path, relative.as_posix())

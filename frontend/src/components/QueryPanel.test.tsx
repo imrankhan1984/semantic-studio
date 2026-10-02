@@ -268,6 +268,14 @@ describe("QueryPanel imports (external-access Stage 2, AC-20)", () => {
     expect(queryScopeText(false, null)).toBeNull();
   });
 
+  it("names a project's data on the source line, a sample's words included (csv-data-import 5.6)", () => {
+    render(
+      <QueryPanel ontologyId="ont-1" theme="light" builder={builderStub()} onPickIri={vi.fn()}
+        onViewInSource={vi.fn()} ontologyTriples={0} dataSources={[{ id: "people-abc123", source: "people.csv", importedAt: "2026-10-02T12:00:00Z", rows: 2000, total: 12480, sample: true }]} />,
+    );
+    expect(screen.getByText("Includes data from people.csv, imported 2 October 2026; sample: first 2,000 of 12,480 rows.")).toBeTruthy();
+  });
+
   it("runs over the merged view when the switch is on, and says so", async () => {
     render(
       <QueryPanel

@@ -56,7 +56,9 @@ EXPECTED OUTPUT
     - Ontology objects with a stable id, metadata summary, and lazily parsed
       graph, plus viz/schema/hierarchy/pretty views cached per revision. A second cache,
       `merged_cache`, holds the views over the file plus its resolved imports;
-      imports.py fills it and it never mixes with the file-only one.
+      imports.py fills it and it never mixes with the file-only one. A
+      third, `data_cache`, holds a project model's views with its data
+      snapshots joined (csv-data-import 5.6).
     - Raises ParseError for unparseable input and ParseTimeout when a bounded
       parse runs out of time; the router maps them to HTTP 422 and 504.
       The broker's decisions (ApprovalRequired, Offline, HostBlocked) pass
@@ -308,6 +310,14 @@ class Ontology:
     # other way round; dropped whole whenever the resolved closure changes, and
     # carrying the revision it was built at.
     merged_cache: Optional[dict] = field(default=None, repr=False)
+    # The views over the model with its switched-on data snapshots
+    # (csv-data-import 5.6), with imports or without: one entry per value of
+    # the imports switch, each keyed on the revision, the snapshots'
+    # generation and the imports view it was built on.
+    data_cache: Optional[dict] = field(default=None, repr=False)
+    # A project model's snapshots, supplied by editing.py on open:
+    # () -> (generation, [(graph, info)]). None everywhere else.
+    snapshots: Optional[Callable[[], tuple]] = field(default=None, repr=False, compare=False)
     # Moved by editing.py on every change to a project document. A library
     # ontology stays at 0 for ever, which is what keeps its caches built once.
     revision: int = 0

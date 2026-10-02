@@ -13,7 +13,11 @@ SUMMARY
 BASIC IDEA
     The read endpoints take ?imports=true, which serves the same view built
     over the ontology plus its resolved imports (imports.py). Off is the
-    default and answers exactly as before.
+    default and answers exactly as before. A project model with switched-on
+    data snapshots is served with their data joined either way
+    (csv-data-import 5.6): data is part of the project, not an import. An
+    individual from a snapshot says which file and row it came from, and
+    has no example form: snapshot data is read-only.
 
     An open project document is served here too, under its prj-<hex>-<doc> id
     (D-081). The views that show names take ?lang=, the project's display
@@ -91,6 +95,8 @@ from .. import imports as imports_mod
 from ..imports import imports_service
 from ..net_guard import BlockedAddress
 from ..network_broker import FetchFailed, TooLarge, TooManyRedirects, broker
+from ..editing import editing_service
+from ..projects import split_document_id
 from ..query_schema import describe_query_node
 from ..sparql_exec import QueryError, QueryTimeout, execute_select
 from ..store import ParseError, ParseTimeout, detect_format, saved_queries, store
@@ -290,15 +296,22 @@ SearchKind = Literal["class", "concept", "objectProperty", "datatypeProperty", "
 
 
 def _viz(ontology, imports: bool, lang: Optional[str] = None) -> dict:
-    if imports:
-        return imports_mod.merged_viz(ontology, PARSE_TIMEOUT_SECONDS, lang)
-    return ontology.viz(lang)
+    return imports_mod.view_viz(ontology, imports, PARSE_TIMEOUT_SECONDS, lang)
 
 
 def _graph(ontology, imports: bool):
-    if not imports:
-        return ontology.ensure_loaded()
-    return imports_service.merged(ontology, PARSE_TIMEOUT_SECONDS)["graph"]
+    return imports_mod.view_graph(ontology, imports, PARSE_TIMEOUT_SECONDS)
+
+
+def _from_data(ontology, iri: str) -> Optional[dict]:
+    """The snapshot an individual came from, and its row, or None."""
+    view = imports_service.reading(ontology, False)
+    info = (view or {}).get("dataFrom", {}).get(iri)
+    if info is None:
+        return None
+    split = split_document_id(ontology.id)
+    origin = editing_service.snapshots.origins(split[0]).get(iri) if split else None
+    return {**info, "row": origin[1] if origin else None}
 
 
 def _get_or_404(oid: str):
@@ -580,10 +593,16 @@ def get_node(
         if details is not None and ontology.editable and details.get("kind") in PROPERTY_KINDS:
             name = labeler(ontology.graph, ontology.label_langs(lang))
             details["warnings"] = modeling_checks.warnings(ontology.graph, URIRef(iri), name)
+        # A snapshot's individual is read-only data (csv-data-import 5.6):
+        # where it came from, never an example's form.
+        from_data = _from_data(ontology, iri) if details is not None and ontology.editable else None
+        if from_data is not None:
+            details["fromData"] = from_data
         # An example's form (shacl-authoring 5.8): its classes, and a field
         # per attribute and relationship they have, from the same view the
         # panel reads, so a class from an import gives its fields too.
-        if details is not None and ontology.editable and details.get("kind") in ("individual", "other"):
+        if (details is not None and ontology.editable and from_data is None
+                and details.get("kind") in ("individual", "other")):
             example = examples.example_view(
                 graph, URIRef(iri), labeler(graph, ontology.label_langs(lang)),
                 list(ontology.languages or ()), own=ontology.graph,
@@ -751,20 +770,17 @@ def get_hierarchy(
     implemented, so absent means asserted-only (D-046).
     """
     ontology = _get_or_404(oid)
-    if imports:
-        # Imported rows carry `importedFrom`, and the edge to each one the
-        # origin "imported" -- D-046's seam with a new value (AC-21).
-        return imports_mod.merged_hierarchy(ontology, PARSE_TIMEOUT_SECONDS, lang)
-    return ontology.hierarchy(lang)
+    # Imported rows carry `importedFrom`, and the edge to each one the
+    # origin "imported" -- D-046's seam with a new value (AC-21); a
+    # snapshot's individuals carry `fromData` (csv-data-import 5.6).
+    return imports_mod.view_hierarchy(ontology, imports, PARSE_TIMEOUT_SECONDS, lang)
 
 
 @router.get("/{oid}/query-schema")
 def get_query_schema(oid: str, imports: bool = IMPORTS_PARAM) -> dict:
     """Class-level schema powering the visual query builder."""
     ontology = _get_or_404(oid)
-    if imports:
-        return imports_mod.merged_query_schema(ontology, PARSE_TIMEOUT_SECONDS)
-    return ontology.query_schema()
+    return imports_mod.view_query_schema(ontology, imports, PARSE_TIMEOUT_SECONDS)
 
 
 @router.get("/{oid}/embedded-queries")
@@ -789,11 +805,7 @@ def get_query_node(oid: str, iri: str = Query(...), imports: bool = IMPORTS_PARA
     classes too, and describing one against the file alone would refuse it.
     """
     ontology = _get_or_404(oid)
-    schema = (
-        imports_mod.merged_query_schema(ontology, PARSE_TIMEOUT_SECONDS)
-        if imports
-        else ontology.query_schema()
-    )
+    schema = imports_mod.view_query_schema(ontology, imports, PARSE_TIMEOUT_SECONDS)
     graph = _graph(ontology, imports)
     with ontology.reading():
         described = describe_query_node(graph, iri, schema)
@@ -821,6 +833,11 @@ def run_sparql(oid: str, request: SparqlRequest, imports: bool = IMPORTS_PARAM) 
             result = execute_select(graph, request.query)
         if imports:
             result["importDocuments"] = imports_service.merged(ontology)["documents"]
+        # What the results covered: the switched-on data snapshots, which
+        # the results header names (csv-data-import 5.6).
+        view = imports_service.reading(ontology, imports)
+        if view is not None and view.get("snapshots"):
+            result["dataSources"] = view["snapshots"]
         return result
     except QueryTimeout as exc:
         raise HTTPException(status_code=504, detail=str(exc)) from exc

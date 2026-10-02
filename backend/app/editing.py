@@ -68,6 +68,13 @@ BASIC IDEA
     whose IRI is gone is kept until the project is next opened, so undoing a
     delete puts the box back where it was.
 
+    A project's data snapshots (csv-data-import, D-096) are not documents
+    and nothing here changes them: the SnapshotService the editing service
+    holds loads them when the project opens and drops them when it closes,
+    the model's Ontology is given them for its views, and Validate checks
+    them with the model. model_reader lends the data wizard the model, its
+    imports and names, under the model's lock.
+
     Autosave never runs on the request path. A change arms a timer (two seconds,
     reset by every later change); the timer thread snapshots the document under
     its lock and writes .draft/<doc>.ttl outside it. Recovery reads that draft
@@ -106,7 +113,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -127,9 +134,10 @@ from .projects import (
     graph_counts,
     valid_lang,
 )
-from . import examples, modeling_checks, shacl, shapes_form
+from . import examples, lexical, modeling_checks, shacl, shapes_form
 from .canvas import build_canvas, restrict
 from .imports import imports_service, load_state
+from .snapshots import SnapshotService
 from .store import Ontology, OntologyStore, ParseTimeout
 from .store import store as _default_store
 
@@ -192,35 +200,6 @@ OFFERED_DATATYPES = {
 }
 _DATATYPE_BY_IRI = {v: k for k, v in OFFERED_DATATYPES.items()}
 
-_TZ = r"(Z|[+-](0[0-9]|1[0-4]):[0-5][0-9])?"
-_DATE = r"(-?[0-9]{4,})-([0-9]{2})-([0-9]{2})"
-_LEXICAL = {
-    "integer": (re.compile(r"[+-]?[0-9]+"), "integer", "a whole number such as 42"),
-    "decimal": (
-        re.compile(r"[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)"),
-        "decimal",
-        "a number such as 4.5",
-    ),
-    "boolean": (re.compile(r"true|false|1|0"), "boolean", "true or false"),
-    "date": (re.compile(_DATE + _TZ), "date", "YYYY-MM-DD"),
-    "dateTime": (
-        re.compile(_DATE + r"T([0-9]{2}):([0-9]{2}):([0-9]{2})(\.[0-9]+)?" + _TZ),
-        "date and time",
-        "YYYY-MM-DDThh:mm:ss",
-    ),
-}
-
-
-def _real_date(year: str, month: str, day: str) -> bool:
-    try:
-        # A year past 9999 or before 1 is lexically legal and Python cannot
-        # represent it; check the month and day against a leap year instead.
-        y = int(year)
-        date(y if 1 <= y <= 9999 else 2000, int(month), int(day))
-        return True
-    except ValueError:
-        return False
-
 
 def check_lexical(value: str, datatype: str) -> None:
     """Refuse a value that is not valid for its datatype, naming the type."""
@@ -230,15 +209,10 @@ def check_lexical(value: str, datatype: str) -> None:
         if re.search(r"\s", value) or not value:
             raise CommandError(f'"{value}" is not a valid URI (it is empty or contains a space).')
         return
-    pattern, name, expected = _LEXICAL[datatype]
-    match = pattern.fullmatch(value)
-    ok = match is not None
-    if ok and datatype in ("date", "dateTime"):
-        ok = _real_date(match.group(1), match.group(2), match.group(3))
-    if ok and datatype == "dateTime":
-        hour, minute, second = int(match.group(4)), int(match.group(5)), int(match.group(6))
-        ok = (hour < 24 and minute < 60 and second < 60) or (hour, minute, second) == (24, 0, 0)
-    if not ok:
+    # The rules are lexical.py's, shared with the data import's engine, so
+    # what the form refuses is exactly what an import keeps as text.
+    if not lexical.valid(value, datatype):
+        _, name, expected = lexical.LEXICAL[datatype]
         raise CommandError(f'"{value}" is not a valid {name} (expected {expected}).')
 
 
@@ -2212,11 +2186,16 @@ class EditingService:
         self._lock = threading.Lock()
         # How many drafts the timer has written; the autosave tests read it.
         self.drafts_written = 0
+        # The open projects' data snapshots (csv-data-import 5.6): not
+        # documents, so nothing here edits them, but they open and close
+        # with the project and join its views and its validation.
+        self.snapshots = SnapshotService(projects)
 
     def configure(self, projects: ProjectStore, store: OntologyStore) -> None:
         self.close_all()
         self.projects = projects
         self.store = store
+        self.snapshots.configure(projects)
 
     # --- opening and closing --------------------------------------------------
 
@@ -2262,6 +2241,9 @@ class EditingService:
                 # A project made before kinds is judged from its model (D-089).
                 self.projects.ensure_kind(pid, documents["model"].graph)
                 manifest = self.projects.manifest(pid)
+                # data.ttl is read now, so no view ever runs a mapping.
+                self.snapshots.load(pid)
+                documents["model"].ontology.snapshots = lambda: self.snapshots.active(pid)
                 self._open[pid] = documents
                 for document in documents.values():
                     self.store.register_document(document.ontology)
@@ -2316,6 +2298,7 @@ class EditingService:
                 if discard:
                     self._remove_draft(document)
             self.store.unregister_document(document.ontology.id)
+        self.snapshots.unload(pid)
         return {"closed": pid}
 
     def close_all(self) -> None:
@@ -2359,6 +2342,18 @@ class EditingService:
             model_doc = self._open[document.pid]["model"]
             model = lambda: self._model_view(model_doc)  # noqa: E731
         return Context(document.graph, manifest, imported, document.doc, model)
+
+    @contextlib.contextmanager
+    def model_reader(self, pid: str):
+        """(model with its imports, manifest, names) under the model's lock,
+        for the data wizard: what a row can be, and what a column can
+        become, are the model's classes, attributes and relationships."""
+        model_doc = self._project_documents(pid)["model"]
+        manifest = self.projects.manifest(pid)
+        languages = [manifest.get("primaryLanguage", "en"), *manifest.get("languages", [])]
+        with model_doc.lock:
+            model = self._model_view(model_doc)
+            yield model, manifest, lambda iri: pick_label_in(model, iri, languages)[0]
 
     @staticmethod
     def _model_view(model_doc: "OpenDocument") -> Graph:
@@ -2815,7 +2810,10 @@ class EditingService:
         """Check the model, unsaved changes and resolved imports included,
         against every shape (5.6). Copies are taken under each document's
         lock, one at a time, and checked outside both, so a long check never
-        holds up an edit and an edit never changes a check half way."""
+        holds up an edit and an edit never changes a check half way.
+
+        The switched-on data snapshots are checked too (csv-data-import
+        5.6), and each panel says which of them it found individuals in."""
         documents = self._project_documents(pid)
         manifest = self.projects.manifest(pid)
         languages = [manifest.get("primaryLanguage", "en"), *manifest.get("languages", [])]
@@ -2827,6 +2825,11 @@ class EditingService:
             for t in self._model_view(model_doc):
                 data.add(t)
             model_revision = model_doc.ontology.revision
+        generation, snapshots = self.snapshots.active(pid)
+        for graph, _ in snapshots:
+            for t in graph:
+                data.add(t)
+        sources = {URIRef(iri): sid for iri, (sid, _) in self.snapshots.origins(pid).items()}
         shapes = Graph()
         shapes_revision = None
         shapes_doc = documents.get("shapes")
@@ -2837,8 +2840,9 @@ class EditingService:
                 for t in shapes_doc.graph:
                     shapes.add(t)
                 shapes_revision = shapes_doc.ontology.revision
-        result = shacl.validate(data, shapes, languages, timeout)
-        result["revisions"] = {"model": model_revision, "shapes": shapes_revision}
+        result = shacl.validate(data, shapes, languages, timeout, sources=sources)
+        result["revisions"] = {"model": model_revision, "shapes": shapes_revision, "data": generation}
+        result["dataSources"] = [info for _, info in snapshots]
         return result
 
     # --- what the forms and the language menu read --------------------------------
