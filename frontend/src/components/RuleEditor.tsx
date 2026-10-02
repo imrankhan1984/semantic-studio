@@ -19,6 +19,11 @@ BASIC IDEA
     dates, allowed values for text, numbers and relationships, languages for
     names, definitions and text in a language.
 
+    *Points to* is a class picker, the relationship's end class by default
+    and available when it has none (Stage B follow-up 2); a date-and-time
+    range is entered in a date-and-time field, its seconds added when the
+    field leaves them out (follow-up 1).
+
     Invalid values keep Add aria-disabled with the sentence that says why
     (Section 6, ruleProblem), rather than sending a rule the server would
     refuse; the server checks again, and its refusal shows under the editor.
@@ -30,6 +35,7 @@ BASIC IDEA
     checked by building a RegExp, never ontology text.
 
 INPUTS / INPUT SOURCES (props)
+    - modelOntologyId: the model, which the class picker searches.
     - paths: what a rule can be about, from the suggestions route.
     - initial: the rule being edited, or null for a new one.
     - languages: the project's languages, primary first.

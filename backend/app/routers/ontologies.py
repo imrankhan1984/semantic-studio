@@ -45,7 +45,8 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - JSON responses (ontology summaries, graph, one entity's neighbourhood,
-      node details, search results, query schema, the queries stored in the
+      node details -- for a project's example, its classes and fields
+      (shacl-authoring 5.8) --, search results, query schema, the queries stored in the
       file, source text, SPARQL results)
       and appropriate HTTP errors:
       400 for a blocked address or refused query, 413 for a body over the cap,

@@ -28,6 +28,10 @@ BASIC IDEA
     free-text value and is escaped as a Turtle string; base and prefix are
     validated first, so neither can close the IRI or the prefix declaration
     they sit in. Every template is written in the project's primary language.
+    A template may ship starter shapes beside it, <template>.shapes.ttl,
+    rendered the same way and written as the project's shapes.ttl: the Small
+    one does, with two examples in its model, so a learner's first Validate
+    already shows red and green (shacl-authoring 5.8, row S23).
 
     Delete never destroys: the folder moves into projects/.trash/, and the
     trash is emptied by hand (open question 3, closed as recommended).
@@ -60,7 +64,8 @@ INPUTS / INPUT SOURCES
     - A library ontology's graph, for "Start a project from this".
 
 EXPECTED OUTPUT
-    - Project folders and manifests on disk, and manifest dicts for the API.
+    - Project folders and manifests on disk, and manifest dicts for the API;
+      a template's starter shapes.ttl where it has one.
     - <doc>.layout.json, read, validated and written atomically.
     - Raises ProjectError (400, a sentence), UnknownProject and UnknownDocument
       (404).

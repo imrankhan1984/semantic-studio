@@ -33,7 +33,11 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - ruleSentence, shapeSentence, rowSentence, panelHeader, panelName,
-      validationSummary, ruleProblem, languageName, plural.
+      validationSummary, ruleProblem, languageName, plural; and article,
+      pathWords, mustPhrase and dateTimeBound, Stage B's follow-ups 1 and 5:
+      a relationship read after *must* (*must work for*, *must be member
+      of*), a minimum of 0 left unsaid, a type and its length one phrase,
+      a rule without a label named by its path.
 ================================================================================
 */
 

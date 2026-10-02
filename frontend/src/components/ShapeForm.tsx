@@ -27,6 +27,12 @@ BASIC IDEA
 
     Delete counts the rules first, in a confirmation, before DeleteShape.
 
+    Focus is never left on the page (Stage B follow-up 6, row S19): Cancel in
+    the rule editor returns it to the rule's Edit, a saved rule's Edit takes
+    it, and Remove gives it to the next rule, else + Add a rule. The
+    sentence has no live region of its own: the project's announces each
+    change once (follow-up 7).
+
 INPUTS / INPUT SOURCES (props)
     - projectId, shape, modelOntologyId (the class picker searches the
       model), languages, revisions (to refetch suggestions).

@@ -29,12 +29,13 @@ EXPECTED OUTPUT
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { openProject, runCommand, getShapes, getShapeSuggestions, validateProject } = vi.hoisted(() => ({
+const { openProject, runCommand, getShapes, getShapeSuggestions, validateProject, searchNodes } = vi.hoisted(() => ({
   openProject: vi.fn(),
   runCommand: vi.fn(),
   getShapes: vi.fn(),
   getShapeSuggestions: vi.fn(),
   validateProject: vi.fn(),
+  searchNodes: vi.fn(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -44,6 +45,7 @@ vi.mock("../api", async (importOriginal) => ({
   getShapes,
   getShapeSuggestions,
   validateProject,
+  searchNodes,
 }));
 
 import { projectStore } from "../state/projectStore";
@@ -380,5 +382,136 @@ describe("ShapesView: the form", () => {
     });
     expect(screen.getByText("Choose what the shape applies to, and the model suggests rules for it.")).toBeTruthy();
     expect(screen.queryByText("Reading the model…")).toBeNull();
+  });
+});
+
+describe("ShapesView: Stage A follow-ups fixed in Stage B (5.9)", () => {
+  async function openPerson(shapes: ShapeForm[] = [PERSON]) {
+    await setup(shapes);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Person rules/ }));
+    });
+  }
+
+  /** The timer a focus move is scheduled on, run. */
+  async function settle() {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+
+  const BIRTH = { path: [`${X}birthDate`], pathLabel: "birth date", pathKind: "attribute" as const, maxCount: 1 };
+
+  it("returns focus to a rule's Edit after Cancel (item 6, row S19)", async () => {
+    await openPerson();
+    fireEvent.click(screen.getByRole("button", { name: "Edit the rule on name" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await settle();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Edit the rule on name" }));
+  });
+
+  it("gives focus to the next rule after Remove (item 6)", async () => {
+    await openPerson([{ ...PERSON, rules: [BIRTH, ...PERSON.rules] }]);
+    runCommand.mockResolvedValue(changed("Removed the rule on birth date"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove the rule on birth date" }));
+    });
+    await settle();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Edit the rule on name" }));
+  });
+
+  it("sends focus to + Add a rule when the only rule goes", async () => {
+    await openPerson();
+    runCommand.mockResolvedValue(changed("Removed the rule on name"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove the rule on name" }));
+    });
+    await settle();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "+ Add a rule" }));
+  });
+
+  it("leaves announcing to the project's live region: the sentence has none of its own (item 7)", async () => {
+    await openPerson();
+    const sentence = screen.getByText("Every Person must have a name.");
+    expect(sentence.closest("[aria-live]")).toBeNull();
+  });
+
+  it("names a rule without a label by its path, never undefined (item 5)", async () => {
+    await openPerson([{ ...PERSON, rules: [{ path: [`${X}nickname`], pathKind: "other", minCount: 1 }] }]);
+    expect(screen.getByRole("button", { name: "Edit the rule on nickname" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /undefined/ })).toBeNull();
+  });
+
+  it("enters a date-and-time range in a date-and-time field, seconds added (item 1)", async () => {
+    await setup([PERSON]);
+    getShapeSuggestions.mockResolvedValue({
+      paths: [{ path: [`${X}startsAt`], label: "starts at", kind: "attribute", datatype: "xsd:dateTime", functional: false }],
+      suggestions: [],
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Person rules/ }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "+ Add a rule" }));
+    fireEvent.change(screen.getByLabelText("What is the rule about?"), { target: { value: `${X}startsAt` } });
+    expect(screen.getByText("Date and time range")).toBeTruthy();
+    const low = screen.getByLabelText("at least", { selector: "input" }) as HTMLInputElement;
+    expect(low.type).toBe("datetime-local");
+    fireEvent.change(low, { target: { value: "2020-01-01T10:00" } });
+    runCommand.mockResolvedValue(changed("Added a rule on starts at"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
+    });
+    expect(runCommand.mock.calls[0][3].rule.minInclusive).toEqual({ value: "2020-01-01T10:00:00", datatype: "xsd:dateTime" });
+  });
+
+  it("offers a class picker for points to, and one when the relationship has no end class (item 2)", async () => {
+    await setup([PERSON]);
+    getShapeSuggestions.mockResolvedValue({
+      paths: [
+        ...SUGGESTIONS.paths,
+        { path: [`${X}knows`], label: "knows", kind: "relationship", range: null, rangeLabel: null, functional: false },
+      ],
+      suggestions: [],
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Person rules/ }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "+ Add a rule" }));
+    fireEvent.change(screen.getByLabelText("What is the rule about?"), { target: { value: `${X}knows` } });
+    expect(screen.getByText(/Not checked: this relationship has no end class/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Choose a class" }));
+    searchNodes.mockResolvedValue([{ id: `${X}Person`, label: "Person", kind: "class", degree: 1 }]);
+    const field = screen.getByRole("combobox", { name: "Each value must be of the class" });
+    await act(async () => {
+      fireEvent.change(field, { target: { value: "Per" } });
+      await new Promise((r) => setTimeout(r, 250));
+    });
+    fireEvent.keyDown(field, { key: "ArrowDown" });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await settle();
+    expect(screen.getByText("Each value must be a Person")).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Change class" }));
+    runCommand.mockResolvedValue(changed("Added a rule on knows"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
+    });
+    expect(runCommand.mock.calls[0][3].rule).toMatchObject({ path: [`${X}knows`], class: `${X}Person`, classLabel: "Person" });
+  });
+
+  it("keeps a blank-node shape selected when a Turtle apply gives it a new id (item 8)", async () => {
+    const blank: ShapeForm = { ...PERSON, id: "_:b1", iri: null, name: "Unnamed shape", named: false };
+    await setup([blank]);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Unnamed shape/ }));
+    });
+    expect(screen.getByRole("heading", { name: "Unnamed shape" })).toBeTruthy();
+    // The editor's apply re-parses shapes.ttl: the same shape, a new _: id.
+    getShapes.mockResolvedValue(listing([{ ...blank, id: "_:b7" }]));
+    await act(async () => {
+      projectStore.applied({ revision: 3, label: "Applied the Turtle", state: doc("shapes", 3) } as never);
+    });
+    await settle();
+    expect(screen.getByRole("heading", { name: "Unnamed shape" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Unnamed shape/ }).getAttribute("aria-pressed")).toBe("true");
   });
 });

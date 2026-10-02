@@ -27,6 +27,11 @@ BASIC IDEA
     takes a document as well, for the Shapes view's commands on shapes.ttl;
     the first one creates that file, and the store then tracks it.
 
+    Validation runs one check at a time, and a check that outlives its
+    project -- closed, or another opened -- is ignored when it answers: its
+    result, its announcement and its failure never reach the next project
+    (shacl-authoring Stage B, follow-up 3).
+
     Something holding writes for the open project -- the canvas, which saves
     its layout a second after a move -- registers a flush, and close() awaits
     every one before the server closes the project. A closed project refuses
@@ -461,6 +466,7 @@ export const projectStore = {
 
   /** For tests: back to nothing open. */
   _reset(): void {
+    validationRun++;
     snapshot = EMPTY;
     setApiLanguage(null);
     for (const listener of listeners) listener();

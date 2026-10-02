@@ -230,3 +230,88 @@ describe("ResultPanels", () => {
     expect(onError).toHaveBeenCalledWith("Open the project first.");
   });
 });
+
+describe("ResultPanels: Stage A follow-ups fixed in Stage B (5.9)", () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((r) => (resolve = r));
+    return { promise, resolve };
+  }
+
+  it("runs one check at a time: a second press while one runs sends nothing (item 3)", async () => {
+    await setup();
+    const pending = deferred<ValidationResult>();
+    validateProject.mockReturnValue(pending.promise);
+    await validate();
+    // The button is aria-disabled, not disabled, so a press still arrives.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Validating…" }));
+    });
+    await act(async () => {
+      await projectStore.validate();
+    });
+    expect(validateProject).toHaveBeenCalledTimes(1);
+    await act(async () => pending.resolve(RESULT));
+    expect(projectStore.getSnapshot().validating).toBe(false);
+  });
+
+  it("says nothing in the next project about a check that outlived its own (item 3)", async () => {
+    await setup();
+    const pending = deferred<ValidationResult>();
+    validateProject.mockReturnValue(pending.promise);
+    await validate();
+    expect(screen.getByRole("button", { name: "Validating…" }).getAttribute("aria-disabled")).toBe("true");
+    // Another project opens while the first one's check still runs.
+    openProject.mockResolvedValue({
+      project: { ...PROJECT, id: "prj-ba9876543210", name: "Library" },
+      documents: [doc("model", 1)], recovery: { available: false, draftTime: null },
+    });
+    await act(async () => {
+      await projectStore.open("prj-ba9876543210");
+    });
+    const opened = projectStore.getSnapshot().announcement.text;
+    // The new project's Validate is free at once, not when the old check ends.
+    expect(screen.getByRole("button", { name: "Validate" }).getAttribute("aria-disabled")).toBe("false");
+    await act(async () => pending.resolve(RESULT));
+    expect(projectStore.getSnapshot().validation).toBeNull();
+    expect(projectStore.getSnapshot().announcement.text).toBe(opened);
+    expect(projectStore.getSnapshot().validating).toBe(false);
+  });
+
+  it("drops the failure of a check that outlived its project, rather than showing it in the next", async () => {
+    await setup();
+    const pending = deferred<ValidationResult>();
+    validateProject.mockReturnValue(pending.promise.then(() => Promise.reject(new Error("Gone."))));
+    await validate();
+    openProject.mockResolvedValue({
+      project: { ...PROJECT, id: "prj-ba9876543210" },
+      documents: [doc("model", 1)], recovery: { available: false, draftTime: null },
+    });
+    await act(async () => {
+      await projectStore.open("prj-ba9876543210");
+    });
+    await act(async () => pending.resolve(RESULT));
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("says why Validate cannot run in text tied to it, not only a tooltip (item 7)", async () => {
+    openProject.mockResolvedValue({ project: PROJECT, documents: [doc("model", 2)], recovery: { available: false, draftTime: null } });
+    await projectStore.open(PROJECT.id);
+    await act(async () => {
+      render(<ValidateButton onError={vi.fn()} blocked="Apply the text in the editor first." />);
+    });
+    const button = screen.getByRole("button", { name: "Validate" });
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    const reason = document.getElementById(button.getAttribute("aria-describedby") ?? "");
+    expect(reason?.textContent).toBe("Apply the text in the editor first.");
+  });
+
+  it("points a class with nothing to check at Add an example (item 8)", async () => {
+    await setup();
+    await validate();
+    fireEvent.click(screen.getByRole("button", { name: /Nothing to check\. Invoice rules/ }));
+    expect(
+      screen.getByText("No Invoice is in the data yet, so there is nothing to check. Add an example from the Invoice form, then validate again."),
+    ).toBeTruthy();
+  });
+});

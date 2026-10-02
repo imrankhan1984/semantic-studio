@@ -35,6 +35,14 @@ BASIC IDEA
     other, a loop of broader or sub-relationship links -- are modeling_checks'
     sentences, raised the same way.
 
+    Examples (shacl-authoring 5.8) are individuals of the model's classes,
+    made so a shape has something to check: CreateExample types one with its
+    class and owl:NamedIndividual, and SetExampleValue, AddExampleValue and
+    RemoveExampleValue fill its attributes and relationships, an attribute's
+    value checked against its type of value as an annotation's is, so a
+    wrong one is refused with the type's sentence (row S22). What counts as
+    an example is examples.py's to say.
+
     A concept's place at the top of its scheme is kept by the commands, never
     by hand (D-091): CreateConcept joins the scheme and is a top concept when
     nothing above it is in the scheme, and AddBroader, RemoveBroader and a
@@ -75,7 +83,8 @@ INPUTS / INPUT SOURCES
       for the delete impact's import mentions.
 
 EXPECTED OUTPUT
-    - Mutated document graphs, new revisions, undo labels; a create or rename
+    - Mutated document graphs, new revisions, undo labels; a create (an
+      example's too) or rename
       command's result names the entity's IRI (`created`), so the interface
       can select it.
     - Files: <doc>.ttl on save, <doc>.original.ttl once, .draft/<doc>.ttl and

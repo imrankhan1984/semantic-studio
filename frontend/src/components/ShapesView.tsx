@@ -24,6 +24,10 @@ BASIC IDEA
     (never colour alone), and marked stale when either document changed
     since.
 
+    A shape written as a blank node gets a new id with every Turtle apply;
+    the view finds it again by its name and target, so it stays selected
+    (Stage B follow-up 8).
+
     The list is a set of buttons with aria-pressed rather than a listbox:
     each row is one action (open this shape), and a keyboard user reaches it
     with Tab like every other control in the panel.

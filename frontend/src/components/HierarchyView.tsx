@@ -66,6 +66,11 @@ INPUTS / INPUT SOURCES (props)
       object and datatype property with its ends -- *works for (Person →
       Organization)*, *name (Person, text)* -- so every line on the canvas
       has a row (5.5, D-078).
+      A project's examples (shacl-authoring 5.8) have a section of their
+      own, *Examples*, each under its class. The class rows there are
+      headings, open from the start and with no actions, and the section
+      keeps its own expansion, so opening Person there leaves the class
+      tree as it was.
     - onDeleted: an entity was deleted from the tree.
     - canvas: past 300 boxes, the row menu's *Show on canvas* and *Hide from
       canvas* (visual-modeling 5.6).

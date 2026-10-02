@@ -31,6 +31,12 @@ BASIC IDEA
     shapes.ttl are decided by DetailPanel, which does not render this at all
     for them.
 
+    A class's form lists its examples and offers *Add an example*
+    (shacl-authoring 5.8); an example's form shows, in place of a class's
+    structure, which class it is an example of and one field per attribute
+    and relationship, ExampleForm.tsx, and keeps those values out of its
+    annotations.
+
     A relationship or an attribute opens on its sentence, PropertyHead in
     RelationshipForm.tsx; the warnings of the modeling checks stand under the
     blocks they concern (relationships 5.6, 5.9). The structure blocks are in EditStructure.tsx, the annotation adder in

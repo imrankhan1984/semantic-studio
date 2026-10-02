@@ -38,6 +38,10 @@ BASIC IDEA
     sh:NodeShape no other shape refers to. A shape only reached through
     another (`sh:node ex:AddressShape`) is part of that shape, not a row.
 
+    rdfs:label reads *name*, or *name (label)* when the model has an
+    attribute or relationship itself called "name", so the rule editor
+    never offers two paths with one word (Stage B, follow-up 4).
+
     Suggestions read the model with its resolved imports: the attributes and
     relationships whose start is the class or one of its parents, their
     *one value only*, and names and definitions. A suggestion whose every

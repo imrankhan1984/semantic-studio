@@ -43,6 +43,10 @@ EXPECTED OUTPUT
         "objectProperties":     forest,   # optional
         "datatypeProperties":   forest,   # optional
         "annotationProperties": forest,   # optional
+        # A project document's examples by class (shacl-authoring 5.8): each
+        # class that has one is a root, its examples its children; present
+        # only when there is one, its count the examples'.
+        "examples":             forest,   # optional
         "counts":   {"classes": int, "concepts": int, [<property key>: int, ...]},
         "truncated": bool,
       }

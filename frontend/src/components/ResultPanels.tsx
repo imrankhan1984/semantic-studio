@@ -28,6 +28,10 @@ BASIC IDEA
     (Section 10). The server sends at most 200 problems a panel and the true
     total, and the panel says *and 870 more*.
 
+    Why Validate cannot run is text beside it, tied with aria-describedby
+    (Stage B follow-up 7). A class with nothing to check points to *Add an
+    example* on its form, which Stage B made true (follow-up 8).
+
     A problem's name is a button: following it selects the individual and
     moves focus to its form (Section 6), which App arranges.
 
