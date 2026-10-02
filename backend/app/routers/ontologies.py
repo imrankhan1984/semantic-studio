@@ -85,7 +85,7 @@ from ..graph_builder import (
     node_details,
     search_nodes,
 )
-from .. import modeling_checks
+from .. import examples, modeling_checks
 from .. import imports as imports_mod
 from ..imports import imports_service
 from ..net_guard import BlockedAddress
@@ -579,6 +579,16 @@ def get_node(
         if details is not None and ontology.editable and details.get("kind") in PROPERTY_KINDS:
             name = labeler(ontology.graph, ontology.label_langs(lang))
             details["warnings"] = modeling_checks.warnings(ontology.graph, URIRef(iri), name)
+        # An example's form (shacl-authoring 5.8): its classes, and a field
+        # per attribute and relationship they have, from the same view the
+        # panel reads, so a class from an import gives its fields too.
+        if details is not None and ontology.editable and details.get("kind") in ("individual", "other"):
+            example = examples.example_view(
+                graph, URIRef(iri), labeler(graph, ontology.label_langs(lang)),
+                list(ontology.languages or ()), own=ontology.graph,
+            )
+            if example is not None:
+                details["example"] = example
     if details is None:
         raise HTTPException(status_code=404, detail=f"No triples found for {iri}")
     if imports:

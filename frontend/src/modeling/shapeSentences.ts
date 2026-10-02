@@ -81,8 +81,11 @@ const IRREGULAR: Record<string, string> = {
   class: "classes",
 };
 
-/** The plural of a noun phrase's last word. */
+/** The plural of a noun phrase's last word. A phrase that says which one in
+ *  brackets, *name (label)*, is the word before them: *names (label)*. */
 export function plural(phrase: string): string {
+  const note = phrase.endsWith(")") ? phrase.lastIndexOf(" (") : -1;
+  if (note > 0) return `${plural(phrase.slice(0, note))}${phrase.slice(note)}`;
   const at = phrase.lastIndexOf(" ");
   const head = at >= 0 ? phrase.slice(0, at + 1) : "";
   const last = phrase.slice(at + 1);
@@ -97,8 +100,38 @@ export function plural(phrase: string): string {
   return head + out;
 }
 
-function article(word: string): string {
+export function article(word: string): string {
   return /^[aeiou]/i.test(word) ? "an" : "a";
+}
+
+/** What a rule is about, in words: its label, or the path's last name when
+ *  it has none -- never "undefined" (Stage A follow-up 5). */
+export function pathWords(rule: Pick<ShapeRule, "path" | "pathLabel">): string {
+  if (rule.pathLabel) return rule.pathLabel;
+  const names = rule.path.map((iri) => iri.slice(Math.max(iri.lastIndexOf("#"), iri.lastIndexOf("/")) + 1) || iri);
+  return names.join(" or ") || "value";
+}
+
+/** A date and time as the server reads one: a field that shows no seconds
+ *  when they are zero gives "2020-01-01T10:00", which needs ":00". */
+export function dateTimeBound(value: string): string {
+  return /T\d{2}:\d{2}$/.test(value) ? `${value}:00` : value;
+}
+
+/** A relationship's name after *must*, so a shape reads as a sentence
+ *  (follow-up 5): *works for* -> *work for*, *has part* -> *have part*,
+ *  *is part of* -> *be part of*, and a name that is not a verb, *member
+ *  of*, -> *be member of*. */
+export function mustPhrase(label: string): string {
+  const [first, ...rest] = label.split(" ");
+  const tail = rest.length ? ` ${rest.join(" ")}` : "";
+  const lower = first.toLowerCase();
+  if (lower === "is" || lower === "are") return `be${tail}`;
+  if (lower === "has") return `have${tail}`;
+  if (rest.length && /^[a-z]+ies$/.test(lower)) return `${first.slice(0, -3)}y${tail}`;
+  if (rest.length && /^[a-z]+(ch|sh|ss|x)es$/.test(lower)) return `${first.slice(0, -2)}${tail}`;
+  if (rest.length && /^[a-z]{3,}[^su]s$/.test(lower)) return `${first.slice(0, -1)}${tail}`;
+  return `be ${label}`;
 }
 
 function listWords(items: string[], last = "and"): string {
@@ -143,8 +176,9 @@ function qualifiers(rule: ShapeRule, relationship: boolean): string[] {
 
 /** One rule, as the form lists it and the editor reads it back (5.3). */
 export function ruleSentence(rule: ShapeRule): string {
-  const label = rule.pathLabel ?? rule.path[0] ?? "value";
-  const min = rule.minCount;
+  const label = pathWords(rule);
+  // At least 0 says nothing: *between 0 and 3* reads *at most 3* (follow-up 5).
+  const min = rule.minCount === 0 ? undefined : rule.minCount;
   const max = rule.maxCount;
   const required = rule.requiredLanguages ?? [];
   if (rule.pathKind === "relationship") {
@@ -170,6 +204,11 @@ export function ruleSentence(rule: ShapeRule): string {
     head += ` in ${listWords(required.map(languageName))}`;
   }
   const quals = qualifiers(rule, false);
+  // A type and the length after it are one phrase: *as text of at most 20
+  // characters*, not *as text, of at most* (follow-up 5).
+  if (rule.datatype && quals.length > 1 && quals[1].startsWith("of ")) {
+    quals.splice(0, 2, `${quals[0]} ${quals[1]}`);
+  }
   // "may have phone numbers, each text of at most 20 characters".
   if (quals.length && (max === undefined || max > 1) && !(min === 1 && max === 1)) {
     quals[0] = `each ${quals[0].replace(/^as /, "")}`;
@@ -189,10 +228,10 @@ export function shapeSentence(shape: Pick<ShapeForm, "target" | "rules">): strin
   const who = everyWord(shape);
   if (!shape.rules.length) return `${who}: no rules yet.`;
   const parts = shape.rules.map((rule) =>
-    rule.pathKind === "relationship" ? `must be linked: ${ruleSentence(rule)}` : ruleSentence(rule),
+    rule.pathKind === "relationship" ? `must ${mustPhrase(ruleSentence(rule))}` : ruleSentence(rule),
   );
   // Rules carry their own commas, so the last one is joined by ", and":
-  // *…exactly one name, as text, and must be linked: …*
+  // *…exactly one name, as text, and must work for an Organization*
   const joined = parts.length > 1 ? `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}` : parts[0];
   return `${who} ${joined}.`;
 }
@@ -291,8 +330,16 @@ export function ruleProblem(rule: ShapeRule): string | null {
   for (const bound of [low, high]) {
     if (!bound) continue;
     const isDate = bound.datatype === "xsd:date" || bound.datatype === "xsd:dateTime";
-    const ok = isDate ? /^-?\d{4,}-\d{2}-\d{2}/.test(bound.value) : bound.value.trim() !== "" && Number.isFinite(Number(bound.value));
-    if (!ok) return isDate ? `"${bound.value}" is not a date (YYYY-MM-DD).` : `"${bound.value}" is not a number.`;
+    const withTime = bound.datatype === "xsd:dateTime";
+    const ok = withTime
+      ? /^-?\d{4,}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(bound.value)
+      : isDate
+        ? /^-?\d{4,}-\d{2}-\d{2}/.test(bound.value)
+        : bound.value.trim() !== "" && Number.isFinite(Number(bound.value));
+    if (!ok) {
+      if (withTime) return `"${bound.value}" is not a date and time (YYYY-MM-DDThh:mm:ss).`;
+      return isDate ? `"${bound.value}" is not a date (YYYY-MM-DD).` : `"${bound.value}" is not a number.`;
+    }
   }
   if (low && high && low.datatype === high.datatype) {
     const lower = low.datatype.startsWith("xsd:date") ? low.value > high.value : Number(low.value) > Number(high.value);

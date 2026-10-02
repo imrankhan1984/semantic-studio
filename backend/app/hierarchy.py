@@ -79,7 +79,8 @@ from .graph_builder import (
     prefixed,
     subclass_parents,
 )
-from .graph_builder import KIND_SCHEME
+from .graph_builder import KIND_INDIVIDUAL, KIND_SCHEME
+from . import examples as examples_mod
 from .query_schema import META_CLASSES
 
 # The three property forests, in priority order, paired with the response key
@@ -426,6 +427,23 @@ def _build_property_forests(
     return result
 
 
+def _build_examples_forest(
+    graph: Graph, label: Callable[[URIRef], str], own: Graph
+) -> tuple[dict, int]:
+    """A project's examples by class (shacl-authoring 5.8): each class that
+    has one is a root, its examples its children, an example of two classes
+    under both. The count is the examples', not the classes': it is what the
+    section is about."""
+    groups = examples_mod.by_class(graph, own)
+    members = {e for listed in groups.values() for e in listed}
+    nodes = set(groups) | members
+    parents = {e: {c for c, listed in groups.items() if e in listed and c != e} for e in members}
+    kind_of = {n: (KIND_INDIVIDUAL if n in members else KIND_CLASS) for n in nodes}
+    labels = {n: (label(n), prefixed(graph, n)) for n in nodes}
+    forest, _ = _forest(nodes, parents, labels, KIND_INDIVIDUAL, kind_of)
+    return forest, len(members)
+
+
 def _truncate(forest: dict, keep: int) -> dict:
     """Keep the `keep` most-connected nodes of a forest, dropping the rest.
 
@@ -497,6 +515,12 @@ def build_hierarchy(
         "concepts": (concepts, concept_total),
         **properties,
     }
+    # A project's examples, by class (shacl-authoring 5.8); only when it has
+    # one, so a library ontology and an empty project keep their shape.
+    if own is not None:
+        examples_forest, example_total = _build_examples_forest(graph, label, own)
+        if example_total:
+            forests["examples"] = (examples_forest, example_total)
 
     grand_total = sum(total for _, total in forests.values())
     truncated = grand_total > max_nodes
@@ -519,4 +543,6 @@ def build_hierarchy(
     for _, key in _PROPERTY_FORESTS:
         if key in properties:
             result[key] = forests[key][0]
+    if "examples" in forests:
+        result["examples"] = forests["examples"][0]
     return result

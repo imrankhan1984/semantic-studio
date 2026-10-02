@@ -174,6 +174,20 @@ def path_of(shapes: Graph, node) -> Optional[tuple]:
     return None
 
 
+def _name_taken(model: Graph, languages: list) -> bool:
+    """True when an attribute or relationship of the model is itself called
+    "name": then rdfs:label reads *name (label)*, or the rule editor and the
+    sentences would offer two paths both called "name" (Stage A follow-up 4).
+    Index lookups on the label, never a scan of every property."""
+    for text in ("name", "Name"):
+        for literal in (Literal(text), *(Literal(text, lang=tag) for tag in languages)):
+            for subject in model.subjects(RDFS.label, literal):
+                types = set(model.objects(subject, RDF.type))
+                if types & {OWL.DatatypeProperty, OWL.ObjectProperty}:
+                    return True
+    return False
+
+
 def path_label(model: Graph, path: tuple, languages: list) -> str:
     """The path in the learner's words: "definition", "name", or its label."""
     if tuple(path) == DEFINITION_PATH:
@@ -181,7 +195,7 @@ def path_label(model: Graph, path: tuple, languages: list) -> str:
     if len(path) == 1:
         iri = path[0]
         if iri == RDFS.label:
-            return "name"
+            return "name (label)" if _name_taken(model, languages) else "name"
         if iri == SKOS.prefLabel:
             return "preferred name"
         if iri == SKOS.definition:

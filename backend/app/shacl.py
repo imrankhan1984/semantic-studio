@@ -140,9 +140,14 @@ def language_name(tag: str) -> str:
 
 
 def plural(word: str) -> str:
-    """The plural of a noun phrase's last word, for counts in sentences."""
+    """The plural of a noun phrase's last word, for counts in sentences. A
+    word that says which one in brackets, *name (label)*, is the word before
+    the brackets: *names (label)*."""
     if not word:
         return word
+    if word.endswith(")") and " (" in word:
+        head, _, note = word.rpartition(" (")
+        return f"{plural(head)} ({note}"
     head, _, last = word.rpartition(" ")
     lower = last.lower()
     if lower in IRREGULAR:

@@ -322,6 +322,9 @@ function sectionsOf(
     { title: project ? "Relationships" : "Object properties", forest: data.objectProperties },
     { title: project ? "Attributes" : "Datatype properties", forest: data.datatypeProperties },
     { title: "Annotation properties", forest: data.annotationProperties },
+    // A project's examples, by class (shacl-authoring 5.8). Before the
+    // concepts, which a taxonomy moves to the front.
+    { title: EXAMPLES_SECTION, forest: project ? data.examples : undefined },
     { title: CONCEPT_SECTION, forest: data.concepts },
   ];
   // A taxonomy leads with its scheme: it is the model (5.1).
@@ -338,6 +341,7 @@ function sectionsOf(
 
 const CLASS_SECTION = "Class hierarchy";
 const CONCEPT_SECTION = "Concept hierarchy";
+const EXAMPLES_SECTION = "Examples";
 
 export default function HierarchyView({
   ontologyId,
@@ -423,12 +427,31 @@ export default function HierarchyView({
   /** A row of the other kind: shown, never changed here (D-089). */
   const fixedRow = useCallback((row: Row) => otherKindReason(kind, row.kind) !== null, [kind]);
 
+  // The Examples section (5.8) names classes the class tree names too, so it
+  // keeps its own expansion: opening Person here must not open it there.
+  // Its classes start open, since they are only headings for the examples,
+  // and they carry no actions: a class is changed in the class tree.
+  const [examplesClosed, setExamplesClosed] = useState<Set<string>>(new Set());
+  const examplesOpen = useMemo(
+    () => new Set((data?.examples?.roots ?? []).filter((id) => !examplesClosed.has(id))),
+    [data, examplesClosed],
+  );
+  const toggleExamples = useCallback((id: string, next: boolean) => {
+    setExamplesClosed((prev) => {
+      const set = new Set(prev);
+      if (next) set.delete(id);
+      else set.add(id);
+      return set;
+    });
+  }, []);
+  const fixedExampleRow = useCallback((row: Row) => row.kind !== "individual" || fixedRow(row), [fixedRow]);
+
   // --- the project's actions (5.2) ------------------------------------------
   const sectionRef = useRef<HTMLElement>(null);
   const [creating, setCreating] = useState<Creating | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<{ iri: string; label: string } | null>(null);
-  const [menu, setMenu] = useState<{ row: Row; anchor: { top: number; left: number } } | null>(null);
+  const [menu, setMenu] = useState<{ row: Row; anchor: { top: number; left: number }; fixed: boolean } | null>(null);
   const [reveal, setReveal] = useState<string | null>(null);
   const runner = useRunner();
   const { busy, run, clear } = runner;
@@ -649,16 +672,19 @@ export default function HierarchyView({
 
       {data && sections.length > 0 && (
         <div className="hierarchy-forests">
-          {sections.map((section) => (
+          {sections.map((section) => {
+            const isExamples = section.title === EXAMPLES_SECTION;
+            const fixed = isExamples ? fixedExampleRow : fixedRow;
+            return (
             <Forest
               key={section.title}
               title={section.title}
               forest={section.forest}
               filter={filter}
-              expanded={expanded}
+              expanded={isExamples ? examplesOpen : expanded}
               selected={selected}
               theme={theme}
-              onToggle={toggle}
+              onToggle={isExamples ? toggleExamples : toggle}
               onSelect={onSelect}
               header={header(section.title)}
               editable={editing !== null}
@@ -666,12 +692,13 @@ export default function HierarchyView({
               renameValue={(row) => (language === null || language === editing?.primaryLanguage ? row.label : "")}
               busy={busy}
               onRename={(row, value) => void rename(row, value)}
-              onMenu={(row, anchor) => setMenu({ row, anchor })}
-              fixedRow={fixedRow}
+              onMenu={(row, anchor) => setMenu({ row, anchor, fixed: fixed(row) })}
+              fixedRow={fixed}
               reveal={reveal}
               onRevealed={() => setReveal(null)}
             />
-          ))}
+            );
+          })}
         </div>
       )}
       {menu && (
@@ -681,7 +708,7 @@ export default function HierarchyView({
             menu.row.kind,
             Boolean(menu.row.importedFrom),
             canvas ? { limited: canvas.limited, shown: canvas.shown.includes(menu.row.id) } : null,
-            fixedRow(menu.row),
+            menu.fixed,
           )}
           anchor={menu.anchor}
           onChoose={(action) => choose(menu.row, action)}

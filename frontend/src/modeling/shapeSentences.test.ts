@@ -54,7 +54,8 @@ describe("ruleSentence", () => {
 
   it("reads 5.3's example", () => {
     expect(ruleSentence({ ...phone, minCount: 1, maxCount: 3, datatype: "xsd:string", maxLength: 20 })).toBe(
-      "must have between 1 and 3 phone numbers, each text, of at most 20 characters",
+      // 5.3's own words: the type and its length are one phrase (follow-up 5).
+      "must have between 1 and 3 phone numbers, each text of at most 20 characters",
     );
   });
 
@@ -96,7 +97,8 @@ describe("shapeSentence and rowSentence", () => {
 
   it("reads the whole shape back from its rules", () => {
     expect(shapeSentence(shape)).toBe(
-      "Every Person must have exactly one name, as text, and must be linked: works for an Organization.",
+      // 5.3's own words: *must work for*, not *must be linked: works for* (follow-up 5).
+      "Every Person must have exactly one name, as text, and must work for an Organization.",
     );
     expect(shapeSentence({ ...shape, rules: [] })).toBe("Every Person: no rules yet.");
     expect(shapeSentence({ target: { iri: "owl:Class", label: "Class", every: "every class" }, rules: [] })).toBe(

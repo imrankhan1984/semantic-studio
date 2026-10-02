@@ -60,6 +60,7 @@ EXPECTED OUTPUT
 import { useMemo, useState } from "react";
 import { linkTarget } from "../links";
 import { entityModel, structureOf, type Annotation } from "../modeling/entity";
+import { examplesOf } from "../modeling/examples";
 import { otherKindReason } from "../modeling/sentences";
 import { describeValue, typeOfValue, valueProblem, toValue } from "../modeling/values";
 import type { CanvasSet, NodeDetails, ProjectKind } from "../types";
@@ -67,6 +68,7 @@ import AnnotationAdder, { ValueInput } from "./AnnotationAdder";
 import DeleteDialog from "./DeleteDialog";
 import { Block, InlineText, useCopy, useReturnFocus, useRunner, type Runner } from "./EditParts";
 import EditStructure from "./EditStructure";
+import ExampleForm from "./ExampleForm";
 import NewEntityForm from "./NewEntityForm";
 import { PropertyHead } from "./RelationshipForm";
 
@@ -108,6 +110,7 @@ export default function EditSection({
   const [addRef, returnToAdd] = useReturnFocus();
   const [renameRef, returnToRename] = useReturnFocus();
   const [importRef, returnToImport] = useReturnFocus();
+  const [exampleRef, returnToExample] = useReturnFocus();
   /** Select what a command made, unless the user went elsewhere meanwhile. */
   const follow = (created: string | undefined) => {
     if (created && alive()) onSelect(created);
@@ -116,6 +119,7 @@ export default function EditSection({
   const [deleting, setDeleting] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [subclassOfImport, setSubclassOfImport] = useState(false);
+  const [addingExample, setAddingExample] = useState(false);
   const iri = details.iri;
   const name = details.label;
 
@@ -201,6 +205,10 @@ export default function EditSection({
   };
 
   const langs = [primaryLanguage, ...languages.filter((l) => l !== primaryLanguage)];
+  // An example's values are its fields, not annotations (shacl-authoring 5.8).
+  const fieldProperties = new Set(details.example?.fields.map((f) => f.property) ?? []);
+  const annotations = model.annotations.filter((a) => !fieldProperties.has(a.property.iri));
+  const examples = model.kind === "class" ? examplesOf(details) : [];
   return (
     <section className="edit-section" aria-label="Edit" aria-busy={busy}>
       <h3>Edit</h3>
@@ -271,9 +279,9 @@ export default function EditSection({
       </Block>
 
       <Block title="Annotations">
-        {model.annotations.length === 0 && <p className="detail-note">No other annotations.</p>}
+        {annotations.length === 0 && <p className="detail-note">No other annotations.</p>}
         <ul className="edit-list">
-          {model.annotations.map((a) => (
+          {annotations.map((a) => (
             <AnnotationRow
               key={annotationKey(a)}
               annotation={a}
@@ -302,17 +310,72 @@ export default function EditSection({
         )}
       </Block>
 
-      <EditStructure
-        ontologyId={ontologyId}
-        iri={iri}
-        name={name}
-        model={model}
-        primaryLanguage={primaryLanguage}
-        runner={runner}
-        onSelect={onSelect}
-        follow={follow}
-        warnings={details.warnings ?? []}
-      />
+      {details.example ? (
+        <ExampleForm
+          iri={iri}
+          name={name}
+          example={details.example}
+          primaryLanguage={primaryLanguage}
+          languages={languages}
+          runner={runner}
+          onSelect={onSelect}
+        />
+      ) : (
+        <EditStructure
+          ontologyId={ontologyId}
+          iri={iri}
+          name={name}
+          model={model}
+          primaryLanguage={primaryLanguage}
+          runner={runner}
+          onSelect={onSelect}
+          follow={follow}
+          warnings={details.warnings ?? []}
+        />
+      )}
+
+      {model.kind === "class" && (
+        // 5.8: examples of the class, so a shape has something to check.
+        <Block title="Examples">
+          {examples.length === 0 ? (
+            <p className="detail-note">No examples yet. Add one, and a shape on {name} has something to check.</p>
+          ) : (
+            <ul className="edit-list">
+              {examples.map((e) => (
+                <li key={e.iri}>
+                  <button type="button" className="link-btn" onClick={() => onSelect(e.iri)}>
+                    {e.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {addingExample ? (
+            <NewEntityForm
+              title={`New example of ${name}`}
+              primaryLanguage={primaryLanguage}
+              busy={busy}
+              error={errors.example}
+              submitLabel="Add example"
+              onCancel={() => {
+                setAddingExample(false);
+                returnToExample();
+              }}
+              onSubmit={async ({ name: label, iri: chosen }) => {
+                const result = await run("example", "CreateExample", { class: iri, label, iri: chosen });
+                if (result) {
+                  setAddingExample(false);
+                  follow(result.created);
+                }
+              }}
+            />
+          ) : (
+            <button ref={exampleRef} type="button" className="ghost" onClick={() => setAddingExample(true)}>
+              Add an example
+            </button>
+          )}
+        </Block>
+      )}
 
       <Block title="Identifier">
         <div className="edit-value">

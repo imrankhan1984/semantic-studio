@@ -114,6 +114,10 @@ const EMPTY: ProjectSnapshot = {
 };
 
 let snapshot: ProjectSnapshot = EMPTY;
+// Which validation is the current one. Opening, closing or forgetting a
+// project moves it on, so a check still running for the old project is
+// ignored when it answers (shacl-authoring Stage A follow-up 3).
+let validationRun = 0;
 const listeners = new Set<() => void>();
 // Pending writes to wait for before the project closes (the canvas layout).
 const flushes = new Set<() => Promise<void>>();
@@ -218,6 +222,7 @@ export const projectStore = {
   /** Open a project and make it current. Returns the model's ontology id. */
   async open(pid: string): Promise<string> {
     const opened = await openProject(pid);
+    validationRun++;
     set({
       ...EMPTY,
       announcement: snapshot.announcement,
@@ -240,12 +245,14 @@ export const projectStore = {
     const project = snapshot.project;
     await flushAll();
     if (project) await closeProject(project.id, discard);
+    validationRun++;
     set({ ...EMPTY, announcement: snapshot.announcement });
   },
 
   /** Forget the open project without telling the server: for a project that
    *  was deleted or failed to open. */
   reset(): void {
+    validationRun++;
     set({ ...EMPTY, announcement: snapshot.announcement });
   },
 
@@ -311,17 +318,32 @@ export const projectStore = {
   /** Validate the open project, on demand only (5.6). The previous result
    *  stays, dimmed by the views, until this one replaces it; the live region
    *  reads the summary (Section 6). */
-  async validate(): Promise<ValidationResult> {
+  async validate(): Promise<ValidationResult | null> {
     const project = requireProject();
+    // One check at a time: a second press while one runs is not a second
+    // request (Stage A follow-up 3).
+    if (snapshot.validating) return null;
+    const run = ++validationRun;
     set({ validating: true });
     announce("Validating…");
+    const stale = () => run !== validationRun || snapshot.project?.id !== project.id;
     try {
-      const result = await validateProject(project.id);
-      if (snapshot.project?.id === project.id) set({ validation: result });
+      let result: ValidationResult;
+      try {
+        result = await validateProject(project.id);
+      } catch (e) {
+        // Nor does its failure reach the next project's error bar.
+        if (stale()) return null;
+        throw e;
+      }
+      // A check that outlived its project -- closed, or another opened --
+      // says nothing in the next one and leaves its Validate alone.
+      if (stale()) return null;
+      set({ validation: result });
       announce(validationSummary(result));
       return result;
     } finally {
-      set({ validating: false });
+      if (run === validationRun) set({ validating: false });
     }
   },
 

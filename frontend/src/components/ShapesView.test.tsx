@@ -271,7 +271,10 @@ describe("ShapesView: the form", () => {
     await openPerson();
     fireEvent.click(screen.getByRole("button", { name: "+ Add a rule" }));
     fireEvent.change(screen.getByLabelText("What is the rule about?"), { target: { value: `${X}worksFor` } });
-    expect((screen.getByLabelText(/Each value must be an/) as HTMLInputElement).checked).toBe(true);
+    // The relationship's end class by default, with a picker to change it
+    // (Stage A follow-up 2), no longer a checkbox.
+    expect(screen.getByText("Each value must be an Organization")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Change class" })).toBeTruthy();
     expect(screen.getByText("Reads: works for an Organization.")).toBeTruthy();
     expect(screen.queryByLabelText("Type of value")).toBeNull();
   });

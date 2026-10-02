@@ -408,12 +408,16 @@ export interface Hierarchy {
   objectProperties?: HierarchyForest;
   datatypeProperties?: HierarchyForest;
   annotationProperties?: HierarchyForest;
+  // A project's examples by class (shacl-authoring 5.8): each class that has
+  // one is a root, its examples its children. Absent when there are none.
+  examples?: HierarchyForest;
   counts: {
     classes: number;
     concepts: number;
     objectProperties?: number;
     datatypeProperties?: number;
     annotationProperties?: number;
+    examples?: number;
   };
   truncated: boolean;
 }
@@ -451,6 +455,30 @@ export interface NodeDetails {
   // A project's relationship or attribute: the modeling checks' warnings
   // (relationships 5.9), each with the command that fixes it, if one does.
   warnings?: ModelWarning[];
+  // A project's example (shacl-authoring 5.8): its classes, and one field per
+  // attribute and relationship they have, own and inherited.
+  example?: ExampleInfo;
+}
+
+export interface ExampleInfo {
+  classes: { iri: string; label: string }[];
+  fields: ExampleField[];
+}
+
+export interface ExampleField {
+  property: string;
+  label: string;
+  kind: "attribute" | "relationship";
+  functional: boolean;
+  values: (AnnotationValue & { label?: string })[];
+  // An attribute's type of value, as xsd:name; null when it has none.
+  datatype?: string | null;
+  // A relationship's end class, and the examples it may point to (capped,
+  // with the true total).
+  range?: string | null;
+  rangeLabel?: string | null;
+  options?: { iri: string; label: string }[];
+  optionsTotal?: number;
 }
 
 export interface ModelWarning {
