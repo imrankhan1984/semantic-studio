@@ -9,6 +9,9 @@ SUMMARY
     the tool's limits enforced while reading, and the rows kept -- never more
     than 2,000 (D-098). Also what the wizard's first two steps show: the
     first rows, each column's make-up, the identifier and name suggestions.
+    Stage B (5.8): an Excel workbook's chosen sheet, from a chosen header
+    row, read into the same table under the same limits, after Section 9's
+    defences have judged the workbook without parsing any of it.
 
 BASIC IDEA
     A file is bytes from the browser and untrusted. It is refused past 5 MB
@@ -37,13 +40,36 @@ BASIC IDEA
     preview, the engine and the copy written into the project see the same
     text.
 
+    A workbook is a ZIP of XML and untrusted in new ways (Section 9), so
+    before openpyxl opens it: a macro-enabled or password-protected file,
+    an Excel 97 one and anything that is not a ZIP are refused by name and
+    first bytes; the ZIP's directory is refused past 100 MB unpacked or a
+    100:1 ratio (a decompression bomb); every entry is then read to its end
+    in bounded chunks, so its CRC proves its declared size, and refused if
+    it holds a document type declaration, which Excel never writes and an
+    entity attack needs. Only then does openpyxl read it, read-only and
+    data_only (a formula gives its last saved value, never run), its XML
+    through defusedxml -- and if openpyxl would not use defusedxml, the
+    workbook is refused rather than parsed.
+
+    A sheet becomes the same Table a CSV file does: rows above the header
+    row skipped, empty rows not counted, each cell as the text the type
+    rule reads (a whole number without ".0", a date as xsd:date, with a
+    time as xsd:dateTime), at most 100 columns and 32,767 characters a
+    cell, 2,000 rows kept per sheet and all counted. Its rows come from
+    openpyxl's parser rather than its row iterator, which pads every row to
+    the sheet's widest column and fills every missing row.
+
 INPUTS / INPUT SOURCES
-    - The file's bytes; optionally the separator, encoding and header flag
-      the user chose instead of the detected ones.
+    - The file's bytes and the name the browser gave it; optionally the
+      separator, encoding and header flag the user chose instead of the
+      detected ones, or a workbook's sheet and header row.
 
 EXPECTED OUTPUT
     - read_table(...) -> Table: columns, at most 2,000 rows, the true total,
       the dialect used and the renamings.
+    - read_workbook(...) -> the same Table for a sheet, with the workbook's
+      sheets and first rows; read_file(...) picks CSV or workbook.
     - inspect(table) -> the JSON the wizard's first step shows.
     - write_csv(table, ...) -> the bytes of the copy kept in the project.
     - TabularError, a sentence, for anything refused; its `kind` says which
@@ -54,8 +80,12 @@ EXPECTED OUTPUT
 from __future__ import annotations
 
 import csv
+import datetime
+import decimal
 import io
 import re
+import zipfile
+import zlib
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -96,6 +126,8 @@ class Table:
     encoding: str
     header: bool
     renamed: list[dict] = field(default_factory=list)
+    # A workbook's sheets, the one read and its header row (5.8); None for CSV.
+    workbook: Optional[dict] = None
 
     @property
     def sample(self) -> bool:
@@ -256,6 +288,359 @@ def read_table(
 
 
 # ---------------------------------------------------------------------------
+# Excel (Stage B, 5.8 and Section 9)
+# ---------------------------------------------------------------------------
+
+# Section 9: a workbook is a ZIP of XML, refused before openpyxl sees it when
+# its entries would unpack past this, or pack tighter than this ratio.
+XLSX_MAX_UNPACKED = 100 * 1024 * 1024
+XLSX_MAX_RATIO = 100
+# An entry smaller than this may pack tighter (a near-empty sheet XML does);
+# the total's ratio still counts it.
+_RATIO_FLOOR = 1024 * 1024
+# The physical rows offered as header rows in step 1 (5.8).
+HEADER_ROWS_SHOWN = 20
+MAX_HEADER_ROW = 1_048_576  # Excel's last row
+
+_ZIP = b"PK\x03\x04"
+_OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+# An encrypted .xlsx is an OLE container holding this stream, by its UTF-16 name.
+_ENCRYPTED = "EncryptedPackage".encode("utf-16-le")
+_REFUSED_SUFFIXES = {
+    ".xlsm": "a macro-enabled workbook (.xlsm), which Semantic Studio does not accept: "
+             "save it as an Excel workbook (.xlsx)",
+    ".xltm": "a macro-enabled template (.xltm), which Semantic Studio does not accept: "
+             "save it as an Excel workbook (.xlsx)",
+    ".xlsb": "a binary workbook (.xlsb): save it as an Excel workbook (.xlsx) or as CSV",
+    ".xls": "an Excel 97-2003 workbook (.xls): save it as an Excel workbook (.xlsx) or as CSV",
+    ".ods": "an OpenDocument spreadsheet (.ods): save it as an Excel workbook (.xlsx) or as CSV",
+}
+# Excel never writes a document type declaration; one in a workbook is an
+# entity attack. Searched as bytes in both encodings XML allows.
+_DTD_MARKS = tuple(
+    mark.encode(enc) for mark in ("<!DOCTYPE", "<!ENTITY") for enc in ("utf-8", "utf-16-le", "utf-16-be")
+)
+
+
+def _suffix(filename: str) -> str:
+    name = re.split(r"[\\/]", filename or "")[-1].lower()
+    return name[name.rfind("."):] if "." in name else ""
+
+
+def is_workbook(data: bytes, filename: str = "") -> bool:
+    """Whether the file is read as a workbook: by its name, or by its first
+    bytes when the name says nothing -- a ZIP or an OLE container is never
+    CSV text."""
+    suffix = _suffix(filename)
+    if suffix in (".csv", ".txt", ".tsv"):
+        return data.startswith(_ZIP) or data.startswith(_OLE)
+    return suffix in (".xlsx", ".xltx", *_REFUSED_SUFFIXES) or data.startswith((_ZIP, _OLE))
+
+
+def check_workbook(data: bytes, filename: str = "") -> None:
+    """Section 9's defences, all before openpyxl opens anything. Only the
+    ZIP's central directory and the raw bytes of its entries are read here;
+    no XML is parsed."""
+    suffix = _suffix(filename)
+    if suffix in _REFUSED_SUFFIXES:
+        raise TabularError(f"This file is {_REFUSED_SUFFIXES[suffix]}.", "not-text")
+    if data.startswith(_OLE):
+        if _ENCRYPTED in data:
+            raise TabularError(
+                "This workbook is password protected. Open it in Excel, remove the password, "
+                "and save it again.",
+                "not-text",
+            )
+        raise TabularError(f"This file is {_REFUSED_SUFFIXES['.xls']}.", "not-text")
+    if not data.startswith(_ZIP):
+        raise TabularError("This file is not an Excel workbook (.xlsx).", "not-text")
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+        entries = archive.infolist()
+    except (zipfile.BadZipFile, OSError, ValueError) as exc:
+        raise TabularError("This file is not an Excel workbook (.xlsx): it is a damaged ZIP.") from exc
+    unpacked = sum(e.file_size for e in entries)
+    packed = sum(e.compress_size for e in entries)
+    bomb = (
+        "This workbook would unpack to {what}. Semantic Studio refuses a workbook that unpacks "
+        f"past {XLSX_MAX_UNPACKED // (1024 * 1024)} MB or more than {XLSX_MAX_RATIO} times its "
+        "size: that is how a decompression bomb looks."
+    )
+    if unpacked > XLSX_MAX_UNPACKED:
+        raise TabularError(bomb.format(what=f"{unpacked / (1024 * 1024):,.0f} MB"), "too-large")
+    if unpacked > XLSX_MAX_RATIO * max(packed, 1):
+        raise TabularError(bomb.format(what=f"{unpacked // max(packed, 1):,} times its size"), "too-large")
+    for entry in entries:
+        if entry.file_size >= _RATIO_FLOOR and entry.file_size > XLSX_MAX_RATIO * max(entry.compress_size, 1):
+            raise TabularError(
+                bomb.format(what=f"{entry.file_size // max(entry.compress_size, 1):,} times its size"),
+                "too-large",
+            )
+        if entry.flag_bits & 0x1:
+            raise TabularError(
+                "This workbook is password protected. Open it in Excel, remove the password, "
+                "and save it again.",
+                "not-text",
+            )
+    names = {e.filename.lower() for e in entries}
+    if any(n.endswith("vbaproject.bin") for n in names):
+        raise TabularError(f"This file is {_REFUSED_SUFFIXES['.xlsm']}.", "not-text")
+    try:
+        # Every entry is read to its end before openpyxl sees any: its CRC
+        # is checked there, so an entry whose data inflates past its
+        # declared size -- which the checks above trusted -- fails here.
+        # In chunks, never ZipFile.read: that inflates an entry's whole
+        # compressed data in one call before cutting it to the declared
+        # size, so a lying entry would be a bomb after all (found by
+        # test_xlsx_defences).
+        for entry in entries:
+            if not entry.is_dir():
+                _scan_entry(archive, entry)
+    except (zipfile.BadZipFile, OSError, ValueError, EOFError, zlib.error, NotImplementedError) as exc:
+        if isinstance(exc, TabularError):
+            raise
+        raise TabularError("This file is not an Excel workbook (.xlsx): it is a damaged ZIP.") from exc
+
+
+_SCAN_CHUNK = 64 * 1024
+_MARK_TAIL = max(len(mark) for mark in _DTD_MARKS) - 1
+
+
+def _scan_entry(archive: zipfile.ZipFile, entry: zipfile.ZipInfo) -> None:
+    """One entry's raw bytes, read in bounded chunks: no document type
+    declaration, and no macro-enabled content type. A mark split across two
+    chunks is found in the tail kept from the first."""
+    contents = entry.filename.lower() == "[content_types].xml"
+    tail = b""
+    with archive.open(entry) as stream:
+        while chunk := stream.read(_SCAN_CHUNK):
+            window = tail + chunk
+            if contents and b"macroenabled" in window.lower():
+                raise TabularError(f"This file is {_REFUSED_SUFFIXES['.xlsm']}.", "not-text")
+            if any(mark in window for mark in _DTD_MARKS):
+                raise TabularError(
+                    f"This workbook holds an XML document type declaration ({entry.filename}), which "
+                    "Excel never writes. It is refused: declarations are how XML entity attacks work.",
+                    "not-text",
+                )
+            tail = window[-_MARK_TAIL:]
+
+
+def cell_text(value) -> str:
+    """A cell as the copy's text (5.8): numbers as numbers, a date as
+    xsd:date or, with a time set, xsd:dateTime, so the column's make-up and
+    the engine's type rule read it as Excel showed it."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, datetime.datetime):
+        if value.time() == datetime.time(0):
+            return value.date().isoformat()
+        return value.isoformat(timespec="seconds" if not value.microsecond else "microseconds")
+    if isinstance(value, (datetime.date, datetime.time)):
+        return value.isoformat()
+    if isinstance(value, datetime.timedelta):
+        seconds = value.total_seconds()
+        sign, seconds = ("-" if seconds < 0 else ""), abs(seconds)
+        hours, rest = divmod(seconds, 3600)
+        minutes, secs = divmod(rest, 60)
+        return f"{sign}PT{int(hours)}H{int(minutes)}M{secs:g}S"
+    if isinstance(value, float):
+        # Excel holds every number as a double: 12.0 is the whole number 12,
+        # and 1e-05 is written out, so xsd:decimal reads it.
+        if value.is_integer() and abs(value) < 1e15:
+            return str(int(value))
+        text = repr(value)
+        return format(decimal.Decimal(text), "f") if "e" in text.lower() and "inf" not in text and "nan" not in text else text
+    return str(value)
+
+
+def _sheet_cells(sheet):
+    """(row number, [(column, value)]) for each row the sheet's XML holds.
+
+    openpyxl's own row iterator pads every row to its widest column and
+    fills every missing row, so one crafted cell in column XFD or row
+    1,048,576 makes millions of empty values; its parser, which the
+    iterator wraps, yields only what is written. Pinned at 3.1.5."""
+    from openpyxl.worksheet._reader import WorkSheetParser
+
+    book = sheet.parent
+    with sheet._get_source() as source:
+        parser = WorkSheetParser(
+            source, sheet._shared_strings, data_only=True, epoch=book.epoch,
+            date_formats=book._date_formats, timedelta_formats=book._timedelta_formats,
+        )
+        for number, cells in parser.parse():
+            yield number, [(c["column"], c["value"]) for c in cells if c["value"] is not None]
+
+
+def _sheet_row(sheet_name: str, number: int, cells: list) -> list[str]:
+    """A row's cells as text by position, under the column and cell limits."""
+    texts: dict[int, str] = {}
+    for column, value in cells:
+        text = cell_text(value)
+        if not text.strip():
+            continue
+        if column > MAX_COLUMNS:
+            raise TabularError(
+                f"Sheet {sheet_name} has a value in column {column:,} (row {number:,}). Semantic Studio "
+                f"imports at most {MAX_COLUMNS} columns: {WHY}.",
+                "too-large",
+            )
+        if len(text) > MAX_CELL:
+            raise TabularError(
+                f"Sheet {sheet_name}, row {number:,}, column {column} holds {len(text):,} characters. "
+                f"A cell can hold at most {MAX_CELL:,} characters, as in Excel.",
+                "too-large",
+            )
+        texts[column] = text
+    if not texts:
+        return []
+    return [texts.get(i, "") for i in range(1, max(texts) + 1)]
+
+
+def _open_workbook(data: bytes):
+    import openpyxl
+
+    # openpyxl parses through defusedxml only when it is installed and not
+    # switched off by OPENPYXL_DEFUSEDXML; without it, refuse rather than
+    # parse a workbook with the standard library's XML (Section 9).
+    if not getattr(openpyxl, "DEFUSEDXML", False):
+        raise TabularError(
+            "Excel workbooks cannot be read safely here: defusedxml is missing or switched off.",
+            "not-text",
+        )
+    return openpyxl.load_workbook(
+        io.BytesIO(data), read_only=True, data_only=True, keep_vba=False, keep_links=False,
+    )
+
+
+def read_workbook(
+    data: bytes,
+    *,
+    filename: str = "",
+    sheet: Optional[str] = None,
+    header_row: int = 1,
+) -> Table:
+    """A workbook's sheet read as a table under the same limits as a CSV
+    file: at most MAX_ROWS rows kept and all counted, per sheet (5.8)."""
+    check_size(len(data))
+    if isinstance(header_row, bool) or not isinstance(header_row, int) or not 1 <= header_row <= MAX_HEADER_ROW:
+        raise TabularError("The header row is a row number, from 1.", "not-text")
+    check_workbook(data, filename)
+    try:
+        book = _open_workbook(data)
+    except TabularError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - openpyxl and defusedxml raise many kinds
+        raise TabularError(f"This workbook cannot be read: {_reason(exc)}") from exc
+    try:
+        from openpyxl.worksheet._read_only import ReadOnlyWorksheet
+
+        sheets = [ws for ws in book.worksheets if isinstance(ws, ReadOnlyWorksheet)]
+        if not sheets:
+            raise TabularError("This workbook has no sheet of cells.", "empty")
+        chosen = sheets[0] if sheet is None else next((ws for ws in sheets if ws.title == sheet), None)
+        if chosen is None:
+            raise TabularError(f"This workbook has no sheet named {sheet}.", "not-text")
+        listing = []
+        table: Optional[Table] = None
+        for ws in sheets:
+            if ws is chosen:
+                table = _read_sheet(ws, header_row)
+                listing.append({"name": ws.title, "rows": table.total})
+            else:
+                count = sum(1 for _, cells in _sheet_cells(ws) if any(cell_text(v).strip() for _, v in cells))
+                # Below a header in row 1, as the sheet would first be read.
+                listing.append({"name": ws.title, "rows": max(count - 1, 0)})
+        assert table is not None
+        table.workbook = {**table.workbook, "sheets": listing}
+        return table
+    except TabularError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise TabularError(f"This workbook cannot be read: {_reason(exc)}") from exc
+    finally:
+        book.close()
+
+
+def _reason(exc: BaseException) -> str:
+    """The first line of what went wrong. openpyxl wraps what its parser
+    raised, so the chain is searched for defusedxml's refusal, which says
+    what the workbook held."""
+    seen = exc
+    while seen is not None:
+        if type(seen).__module__.startswith("defusedxml"):
+            exc = seen
+            break
+        seen = seen.__cause__ or seen.__context__
+    text = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+    return text[:200]
+
+
+def _read_sheet(ws, header_row: int) -> Table:
+    name = ws.title
+    top: list[dict] = []
+    head: Optional[list[str]] = None
+    kept: list[list[str]] = []
+    total = 0
+    width = 0
+    for number, cells in _sheet_cells(ws):
+        row = _sheet_row(name, number, cells)
+        if number <= HEADER_ROWS_SHOWN:
+            top.append({"row": number, "cells": [c for c in row if c][:4]})
+        if number < header_row:
+            continue
+        if number == header_row:
+            head = row
+            width = len(row)
+            continue
+        if head is None:
+            # The chosen header row is not in the sheet's XML: it is empty.
+            head = []
+        if not row:
+            continue  # an empty row is no row, as a blank line in CSV
+        total += 1
+        if total <= MAX_ROWS:
+            kept.append([cell.strip() for cell in row])
+            width = max(width, len(row))
+    if head is None or not any(head):
+        if not kept and total == 0 and head is None and not top:
+            raise TabularError(f"Sheet {name} is empty.", "empty")
+        raise TabularError(
+            f"Row {header_row:,} of sheet {name} is empty: choose the row that holds the column names.",
+            "empty",
+        )
+    columns, renamed = _named(head, width)
+    rows = [row + [""] * (width - len(row)) for row in kept]
+    # Every physical row up to the last one shown, an empty one included,
+    # so the header row picker numbers them as Excel does.
+    written = {entry["row"]: entry["cells"] for entry in top}
+    last = max(written, default=0)
+    top = [{"row": n, "cells": written.get(n, [])} for n in range(1, last + 1)]
+    workbook = {"sheet": name, "headerRow": header_row, "top": top}
+    return Table(columns, rows, total, ",", "utf-8", True, renamed, workbook)
+
+
+def read_file(data: bytes, filename: str, options: dict) -> Table:
+    """A CSV file or a workbook, as the options for its kind say."""
+    options = options or {}
+    if is_workbook(data, filename):
+        header_row = options.get("headerRow", 1)
+        return read_workbook(
+            data, filename=filename, sheet=options.get("sheet"),
+            header_row=1 if header_row is None else header_row,
+        )
+    return read_table(
+        data,
+        separator=options.get("separator"),
+        encoding=options.get("encoding"),
+        header=bool(options.get("header", True)),
+    )
+
+
+# ---------------------------------------------------------------------------
 # What the wizard shows
 # ---------------------------------------------------------------------------
 
@@ -353,6 +738,8 @@ def inspect(table: Table) -> dict:
         "limitSentence": rows_sentence(table.total) if table.sample else None,
         "idSuggestion": suggest_id(table),
         "nameSuggestion": suggest_name(table),
+        "format": "xlsx" if table.workbook else "csv",
+        "workbook": table.workbook,
     }
     return result
 

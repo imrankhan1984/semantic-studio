@@ -998,7 +998,7 @@ export default function App() {
     setDialogOpen(true);
   };
 
-  // Import data from CSV (csv-data-import 5.1): the project's Data tab, the
+  // Import data from CSV or Excel (csv-data-import 5.1): the project's Data tab, the
   // wizard started.
   const openDataImport = useCallback(() => {
     setDialogTab("data");

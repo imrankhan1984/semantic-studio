@@ -14,7 +14,8 @@ BASIC IDEA
     project's model and its snapshots), and map refusals to status codes in
     one place.
 
-    A file is multipart, as an upload is, and is read in chunks and refused
+    A file is multipart, as an upload is -- a CSV file or an Excel workbook
+    (5.8), told apart by tabular.py -- and is read in chunks and refused
     the moment it passes 5 MB, with the sentence the wizard shows (Section
     9); main.py refuses a declared oversize before FastAPI buffers it (D-015).
     The wizard's dialect, sample and mapping choices travel beside it as two
@@ -130,6 +131,12 @@ async def _file_bytes(file: Optional[UploadFile]) -> Optional[bytes]:
     return b"".join(chunks)
 
 
+def _filename(file: Optional[UploadFile]) -> str:
+    """The name the browser gave the file: it says CSV or workbook (5.8),
+    never where anything is read from."""
+    return (file.filename or "") if file is not None else ""
+
+
 def _json_field(raw: Optional[str], what: str) -> Optional[dict]:
     if raw is None or raw == "":
         return None
@@ -142,11 +149,13 @@ def _json_field(raw: Optional[str], what: str) -> Optional[dict]:
     return value
 
 
-def _table(pid: str, data: Optional[bytes], snapshot: Optional[str], options: Optional[dict]):
+def _table(
+    pid: str, data: Optional[bytes], snapshot: Optional[str], options: Optional[dict], filename: str = "",
+):
     """The file sent, or the copy a snapshot keeps; and that snapshot's meta."""
     service = editing_service.snapshots
     if data is not None:
-        return service.read(data, options or {}), None
+        return service.read(data, options or {}, filename), None
     if snapshot:
         return service.stored_table(pid, snapshot)
     raise HTTPException(status_code=422, detail="Send a file, or name a snapshot.")
@@ -167,7 +176,7 @@ async def inspect(
 
     def work() -> dict:
         with _errors():
-            table, meta = _table(pid, data, snapshot, opts)
+            table, meta = _table(pid, data, snapshot, opts, _filename(file))
             result = tabular.inspect(table)
             if meta is not None:
                 result["choices"] = meta.get("choices")
@@ -194,10 +203,10 @@ async def preview(
 
     def work() -> dict:
         with _errors():
-            table, _ = _table(pid, data, snapshot, opts)
+            table, _ = _table(pid, data, snapshot, opts, _filename(file))
             with editing_service.model_reader(pid) as (model, manifest, names):
                 return editing_service.snapshots.preview(
-                    model=model, manifest=manifest, names=names, table=table, choices=chosen,
+                    model=model, manifest=manifest, names=names, table=table, choices=chosen, pid=pid,
                 )
 
     return await run_in_threadpool(_bounded, work)

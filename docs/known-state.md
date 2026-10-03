@@ -1417,3 +1417,46 @@ EXPECTED OUTPUT
   reset values are now passed into the read. Leaving past step 3 asked only
   from Cancel; the dialog's close button and its tabs dropped the mapping
   without a word, and now ask too.
+
+- **Excel workbooks and links between snapshots** (2026-10-03, X-10 Stage B,
+  `csv-data-import.md` 5.8, 5.9 and Section 9, D-100 and D-101).
+
+  **A workbook's entries are read in chunks, never with `ZipFile.read`.**
+  The defences judge a workbook from the ZIP's directory first: 100 MB
+  unpacked, 100:1. But the directory can lie, and `ZipFile.read` inflates an
+  entry's whole compressed data in one call before cutting it to the
+  declared size, so an entry declaring 1,000 bytes and holding 20 MB of
+  zeros took 52 MB to refuse (`test_xlsx_defences` measured it). Every entry
+  is now read to its end in 64 KB chunks before openpyxl sees any: a liar
+  fails its CRC with memory flat, and openpyxl then reads only entries
+  whose sizes are proven. The same pass refuses a document type
+  declaration, which Excel never writes and every XML entity attack needs.
+
+  **openpyxl must parse through defusedxml.** It does so only when the
+  package is installed and `OPENPYXL_DEFUSEDXML` is not `False`; otherwise
+  it uses the standard library's parser quietly. `tabular._open_workbook`
+  checks `openpyxl.DEFUSEDXML` and refuses the workbook rather than parse it
+  without. A test switches the byte scan off to prove defusedxml alone still
+  refuses each entity case, with a recording server seeing nothing.
+
+  **A sheet's rows come from openpyxl's parser, not `iter_rows`.** The row
+  iterator pads every row to the sheet's declared width and yields every
+  missing row, so one crafted cell in `XFD1048576` makes millions of empty
+  values. `WorkSheetParser` yields only the cells written; openpyxl is
+  pinned at 3.1.5 because this is its internal API.
+
+  **Step 1's pickers stay mounted while the file is read again.** They were
+  rendered under `!reading`, so changing the sheet unmounted the select
+  being used and keyboard focus fell to the page (found by X4 in Chrome;
+  Stage A's separator select had the same drop). And `hidden` on
+  `.wizard-detections` did not hide it, because the class sets `display`:
+  jsdom passed, Chrome showed a workbook a CSV separator. Render
+  conditionally instead.
+
+  **Links to no row are counted when asked, never stored.** Which row
+  points at which IRI is kept in `snapshot.json`; whether that IRI is a row
+  depends on the other snapshots, which come, go and switch after the
+  import. `summary()` counts against the switched-on snapshots each time, so
+  importing the target second, or switching it off, changes the first
+  snapshot's report without touching it. Stage A's D1 expected a clean
+  report with `org` linking to nothing; it now reports those two rows.

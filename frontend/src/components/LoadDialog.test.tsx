@@ -11,10 +11,13 @@ SUMMARY
     when the tree asked for an import, and not closed by a click outside
     while the wizard runs. Past step 3 the ✕ and a tab switch ask "Leave the
     wizard?" as Cancel does (PR #53 review), driven through the real wizard.
+    Focus goes to the Data heading when the wizard closes, and only then
+    (csv-data-import X4).
 
 BASIC IDEA
     api.ts is mocked; the snapshot list reads the real project store, left
-    empty, so the list says it is reading.
+    empty, so the list says it is reading -- opened on a fixed project where
+    the focus test needs the list itself.
 
 INPUTS / INPUT SOURCES
     - A mocked api.ts.
@@ -27,10 +30,12 @@ EXPECTED OUTPUT
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { fetchHierarchy, inspectData, previewData } = vi.hoisted(() => ({
+const { fetchHierarchy, inspectData, previewData, openProject, listData } = vi.hoisted(() => ({
   fetchHierarchy: vi.fn(() => new Promise(() => {})),
   inspectData: vi.fn(),
   previewData: vi.fn(),
+  openProject: vi.fn(),
+  listData: vi.fn(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -38,13 +43,19 @@ vi.mock("../api", async (importOriginal) => ({
   fetchHierarchy,
   inspectData,
   previewData,
+  openProject,
+  listData,
 }));
 
+import { projectStore } from "../state/projectStore";
 import LoadDialog from "./LoadDialog";
 
 const PROJECT = { id: "prj-0123456789ab", name: "Shop", modelOntologyId: "prj-0123456789ab-model", taxonomy: false };
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  projectStore._reset();
+});
 
 describe("LoadDialog", () => {
   it("has the three ontology tabs and no Data tab without a project", () => {
@@ -74,6 +85,37 @@ describe("LoadDialog", () => {
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByText("Reading the project's data…")).toBeTruthy();
+  });
+
+  it("gives focus to the Data heading when the wizard closes, and not again after a tab switch (X4)", async () => {
+    openProject.mockResolvedValue({
+      project: { id: PROJECT.id, name: "Shop", createdAt: "", updatedAt: "", baseIri: "http://x#", prefix: "x",
+        primaryLanguage: "en", languages: [], documents: [], counts: {}, kind: "ontology" },
+      documents: [{ doc: "model", ontologyId: `${PROJECT.id}-model`, revision: 1, dirty: false, canUndo: false,
+        undoLabel: null, canRedo: false, redoLabel: null, triples: 1 }],
+      recovery: { available: false, draftTime: null },
+    });
+    listData.mockResolvedValue({ generation: 1, snapshots: [] });
+    await act(async () => {
+      await projectStore.open(PROJECT.id);
+    });
+    await act(async () => {
+      render(<LoadDialog onLoaded={() => {}} onClose={() => {}} project={PROJECT} initialTab="data" startImport />);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+    const heading = screen.getByRole("heading", { name: "Data" });
+    expect(document.activeElement).toBe(heading);
+    const suggested = screen.getByRole("button", { name: "Suggested" });
+    suggested.focus();
+    fireEvent.click(suggested);
+    const data = screen.getByRole("button", { name: "Data for this project" });
+    data.focus();
+    await act(async () => {
+      fireEvent.click(data);
+    });
+    expect(document.activeElement).toBe(data);
   });
 
   it("falls back to Suggested when Data is asked for with no project open", () => {
