@@ -26,7 +26,9 @@ BASIC IDEA
     then asks first whichever way it is done: the wizard's own Cancel, the
     dialog's ✕, or another tab, which would unmount the wizard and lose the
     mapping as surely as closing (PR #53 review). A click outside does
-    nothing while a wizard runs.
+    nothing while a wizard runs. When the wizard closes, the Data section's
+    heading takes focus, which the unmounted wizard would otherwise drop to
+    the page; a later tab switch does not take it again (X4).
 
 INPUTS / INPUT SOURCES (props)
     - onLoaded: called with the new ontology's summary on success.
@@ -83,6 +85,8 @@ export default function LoadDialog({
 }: Props) {
   const [tab, setTab] = useState<LoadTab>(initialTab === "data" && !project ? "suggested" : initialTab);
   const [wizard, setWizard] = useState<WizardStart | null>(startImport && project ? { kind: "new" } : null);
+  // The wizard closed: the Data section takes focus back (X4).
+  const [backFromWizard, setBackFromWizard] = useState(false);
   // The wizard has a mapping to lose; and what to do once leaving is confirmed.
   const [wizardDirty, setWizardDirty] = useState(false);
   const [leaving, setLeaving] = useState<(() => void) | null>(null);
@@ -96,6 +100,8 @@ export default function LoadDialog({
     guard(() => {
       // Leaving the Data tab unmounts the wizard: it starts again on return.
       if (tab === "data") setWizard(null);
+      // Coming back by a tab is not coming back from the wizard.
+      setBackFromWizard(false);
       setTab(next);
     });
   };
@@ -206,7 +212,10 @@ export default function LoadDialog({
               modelOntologyId={project.modelOntologyId}
               taxonomy={project.taxonomy}
               start={wizard}
-              onClose={() => setWizard(null)}
+              onClose={() => {
+                setWizard(null);
+                setBackFromWizard(true);
+              }}
               onValidate={onValidate}
               onShowData={onShowData}
               onDirtyChange={setWizardDirty}
@@ -217,6 +226,7 @@ export default function LoadDialog({
               onWizard={setWizard}
               onValidate={onValidate}
               onShowData={onShowData}
+              focusOnMount={backFromWizard}
             />
           ))}
 

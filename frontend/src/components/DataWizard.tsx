@@ -20,7 +20,13 @@ BASIC IDEA
 
     The browser holds the file and sends it again for each step; the server
     keeps nothing until Import. Step 1 shows what it detected -- separator,
-    encoding, header -- and any change reads the file again. A file past
+    encoding, header -- and any change reads the file again. An Excel
+    workbook (5.8) shows a sheet picker, each sheet with its rows, and a
+    header row picker naming each of the sheet's first rows by its first
+    cells; those stay on screen when a choice reads nothing (an empty
+    header row), so the choice can be put right. The detections and the
+    pickers stay mounted while the file is read again, so the control just
+    changed keeps keyboard focus. A file past
     the tool's 2,000-row limit (D-098) gets the limit sentence and two
     choices, Use the first 2,000 rows or Choose another file, and Next waits
     for one.
@@ -70,7 +76,15 @@ import {
   suggestedType,
   withChoice,
 } from "../modeling/dataChoices";
-import { dataLabel, idProblems, previewSentences, sampleWords } from "../modeling/dataSentences";
+import {
+  dataLabel,
+  headerRowOption,
+  idProblems,
+  previewSentences,
+  sampleWords,
+  sheetOption,
+  unmatchedLines,
+} from "../modeling/dataSentences";
 import { projectStore } from "../state/projectStore";
 import type {
   ColumnChoice,
@@ -82,6 +96,7 @@ import type {
   Separator,
   SnapshotSummary,
   DataEncoding,
+  WorkbookInspection,
 } from "../types";
 import ImportReport from "./ImportReport";
 
@@ -141,6 +156,10 @@ export default function DataWizard({
     start.kind === "refresh" ? start.inspection : null,
   );
   const [fileProblem, setFileProblem] = useState<{ text: string; tooLarge: boolean } | null>(null);
+  // A workbook's sheets and first rows, kept when a re-read fails.
+  const [workbook, setWorkbook] = useState<WorkbookInspection | null>(
+    start.kind === "refresh" ? (start.inspection.workbook ?? null) : null,
+  );
   const [reading, setReading] = useState(false);
   const earlier = start.kind === "refresh" ? start.choices : null;
   const [classIri, setClassIri] = useState<string | null>(
@@ -209,6 +228,7 @@ export default function DataWizard({
     try {
       const found = await inspectData(projectId, { file: chosen }, nextOptions);
       setInspection(found);
+      setWorkbook(found.workbook ?? null);
       // Keep the identifier only while the file still has that column.
       let kept = id.idColumn;
       if (kept !== null && !found.columns.some((c) => c.name === kept)) kept = null;
@@ -217,6 +237,13 @@ export default function DataWizard({
       setColumns(null);
     } catch (e: unknown) {
       setInspection(null);
+      // Another sheet that could not be read: its rows are not known, so
+      // the header row picker offers them by number only (code review).
+      setWorkbook((current) =>
+        current && nextOptions.sheet !== undefined && nextOptions.sheet !== current.sheet
+          ? { ...current, sheet: nextOptions.sheet, headerRow: nextOptions.headerRow ?? 1, top: unreadRows() }
+          : current,
+      );
       setFileProblem({ text: message(e), tooLarge: e instanceof ApiError && e.status === 413 });
     } finally {
       setReading(false);
@@ -225,6 +252,7 @@ export default function DataWizard({
 
   const chooseFile = (chosen: File) => {
     setFile(chosen);
+    setWorkbook(null);
     const fresh: DataOptions = {};
     setOptions(fresh);
     setIdColumn(null);
@@ -381,6 +409,7 @@ export default function DataWizard({
         <FileStep
           file={file}
           inspection={inspection}
+          workbook={workbook}
           options={options}
           reading={reading}
           problem={fileProblem}
@@ -551,9 +580,14 @@ const ENCODING_NAMES: [DataEncoding, string][] = [
   ["windows-1252", "Windows-1252"],
 ];
 
+// What the file chooser offers: CSV text, and Excel workbooks (5.8).
+export const DATA_FILE_ACCEPT =
+  ".csv,.txt,.xlsx,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
 function FileStep({
   file,
   inspection,
+  workbook,
   options,
   reading,
   problem,
@@ -562,6 +596,7 @@ function FileStep({
 }: {
   file: File | null;
   inspection: DataInspection | null;
+  workbook: WorkbookInspection | null;
   options: DataOptions;
   reading: boolean;
   problem: { text: string; tooLarge: boolean } | null;
@@ -570,6 +605,8 @@ function FileStep({
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
+  const sheetId = useId();
+  const headerRowId = useId();
   const pick = (event: ChangeEvent<HTMLInputElement>) => {
     const chosen = event.target.files?.[0];
     if (chosen) onFile(chosen);
@@ -591,12 +628,13 @@ function FileStep({
           if (dropped) onFile(dropped);
         }}
       >
-        <input ref={input} type="file" accept=".csv,.txt,text/csv,text/plain" hidden onChange={pick} />
+        <input ref={input} type="file" accept={DATA_FILE_ACCEPT} hidden onChange={pick} />
         <button type="button" onClick={() => input.current?.click()}>
           {file ? "Choose another file" : "Choose a file"}
         </button>
         <p className="hint">
-          {file ? `${file.name}.` : "Or drop a CSV file here."} At most 2,000 rows, 100 columns and 5 MB.
+          {file ? `${file.name}.` : "Or drop a CSV or Excel (.xlsx) file here."} At most 2,000 rows (per sheet in a
+          workbook), 100 columns and 5 MB.
         </p>
       </div>
       {reading && (
@@ -610,44 +648,84 @@ function FileStep({
           {problem.text}
         </p>
       )}
-      {inspection && !reading && (
+      {/* The pickers stay mounted while the file is read again: one that
+          unmounted on its own change dropped keyboard focus to the page
+          (found by X4 in Chrome). */}
+      {workbook && (
+        <div className="wizard-detections" aria-busy={reading}>
+          <p className="wizard-field">
+            <label htmlFor={sheetId}>Sheet </label>
+            <select
+              id={sheetId}
+              value={options.sheet ?? workbook.sheet}
+              // Another sheet starts again from its first row.
+              onChange={(e) => onOptions({ sheet: e.target.value, headerRow: undefined })}
+            >
+              {workbook.sheets.map((sheet) => (
+                <option key={sheet.name} value={sheet.name}>
+                  {sheetOption(sheet)}
+                </option>
+              ))}
+            </select>
+          </p>
+          <p className="wizard-field">
+            <label htmlFor={headerRowId}>Header row </label>
+            <select
+              id={headerRowId}
+              value={options.headerRow ?? workbook.headerRow}
+              onChange={(e) => onOptions({ headerRow: Number(e.target.value) })}
+            >
+              {headerRows(workbook, options.headerRow ?? workbook.headerRow).map((row) => (
+                <option key={row.row} value={row.row}>
+                  {headerRowOption(row)}
+                </option>
+              ))}
+            </select>
+          </p>
+        </div>
+      )}
+      {inspection && (
         <>
-          <div className="wizard-detections">
-            <label>
-              Separator{" "}
-              <select
-                value={options.separator ?? inspection.separator}
-                onChange={(e) => onOptions({ separator: e.target.value as Separator })}
-              >
-                {SEPARATOR_NAMES.map(([value, name]) => (
-                  <option key={name} value={value}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Encoding{" "}
-              <select
-                value={options.encoding ?? inspection.encoding}
-                onChange={(e) => onOptions({ encoding: e.target.value as DataEncoding })}
-              >
-                {ENCODING_NAMES.map(([value, name]) => (
-                  <option key={value} value={value}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={options.header ?? inspection.header}
-                onChange={(e) => onOptions({ header: e.target.checked })}
-              />{" "}
-              First row is the header
-            </label>
-          </div>
+          {/* Not `hidden`: .wizard-detections sets display, which beats the
+              attribute, so a workbook showed a CSV file's separator (X4). */}
+          {inspection.format !== "xlsx" && (
+            <div className="wizard-detections" aria-busy={reading}>
+              <label>
+                Separator{" "}
+                <select
+                  value={options.separator ?? inspection.separator}
+                  onChange={(e) => onOptions({ separator: e.target.value as Separator })}
+                >
+                  {SEPARATOR_NAMES.map(([value, name]) => (
+                    <option key={name} value={value}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Encoding{" "}
+                <select
+                  value={options.encoding ?? inspection.encoding}
+                  onChange={(e) => onOptions({ encoding: e.target.value as DataEncoding })}
+                >
+                  {ENCODING_NAMES.map(([value, name]) => (
+                    <option key={value} value={value}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={options.header ?? inspection.header}
+                  onChange={(e) => onOptions({ header: e.target.checked })}
+                />{" "}
+                First row is the header
+              </label>
+            </div>
+          )}
           {inspection.renamed.length > 0 && (
             <ul className="wizard-notes">
               {inspection.renamed.map((r) => (
@@ -711,6 +789,18 @@ function FileStep({
       )}
     </div>
   );
+}
+
+/** A sheet's first rows when they could not be read: numbers, no cells. */
+function unreadRows(): { row: number; cells: string[]; unread: boolean }[] {
+  return Array.from({ length: 20 }, (_, i) => ({ row: i + 1, cells: [], unread: true }));
+}
+
+/** The rows the header row picker offers: the sheet's first rows, and the
+ *  chosen one when it is further down (a refresh's earlier choice). */
+function headerRows(workbook: WorkbookInspection, chosen: number): WorkbookInspection["top"] {
+  const rows = workbook.top.length > 0 ? workbook.top : [{ row: 1, cells: [] }];
+  return rows.some((r) => r.row === chosen) ? rows : [...rows, { row: chosen, cells: [] }];
 }
 
 /* --- Step 2: what a row is ----------------------------------------------------------- */
@@ -1059,10 +1149,23 @@ function PreviewStep({
           <li key={row.row}>{previewSentences(row, className).join(" ")}</li>
         ))}
       </ol>
-      {!report.clean && (
+      {report.keptAsText.length > 0 && (
         <p className="detail-note">
           Values that do not fit their type are kept as text and listed in the report after the import.
         </p>
+      )}
+      {(report.unmatched ?? []).length > 0 && (
+        <div className="detail-note">
+          <ul className="wizard-notes">
+            {unmatchedLines(report).map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          <p>
+            These links are still written. Import the rows they point to, before or after this file, and they
+            link; until then Validate reports them.
+          </p>
+        </div>
       )}
     </div>
   );

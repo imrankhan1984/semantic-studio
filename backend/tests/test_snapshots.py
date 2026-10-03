@@ -8,12 +8,16 @@ SUMMARY
     5.3 to 5.7, Section 9, rows D1 to D12): the wizard's preview, the import
     and its report, the snapshot folder, where its data shows and where it
     stops showing, refresh, change and edit the mapping, remove, the
-    2,000-row limit on every path, and the project zip.
+    2,000-row limit on every path, and the project zip. Stage B (5.8, 5.9,
+    rows X1 and X3): a workbook imported by sheet and header row with its
+    CSV copy and refreshed the same way, the limit per sheet, and links
+    between snapshots resolving in either order, with the ones that match
+    no row reported and caught by the Small template's Points to rule.
 
 BASIC IDEA
     Each test makes a Small-template project (Person, Organization, member
-    of), adds the attributes it needs by command, and imports a CSV built in
-    the test. What is asserted is what the spec's rows check: the statements
+    of), adds the attributes it needs by command, and imports a CSV or a
+    workbook built in the test. What is asserted is what the spec's rows check: the statements
     written, the report, the label on the data, and save and reopen.
 
     A snapshot is not a model change: every test that changes one asserts
@@ -29,6 +33,7 @@ EXPECTED OUTPUT
 
 from __future__ import annotations
 
+import datetime
 import gc
 import io
 import json
@@ -189,7 +194,14 @@ def test_d1_people_imported_with_exact_values_and_a_clean_report(pid):
     before = model_state(pid)
     made = import_csv(pid)["snapshot"]
     untouched(pid, before)
-    assert made["report"]["clean"] is True
+    # Every value fits and every row has an id. Since Stage B (5.9) the org
+    # column's links are counted too, and no Organization rows are imported
+    # here, so the report is not clean on that one line alone.
+    assert made["report"]["keptAsText"] == [] and made["report"]["skipped"]["count"] == 0
+    assert made["report"]["unmatched"] == [{
+        "column": "org", "className": "Organization", "classIri": EX + "Organization", "count": 2, "rows": [1, 2],
+    }]
+    assert made["report"]["clean"] is False
     assert made["report"]["individuals"] == 3 and made["report"]["rowsRead"] == 3
     assert made["report"]["empty"] == [{"column": "nickname", "count": 1}, {"column": "org", "count": 1}]
     alice = URIRef(EX + "data/person/1")
@@ -713,3 +725,257 @@ def test_validate_with_two_full_snapshots_budget(pid):
     assert client.put(f"/api/projects/{pid}/documents/shapes/source", json={"text": shapes}).status_code == 200
     median = _median_ms(lambda: validate(pid))
     assert median <= limit_ms(2000), f"validating two full snapshots with 5 shapes took {median:.0f} ms (median of 5)"
+
+
+# --- Stage B: Excel (5.8, row X1) ------------------------------------------------------------
+
+ORGANIZATION = EX + "Organization"
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+ORG_IDS = ["acme", "beta", "gamma", "delta", "epsilon"]
+
+
+def xlsx(build) -> bytes:
+    from openpyxl import Workbook
+
+    book = Workbook()
+    build(book)
+    out = io.BytesIO()
+    book.save(out)
+    return out.getvalue()
+
+
+def orgs_workbook(extra: int = 0) -> bytes:
+    """X1's orgs.xlsx: a notes sheet first, then Orgs with a title row and a
+    blank row above the table, dates and numbers."""
+    def build(book):
+        notes = book.active
+        notes.title = "Notes"
+        notes.append(["Read me first"])
+        sheet = book.create_sheet("Orgs")
+        sheet.append(["Organizations, October 2026"])
+        sheet.append([])
+        sheet.append(["id", "name", "founded", "staff"])
+        for n, oid_ in enumerate(ORG_IDS + [f"extra{i}" for i in range(extra)], start=1):
+            sheet.append([oid_, oid_.title(), datetime.date(1990 + n, n, n), n * 10])
+    return xlsx(build)
+
+
+def org_choices(**columns) -> dict:
+    base = {
+        "name": {"as": "name"},
+        "founded": {"as": "attribute", "property": EX + "founded"},
+        "staff": {"as": "attribute", "property": EX + "staff"},
+    }
+    base.update(columns)
+    return {"classIri": ORGANIZATION, "idColumn": "id", "columns": base}
+
+
+def with_org_attributes(pid: str) -> None:
+    command(pid, "CreateDatatypeProperty", label="founded", domain=ORGANIZATION, datatype=str(XSD.date))
+    command(pid, "CreateDatatypeProperty", label="staff", domain=ORGANIZATION, datatype=str(XSD.integer))
+
+
+def import_orgs(pid: str, data: bytes | None = None, options: dict | None = None, status: int = 200) -> dict:
+    response = client.post(
+        f"/api/projects/{pid}/data",
+        files={"file": ("orgs.xlsx", data or orgs_workbook(), XLSX)},
+        data={"choices": json.dumps(org_choices()),
+              "options": json.dumps(options if options is not None else {"sheet": "Orgs", "headerRow": 3})},
+    )
+    assert response.status_code == status, response.text
+    return response.json()
+
+
+def test_x1_a_workbook_imports_by_sheet_and_header_row_with_types_kept_and_a_csv_copy(pid):
+    with_org_attributes(pid)
+    data = orgs_workbook()
+    first = client.post(f"/api/projects/{pid}/data/inspect", files={"file": ("orgs.xlsx", data, XLSX)}).json()
+    # The first sheet, header in row 1, until the learner chooses.
+    assert first["format"] == "xlsx" and first["workbook"]["sheet"] == "Notes"
+    # Each sheet counted below a header in row 1: Orgs' title row is its header there.
+    assert first["workbook"]["sheets"] == [{"name": "Notes", "rows": 0}, {"name": "Orgs", "rows": 6}]
+    chosen = client.post(f"/api/projects/{pid}/data/inspect", files={"file": ("orgs.xlsx", data, XLSX)},
+                         data={"options": json.dumps({"sheet": "Orgs", "headerRow": 3})}).json()
+    assert [c["name"] for c in chosen["columns"]] == ["id", "name", "founded", "staff"]
+    assert chosen["total"] == 5 and chosen["idSuggestion"] == "id"
+    assert chosen["workbook"]["top"][0] == {"row": 1, "cells": ["Organizations, October 2026"]}
+
+    before = model_state(pid)
+    made = import_orgs(pid, data)["snapshot"]
+    untouched(pid, before)
+    assert made["workbook"] == {"sheet": "Orgs", "headerRow": 3}
+    assert made["report"]["clean"] is True and made["report"]["individuals"] == 5
+    acme = URIRef(EX + "data/organization/acme")
+    assert set(data_graph(pid, made["id"]).predicate_objects(acme)) == {
+        (RDF.type, U("Organization")),
+        (RDFS.label, Literal("Acme", lang="en")),
+        (U("founded"), Literal("1991-01-01", datatype=XSD.date)),
+        (U("staff"), Literal("10", datatype=XSD.integer)),
+    }
+    # The original kept, and the sheet written as UTF-8 CSV with a comma,
+    # which is what the standard RML mapping reads.
+    where = folder(pid, made["id"])
+    assert (where / "source.xlsx").read_bytes() == data
+    assert (where / "source.csv").read_bytes().startswith(
+        b"id,name,founded,staff\r\nacme,Acme,1991-01-01,10\r\n")
+    text = (where / "mapping.rml.ttl").read_text(encoding="utf-8")
+    mapping = rml.read(text, EX)
+    assert (mapping.separator, mapping.encoding) == (",", "utf-8")
+    assert "xlsx" not in text
+    zipped = zipfile.ZipFile(io.BytesIO(client.get(f"/api/projects/{pid}/export").content)).namelist()
+    assert f"data/{made['id']}/source.xlsx" in zipped and f"data/{made['id']}/source.csv" in zipped
+
+
+def test_x1_the_row_limit_and_the_sample_apply_per_sheet(pid):
+    def build(book):
+        book.active.title = "Small"
+        book.active.append(["id", "name"])
+        book.active.append(["solo", "Solo"])
+        big = book.create_sheet("Big")
+        big.append(["id", "name"])
+        for i in range(1, 5001):
+            big.append([f"o{i}", f"Org {i}"])
+
+    data = xlsx(build)
+    found = client.post(f"/api/projects/{pid}/data/inspect", files={"file": ("big.xlsx", data, XLSX)},
+                        data={"options": json.dumps({"sheet": "Big"})}).json()
+    assert found["total"] == 5000 and found["sample"] is True
+    assert found["limitSentence"].startswith("This file has 5,000 rows. Semantic Studio imports at most 2,000 rows")
+    chosen = {"classIri": ORGANIZATION, "idColumn": "id", "columns": {"name": {"as": "name"}}}
+    send = lambda options, status: client.post(  # noqa: E731
+        f"/api/projects/{pid}/data", files={"file": ("big.xlsx", data, XLSX)},
+        data={"choices": json.dumps(chosen), "options": json.dumps(options)})
+    assert send({"sheet": "Big"}, 422).status_code == 422
+    made = send({"sheet": "Big", "sample": True}, 200).json()["snapshot"]
+    assert (made["rows"], made["total"], made["sample"]) == (2000, 5000, True)
+    g = data_graph(pid, made["id"])
+    assert (URIRef(EX + "data/organization/o2000"), RDF.type, U("Organization")) in g
+    assert (URIRef(EX + "data/organization/o2001"), None, None) not in g
+    # The other sheet of the same workbook is under the limit.
+    small = send({"sheet": "Small"}, 200).json()["snapshot"]
+    assert (small["rows"], small["total"], small["sample"]) == (1, 1, False)
+
+
+def test_x1_refresh_reads_the_new_workbook_the_same_way_and_a_csv_drops_the_original(pid):
+    with_org_attributes(pid)
+    made = import_orgs(pid)["snapshot"]
+    sid = made["id"]
+    newer = orgs_workbook(extra=2)
+    refreshed = client.post(f"/api/projects/{pid}/data/{sid}/refresh",
+                            files={"file": ("orgs (2).xlsx", newer, XLSX)}).json()
+    # No sheet or header row sent: the same ones as before.
+    assert refreshed["status"] == "imported", refreshed
+    assert refreshed["snapshot"]["rows"] == 7 and refreshed["snapshot"]["workbook"] == {"sheet": "Orgs", "headerRow": 3}
+    assert (folder(pid, sid) / "source.xlsx").read_bytes() == newer
+    # Another sheet named in the options starts from its own row 1, never
+    # from the last sheet's header row (code review).
+    def plain(book):
+        book.active.title = "Plain"
+        book.active.append(["id", "name", "founded", "staff"])
+        book.active.append(["zeta", "Zeta", datetime.date(2000, 1, 1), 1])
+
+    moved = client.post(f"/api/projects/{pid}/data/{sid}/refresh",
+                        files={"file": ("plain.xlsx", xlsx(plain), XLSX)},
+                        data={"options": json.dumps({"sheet": "Plain"})}).json()
+    assert moved["status"] == "imported", moved
+    assert moved["snapshot"]["workbook"] == {"sheet": "Plain", "headerRow": 1} and moved["snapshot"]["rows"] == 1
+    as_csv = "id,name,founded,staff\nacme,Acme,1991-01-01,10\n"
+    again = client.post(f"/api/projects/{pid}/data/{sid}/refresh", files=csv_file(as_csv, "orgs.csv")).json()
+    assert again["status"] == "imported" and again["snapshot"]["workbook"] is None
+    assert not (folder(pid, sid) / "source.xlsx").exists()
+    assert (folder(pid, sid) / "source.csv").is_file()
+
+
+# --- Stage B: links between snapshots (5.9, row X3) ---------------------------------------
+
+
+# Twenty people: six link to an organization of orgs.xlsx, twelve to ones it
+# does not hold, two have none.
+LINKED_PEOPLE = "id,name,org\n" + "".join(
+    f"{n},Person {n},{ORG_IDS[n % 5] if n <= 6 else ('' if n > 18 else f'gone{n}')}\n" for n in range(1, 21)
+)
+UNMATCHED_ROWS = list(range(7, 19))
+
+
+def import_linked_people(pid: str) -> dict:
+    return import_csv(pid, LINKED_PEOPLE, {
+        "classIri": PERSON, "idColumn": "id",
+        "columns": {"name": {"as": "name"}, "org": {"as": "relationship", "property": EX + "memberOf"}},
+    })["snapshot"]
+
+
+def people_row(pid: str) -> dict:
+    return next(s for s in client.get(f"/api/projects/{pid}/data").json()["snapshots"] if s["source"] == "people.csv")
+
+
+def members(pid: str) -> int:
+    rows = sparql(pid, f"""SELECT (COUNT(?p) AS ?n) WHERE {{
+        ?p <{EX}memberOf> ?o . ?o a <{ORGANIZATION}> . FILTER(STRSTARTS(STR(?p), "{EX}data/person/")) }}""")["rows"]
+    return int(rows[0][0]["value"])
+
+
+def test_x3_people_first_then_orgs_links_resolve_and_twelve_are_reported(pid):
+    with_org_attributes(pid)
+    people = import_linked_people(pid)
+    # No Organization rows yet: every link matches none, and says so.
+    assert people["report"]["unmatched"][0]["count"] == 18
+    assert people["report"]["clean"] is False
+    import_orgs(pid)
+    row = people_row(pid)
+    assert row["report"]["unmatched"] == [{
+        "column": "org", "className": "Organization", "classIri": ORGANIZATION,
+        "count": 12, "rows": UNMATCHED_ROWS,
+    }]
+    assert members(pid) == 6
+    # The twelve are still written, so the Small template's Points to rule
+    # (Person rules: member of points to an Organization) reports them.
+    gone = {URIRef(f"{EX}data/organization/gone{n}") for n in UNMATCHED_ROWS}
+    assert {o for o in data_graph(pid, people["id"]).objects(None, U("memberOf"))} >= gone
+    panel = next(p for p in validate(pid)["shapes"] if p["name"] == "Person rules")
+    # A problem's value is shown in short form: data/organization/gone7.
+    flagged = {(p["focus"], p["value"]) for p in panel["problems"] if p["value"] and "gone" in p["value"]}
+    assert flagged == {(f"{EX}data/person/{n}", f"data/organization/gone{n}") for n in UNMATCHED_ROWS}
+    assert people["id"] in panel["data"]
+    # Counted when asked: the orgs switched off, every link is to no row again.
+    orgs = next(s for s in client.get(f"/api/projects/{pid}/data").json()["snapshots"] if s["source"] == "orgs.xlsx")
+    assert client.patch(f"/api/projects/{pid}/data/{orgs['id']}", json={"enabled": False}).status_code == 200
+    assert people_row(pid)["report"]["unmatched"][0]["count"] == 18
+
+
+def test_x3_orgs_first_gives_the_same_statements_and_the_same_report(pid):
+    with_org_attributes(pid)
+    other = _create()
+    with_org_attributes(other)
+    # Order A, then order B, in two projects on the same base IRI.
+    a_people = import_linked_people(pid)
+    import_orgs(pid)
+    import_orgs(other)
+    preview = client.post(f"/api/projects/{other}/data/preview", files=csv_file(LINKED_PEOPLE), data={
+        "choices": json.dumps({"classIri": PERSON, "idColumn": "id",
+                               "columns": {"name": {"as": "name"},
+                                           "org": {"as": "relationship", "property": EX + "memberOf"}}})}).json()
+    # Step 4 already says it, before the import.
+    assert preview["report"]["unmatched"][0]["count"] == 12
+    b_people = import_linked_people(other)
+    assert b_people["report"]["unmatched"][0]["rows"] == UNMATCHED_ROWS
+    assert set(data_graph(pid, a_people["id"])) == set(data_graph(other, b_people["id"]))
+    assert people_row(pid)["report"] == people_row(other)["report"]
+    assert members(pid) == members(other) == 6
+
+
+def test_x3_a_link_uses_the_iri_pattern_of_the_target_classs_snapshot(pid):
+    # An expert's mapping names organizations under data/company/; a column
+    # of ids linking to Organization then uses that pattern, not the default.
+    with_org_attributes(pid)
+    orgs = import_orgs(pid)["snapshot"]
+    text = (folder(pid, orgs["id"]) / "mapping.rml.ttl").read_text(encoding="utf-8")
+    edited = text.replace(f"{EX}data/organization/", f"{EX}data/company/")
+    assert edited != text
+    applied = client.patch(f"/api/projects/{pid}/data/{orgs['id']}", json={"mapping": edited})
+    assert applied.status_code == 200, applied.text
+    people = import_linked_people(pid)
+    targets = set(data_graph(pid, people["id"]).objects(None, U("memberOf")))
+    assert URIRef(f"{EX}data/company/acme") in targets
+    assert not any("data/organization/" in str(t) for t in targets)
+    assert people["report"]["unmatched"][0]["count"] == 12
+    assert members(pid) == 6

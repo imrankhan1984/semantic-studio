@@ -46,8 +46,10 @@ INPUTS / INPUT SOURCES
 EXPECTED OUTPUT
     - build(...) -> the mapping as a Graph; to_turtle(graph) -> its text.
     - read(text, base) -> Mapping, or UnsupportedMapping naming the feature.
-    - run(mapping, table) -> (Graph, {report, subjects}): the report as the
-      wizard shows it, and each individual's IRI with the row it came from.
+    - run(mapping, table) -> (Graph, {report, subjects, links}): the report
+      as the wizard shows it, each individual's IRI with the row it came
+      from, and for each template object map the rows pointing at each IRI
+      (5.9's links between snapshots).
 ================================================================================
 """
 
@@ -451,6 +453,7 @@ def run(mapping: Mapping, table: Table) -> tuple[Graph, dict]:
     as_text: dict[str, list[int]] = {}
     empty: dict[str, int] = {}
     datatype_of: dict[str, str] = {}
+    targets: dict[tuple, dict[str, list[int]]] = {}
     rows = table.rows[:MAX_ROWS]
     for number, row in enumerate(rows, start=1):
         iri, _ = expand(subject_parts, row, index)
@@ -476,6 +479,9 @@ def run(mapping: Mapping, table: Table) -> tuple[Graph, dict]:
                     empty[blank] = empty.get(blank, 0) + 1
                     continue
                 graph.add((subject, predicate, URIRef(value)))
+                # Which row points where, so a link to a row no snapshot
+                # holds can be reported (5.9).
+                targets.setdefault((str(predicate), om.value), {}).setdefault(value, []).append(number)
                 continue
             value = row[index[column]]
             if not value:
@@ -509,4 +515,8 @@ def run(mapping: Mapping, table: Table) -> tuple[Graph, dict]:
         "empty": [{"column": column, "count": count} for column, count in empty.items()],
     }
     report["clean"] = not (skipped or repeated or as_text)
-    return graph, {"report": report, "subjects": subjects}
+    links = [
+        {"predicate": predicate, "template": template, "targets": found}
+        for (predicate, template), found in targets.items()
+    ]
+    return graph, {"report": report, "subjects": subjects, "links": links}

@@ -8,7 +8,8 @@ SUMMARY
     with its name, where it came from (a sample's words included), its
     rows, a word for its report and the switch that takes its data in and
     out of every view; and its actions -- the report, Refresh…, Change the
-    mapping, Edit as RML, Remove… -- with Import data from CSV at the top.
+    mapping, Edit as RML, Remove… -- with Import data from CSV or Excel at
+    the top.
 
 BASIC IDEA
     Every action here is a snapshot action, not a model change: none is in
@@ -21,6 +22,9 @@ BASIC IDEA
     choices as the wizard (5.2). If the headers still match the mapping it
     imports at once and the report opens; if not, the wizard opens on step
     3 with the missing columns marked, which App arranges through onWizard.
+    A workbook's snapshot reads the new workbook the same way, the sheet
+    of the same name from the same header row (5.8), in step 1's checks
+    as on the server.
 
     Remove says how many statements will leave before it asks, and moves
     the folder to the project's own trash. A mapping edited outside what
@@ -36,19 +40,22 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { inspectData, refreshData, removeData, updateData } from "../api";
 import { dataLabel, reportWord } from "../modeling/dataSentences";
 import { plural } from "../modeling/shapeSentences";
 import { projectStore, useProjectSelector } from "../state/projectStore";
 import type { DataInspection, SnapshotSummary } from "../types";
-import type { WizardStart } from "./DataWizard";
+import { DATA_FILE_ACCEPT, type WizardStart } from "./DataWizard";
 import ImportReport from "./ImportReport";
 import RmlEditor from "./RmlEditor";
 
 interface Props {
   projectId: string;
   onWizard: (start: WizardStart) => void;
+  // Back from the wizard: the section's heading takes focus, which the
+  // wizard's Done or Cancel would otherwise drop to the page (X4).
+  focusOnMount?: boolean;
   onValidate?: () => void;
   onShowData?: () => void;
 }
@@ -57,9 +64,14 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export default function SnapshotList({ projectId, onWizard, onValidate, onShowData }: Props) {
+export default function SnapshotList({ projectId, onWizard, onValidate, onShowData, focusOnMount = false }: Props) {
   const data = useProjectSelector((s) => s.data);
   const headingId = useId();
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const loaded = data !== null;
+  useEffect(() => {
+    if (focusOnMount && loaded) headingRef.current?.focus();
+  }, [focusOnMount, loaded]);
   if (data === null) {
     return (
       <p className="detail-note" role="status">
@@ -69,15 +81,18 @@ export default function SnapshotList({ projectId, onWizard, onValidate, onShowDa
   }
   return (
     <section className="snapshot-section" aria-labelledby={headingId}>
-      <h3 id={headingId}>Data</h3>
+      <h3 id={headingId} ref={headingRef} tabIndex={-1}>
+        Data
+      </h3>
       <p>
         <button type="button" className="primary" onClick={() => onWizard({ kind: "new" })}>
-          Import data from CSV…
+          Import data from CSV or Excel…
         </button>
       </p>
       {data.snapshots.length === 0 ? (
         <p className="detail-note">
-          No data yet. Import a CSV file of up to 2,000 rows to see how its rows map to the model.
+          No data yet. Import a CSV file or an Excel sheet of up to 2,000 rows to see how its rows map to the
+          model.
         </p>
       ) : (
         <ul className="snapshot-list">
@@ -143,16 +158,19 @@ function SnapshotRow({
       );
     });
 
+  // A workbook is read again by the same sheet and header row.
+  const readAs = snapshot.workbook ? { sheet: snapshot.workbook.sheet, headerRow: snapshot.workbook.headerRow } : {};
+
   const refresh = (file: File, sample: boolean) =>
     run("refresh", async () => {
-      const result = await refreshData(projectId, snapshot.id, file, { sample });
+      const result = await refreshData(projectId, snapshot.id, file, { ...readAs, sample });
       setPending(null);
       if (result.status === "mismatch") {
         onWizard({
           kind: "refresh",
           snapshot,
           file,
-          options: { sample },
+          options: { ...readAs, sample },
           inspection: result.inspection,
           missing: result.missing,
           choices: result.choices,
@@ -166,7 +184,7 @@ function SnapshotRow({
   const chooseRefresh = (file: File) =>
     run("refresh", async () => {
       // Step 1's checks first, the 2,000-row limit and its two choices included.
-      const inspection = await inspectData(projectId, { file });
+      const inspection = await inspectData(projectId, { file }, readAs);
       if (inspection.sample) setPending({ file, inspection });
       else await refresh(file, false);
     });
@@ -188,7 +206,8 @@ function SnapshotRow({
         </span>
         <span className="data-label">{dataLabel(snapshot)}</span>
         <span className="snapshot-facts">
-          {made} · {reportWord(snapshot.report)}
+          {made}
+          {snapshot.workbook ? ` · sheet ${snapshot.workbook.sheet}` : ""} · {reportWord(snapshot.report)}
           {busy === "refresh" ? " · Refreshing…" : ""}
         </span>
         <label className="snapshot-switch">
@@ -213,7 +232,7 @@ function SnapshotRow({
         <input
           ref={fileInput}
           type="file"
-          accept=".csv,.txt,text/csv,text/plain"
+          accept={DATA_FILE_ACCEPT}
           hidden
           onChange={(e) => {
             const file = e.target.files?.[0];

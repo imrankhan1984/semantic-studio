@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1022 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1165 tests, vitest
+cd backend  && python -m pytest tests    # 1050 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1174 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -62,7 +62,7 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Twenty-six backend tests carry
+**Timing budgets are separated, not deleted.** Twenty-seven backend tests carry
 `@pytest.mark.perf`; ten frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
@@ -125,8 +125,8 @@ EXPECTED OUTPUT
 `query_schema.py` before writing any. The density is deliberate. Match it.
 
 **3. Do not add dependencies casually.** `frontend/package.json` carries eight
-runtime dependencies and `backend/requirements.txt` carries six (pySHACL the
-sixth, D-092). Adding one is
+runtime dependencies and `backend/requirements.txt` carries eight (pySHACL the
+sixth, D-092; openpyxl and defusedxml for Excel, D-100). Adding one is
 a decision that belongs in a spec, not in a commit.
 
 **4. SPARQL execution is SELECT-only.** `prepare_select` in `sparql_exec.py` is
@@ -167,8 +167,9 @@ backend/app/
   shacl.py           Validation on demand with pySHACL: one panel per shape, sentences
   shapes_form.py     A SHACL shape as the form reads it, read-only parts, suggestions
   queries_store.py   Saved queries, visual or text, one JSON file each
-  tabular.py         A CSV read for the data import: dialect detected, the fixed
-                     limits (2,000 rows, D-098), the copy written
+  tabular.py         A CSV file or a workbook's sheet read for the data import:
+                     dialect detected, the fixed limits (2,000 rows, D-098),
+                     the Excel defences (D-100), the copy written
   rml.py             The RML subset: written, read (refused outside it), run (D-099)
   snapshots.py       Data snapshots in data/<sid>/: import, refresh, switch,
                      remap, edit as RML, remove; the graphs the views join
@@ -334,6 +335,10 @@ leaves one behind.
 - The card's `data` line is written from the folders when the project is closed. [Data snapshots]
 - The data routes check the project and snapshot before the body: an id not issued is 404. [Data snapshots]
 - The wizard uses a class reading only for the class and id it was read for, and every exit past step 3 asks. [Data snapshots]
+- A workbook's entries are read in chunks before openpyxl opens it, never with `ZipFile.read`: a lying entry inflates whole. [Excel workbooks]
+- openpyxl parses through defusedxml or the workbook is refused; a sheet's rows come from its parser, never `iter_rows`. [Excel workbooks]
+- Step 1's pickers stay mounted while a file is read again, and are rendered conditionally, never `hidden`. [Excel workbooks]
+- Links to no row are counted when asked, against the switched-on snapshots, never stored. [Excel workbooks]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

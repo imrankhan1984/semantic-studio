@@ -6,7 +6,11 @@ FILE: backend/tests/test_tabular.py
 SUMMARY
     Reading a CSV file for the data import (csv-data-import 5.2, Section 9):
     encoding, separator and header detection, header names made usable, the
-    fixed limits, and what step 1 and step 2 suggest.
+    fixed limits, and what step 1 and step 2 suggest. Stage B (5.8, row X1):
+    an Excel workbook's sheet and header row, its cell types kept as text
+    the type rule reads, the same limits per sheet, and a far cell read
+    without filling the gap to it. The ZIP and XML defences are in
+    test_xlsx_defences.py.
 
 BASIC IDEA
     Every file is generated in the test, never committed (rdf-fixture). The
@@ -14,21 +18,26 @@ BASIC IDEA
     5 MB and one byte more, 100 columns and 101, 32,767 characters and
     40,000 -- because an off-by-one there is exactly the defect a limit
     test exists to catch. The 2,000-row limit is asserted not to be a
-    setting at all (D-098).
+    setting at all (D-098). Workbooks are made with openpyxl in the test,
+    or written by hand where Excel could not save one.
 
 INPUTS / INPUT SOURCES
     - app.tabular, on bytes built here.
 
 EXPECTED OUTPUT
-    - Pass/fail; one `perf` budget (Section 10: inspect a 5 MB file in 1 s).
+    - Pass/fail; two `perf` budgets (Section 10: inspect a 5 MB file in 1 s,
+      read a 5,000-row sheet in 1 s).
 ================================================================================
 """
 
 from __future__ import annotations
 
+import datetime
 import gc
 import inspect as pyinspect
+import io
 import time
+import zipfile
 
 import pytest
 
@@ -250,3 +259,252 @@ def test_inspect_budget():
         gc.enable()
     median = sorted(times)[2]
     assert median <= limit_ms(1000), f"inspecting a 5 MB file took {median:.0f} ms (median of 5)"
+
+
+# --- Excel (Stage B, 5.8; row X1) ------------------------------------------------
+
+
+def workbook(build) -> bytes:
+    """A workbook made in the test with openpyxl, as Excel would save it."""
+    from openpyxl import Workbook
+
+    book = Workbook()
+    build(book)
+    out = io.BytesIO()
+    book.save(out)
+    return out.getvalue()
+
+
+def orgs_book(book) -> None:
+    # X1: two sheets, a title row above the table, dates and numbers.
+    sheet = book.active
+    sheet.title = "Orgs"
+    sheet["A1"] = "Organizations, October 2026"
+    sheet.merge_cells("A1:D1")
+    sheet.append([])
+    sheet.append(["id", "name", "founded", "staff", "share", "checked", "audited"])
+    sheet.append(["acme", "Acme", datetime.date(1990, 1, 2), 12, 0.25, True, datetime.datetime(2026, 9, 1, 14, 30)])
+    sheet.append(["beta", "Beta", datetime.date(2001, 5, 6), 3.0, 1e-05, False, datetime.datetime(2026, 9, 2)])
+    sheet.append(["gamma", "  Gamma  ", None, 7, 1.5, None, None])
+    sheet.row_dimensions[6].hidden = True
+    people = book.create_sheet("People")
+    people.append(["id", "name", "org"])
+    for i in range(1, 6):
+        people.append([i, f"Person {i}", "acme"])
+
+
+def test_a_sheet_and_header_row_are_chosen_and_cell_types_kept():
+    data = workbook(orgs_book)
+    table = tabular.read_workbook(data, filename="orgs.xlsx", sheet="Orgs", header_row=3)
+    assert table.columns == ["id", "name", "founded", "staff", "share", "checked", "audited"]
+    assert table.rows == [
+        # Numbers stay numbers, dates become xsd:date or, with a time, xsd:dateTime.
+        ["acme", "Acme", "1990-01-02", "12", "0.25", "true", "2026-09-01T14:30:00"],
+        ["beta", "Beta", "2001-05-06", "3", "0.00001", "false", "2026-09-02"],
+        # Trimmed (5.5), and the hidden row is read.
+        ["gamma", "Gamma", "", "7", "1.5", "", ""],
+    ]
+    assert (table.separator, table.encoding, table.header, table.total) == (",", "utf-8", True, 3)
+    found = tabular.inspect(table)
+    assert found["format"] == "xlsx"
+    assert found["workbook"]["sheets"] == [{"name": "Orgs", "rows": 3}, {"name": "People", "rows": 5}]
+    assert (found["workbook"]["sheet"], found["workbook"]["headerRow"]) == ("Orgs", 3)
+    # The header row picker numbers rows as Excel does, the empty one too.
+    assert found["workbook"]["top"][:3] == [
+        {"row": 1, "cells": ["Organizations, October 2026"]},
+        {"row": 2, "cells": []},
+        {"row": 3, "cells": ["id", "name", "founded", "staff"]},
+    ]
+    profiles = {c["name"]: c for c in found["columns"]}
+    assert profiles["founded"]["dates"] and profiles["staff"]["wholeNumbers"] and profiles["share"]["numbers"]
+    assert found["idSuggestion"] == "id" and found["nameSuggestion"] == "name"
+
+
+def test_the_first_sheet_and_row_one_by_default_and_the_copy_is_utf8_comma():
+    data = workbook(orgs_book)
+    table = tabular.read_file(data, "orgs.xlsx", {"sheet": "People"})
+    assert table.columns == ["id", "name", "org"] and table.total == 5
+    assert table.rows[0] == ["1", "Person 1", "acme"]
+    assert tabular.write_csv(table, "utf-8", ",").startswith(b"id,name,org\r\n1,Person 1,acme\r\n")
+    first = tabular.read_file(data, "orgs.xlsx", {})
+    assert first.workbook["sheet"] == "Orgs" and first.workbook["headerRow"] == 1
+    # Row 1 is the merged title: its top-left value is the one column name.
+    assert first.columns[0] == "Organizations, October 2026"
+
+
+def test_a_formula_gives_its_last_saved_value_never_evaluated():
+    def build(book):
+        sheet = book.active
+        sheet.append(["id", "total"])
+        sheet.append(["a", "=1+1"])
+
+    data = workbook(build)
+    # openpyxl saves no cached value for a formula, as a file never opened in
+    # Excel has none: the cell reads empty, and the formula is not run.
+    assert tabular.read_workbook(data).rows == [["a", ""]]
+    # A cached value, as Excel writes it, is what is read.
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        parts = {n: zf.read(n) for n in zf.namelist()}
+    sheet = parts["xl/worksheets/sheet1.xml"].decode()
+    parts["xl/worksheets/sheet1.xml"] = sheet.replace("<f>1+1</f><v></v>", "<f>1+1</f><v>2</v>").replace(
+        "<f>1+1</f><v/>", "<f>1+1</f><v>2</v>").encode()
+    if b"<v>2</v>" not in parts["xl/worksheets/sheet1.xml"]:
+        parts["xl/worksheets/sheet1.xml"] = sheet.replace("<f>1+1</f>", "<f>1+1</f><v>2</v>").encode()
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, raw in parts.items():
+            zf.writestr(name, raw)
+    assert tabular.read_workbook(out.getvalue()).rows == [["a", "2"]]
+
+
+def test_the_row_limit_holds_per_sheet():
+    def build(book):
+        small = book.active
+        small.title = "Small"
+        small.append(["id"])
+        small.append(["only"])
+        big = book.create_sheet("Big")
+        big.append(["id", "n"])
+        for i in range(1, 5001):
+            big.append([f"r{i}", i])
+
+    data = workbook(build)
+    table = tabular.read_workbook(data, sheet="Big")
+    assert table.total == 5000 and len(table.rows) == tabular.MAX_ROWS and table.sample
+    assert table.rows[-1] == ["r2000", "2000"]
+    assert tabular.inspect(table)["limitSentence"] == tabular.rows_sentence(5000)
+    small = tabular.read_workbook(data, sheet="Small")
+    assert small.total == 1 and not small.sample
+
+
+def test_header_row_and_sheet_refusals():
+    data = workbook(orgs_book)
+    with pytest.raises(tabular.TabularError, match="no sheet named Nope"):
+        tabular.read_workbook(data, sheet="Nope")
+    with pytest.raises(tabular.TabularError, match="Row 2 of sheet Orgs is empty: choose the row"):
+        tabular.read_workbook(data, sheet="Orgs", header_row=2)
+    for bad in (0, -1, "3", True, tabular.MAX_HEADER_ROW + 1):
+        with pytest.raises(tabular.TabularError, match="The header row is a row number"):
+            tabular.read_workbook(data, header_row=bad)
+
+    def empty(book):
+        book.active.title = "Blank"
+
+    with pytest.raises(tabular.TabularError, match="Sheet Blank is empty") as caught:
+        tabular.read_workbook(workbook(empty))
+    assert caught.value.kind == "empty"
+
+
+def test_a_sheet_holds_the_same_column_and_cell_limits_as_csv():
+    def wide(book):
+        book.active.append([f"c{i}" for i in range(1, 102)])
+
+    with pytest.raises(tabular.TabularError, match="value in column 101") as caught:
+        tabular.read_workbook(workbook(wide))
+    assert caught.value.kind == "too-large"
+
+    def hundred(book):
+        book.active.append([f"c{i}" for i in range(1, 101)])
+        book.active.append(["x"] * 100)
+
+    assert len(tabular.read_workbook(workbook(hundred)).columns) == 100
+
+    # Excel cannot save a longer cell (openpyxl cuts one), so the file is
+    # written by hand, as an attacker would.
+    base = workbook(lambda book: book.active.append(["id"]))
+    for size, refused in ((tabular.MAX_CELL, False), (tabular.MAX_CELL + 1, True)):
+        long_cell = _with_sheet_xml(
+            base, '<row r="1"><c r="A1" t="inlineStr"><is><t>note</t></is></c></row>'
+                  f'<row r="2"><c r="A2" t="inlineStr"><is><t>{"y" * size}</t></is></c></row>', "A1:A2")
+        if refused:
+            with pytest.raises(tabular.TabularError, match="holds 32,768 characters") as caught:
+                tabular.read_workbook(long_cell)
+            assert caught.value.kind == "too-large"
+        else:
+            assert len(tabular.read_workbook(long_cell).rows[0][0]) == tabular.MAX_CELL
+
+
+def _with_sheet_xml(data: bytes, rows_xml: str, dimension: str) -> bytes:
+    """The workbook with its first sheet's cells replaced by hand-written XML."""
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        parts = {n: zf.read(n) for n in zf.namelist()}
+    parts["xl/worksheets/sheet1.xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<dimension ref="{dimension}"/><sheetData>{rows_xml}</sheetData></worksheet>'
+    ).encode()
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, raw in parts.items():
+            zf.writestr(name, raw)
+    return out.getvalue()
+
+
+def test_a_far_cell_is_refused_or_read_without_filling_the_gap():
+    # openpyxl's row iterator pads to the sheet's dimension, so one cell in
+    # XFD1048576 would make millions of empty values; read through its parser,
+    # nothing between is made.
+    base = workbook(lambda book: book.active.append(["id"]))
+    far_column = _with_sheet_xml(
+        base, '<row r="1"><c r="A1" t="inlineStr"><is><t>id</t></is></c></row>'
+              '<row r="1048576"><c r="XFD1048576"><v>1</v></c></row>', "A1:XFD1048576")
+    start = time.perf_counter()
+    with pytest.raises(tabular.TabularError, match="value in column 16,384"):
+        tabular.read_workbook(far_column)
+    far_row = _with_sheet_xml(
+        base, '<row r="1"><c r="A1" t="inlineStr"><is><t>id</t></is></c></row>'
+              '<row r="1048576"><c r="A1048576"><v>7</v></c></row>', "A1:XFD1048576")
+    table = tabular.read_workbook(far_row)
+    assert table.rows == [["7"]] and table.total == 1
+    assert time.perf_counter() - start < 5
+
+
+def test_cell_text():
+    assert tabular.cell_text(None) == ""
+    assert tabular.cell_text(12) == "12"
+    assert tabular.cell_text(12.0) == "12"
+    assert tabular.cell_text(-0.5) == "-0.5"
+    assert tabular.cell_text(1e-05) == "0.00001"
+    assert tabular.cell_text(1e20) == "100000000000000000000"
+    assert tabular.cell_text(True) == "true"
+    assert tabular.cell_text(datetime.date(2020, 2, 29)) == "2020-02-29"
+    assert tabular.cell_text(datetime.datetime(2020, 2, 29)) == "2020-02-29"
+    assert tabular.cell_text(datetime.datetime(2020, 2, 29, 8, 5, 3)) == "2020-02-29T08:05:03"
+    assert tabular.cell_text(datetime.time(8, 5)) == "08:05:00"
+    assert tabular.cell_text(datetime.timedelta(hours=1, minutes=30)) == "PT1H30M0S"
+    assert tabular.cell_text("#DIV/0!") == "#DIV/0!"
+
+
+def test_a_workbook_is_told_from_csv_by_name_or_first_bytes():
+    data = workbook(orgs_book)
+    assert tabular.is_workbook(data, "orgs.xlsx")
+    # A workbook named .csv is still not CSV text.
+    assert tabular.is_workbook(data, "orgs.csv")
+    assert tabular.is_workbook(data, "")
+    assert not tabular.is_workbook(b"id,name\n1,Ann\n", "people.csv")
+    assert not tabular.is_workbook(b"id,name\n1,Ann\n", "")
+    assert tabular.is_workbook(b"id,name\n", "book.xlsm")
+    assert tabular.read_file(b"id;name\n1;Ann\n", "people.csv", {}).separator == ";"
+
+
+@pytest.mark.perf
+def test_read_a_5000_row_sheet_budget():
+    # Section 10: a 5,000-row sheet in 1 s.
+    def build(book):
+        sheet = book.active
+        sheet.append(["id", "name", "born", "staff", "city"])
+        for i in range(5000):
+            sheet.append([f"id{i}", f"Somebody {i}", datetime.date(1990, 1, 1 + i % 28), i, "Somewhere"])
+
+    data = workbook(build)
+    times = []
+    gc.disable()
+    try:
+        for _ in range(5):
+            start = time.perf_counter()
+            tabular.inspect(tabular.read_file(data, "big.xlsx", {}))
+            times.append((time.perf_counter() - start) * 1000)
+    finally:
+        gc.enable()
+    median = sorted(times)[2]
+    assert median <= limit_ms(1000), f"reading a 5,000-row sheet took {median:.0f} ms (median of 5)"
