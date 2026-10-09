@@ -461,6 +461,74 @@ describe("Stage B: an Excel workbook (5.8) and links (5.9)", () => {
     expect(next().getAttribute("aria-disabled")).toBe("false");
   });
 
+  it("keeps both pickers when the first read finds an empty sheet or header row (PR #54 review)", async () => {
+    await setup();
+    const { ApiError } = await import("../api");
+    const sentence = "Sheet Cover is empty.";
+    const listed = {
+      sheet: "Cover", headerRow: 1, top: [],
+      sheets: [{ name: "Cover", rows: 0 }, { name: "Orgs", rows: 41 }],
+    };
+    const input = document.querySelector(".data-wizard input[type=file]") as HTMLInputElement;
+    inspectData.mockRejectedValue(new ApiError(sentence, 422, { message: sentence, kind: "empty", workbook: listed }));
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [BOOK] } });
+    });
+    expect(screen.getByRole("alert").textContent).toBe(`Not readable. ${sentence}`);
+    const sheet = screen.getByLabelText("Sheet") as HTMLSelectElement;
+    expect([...sheet.options].map((o) => o.text)).toEqual(["Cover (0 rows)", "Orgs (41 rows)"]);
+    expect((screen.getByLabelText("Header row") as HTMLSelectElement).value).toBe("1");
+    // The pickers put it right.
+    inspectData.mockResolvedValue(inspection({ format: "xlsx", workbook: { ...WORKBOOK, headerRow: 3 } }));
+    await act(async () => {
+      fireEvent.change(sheet, { target: { value: "Orgs" } });
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect((screen.getByLabelText("Header row") as HTMLSelectElement).value).toBe("3");
+  });
+
+  it("applies only the latest read's reply, and Next waits until it lands (PR #54 review)", async () => {
+    await setup();
+    await chooseBook(inspection({ format: "xlsx", workbook: { ...WORKBOOK, sheets: [...WORKBOOK.sheets, { name: "People", rows: 5 }] } }));
+    const replies: ((found: DataInspection) => void)[] = [];
+    inspectData.mockImplementation(() => new Promise<DataInspection>((done) => replies.push(done)));
+    const pick = async (value: string) => {
+      await act(async () => {
+        fireEvent.change(screen.getByLabelText("Sheet"), { target: { value } });
+      });
+    };
+    const big = inspection({ format: "xlsx", columns: [profile("big_column")], workbook: { ...WORKBOOK, sheet: "Big" } });
+    const people = inspection({ format: "xlsx", columns: [profile("people_column")], workbook: { ...WORKBOOK, sheet: "People" } });
+    const blockedBy = () => document.getElementById(next().getAttribute("aria-describedby") ?? "")?.textContent;
+
+    await pick("Big");
+    await pick("People");
+    expect(next().getAttribute("aria-disabled")).toBe("true");
+    expect(blockedBy()).toBe("Reading the file…");
+    // The earlier read answers first: still reading, nothing applied.
+    await act(async () => replies[0](big));
+    expect(screen.queryByText("big_column")).toBeNull();
+    expect(next().getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByText("Reading…")).toBeTruthy();
+    await act(async () => replies[1](people));
+    expect(screen.getByText("people_column")).toBeTruthy();
+    expect(next().getAttribute("aria-disabled")).toBe("false");
+
+    // Out of order: the later read answers first, and the earlier one,
+    // landing after, changes nothing.
+    await pick("Big");
+    await pick("Orgs");
+    const orgs = inspection({ format: "xlsx", columns: [profile("orgs_column")], workbook: WORKBOOK });
+    await act(async () => replies[3](orgs));
+    expect(screen.getByText("orgs_column")).toBeTruthy();
+    expect(next().getAttribute("aria-disabled")).toBe("false");
+    await act(async () => replies[2](big));
+    expect(screen.queryByText("big_column")).toBeNull();
+    expect(screen.getByText("orgs_column")).toBeTruthy();
+    expect((screen.getByLabelText("Sheet") as HTMLSelectElement).value).toBe("Orgs");
+    expect(screen.queryByText("Reading…")).toBeNull();
+  });
+
   it("keeps the changed picker mounted and focused while the file is read again (X4)", async () => {
     await setup();
     await chooseBook(inspection({ format: "xlsx", workbook: WORKBOOK }));

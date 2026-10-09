@@ -24,9 +24,11 @@ BASIC IDEA
     workbook (5.8) shows a sheet picker, each sheet with its rows, and a
     header row picker naming each of the sheet's first rows by its first
     cells; those stay on screen when a choice reads nothing (an empty
-    header row), so the choice can be put right. The detections and the
-    pickers stay mounted while the file is read again, so the control just
-    changed keeps keyboard focus. A file past
+    sheet or header row: the refusal brings the sheets and rows with it),
+    so the choice can be put right. The detections and the pickers stay
+    mounted while the file is read again, so the control just changed
+    keeps keyboard focus. Reads are numbered and only the latest reply is
+    applied, and Next waits while one is on its way. A file past
     the tool's 2,000-row limit (D-098) gets the limit sentence and two
     choices, Use the first 2,000 rows or Choose another file, and Next waits
     for one.
@@ -217,16 +219,23 @@ export default function DataWizard({
   // The identifier is passed in rather than read from this render: a new
   // file resets it in the same event, and the closure would still hold the
   // last file's, which lost the new file's suggestion (PR #53 review).
+  // Only the latest read's reply is applied: quick sheet changes raced, and
+  // a slower reply for the earlier sheet replaced the newer one, so the
+  // table showed another sheet than the picker (PR #54 review).
+  const readCount = useRef(0);
   const read = async (
     chosen: File,
     nextOptions: DataOptions,
     id: { idColumn: string | null; rowNumber: boolean },
   ) => {
+    const ticket = ++readCount.current;
+    const latest = () => ticket === readCount.current;
     setReading(true);
     setFileProblem(null);
     setError(null);
     try {
       const found = await inspectData(projectId, { file: chosen }, nextOptions);
+      if (!latest()) return;
       setInspection(found);
       setWorkbook(found.workbook ?? null);
       // Keep the identifier only while the file still has that column.
@@ -236,17 +245,23 @@ export default function DataWizard({
       setIdColumn(kept);
       setColumns(null);
     } catch (e: unknown) {
+      if (!latest()) return;
       setInspection(null);
-      // Another sheet that could not be read: its rows are not known, so
+      // A sheet read without a table (an empty sheet or header row) comes
+      // back with the sheets and its rows, so both pickers stay. Otherwise
+      // another sheet that could not be read: its rows are not known, so
       // the header row picker offers them by number only (code review).
+      const listed = refusedWorkbook(e);
       setWorkbook((current) =>
-        current && nextOptions.sheet !== undefined && nextOptions.sheet !== current.sheet
+        listed ??
+        (current && nextOptions.sheet !== undefined && nextOptions.sheet !== current.sheet
           ? { ...current, sheet: nextOptions.sheet, headerRow: nextOptions.headerRow ?? 1, top: unreadRows() }
-          : current,
+          : current),
       );
       setFileProblem({ text: message(e), tooLarge: e instanceof ApiError && e.status === 413 });
     } finally {
-      setReading(false);
+      // An earlier read finishing leaves the wizard reading the latest.
+      if (latest()) setReading(false);
     }
   };
 
@@ -335,6 +350,7 @@ export default function DataWizard({
           classIri,
           basis: basis ? "ready" : basisFailed ? "failed" : "reading",
           columnsReady: choices !== null,
+          reading,
         })
       : null;
   const retryShown = (step === 2 || step === 3) && basisFailed !== null && !basis;
@@ -792,6 +808,13 @@ function FileStep({
 }
 
 /** A sheet's first rows when they could not be read: numbers, no cells. */
+/** The sheets and rows a refused workbook read came back with, if any. */
+function refusedWorkbook(e: unknown): WorkbookInspection | null {
+  if (!(e instanceof ApiError) || typeof e.detail !== "object" || e.detail === null) return null;
+  const listed = (e.detail as { workbook?: WorkbookInspection }).workbook;
+  return listed && Array.isArray(listed.sheets) && Array.isArray(listed.top) ? listed : null;
+}
+
 function unreadRows(): { row: number; cells: string[]; unread: boolean }[] {
   return Array.from({ length: 20 }, (_, i) => ({ row: i + 1, cells: [], unread: true }));
 }

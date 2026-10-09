@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1050 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1174 tests, vitest
+cd backend  && python -m pytest tests    # 1057 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1177 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -337,6 +337,9 @@ leaves one behind.
 - The wizard uses a class reading only for the class and id it was read for, and every exit past step 3 asks. [Data snapshots]
 - A workbook's entries are read in chunks before openpyxl opens it, never with `ZipFile.read`: a lying entry inflates whole. [Excel workbooks]
 - openpyxl parses through defusedxml or the workbook is refused; a sheet's rows come from its parser, never `iter_rows`. [Excel workbooks]
+- `tabular.py` sets `OPENPYXL_LXML=False` before openpyxl is imported; the guard checks the parser functions, never `DEFUSEDXML` alone. [Excel workbooks]
+- Step 1 applies only the latest inspect reply, and Next waits while one is on its way. [Excel workbooks]
+- A sheet that gives no table is refused with the sheets and its rows (`detail.workbook`), so the pickers stay. [Excel workbooks]
 - Step 1's pickers stay mounted while a file is read again, and are rendered conditionally, never `hidden`. [Excel workbooks]
 - Links to no row are counted when asked, against the switched-on snapshots, never stored. [Excel workbooks]
 

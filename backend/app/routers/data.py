@@ -82,7 +82,12 @@ def _errors():
         raise HTTPException(status_code=409, detail="Open the project first.") from exc
     except tabular.TabularError as exc:
         status = 413 if exc.kind == "too-large" else 422
-        raise HTTPException(status_code=status, detail={"message": str(exc), "kind": exc.kind}) from exc
+        detail = {"message": str(exc), "kind": exc.kind}
+        if exc.workbook is not None:
+            # A sheet that gave no table still names the sheets and its
+            # rows, so the wizard keeps its Sheet and Header row pickers.
+            detail["workbook"] = exc.workbook
+        raise HTTPException(status_code=status, detail=detail) from exc
     except (SnapshotError, UnsupportedMapping) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

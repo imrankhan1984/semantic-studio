@@ -786,6 +786,40 @@ def import_orgs(pid: str, data: bytes | None = None, options: dict | None = None
     return response.json()
 
 
+def test_a_workbook_with_an_empty_first_sheet_and_row_one_inspects_and_keeps_its_pickers(pid):
+    # PR #54 review: row 1 empty or the first sheet empty answered 422 with
+    # no sheet list, so step 1 had no picker to change either.
+    def build(book):
+        book.active.title = "Cover"
+        orgs = book.create_sheet("Orgs")
+        orgs["A3"], orgs["B3"] = "id", "name"
+        orgs["A4"], orgs["B4"] = "acme", "Acme"
+
+    data = xlsx(build)
+
+    def inspect(options: dict):
+        return client.post(
+            f"/api/projects/{pid}/data/inspect",
+            files={"file": ("orgs.xlsx", data, XLSX)}, data={"options": json.dumps(options)},
+        )
+
+    found = inspect({})
+    assert found.status_code == 200, found.text
+    shown = found.json()
+    assert (shown["workbook"]["sheet"], shown["workbook"]["headerRow"]) == ("Orgs", 3)
+    assert [c["name"] for c in shown["columns"]] == ["id", "name"] and shown["total"] == 1
+    for options, sentence in (
+        ({"sheet": "Orgs", "headerRow": 1}, "Row 1 of sheet Orgs is empty"),
+        ({"sheet": "Cover"}, "Sheet Cover is empty"),
+    ):
+        refused = inspect(options)
+        assert refused.status_code == 422
+        detail = refused.json()["detail"]
+        assert detail["message"].startswith(sentence) and detail["kind"] == "empty"
+        assert [s["name"] for s in detail["workbook"]["sheets"]] == ["Cover", "Orgs"]
+        assert detail["workbook"]["sheet"] == options["sheet"]
+
+
 def test_x1_a_workbook_imports_by_sheet_and_header_row_with_types_kept_and_a_csv_copy(pid):
     with_org_attributes(pid)
     data = orgs_workbook()

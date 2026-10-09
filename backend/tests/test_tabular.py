@@ -168,8 +168,10 @@ def test_the_row_limit_is_not_a_setting(monkeypatch):
     # D-098: fixed. No environment variable moves it, and the module reads none.
     monkeypatch.setenv("SEMANTIC_STUDIO_MAX_DATA_ROWS", "50000")
     assert tabular.MAX_ROWS == 2000
-    source = pyinspect.getsource(tabular)
-    assert "import os" not in source and "os.environ" not in source and "getenv(" not in source
+    # The one environment line there is a write, switching openpyxl's lxml
+    # off (Section 9, PR #54 review).
+    source = pyinspect.getsource(tabular).replace('os.environ["OPENPYXL_LXML"] = "False"', "")
+    assert "os.environ" not in source and "getenv(" not in source
 
 
 def test_five_megabytes_are_read_and_one_byte_more_is_refused():
@@ -393,6 +395,54 @@ def test_header_row_and_sheet_refusals():
     with pytest.raises(tabular.TabularError, match="Sheet Blank is empty") as caught:
         tabular.read_workbook(workbook(empty))
     assert caught.value.kind == "empty"
+    # Even a workbook of empty sheets names them, for the Sheet picker.
+    assert caught.value.workbook["sheets"] == [{"name": "Blank", "rows": 0}]
+
+
+def late_table(book) -> None:
+    # A table starting at row 3, nothing above it (PR #54 review).
+    sheet = book.active
+    sheet.title = "Late"
+    sheet["A3"], sheet["B3"] = "id", "name"
+    sheet["A4"], sheet["B4"] = "acme", "Acme"
+    sheet["A5"], sheet["B5"] = "beta", "Beta"
+
+
+def test_not_chosen_the_header_row_is_the_first_row_holding_a_value():
+    table = tabular.read_file(workbook(late_table), "late.xlsx", {"sheet": "Late"})
+    assert table.columns == ["id", "name"] and table.total == 2
+    assert table.workbook["headerRow"] == 3
+    assert [entry["row"] for entry in table.workbook["top"]] == [1, 2, 3, 4, 5]
+    assert tabular.read_file(workbook(late_table), "late.xlsx", {}).workbook["headerRow"] == 3
+
+
+def test_not_chosen_the_sheet_is_the_first_holding_a_value():
+    def behind_an_empty_sheet(book):
+        book.active.title = "Cover"
+        people = book.create_sheet("People")
+        people.append(["id", "name"])
+        people.append(["1", "Ann"])
+
+    table = tabular.read_file(workbook(behind_an_empty_sheet), "people.xlsx", {})
+    assert table.workbook["sheet"] == "People" and table.columns == ["id", "name"]
+    assert table.workbook["sheets"] == [{"name": "Cover", "rows": 0}, {"name": "People", "rows": 1}]
+    # Chosen, the empty sheet is refused with the sheets still named.
+    with pytest.raises(tabular.TabularError, match="Sheet Cover is empty") as caught:
+        tabular.read_file(workbook(behind_an_empty_sheet), "people.xlsx", {"sheet": "Cover"})
+    assert [s["name"] for s in caught.value.workbook["sheets"]] == ["Cover", "People"]
+
+
+def test_a_chosen_empty_header_row_is_refused_with_the_sheets_and_rows_for_the_pickers():
+    with pytest.raises(tabular.TabularError, match="Row 1 of sheet Late is empty") as caught:
+        tabular.read_file(workbook(late_table), "late.xlsx", {"sheet": "Late", "headerRow": 1})
+    listed = caught.value.workbook
+    assert caught.value.kind == "empty"
+    assert listed["sheet"] == "Late" and listed["headerRow"] == 1
+    assert listed["sheets"] == [{"name": "Late", "rows": 0}]
+    assert listed["top"] == [
+        {"row": 1, "cells": []}, {"row": 2, "cells": []}, {"row": 3, "cells": ["id", "name"]},
+        {"row": 4, "cells": ["acme", "Acme"]}, {"row": 5, "cells": ["beta", "Beta"]},
+    ]
 
 
 def test_a_sheet_holds_the_same_column_and_cell_limits_as_csv():

@@ -25,6 +25,12 @@ BASIC IDEA
     them too. Both times the server must see zero requests and the secret
     must appear in no answer.
 
+    Which parser openpyxl uses is decided when it is first imported, and
+    lxml, where installed, would take over fromstring. So the parser is
+    proved in a fresh interpreter with lxml importable (skipped where it is
+    not installed), and the guard is proved to look at the functions, not
+    at openpyxl's flag.
+
     Every workbook is built in the test: with openpyxl where Excel could
     have saved it, by hand where only an attacker would write it.
 
@@ -40,15 +46,21 @@ EXPECTED OUTPUT
 from __future__ import annotations
 
 import io
+import os
 import struct
+import subprocess
+import sys
 import tracemalloc
 import zipfile
+
+# app.tabular first: it switches openpyxl's lxml off, which must happen
+# before openpyxl is imported (Section 9).
+from app import tabular  # noqa: I001
 
 import openpyxl
 import pytest
 from fastapi.testclient import TestClient
 
-from app import tabular
 from app.editing import editing_service, project_store
 from app.main import app
 
@@ -280,7 +292,33 @@ def test_with_the_scan_off_defusedxml_still_refuses_every_entity(monkeypatch, re
 
 def test_a_workbook_is_not_parsed_when_defusedxml_is_off(opened, monkeypatch):
     monkeypatch.setattr(openpyxl, "DEFUSEDXML", False)
-    refused(book_bytes(), "orgs.xlsx", "cannot be read safely here: defusedxml is missing or switched off")
+    refused(book_bytes(), "orgs.xlsx", "cannot be read safely here: openpyxl is not parsing through defusedxml")
+    assert opened == []
+
+
+def test_a_workbook_is_not_parsed_when_a_parser_is_not_defusedxml_though_the_flag_says_so(opened, monkeypatch):
+    # What lxml does to openpyxl: DEFUSEDXML stays True while fromstring is
+    # another parser. The guard must look at the function, not the flag.
+    import xml.etree.ElementTree as ElementTree
+
+    from openpyxl.reader import excel
+    from openpyxl.xml import functions
+
+    assert openpyxl.DEFUSEDXML is True
+    for module in (functions, excel):
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "fromstring", ElementTree.fromstring)
+            refused(book_bytes(), "orgs.xlsx", "openpyxl is not parsing through defusedxml")
+    from openpyxl.worksheet import _reader
+
+    monkeypatch.setattr(_reader, "iterparse", ElementTree.iterparse)
+    refused(book_bytes(), "orgs.xlsx", "openpyxl is not parsing through defusedxml")
+    assert opened == []
+
+
+def test_a_workbook_is_not_parsed_when_openpyxl_took_lxml(opened, monkeypatch):
+    monkeypatch.setattr(openpyxl, "LXML", True)
+    refused(book_bytes(), "orgs.xlsx", "openpyxl is not parsing through defusedxml")
     assert opened == []
 
 
@@ -292,6 +330,45 @@ def test_openpyxl_parses_through_defusedxml_here():
     assert openpyxl.DEFUSEDXML is True
     assert functions.iterparse.__module__.startswith("defusedxml")
     assert functions.fromstring.__module__.startswith("defusedxml")
+    assert tabular.parses_through_defusedxml()
+
+
+_WITH_LXML = """
+import sys
+import lxml.etree  # importable, as it is where openpyxl would take it
+if sys.argv[1] == "app-first":
+    from app import tabular
+import openpyxl
+from openpyxl.xml import functions
+print(openpyxl.LXML, functions.fromstring.__module__, functions.iterparse.__module__)
+if sys.argv[1] == "app-first":
+    print(tabular.parses_through_defusedxml())
+"""
+
+
+def _with_lxml(order: str) -> list[str]:
+    backend = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = {k: v for k, v in os.environ.items() if not k.startswith("OPENPYXL_")}
+    done = subprocess.run(
+        [sys.executable, "-c", _WITH_LXML, order], cwd=backend, env=env,
+        capture_output=True, text=True, timeout=120,
+    )
+    assert done.returncode == 0, done.stderr
+    return done.stdout.split()
+
+
+def test_with_lxml_installed_openpyxl_still_parses_through_defusedxml():
+    # A fresh interpreter: openpyxl chooses its parser on first import, and
+    # this one has already imported it. Where lxml is installed, openpyxl
+    # alone takes it for fromstring (the first run, which proves lxml is in
+    # play); with app.tabular imported first it takes defusedxml for both.
+    pytest.importorskip("lxml")
+    alone = _with_lxml("openpyxl-alone")
+    assert alone[0] == "True" and not alone[1].startswith("defusedxml"), alone
+    lxml_off, fromstring, iterparse, guard = _with_lxml("app-first")
+    assert lxml_off == "False"
+    assert fromstring.startswith("defusedxml") and iterparse.startswith("defusedxml")
+    assert guard == "True"
 
 
 # --- macros ------------------------------------------------------------------------------

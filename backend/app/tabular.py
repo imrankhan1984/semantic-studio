@@ -49,8 +49,9 @@ BASIC IDEA
     it holds a document type declaration, which Excel never writes and an
     entity attack needs. Only then does openpyxl read it, read-only and
     data_only (a formula gives its last saved value, never run), its XML
-    through defusedxml -- and if openpyxl would not use defusedxml, the
-    workbook is refused rather than parsed.
+    through defusedxml, lxml switched off before openpyxl is imported -- and
+    if any parser openpyxl would use is not defusedxml's, the workbook is
+    refused rather than parsed.
 
     A sheet becomes the same Table a CSV file does: rows above the header
     row skipped, empty rows not counted, each cell as the text the type
@@ -78,6 +79,15 @@ EXPECTED OUTPUT
 """
 
 from __future__ import annotations
+
+import os
+
+# Section 9: openpyxl picks its XML parser once, when it is first imported.
+# With lxml installed it takes lxml for fromstring, not defusedxml, while
+# its DEFUSEDXML flag still says True. So lxml is switched off here, before
+# anything imports openpyxl, and _open_workbook checks the functions it
+# ended up with rather than the flag.
+os.environ["OPENPYXL_LXML"] = "False"
 
 import csv
 import datetime
@@ -112,9 +122,12 @@ WHY = "it is for learning how data is mapped to a model, not for loading whole d
 class TabularError(ValueError):
     """A file refused, with the sentence saying why and the wizard's state."""
 
-    def __init__(self, message: str, kind: str = "not-text") -> None:
+    def __init__(self, message: str, kind: str = "not-text", workbook: Optional[dict] = None) -> None:
         super().__init__(message)
         self.kind = kind
+        # A workbook's sheets and the chosen sheet's first rows, when a sheet
+        # was read but gave no table: step 1 keeps its pickers with them.
+        self.workbook = workbook
 
 
 @dataclass
@@ -500,15 +513,44 @@ def _sheet_row(sheet_name: str, number: int, cells: list) -> list[str]:
     return [texts.get(i, "") for i in range(1, max(texts) + 1)]
 
 
+# The parser functions openpyxl reads a workbook through: its own module,
+# and the names its readers bound when they were imported (openpyxl 3.1.5).
+_PARSER_NAMES = (
+    ("openpyxl.xml.functions", "fromstring"),
+    ("openpyxl.xml.functions", "iterparse"),
+    ("openpyxl.reader.excel", "fromstring"),
+    ("openpyxl.reader.workbook", "fromstring"),
+    ("openpyxl.reader.strings", "iterparse"),
+    ("openpyxl.styles.stylesheet", "fromstring"),
+    ("openpyxl.worksheet._reader", "iterparse"),
+)
+
+
+def parses_through_defusedxml() -> bool:
+    """Whether every parser openpyxl would read a workbook with is
+    defusedxml's. The DEFUSEDXML flag alone is not the answer: with lxml
+    imported it stays True while fromstring is lxml's."""
+    import importlib
+
+    import openpyxl
+
+    if not getattr(openpyxl, "DEFUSEDXML", False) or getattr(openpyxl, "LXML", False):
+        return False
+    for module, name in _PARSER_NAMES:
+        function = getattr(importlib.import_module(module), name, None)
+        if not getattr(function, "__module__", "").startswith("defusedxml"):
+            return False
+    return True
+
+
 def _open_workbook(data: bytes):
     import openpyxl
 
-    # openpyxl parses through defusedxml only when it is installed and not
-    # switched off by OPENPYXL_DEFUSEDXML; without it, refuse rather than
-    # parse a workbook with the standard library's XML (Section 9).
-    if not getattr(openpyxl, "DEFUSEDXML", False):
+    # Refuse rather than parse a workbook with any XML parser but
+    # defusedxml's: the standard library's, or lxml's (Section 9).
+    if not parses_through_defusedxml():
         raise TabularError(
-            "Excel workbooks cannot be read safely here: defusedxml is missing or switched off.",
+            "Excel workbooks cannot be read safely here: openpyxl is not parsing through defusedxml.",
             "not-text",
         )
     return openpyxl.load_workbook(
@@ -521,12 +563,19 @@ def read_workbook(
     *,
     filename: str = "",
     sheet: Optional[str] = None,
-    header_row: int = 1,
+    header_row: Optional[int] = None,
 ) -> Table:
     """A workbook's sheet read as a table under the same limits as a CSV
-    file: at most MAX_ROWS rows kept and all counted, per sheet (5.8)."""
+    file: at most MAX_ROWS rows kept and all counted, per sheet (5.8).
+
+    Not chosen, the sheet is the first one holding a value, and the header
+    row that sheet's first row holding one: a table starting at row 3, or
+    behind an empty first sheet, is read as it stands rather than refused
+    with no picker to change it (PR #54 review)."""
     check_size(len(data))
-    if isinstance(header_row, bool) or not isinstance(header_row, int) or not 1 <= header_row <= MAX_HEADER_ROW:
+    if header_row is not None and (
+        isinstance(header_row, bool) or not isinstance(header_row, int) or not 1 <= header_row <= MAX_HEADER_ROW
+    ):
         raise TabularError("The header row is a row number, from 1.", "not-text")
     check_workbook(data, filename)
     try:
@@ -541,19 +590,35 @@ def read_workbook(
         sheets = [ws for ws in book.worksheets if isinstance(ws, ReadOnlyWorksheet)]
         if not sheets:
             raise TabularError("This workbook has no sheet of cells.", "empty")
-        chosen = sheets[0] if sheet is None else next((ws for ws in sheets if ws.title == sheet), None)
+        if sheet is None:
+            chosen = next((ws for ws in sheets if _has_values(ws)), sheets[0])
+        else:
+            chosen = next((ws for ws in sheets if ws.title == sheet), None)
         if chosen is None:
             raise TabularError(f"This workbook has no sheet named {sheet}.", "not-text")
         listing = []
         table: Optional[Table] = None
+        unread: Optional[TabularError] = None
         for ws in sheets:
             if ws is chosen:
-                table = _read_sheet(ws, header_row)
-                listing.append({"name": ws.title, "rows": table.total})
+                try:
+                    table = _read_sheet(ws, header_row)
+                    listing.append({"name": ws.title, "rows": table.total})
+                except TabularError as exc:
+                    if exc.kind != "empty":
+                        raise
+                    unread = exc
+                    listing.append({"name": ws.title, "rows": 0})
             else:
                 count = sum(1 for _, cells in _sheet_cells(ws) if any(cell_text(v).strip() for _, v in cells))
-                # Below a header in row 1, as the sheet would first be read.
+                # Below a header in its first row holding a value, as the
+                # sheet would first be read.
                 listing.append({"name": ws.title, "rows": max(count - 1, 0)})
+        if unread is not None:
+            # The sheet list and the rows that are there go with the
+            # sentence, so step 1 can offer another sheet or row.
+            unread.workbook = {**(unread.workbook or {}), "sheets": listing}
+            raise unread
         assert table is not None
         table.workbook = {**table.workbook, "sheets": listing}
         return table
@@ -579,7 +644,14 @@ def _reason(exc: BaseException) -> str:
     return text[:200]
 
 
-def _read_sheet(ws, header_row: int) -> Table:
+def _has_values(ws) -> bool:
+    """Whether a sheet holds any value; stops at the first row that does."""
+    return any(any(cell_text(v).strip() for _, v in cells) for _, cells in _sheet_cells(ws))
+
+
+def _read_sheet(ws, header_row: Optional[int]) -> Table:
+    """The sheet below its header row: the one given, or else its first
+    row holding a value."""
     name = ws.title
     top: list[dict] = []
     head: Optional[list[str]] = None
@@ -590,6 +662,10 @@ def _read_sheet(ws, header_row: int) -> Table:
         row = _sheet_row(name, number, cells)
         if number <= HEADER_ROWS_SHOWN:
             top.append({"row": number, "cells": [c for c in row if c][:4]})
+        if header_row is None:
+            if not row:
+                continue
+            header_row = number
         if number < header_row:
             continue
         if number == header_row:
@@ -605,21 +681,23 @@ def _read_sheet(ws, header_row: int) -> Table:
         if total <= MAX_ROWS:
             kept.append([cell.strip() for cell in row])
             width = max(width, len(row))
-    if head is None or not any(head):
-        if not kept and total == 0 and head is None and not top:
-            raise TabularError(f"Sheet {name} is empty.", "empty")
-        raise TabularError(
-            f"Row {header_row:,} of sheet {name} is empty: choose the row that holds the column names.",
-            "empty",
-        )
-    columns, renamed = _named(head, width)
-    rows = [row + [""] * (width - len(row)) for row in kept]
     # Every physical row up to the last one shown, an empty one included,
     # so the header row picker numbers them as Excel does.
     written = {entry["row"]: entry["cells"] for entry in top}
     last = max(written, default=0)
     top = [{"row": n, "cells": written.get(n, [])} for n in range(1, last + 1)]
-    workbook = {"sheet": name, "headerRow": header_row, "top": top}
+    workbook = {"sheet": name, "headerRow": header_row or 1, "top": top}
+    if head is None or not any(head):
+        # Refused with the rows that are there, so step 1 keeps its pickers.
+        if header_row is None or (total == 0 and not any(entry["cells"] for entry in top)):
+            raise TabularError(f"Sheet {name} is empty.", "empty", workbook)
+        raise TabularError(
+            f"Row {header_row:,} of sheet {name} is empty: choose the row that holds the column names.",
+            "empty",
+            workbook,
+        )
+    columns, renamed = _named(head, width)
+    rows = [row + [""] * (width - len(row)) for row in kept]
     return Table(columns, rows, total, ",", "utf-8", True, renamed, workbook)
 
 
@@ -627,10 +705,8 @@ def read_file(data: bytes, filename: str, options: dict) -> Table:
     """A CSV file or a workbook, as the options for its kind say."""
     options = options or {}
     if is_workbook(data, filename):
-        header_row = options.get("headerRow", 1)
         return read_workbook(
-            data, filename=filename, sheet=options.get("sheet"),
-            header_row=1 if header_row is None else header_row,
+            data, filename=filename, sheet=options.get("sheet"), header_row=options.get("headerRow"),
         )
     return read_table(
         data,

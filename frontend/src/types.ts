@@ -1137,7 +1137,7 @@ export interface DataOptions {
 }
 
 export interface WorkbookInspection extends WorkbookChoice {
-  // Every sheet with its rows below a header in row 1; the chosen one's
+  // Every sheet with its rows below its first row holding a value; the chosen one's
   // below its own header row.
   sheets: { name: string; rows: number }[];
   // The chosen sheet's first physical rows, a few cells each, for the

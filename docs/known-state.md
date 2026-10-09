@@ -1439,6 +1439,18 @@ EXPECTED OUTPUT
   without. A test switches the byte scan off to prove defusedxml alone still
   refuses each entity case, with a recording server seeing nothing.
 
+  The flag was not enough (PR #54 review). With `lxml` installed, openpyxl
+  takes lxml's `fromstring` for `workbook.xml`, the relationships, styles
+  and comments, while `DEFUSEDXML` stays True, so the guard passed on a
+  machine with lxml and the claim was untrue there. openpyxl chooses on
+  first import, so `tabular.py` sets `OPENPYXL_LXML=False` at its top,
+  before anything imports openpyxl, and `parses_through_defusedxml()`
+  checks the functions themselves (`openpyxl.xml.functions` and the names
+  the readers bound) and refuses unless every one is defusedxml's. A test
+  imported openpyxl before `app.tabular` loses the switch, so
+  `test_xlsx_defences` imports `app.tabular` first, and the lxml case is
+  proved in a fresh interpreter (skipped where lxml is not installed).
+
   **A sheet's rows come from openpyxl's parser, not `iter_rows`.** The row
   iterator pads every row to the sheet's declared width and yields every
   missing row, so one crafted cell in `XFD1048576` makes millions of empty
@@ -1452,6 +1464,21 @@ EXPECTED OUTPUT
   `.wizard-detections` did not hide it, because the class sets `display`:
   jsdom passed, Chrome showed a workbook a CSV separator. Render
   conditionally instead.
+
+  **Only the latest read's reply is applied, and Next waits for it.** Quick
+  sheet changes raced: a slower reply for the earlier sheet replaced the
+  newer one, so the table showed another sheet than the picker, and Next
+  could be pressed on it (PR #54 review, reproduced in Chrome). `read()`
+  numbers each request in a ref and drops any reply but the latest's;
+  `reading` is cleared only by the latest, and `stepBlocked` says *Reading
+  the file…* on step 1 while it is set.
+
+  **A sheet that gives no table still names the sheets.** An empty first
+  sheet, or a table starting at row 3, answered 422 with nothing else, and
+  the wizard had no Sheet or Header row picker to put it right. Not chosen,
+  the sheet is now the first holding a value and the header row its first
+  row holding one; a chosen empty sheet or row is refused with the sheet
+  list and top rows in the 422's `detail.workbook`, which the wizard shows.
 
   **Links to no row are counted when asked, never stored.** Which row
   points at which IRI is kept in `snapshot.json`; whether that IRI is a row
