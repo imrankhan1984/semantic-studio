@@ -1487,3 +1487,56 @@ EXPECTED OUTPUT
   importing the target second, or switching it off, changes the first
   snapshot's report without touching it. Stage A's D1 expected a clean
   report with `org` linking to nothing; it now reports those two rows.
+
+- **Reasoning** (2026-10-09, V-7 Stage A, `axioms-and-reasoning.md` 5.1 to
+  5.7, D-102 to D-104, D-106).
+
+  **The reasoner runs in a spawned process, everywhere.** A run can take
+  minutes on a dense model, and a thread cannot be stopped; a process can be
+  killed. `spawn`, not Linux's `fork`, on every platform, so CI tests what
+  Windows runs and the child inherits none of the server's threads or locks.
+  A script that calls `reasoning.reason` must sit under
+  `if __name__ == "__main__"`, since spawn re-runs the caller's top level;
+  the server and pytest already are. The packaged app (X-9) needs
+  `multiprocessing.freeze_support()`.
+
+  **Blank nodes come back under their own labels.** rdflib gives every blank
+  node a fresh id on parse, so the worker's conclusions about a restriction
+  (*order 7 is one of [only Order lines]*) named blank nodes the server never
+  had, and the *only* family found no reason for *L1 is an Order line*. The
+  worker parses with a `bnode_context` it keeps, maps each fresh id back to
+  the label it was sent, and the server parses the answer with
+  `_SameLabels`, a context that maps every label to itself.
+
+  **Generalized RDF stays in the worker.** OWL-RL concludes
+  `"Manager"@en owl:sameAs "Manager"@en`; N-Triples cannot carry a literal
+  subject and the parse of the whole answer failed. No such statement is ever
+  shown, so the worker drops them.
+
+  **Names come from the stated facts.** OWL-RL copies a label across
+  `owl:sameAs`, and read from the closure, Anne was named Ann.
+
+  **The marks go at once.** In Chrome (R5) the tree kept four inferred rows
+  after an edit, for as long as its refetch took. The tree and the canvas now
+  strip a result's marks themselves the moment the flag goes off
+  (`withoutInferred`, the canvas's filtered view), and App derives the flag
+  for the tree, the canvas and the detail panel from one rule
+  (`marksShown`).
+
+  **Tree rows are keyed and focused by their path.** The same R5 run showed
+  the rows still there after the strip: keyed by entity id, a node under two
+  parents gave React two rows with one key, and the duplicates stayed in the
+  DOM. The roving focus had the same flaw, so Shift+F10 on the second row
+  opened the first row's menu. Inferred memberships made two parents common;
+  the defect was older. Both now use `row.key`, the path from the root.
+
+  **One way round, by IRI.** A pair concluded both ways (`owl:sameAs`,
+  equivalence) is shown once; which direction depended on set order, which
+  changes with Python's hash seed, and a test failed one run in three. The
+  kept direction is the IRIs' order.
+
+  **A test trap found here.** `beforeEach(() => mock.mockReset())` returns
+  the mock, and vitest runs a function returned from `beforeEach` as its
+  cleanup: the mock was called with no arguments after each test. Brace the
+  body.
+

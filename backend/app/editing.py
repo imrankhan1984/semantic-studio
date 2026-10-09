@@ -75,6 +75,14 @@ BASIC IDEA
     them with the model. model_reader lends the data wizard the model, its
     imports and names, under the model's lock.
 
+    Reason (axioms-and-reasoning Stage A) copies the model, its imports when
+    the switch is on and its snapshots when asked, under the model's lock,
+    and hands the copies to reasoning.py, which runs them in a process of
+    its own. A run reads and never writes: no revision, no dirty flag, no
+    undo step. Its result is keyed on the revision, the generation and the
+    imports view it was computed on, so any change makes it stale, and the
+    project's close drops it.
+
     Autosave never runs on the request path. A change arms a timer (two seconds,
     reset by every later change); the timer thread snapshots the document under
     its lock and writes .draft/<doc>.ttl outside it. Recovery reads that draft
@@ -98,7 +106,9 @@ EXPECTED OUTPUT
       .draft/<doc>.json while unsaved.
     - The canvas view, and layout entries moved by a rename or pruned on open.
     - CommandError (422, a sentence), TurtleSyntaxError (422, line and column),
-      NotOpen and Dirty (409).
+      NotOpen and Dirty (409), ReasoningRefused (422, a taxonomy).
+    - reason(...) -> a reasoning result's summary; the current result for the
+      tree and the canvas (current_inferred).
 ================================================================================
 """
 
@@ -134,8 +144,8 @@ from .projects import (
     graph_counts,
     valid_lang,
 )
-from . import examples, lexical, modeling_checks, shacl, shapes_form
-from .canvas import build_canvas, restrict
+from . import examples, lexical, modeling_checks, reasoning, shacl, shapes_form
+from .canvas import build_canvas, restrict, with_inferred
 from .imports import imports_service, load_state
 from .snapshots import SnapshotService
 from .store import Ontology, OntologyStore, ParseTimeout
@@ -183,6 +193,10 @@ class NotOpen(LookupError):
 
 class Dirty(RuntimeError):
     """Closing a project with unsaved changes, without saying to discard them."""
+
+
+class ReasoningRefused(ValueError):
+    """Reason asked of a project it is not offered for (axioms-and-reasoning 4)."""
 
 
 # ---------------------------------------------------------------------------
@@ -2299,6 +2313,8 @@ class EditingService:
                     self._remove_draft(document)
             self.store.unregister_document(document.ontology.id)
         self.snapshots.unload(pid)
+        # A run and its result belong to the open project (5.3).
+        reasoning.service.forget(pid)
         return {"closed": pid}
 
     def close_all(self) -> None:
@@ -2670,7 +2686,9 @@ class EditingService:
 
     # --- the modeling canvas (visual-modeling 5.4 to 5.6) ---------------------------
 
-    def canvas_view(self, pid: str, doc: str, lang: Optional[str] = None) -> dict:
+    def canvas_view(
+        self, pid: str, doc: str, lang: Optional[str] = None, *, inferred: bool = False, imports: bool = False,
+    ) -> dict:
         """Boxes, lines, undrawn relationships and the saved layout.
 
         The boxes and lines are cached by revision and language: dragging a
@@ -2705,7 +2723,11 @@ class EditingService:
         # The project's kind decides what the palette offers and which boxes
         # the visual doors may change (D-089); the model is the same either way.
         kind = self.projects.manifest(pid).get("kind")
-        return {"revision": revision, "kind": kind, **restrict(view, layout["shown"]), "layout": layout}
+        drawn = restrict(view, layout["shown"])
+        outcome = self.current_inferred(pid, imports) if inferred and doc == "model" else None
+        if outcome is not None:
+            drawn = with_inferred(drawn, outcome.inferred_kinds(), outcome.never_members())
+        return {"revision": revision, "kind": kind, **drawn, "layout": layout}
 
     def get_layout(self, pid: str, doc: str) -> dict:
         document = self.document(pid, doc)
@@ -2844,6 +2866,102 @@ class EditingService:
         result["revisions"] = {"model": model_revision, "shapes": shapes_revision, "data": generation}
         result["dataSources"] = [info for _, info in snapshots]
         return result
+
+    # --- reasoning (axioms-and-reasoning Stage A, 5.1 to 5.7) ---------------------------
+
+    def reasoning_key(self, pid: str, imports: bool, include_data: bool = False) -> reasoning.Key:
+        """What a result computed now would be keyed on (5.3): the model's
+        revision, the snapshots' generation and the imports view in use."""
+        ontology = self._project_documents(pid)["model"].ontology
+        view = imports_service.merged(ontology) if imports and load_state(ontology) else None
+        return reasoning.Key(ontology.revision, self.snapshots.generation(pid), imports, include_data, view)
+
+    def reason(self, pid: str, include_data: bool, imports: bool, limit: Optional[float] = None) -> dict:
+        """One run over the model with its examples, its imports when the
+        switch is on, and its snapshots when asked (5.2). Copies are taken
+        under the model's lock and reasoned over outside it, so the model
+        can be edited meanwhile; a change made during the run makes the
+        result stale, never wrong. Nothing here touches the document: no
+        revision, no dirty flag, no undo step (AC-6)."""
+        documents = self._project_documents(pid)
+        manifest = self.projects.manifest(pid)
+        if manifest.get("kind") == "taxonomy":
+            raise ReasoningRefused("Reasoning is for ontology projects.")
+        languages = [manifest.get("primaryLanguage", "en"), *manifest.get("languages", [])]
+        model_doc = documents["model"]
+        handle = reasoning.service.begin(pid)
+        outcome = None
+        try:
+            model = Graph()
+            with model_doc.lock:
+                ontology = model_doc.ontology
+                view = imports_service.merged(ontology) if imports and load_state(ontology) else None
+                source = view["graph"] if view is not None else model_doc.graph
+                for t in source:
+                    model.add(t)
+                # The model's own classes get the probe's test members (5.5).
+                probes = sorted(
+                    str(c) for c in model_doc.graph.subjects(RDF.type, OWL.Class)
+                    if isinstance(c, URIRef) and not reasoning.built_in(c)
+                )
+                key = reasoning.Key(ontology.revision, self.snapshots.generation(pid), imports, include_data, view)
+                imported = set(view["importedFrom"]) if view is not None else set()
+            data = Graph()
+            if include_data:
+                generation, snapshots = self.snapshots.active(pid)
+                # The generation the data was read at, which may have moved
+                # since the lock above: the key must say which data this is.
+                key = reasoning.Key(key.revision, generation, imports, include_data, view)
+                for graph, _ in snapshots:
+                    for t in graph:
+                        data.add(t)
+            statements = len(model) + len(data)
+            if statements > reasoning.MAX_STATEMENTS:
+                outcome = reasoning.too_large(key, statements)
+                return outcome.summary(key)
+            raw = reasoning.reason(
+                model.serialize(format="nt"), data.serialize(format="nt") if len(data) else "",
+                probes, handle=handle, limit=limit,
+            )
+            if raw.status != "done":
+                outcome = reasoning.Outcome(
+                    raw.status, key, statements=statements, duration_ms=raw.duration_ms, message=raw.message,
+                )
+            else:
+                stated = list(model) + list(data)
+                outcome = reasoning.analyse(
+                    stated, raw, key=key, languages=languages, probes=probes, imported=imported,
+                    statements=statements,
+                )
+            return outcome.summary(self.reasoning_key(pid, imports, include_data))
+        finally:
+            reasoning.service.end(pid, handle, outcome)
+
+    def stop_reasoning(self, pid: str) -> bool:
+        self._project_documents(pid)
+        return reasoning.service.stop(pid)
+
+    def reasoning_result(self, pid: str) -> Optional[reasoning.Outcome]:
+        self._project_documents(pid)
+        return reasoning.service.result(pid)
+
+    def current_inferred(self, pid: str, imports: bool) -> Optional[reasoning.Outcome]:
+        """The last result, only while it is current for this view: a stale
+        one draws nothing (5.3), and only a finished run draws at all."""
+        outcome = reasoning.service.result(pid)
+        if outcome is None or outcome.status != "done":
+            return None
+        if not outcome.key.same_model(self.reasoning_key(pid, imports)):
+            return None
+        return outcome
+
+    def project_of(self, ontology_id: str) -> Optional[str]:
+        """The open project whose model has this ontology id, if any."""
+        for pid, documents in list(self._open.items()):
+            model = documents.get("model")
+            if model is not None and model.ontology.id == ontology_id:
+                return pid
+        return None
 
     # --- what the forms and the language menu read --------------------------------
 

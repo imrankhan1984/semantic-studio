@@ -119,6 +119,9 @@ export interface ModelCanvasProps {
   onSelectLink?: (link: CanvasLink) => void;
   onDeleted: (iri: string) => void;
   onCanvasSet?: (set: CanvasSet | null) => void;
+  /** A current reasoning result's lines and marks (axioms-and-reasoning
+   *  5.7), with the imports switch it was computed on; null for none. */
+  inferred?: { imports: boolean } | null;
 }
 
 /** The palette's drag data, one type per kind: dragover cannot read the
@@ -136,6 +139,8 @@ interface LineData extends Record<string, unknown> {
   forward: boolean;
   // skos:related: dashed, no arrowhead (relationships 5.8).
   dashed: boolean;
+  // A reasoning conclusion: dashed and labelled *inferred* (5.7).
+  inferred: boolean;
   // A click on the label is a click on its line (5.10 item 7).
   onLabel: (id: string) => void;
 }
@@ -171,7 +176,7 @@ function LabelledEdge(props: EdgeProps<Edge<LineData>>) {
         id={props.id}
         path={path}
         markerEnd={props.markerEnd}
-        className={`canvas-edge${data.always ? " relationship" : ""}${data.dashed ? " related" : ""}${props.selected ? " selected" : ""}`}
+        className={`canvas-edge${data.always ? " relationship" : ""}${data.dashed ? " related" : ""}${data.inferred ? " inferred" : ""}${props.selected ? " selected" : ""}`}
       />
       {show && (
         <EdgeLabelRenderer>
@@ -205,8 +210,22 @@ interface Draft {
 function Canvas(props: ModelCanvasProps) {
   const { projectId, doc, revision, language, primaryLanguage, selected, onSelect, onSelectLink, onDeleted, onCanvasSet } =
     props;
-  const data = useCanvasData(projectId, doc, revision, language);
-  const { view, positions } = data;
+  const data = useCanvasData(projectId, doc, revision, language, props.inferred ?? null);
+  // A reasoning result's lines and marks leave at once when it goes stale or
+  // Show inferred is turned off, not when the refetch lands (5.3, R5).
+  const marks = Boolean(props.inferred);
+  const view = useMemo(
+    () =>
+      !data.view || marks
+        ? data.view
+        : {
+            ...data.view,
+            edges: data.view.edges.filter((e) => !e.inferred),
+            nodes: data.view.nodes.map((n) => (n.neverMembers ? { ...n, neverMembers: false } : n)),
+          },
+    [data.view, marks],
+  );
+  const { positions } = data;
   const flow = useReactFlow();
   const runner = useRunner();
   const { busy, errors, run, clear, alive } = runner;
@@ -384,6 +403,9 @@ function Canvas(props: ModelCanvasProps) {
    *  imported, whose statement is the import's (item 6). */
   const fixedLink = (edge: CanvasView["edges"][number]): string | null => {
     if (!view) return null;
+    if (edge.inferred) {
+      return `${label(view, edge.source)} is a kind of ${label(view, edge.target)}, inferred by reasoning: a conclusion, not part of your model, so it is not removed here.`;
+    }
     if (edge.kind === "relationship") {
       return view.kind === "taxonomy"
         ? `${edge.label ?? "This relationship"} is a relationship, read-only in a taxonomy. Edit it in Turtle, or change the project to an ontology.`
@@ -437,7 +459,7 @@ function Canvas(props: ModelCanvasProps) {
     if (line.kind === "relationship" && line.property) {
       edgeSelection.current = line.property;
       selectHere(line.property);
-    } else if (line.kind !== "relationship") {
+    } else if (line.kind !== "relationship" && !line.inferred) {
       edgeSelection.current = null;
       onSelectLink?.({
         kind: line.kind,
@@ -522,7 +544,7 @@ function Canvas(props: ModelCanvasProps) {
         ariaLabel:
           e.kind === "relationship"
             ? `${label(view, e.source)} ${e.label} ${label(view, e.target)}`
-            : linkSentence(e.kind, label(view, e.source), label(view, e.target)),
+            : `${linkSentence(e.kind, label(view, e.source), label(view, e.target))}${e.inferred ? ", inferred" : ""}`,
         // A hollow triangle at the parent for a subclass (5.4); an arrow for
         // broader and relationships; none for related, which reads the same
         // both ways (5.8). The hollow one is ours: React Flow draws only
@@ -534,13 +556,15 @@ function Canvas(props: ModelCanvasProps) {
               ? undefined
               : { type: relationship ? MarkerType.ArrowClosed : MarkerType.Arrow },
         data: {
-          text: e.kind === "relationship" ? (e.label ?? "") : LINE_WORDS[e.kind],
-          always: relationship,
+          // An inferred line always says so, in words: never by its dash alone.
+          text: e.kind === "relationship" ? (e.label ?? "") : e.inferred ? "inferred" : LINE_WORDS[e.kind],
+          always: relationship || Boolean(e.inferred),
           hover: hover === id,
           pair: e.pair ?? 0,
           pairs: e.pairs ?? 1,
           forward: e.source < e.target,
           dashed: e.kind === "related",
+          inferred: Boolean(e.inferred),
           onLabel: clickLabel,
         },
       };

@@ -444,3 +444,46 @@ def test_the_canvas_answers_with_the_generation_it_read(pid):
     put_layout(pid, {"positions": {EX + "Invoice": [1, 1]}})
     assert canvas(pid)["layout"]["generation"] == 1
 
+
+
+# --- axioms-and-reasoning 5.7: inferred lines and boxes ----------------------------------
+
+
+def test_a_current_reasoning_result_adds_dashed_kind_lines_and_flags_a_box_that_can_never_have_members():
+    pid = _project(MODEL + """
+shop:Paper a owl:Class ; rdfs:label "Paper"@en ; rdfs:subClassOf shop:Invoice .
+shop:Draft a owl:Class ; rdfs:label "Draft"@en ; rdfs:subClassOf shop:Invoice , shop:Customer .
+shop:Invoice owl:disjointWith shop:Customer .
+""", languages=())
+    assert client.post(f"/api/projects/{pid}/reasoning", json={}).status_code == 200
+    drawn = canvas(pid, inferred=True)
+    inferred = [(e["source"], e["target"]) for e in drawn["edges"] if e.get("inferred")]
+    # Paper is a kind of Document, concluded; drawn once, flagged, and placed
+    # among the lines it shares boxes with.
+    assert (EX + "Paper", EX + "Document") in inferred
+    assert all(e["kind"] == "subClassOf" and "pair" in e for e in drawn["edges"] if e.get("inferred"))
+    boxes = {n["iri"]: n for n in drawn["nodes"]}
+    assert boxes[EX + "Draft"].get("neverMembers") is True
+    assert "neverMembers" not in boxes[EX + "Invoice"]
+    # Without the flag, or once the result is stale, nothing inferred is drawn.
+    plain = canvas(pid)
+    assert not [e for e in plain["edges"] if e.get("inferred")]
+    run(pid, "CreateClass", label="Receipt")
+    stale = canvas(pid, inferred=True)
+    assert not [e for e in stale["edges"] if e.get("inferred")]
+    assert not [n for n in stale["nodes"] if n.get("neverMembers")]
+
+
+def test_inferred_lines_are_laid_on_a_copy_of_the_cached_view():
+    view = {
+        "nodes": [{"iri": "a"}, {"iri": "b"}, {"iri": "c"}],
+        "edges": [{"kind": "subClassOf", "source": "a", "target": "b"}],
+        "undrawn": [], "total": 3,
+    }
+    out = canvas_mod.with_inferred(view, [("a", None, "c"), ("a", None, "b"), ("a", None, "zz")], {"c"})
+    assert [(e["source"], e["target"], e.get("inferred")) for e in out["edges"]] == [
+        ("a", "b", None), ("a", "c", True),
+    ]
+    assert view["edges"] == [{"kind": "subClassOf", "source": "a", "target": "b"}]
+    assert [n.get("neverMembers") for n in out["nodes"]] == [None, None, True]
+    assert view["nodes"][2] == {"iri": "c"}

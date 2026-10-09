@@ -141,6 +141,13 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   refreshData: () => api.refreshData("prj-1", "people-abcdef", new File(["a,b"], "a.csv"), {}),
   updateData: () => api.updateData("prj-1", "people-abcdef", { enabled: false }),
   removeData: () => api.removeData("prj-1", "people-abcdef"),
+  // axioms-and-reasoning: a run, its Stop, a page, the facts about one
+  // entity and one fact's reason.
+  reasonProject: () => api.reasonProject("prj-1", false, false),
+  stopReasoning: () => api.stopReasoning("prj-1"),
+  getReasoningPage: () => api.getReasoningPage("prj-1", "memberships", 200, false),
+  getReasoningAbout: () => api.getReasoningAbout("prj-1", "http://example.org/A", false),
+  getWhy: () => api.getWhy("prj-1", { s: "http://example.org/a", p: "http://example.org/p", o: "http://example.org/b" }),
   // Not requests: the approval plumbing and the display language. Listed so
   // the export check holds.
   setApprovalHandler: async () => api.setApprovalHandler(null),
@@ -167,12 +174,13 @@ describe("api client header (S-6)", () => {
     // a DELETE, a PATCH (rename, languages) and a PUT (the Turtle apply);
     // the editing form adds one POST (the delete's dry run); the canvas one
     // PUT (its layout); validation one POST (shacl-authoring 5.6); the data
-    // wizard four POSTs, a PATCH and a DELETE (csv-data-import).
+    // wizard four POSTs, a PATCH and a DELETE (csv-data-import); reasoning
+    // a POST (Reason) and a DELETE (Stop).
     const expected = [
-      ...Array(5).fill("DELETE"),
+      ...Array(6).fill("DELETE"),
       "PATCH",
       "PATCH",
-      ...Array(26).fill("POST"),
+      ...Array(27).fill("POST"),
       "PUT",
       "PUT",
       "PUT",

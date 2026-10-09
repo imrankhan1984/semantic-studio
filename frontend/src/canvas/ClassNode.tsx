@@ -137,6 +137,7 @@ function ClassNode({ data, selected }: NodeProps<BoxNode>) {
       className={
         "canvas-box canvas-class" +
         (imported ? " imported" : "") +
+        (node.neverMembers ? " never-members" : "") +
         (otherKind ? " other-kind" : "") +
         (selected ? " selected" : "") +
         (dropTarget ? " drop-target" : "")
@@ -150,6 +151,9 @@ function ClassNode({ data, selected }: NodeProps<BoxNode>) {
         </span>
       )}
       {otherKind && <span className="canvas-box-from">read-only in a taxonomy</span>}
+      {/* A reasoning result found it can never have members (5.5, 5.7):
+          said in text, and outlined dashed, never by colour alone. */}
+      {node.neverMembers && <span className="canvas-box-never">can never have members</span>}
       {node.attributes.length > 0 && (
         <ul className="canvas-attributes">
           {node.attributes.map((a) => (

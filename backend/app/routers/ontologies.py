@@ -96,6 +96,7 @@ from ..imports import imports_service
 from ..net_guard import BlockedAddress
 from ..network_broker import FetchFailed, TooLarge, TooManyRedirects, broker
 from ..editing import editing_service
+from ..hierarchy import with_inferred
 from ..projects import split_document_id
 from ..query_schema import describe_query_node
 from ..sparql_exec import QueryError, QueryTimeout, execute_select
@@ -748,7 +749,7 @@ def get_documentation(oid: str, include_individuals: str = Query("false")) -> Re
 
 @router.get("/{oid}/hierarchy")
 def get_hierarchy(
-    oid: str, imports: bool = IMPORTS_PARAM, lang: Optional[str] = LANG_PARAM
+    oid: str, imports: bool = IMPORTS_PARAM, lang: Optional[str] = LANG_PARAM, inferred: bool = False
 ) -> dict:
     """GET /{oid}/hierarchy -> the subClassOf, broader and subPropertyOf forests.
 
@@ -764,16 +765,22 @@ def get_hierarchy(
     frontend virtualizes it, so the whole asserted structure is returned. A soft
     node cap sets `truncated` rather than refusing the response.
 
-    Every child edge carries `origin`, "asserted" today. A future
-    `?include_inferred=true` would select asserted-plus-inferred, mirroring the
-    documentation export's `include_individuals`; it is reserved and not
-    implemented, so absent means asserted-only (D-046).
+    Every child edge carries `origin`. `?inferred=true` adds an open
+    project's current reasoning result as edges with the origin "inferred"
+    (D-046, axioms-and-reasoning 5.7); a stale result, or none, adds nothing,
+    and absent means asserted only.
     """
     ontology = _get_or_404(oid)
     # Imported rows carry `importedFrom`, and the edge to each one the
     # origin "imported" -- D-046's seam with a new value (AC-21); a
     # snapshot's individuals carry `fromData` (csv-data-import 5.6).
-    return imports_mod.view_hierarchy(ontology, imports, PARSE_TIMEOUT_SECONDS, lang)
+    tree = imports_mod.view_hierarchy(ontology, imports, PARSE_TIMEOUT_SECONDS, lang)
+    if inferred:
+        pid = editing_service.project_of(oid)
+        outcome = editing_service.current_inferred(pid, imports) if pid is not None else None
+        if outcome is not None:
+            tree = with_inferred(tree, outcome.inferred_kinds(), outcome.inferred_members())
+    return tree
 
 
 @router.get("/{oid}/query-schema")

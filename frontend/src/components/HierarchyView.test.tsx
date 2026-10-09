@@ -369,7 +369,10 @@ describe("HierarchyView", () => {
       [EX + "Alpha"],
       new Set([`${EX + "Alpha"}->${EX + "Derived"}`]),
     );
-    renderView(hierarchyOf(classes, EMPTY));
+    // Shown while a current reasoning result's marks are on (axioms-and-
+    // reasoning 5.7); without them the tree drops inferred edges itself.
+    fetchHierarchy.mockResolvedValue(hierarchyOf(classes, EMPTY));
+    render(<HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} inferred />);
     await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
 
     await act(async () => fireEvent.click(itemByLabel("Alpha")!.querySelector(".hierarchy-twistie")!));
@@ -404,7 +407,7 @@ describe("HierarchyView imports (external-access Stage 2)", () => {
     fetchHierarchy.mockResolvedValue(mixed());
     render(<HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} imports />);
     await screen.findByText("Alpha");
-    expect(fetchHierarchy).toHaveBeenCalledWith("o1", true);
+    expect(fetchHierarchy).toHaveBeenCalledWith("o1", true, false);
   });
 });
 
@@ -958,5 +961,130 @@ describe("HierarchyView, examples (shacl-authoring 5.8)", () => {
     expect(screen.getByText("No examples or imported data yet.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Import data from CSV or Excel…" }));
     expect(onImportData).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("HierarchyView inferred edges (axioms-and-reasoning 5.7)", () => {
+  afterEach(() => projectStore._reset());
+
+  // Employee is stated under Person and concluded under Agent.
+  function concluded(): Hierarchy {
+    const classes = forestOf(
+      {
+        [EX + "Agent"]: node("Agent", "class", true),
+        [EX + "Person"]: node("Person", "class", true),
+        [EX + "Employee"]: node("Employee", "class"),
+      },
+      { [EX + "Agent"]: [EX + "Person", EX + "Employee"], [EX + "Person"]: [EX + "Employee"] },
+      [EX + "Agent"],
+      new Set([`${EX + "Agent"}->${EX + "Employee"}`]),
+    );
+    return hierarchyOf(classes, EMPTY);
+  }
+
+  const view = (inferred: boolean, editing = false) => (
+    <HierarchyView
+      ontologyId="o1"
+      theme="dark"
+      selected={null}
+      onSelect={vi.fn()}
+      inferred={inferred}
+      editing={editing ? { primaryLanguage: "en" } : null}
+    />
+  );
+
+  it("asks for the inferred edges while marks show, and drops them at once when they go", async () => {
+    fetchHierarchy.mockResolvedValue(concluded());
+    const { rerender } = render(view(true));
+    expect(fetchHierarchy).toHaveBeenCalledWith("o1", false, true);
+    await waitFor(() => expect(itemByLabel("Agent")).toBeTruthy());
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: /expand all/i })));
+    const inferredRows = () => items().filter((el) => el.querySelector('[aria-label="inferred, derived"]'));
+    expect(inferredRows().map((el) => el.querySelector(".hierarchy-label")!.textContent)).toEqual(["Employee"]);
+    expect(screen.getByText(/what reasoning concluded, each marked inferred/)).toBeTruthy();
+    // Stale, or Show inferred off: the refetch has not answered yet, and the
+    // inferred row is gone already (found in Chrome, R5).
+    fetchHierarchy.mockReturnValue(new Promise(() => {}));
+    rerender(view(false));
+    expect(fetchHierarchy).toHaveBeenLastCalledWith("o1", false, false);
+    expect(inferredRows()).toEqual([]);
+    // Employee is still under Person, as stated.
+    expect(items().filter((el) => el.querySelector(".hierarchy-label")!.textContent === "Employee")).toHaveLength(1);
+    expect(screen.getByText(/not inferred relationships/)).toBeTruthy();
+  });
+
+  it("leaves no row behind when a node under two parents loses one (rows keyed by path)", async () => {
+    // As the Examples section had it in Chrome: Bea stated under one
+    // heading, concluded under two others, with rows between them.
+    const examples = forestOf(
+      {
+        [EX + "Agent"]: node("Agent", "class", true),
+        [EX + "Individual"]: node("Individual", "class", true),
+        [EX + "Person"]: node("Person", "class", true),
+        [EX + "bea"]: node("Bea", "individual"),
+        [EX + "bob"]: node("bob", "individual"),
+      },
+      {
+        [EX + "Agent"]: [EX + "bea", EX + "bob"],
+        [EX + "Individual"]: [EX + "bea"],
+        [EX + "Person"]: [EX + "bea", EX + "bob"],
+      },
+      [EX + "Agent", EX + "Individual", EX + "Person"],
+      new Set([`${EX}Agent->${EX}bea`, `${EX}Agent->${EX}bob`, `${EX}Person->${EX}bea`]),
+    );
+    fetchHierarchy.mockResolvedValue({ ...hierarchyOf(EMPTY, EMPTY), examples });
+    const { rerender } = render(view(true, true));
+    await waitFor(() => expect(itemByLabel("Individual")).toBeTruthy());
+    const beas = () => items().filter((el) => el.querySelector(".hierarchy-label")!.textContent === "Bea");
+    expect(beas()).toHaveLength(3);
+    fetchHierarchy.mockReturnValue(new Promise(() => {}));
+    rerender(view(false, true));
+    // Keyed by id, the duplicate Bea rows stayed in the DOM.
+    expect(beas()).toHaveLength(1);
+    expect(document.querySelectorAll('[aria-label="inferred, derived"]')).toHaveLength(0);
+    expect(items().map((el) => el.querySelector(".hierarchy-label")!.textContent)).toEqual([
+      "Individual", "Bea", "Person", "bob",
+    ]);
+  });
+
+  it("offers none of a row's own actions on an inferred row", async () => {
+    fetchHierarchy.mockResolvedValue(concluded());
+    render(view(true, true));
+    await waitFor(() => expect(itemByLabel("Agent")).toBeTruthy());
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: /expand all/i })));
+    const rows = items().filter((el) => el.querySelector(".hierarchy-label")!.textContent === "Employee");
+    const inferredRow = rows.find((el) => el.querySelector('[aria-label="inferred, derived"]'))!;
+    const statedRow = rows.find((el) => !el.querySelector('[aria-label="inferred, derived"]'))!;
+    expect(statedRow.querySelector(".hierarchy-menu-btn")).toBeTruthy();
+    expect(inferredRow.querySelector(".hierarchy-menu-btn")).toBeNull();
+    // The roving stop moves to the inferred row (by its path, not its id),
+    // so Shift+F10 asks about that row and not the stated one.
+    await act(async () => inferredRow.focus());
+    fireEvent.keyDown(inferredRow, { key: "F10", shiftKey: true });
+    expect(screen.queryByRole("menu")).toBeNull();
+    await act(async () => statedRow.focus());
+    fireEvent.keyDown(statedRow, { key: "F10", shiftKey: true });
+    expect(screen.getByRole("menu")).toBeTruthy();
+  });
+
+  it("renders each of 200 inferred rows once (count, not timing)", async () => {
+    const nodes: Record<string, HierarchyForest["nodes"][string]> = { [EX + "Agent"]: node("Agent", "class", true) };
+    const kids: string[] = [];
+    for (let i = 0; i < 200; i++) {
+      nodes[`${EX}C${i}`] = node(`C${i}`);
+      kids.push(`${EX}C${i}`);
+    }
+    const inferred = new Set(kids.map((k) => `${EX + "Agent"}->${k}`));
+    fetchHierarchy.mockResolvedValue(hierarchyOf(forestOf(nodes, { [EX + "Agent"]: kids }, [EX + "Agent"], inferred), EMPTY));
+    render(view(true));
+    await waitFor(() => expect(itemByLabel("Agent")).toBeTruthy());
+    await act(async () => fireEvent.click(itemByLabel("Agent")!.querySelector(".hierarchy-twistie")!));
+    // The flattened tree holds Agent and its 200 rows, each once: the
+    // scroll height counts them, the window renders a bounded few.
+    const scroll = document.querySelector<HTMLElement>(".hierarchy-scroll")!;
+    expect(scroll.style.height).toBe(`${201 * 28}px`);
+    const shown = items().map((el) => el.querySelector(".hierarchy-label")!.textContent);
+    expect(new Set(shown).size).toBe(shown.length);
+    expect(shown.length).toBeLessThan(60);
   });
 });

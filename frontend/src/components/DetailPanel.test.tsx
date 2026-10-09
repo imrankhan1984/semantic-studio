@@ -36,13 +36,17 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DetailPanel from "./DetailPanel";
 import type { NodeDetails } from "../types";
 
-const { getNodeDetails } = vi.hoisted(() => ({ getNodeDetails: vi.fn() }));
-vi.mock("../api", () => ({ getNodeDetails }));
+const { getNodeDetails, getReasoningAbout, getWhy } = vi.hoisted(() => ({
+  getNodeDetails: vi.fn(),
+  getReasoningAbout: vi.fn(),
+  getWhy: vi.fn(),
+}));
+vi.mock("../api", () => ({ getNodeDetails, getReasoningAbout, getWhy }));
 
 const SUBJECT = "http://example.org/fibo#BONDMATCH";
 
@@ -440,3 +444,56 @@ describe("DetailPanel after a failed refetch (found in review)", () => {
     expect(screen.queryByRole("heading", { name: /Statements/ })).toBeNull();
   });
 });
+
+describe("DetailPanel: the Inferred block (axioms-and-reasoning 5.7)", () => {
+  const X = "http://example.org/shop#";
+  const ROBOT = { ...detailsWith(1), iri: `${X}Robot`, label: "Robot", prefixed: "shop:Robot" };
+  const INFERRED = { projectId: "prj-1", resultKey: "3+0|model|no-data|120", imports: false };
+
+  async function show(inferred: typeof INFERRED | null) {
+    getReasoningAbout.mockClear();
+    getNodeDetails.mockResolvedValue(ROBOT);
+    getReasoningAbout.mockResolvedValue({
+      iri: `${X}Robot`,
+      neverMembers: true,
+      stale: false,
+      facts: [
+        {
+          s: `${X}Robot`, p: "http://www.w3.org/2000/01/rdf-schema#subClassOf", o: `${X}Agent`,
+          sLabel: "Robot", pLabel: "subClassOf", oLabel: "Agent", sentence: "Robot is a kind of Agent",
+        },
+      ],
+    });
+    const onNavigate = vi.fn();
+    await act(async () => {
+      render(
+        <DetailPanel ontologyId="o1" iri={`${X}Robot`} onNavigate={onNavigate} onClose={vi.fn()} inferred={inferred} />,
+      );
+    });
+    return onNavigate;
+  }
+
+  it("lists what a current result concluded, under the statements, each with Why?", async () => {
+    const onNavigate = await show(INFERRED);
+    expect(getReasoningAbout).toHaveBeenCalledWith("prj-1", `${X}Robot`, false);
+    const block = screen.getByRole("region", { name: "Inferred about Robot" });
+    // After the statements, in words and outlined dashed: never colour alone.
+    const statements = screen.getByRole("heading", { name: /^Statements/ });
+    expect(statements.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(block.classList.contains("detail-inferred")).toBe(true);
+    expect(within(block).getByRole("heading", { name: /^Inferred/ })).toBeTruthy();
+    expect(within(block).getByText("Robot can never have members.")).toBeTruthy();
+    expect(within(block).getByText("inferred")).toBeTruthy();
+    expect(within(block).getByRole("button", { name: "Why? Robot is a kind of Agent" })).toBeTruthy();
+    // The other end is a link through the app's selection.
+    within(block).getByRole("button", { name: "Robot is a kind of Agent" }).click();
+    expect(onNavigate).toHaveBeenCalledWith(`${X}Agent`);
+  });
+
+  it("is not there without a current result shown", async () => {
+    await show(null);
+    expect(getReasoningAbout).not.toHaveBeenCalled();
+    expect(screen.queryByRole("region", { name: /Inferred/ })).toBeNull();
+  });
+});
+

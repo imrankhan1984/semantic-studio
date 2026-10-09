@@ -51,6 +51,8 @@ INPUTS / INPUT SOURCES (props)
     - onDeleted: the entity was deleted from the form.
     - canvas: past 300 boxes, the form's Show on canvas and Hide from canvas
       (visual-modeling 5.6).
+    - inferred: a current reasoning result, while Show inferred is on: the
+      Inferred block under the statements (axioms-and-reasoning 5.7).
 
     The IRI under the title is a link only when linkTarget allows it (D-088):
     http and https. Any other scheme is shown as text, with Copy beside it.
@@ -66,6 +68,7 @@ import { linkTarget } from "../links";
 import { dataLabel } from "../modeling/dataSentences";
 import type { CanvasSet, NodeDetails, TermRef, ProjectKind } from "../types";
 import EditSection from "./EditSection";
+import InferredBlock from "./InferredBlock";
 
 interface Props {
   ontologyId: string | null;
@@ -94,6 +97,8 @@ interface Props {
   readOnlyNote?: string | null;
   onDeleted?: (iri: string) => void;
   canvas?: CanvasSet | null;
+  /** A current reasoning result to show under the statements (5.7). */
+  inferred?: { projectId: string; resultKey: string; imports: boolean } | null;
 }
 
 /** The heading id, so the panel can be named by it and focus can be sent to it. */
@@ -144,6 +149,7 @@ export default function DetailPanel({
   readOnlyNote = null,
   onDeleted,
   canvas = null,
+  inferred = null,
 }: Props) {
   const [details, setDetails] = useState<NodeDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -329,6 +335,17 @@ export default function DetailPanel({
               </p>
             )}
           </section>
+          {inferred && (
+            <InferredBlock
+              projectId={inferred.projectId}
+              iri={details.iri}
+              imports={inferred.imports}
+              resultKey={inferred.resultKey}
+              revision={revision}
+              label={details.label}
+              onSelect={onNavigate}
+            />
+          )}
 
           <section>
             <h3>

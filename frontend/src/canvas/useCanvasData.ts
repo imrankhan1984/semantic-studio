@@ -44,6 +44,10 @@ BASIC IDEA
     file: undoing a delete then finds the box's old place. The server prunes
     them when the project is next opened.
 
+    With a current reasoning result shown (axioms-and-reasoning 5.7) the
+    view comes with its inferred *kind of* lines, which are drawn but never
+    laid out by: a conclusion must not move a box the learner placed.
+
     Saving is debounced by a second. flush() writes what is pending now and
     waits for it: the project store awaits it before a project closes,
     because a closed project refuses the write and a move made just before
@@ -52,6 +56,8 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES
     - projectId, doc, revision, language: which view to fetch and when.
+    - inferred: ask for a current reasoning result's lines and marks, with
+      the imports switch the result was computed on; null for none.
     - api.ts: getCanvas, putLayout.
 
 EXPECTED OUTPUT
@@ -74,7 +80,7 @@ function boxes(view: CanvasView): Box[] {
 
 function links(view: CanvasView): Link[] {
   return view.edges
-    .filter((e) => e.kind === "subClassOf" || e.kind === "broader")
+    .filter((e) => (e.kind === "subClassOf" || e.kind === "broader") && !e.inferred)
     .map((e) => ({ child: e.source, parent: e.target }));
 }
 
@@ -82,7 +88,14 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export function useCanvasData(projectId: string, doc: ProjectDocName, revision: number, language: string | null) {
+export function useCanvasData(
+  projectId: string,
+  doc: ProjectDocName,
+  revision: number,
+  language: string | null,
+  inferred: { imports: boolean } | null = null,
+) {
+  const inferredKey = inferred ? `on|${inferred.imports}` : "off";
   const [view, setView] = useState<CanvasView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -168,7 +181,7 @@ export function useCanvasData(projectId: string, doc: ProjectDocName, revision: 
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    getCanvas(projectId, doc)
+    getCanvas(projectId, doc, inferred)
       .then((fetched) => {
         if (cancelled) return;
         const local = layout.current;
@@ -199,7 +212,9 @@ export function useCanvasData(projectId: string, doc: ProjectDocName, revision: 
     return () => {
       cancelled = true;
     };
-  }, [projectId, doc, revision, language, attempt, scheduleSave]);
+    // `inferred` is read through its key, so a new object for the same
+    // switch does not refetch.
+  }, [projectId, doc, revision, language, attempt, scheduleSave, inferredKey]);
 
   /** A box moved by drag or arrow key. */
   const move = useCallback(

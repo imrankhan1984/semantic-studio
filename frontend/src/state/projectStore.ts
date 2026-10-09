@@ -9,8 +9,9 @@ SUMMARY
     revision and dirty flag, the undo and redo labels, the save status, the
     display language, the editor's unapplied text, the sentence the live
     region last announced, the last SHACL validation (shacl-authoring
-    5.6), which lives for the session and is never saved, and the project's
-    data snapshots with their generation (csv-data-import 5.6).
+    5.6), which lives for the session and is never saved, the project's
+    data snapshots with their generation (csv-data-import 5.6), and the last
+    reasoning run with Show inferred (axioms-and-reasoning 5.2 to 5.7).
 
 BASIC IDEA
     New state only. App.tsx keeps everything it held before; this holds what
@@ -31,7 +32,10 @@ BASIC IDEA
     Validation runs one check at a time, and a check that outlives its
     project -- closed, or another opened -- is ignored when it answers: its
     result, its announcement and its failure never reach the next project
-    (shacl-authoring Stage B, follow-up 3).
+    (shacl-authoring Stage B, follow-up 3). Reasoning follows the same rule:
+    one run at a time, its start and end announced, its result kept for the
+    session only with what it was computed on, and Stop asks the server to
+    kill the run, whose own answer then says *Stopped*.
 
     Data snapshots are not documents: changing one moves no revision and no
     undo step (5.7). The server counts their changes in a generation of its
@@ -68,18 +72,22 @@ import {
   recoverProject,
   redoChange,
   runCommand,
+  reasonProject,
   saveDocument,
+  stopReasoning,
   setDisplayLanguage as setApiLanguage,
   undoChange,
   updateProject,
   validateProject,
 } from "../api";
 import { validationSummary } from "../modeling/shapeSentences";
+import { finishedLine } from "../reasoning/reasonSentences";
 import type {
   ChangeResult,
   ProjectDocName,
   ProjectDocumentState,
   ProjectSummary,
+  ReasoningResult,
   SnapshotListing,
   ValidationResult,
 } from "../types";
@@ -114,6 +122,18 @@ export interface ProjectSnapshot {
   /** The project's data snapshots and the server's generation for them
    *  (csv-data-import 5.6); null until fetched. */
   data: SnapshotListing | null;
+  /** The last reasoning run (axioms-and-reasoning 5.2): kept for the session
+   *  only, never saved, and stale once the model moves (5.3). */
+  reasoning: ReasoningResult | null;
+  /** When the run going started, for the seconds the status line counts;
+   *  null when none is going. Reason reads Stop meanwhile. */
+  reasoningSince: number | null;
+  /** A run that could not be asked for: a 409, a lost connection. */
+  reasoningError: string | null;
+  /** Show inferred (5.7): on after a run, the user's toggle otherwise. */
+  showInferred: boolean;
+  /** Include data snapshots (5.1, Q1): off by default for every project. */
+  reasoningData: boolean;
 }
 
 const EMPTY: ProjectSnapshot = {
@@ -130,6 +150,11 @@ const EMPTY: ProjectSnapshot = {
   validating: false,
   editorTarget: null,
   data: null,
+  reasoning: null,
+  reasoningSince: null,
+  reasoningError: null,
+  showInferred: false,
+  reasoningData: false,
 };
 
 let snapshot: ProjectSnapshot = EMPTY;
@@ -137,6 +162,8 @@ let snapshot: ProjectSnapshot = EMPTY;
 // project moves it on, so a check still running for the old project is
 // ignored when it answers (shacl-authoring Stage A follow-up 3).
 let validationRun = 0;
+// The same for reasoning: a run that outlives its project is ignored.
+let reasoningRun = 0;
 const listeners = new Set<() => void>();
 // Pending writes to wait for before the project closes (the canvas layout).
 const flushes = new Set<() => Promise<void>>();
@@ -247,6 +274,7 @@ export const projectStore = {
   async open(pid: string): Promise<string> {
     const opened = await openProject(pid);
     validationRun++;
+    reasoningRun++;
     set({
       ...EMPTY,
       announcement: snapshot.announcement,
@@ -289,6 +317,7 @@ export const projectStore = {
     await flushAll();
     if (project) await closeProject(project.id, discard);
     validationRun++;
+    reasoningRun++;
     set({ ...EMPTY, announcement: snapshot.announcement });
   },
 
@@ -296,6 +325,7 @@ export const projectStore = {
    *  was deleted or failed to open. */
   reset(): void {
     validationRun++;
+    reasoningRun++;
     set({ ...EMPTY, announcement: snapshot.announcement });
   },
 
@@ -388,6 +418,53 @@ export const projectStore = {
     } finally {
       if (run === validationRun) set({ validating: false });
     }
+  },
+
+  /** Reason over the open project (axioms-and-reasoning 5.2). One run at a
+   *  time; the start and the end are announced, the seconds are not. A run
+   *  that outlives its project says nothing in the next one. */
+  async reason(includeData: boolean, imports: boolean): Promise<ReasoningResult | null> {
+    const project = requireProject();
+    if (snapshot.reasoningSince !== null) return null;
+    const run = ++reasoningRun;
+    set({ reasoningSince: Date.now(), reasoningError: null });
+    announce("Reasoning started.");
+    const stale = () => run !== reasoningRun || snapshot.project?.id !== project.id;
+    try {
+      let result: ReasoningResult;
+      try {
+        result = await reasonProject(project.id, includeData, imports);
+      } catch (e) {
+        if (stale()) return null;
+        const text = e instanceof Error ? e.message : String(e);
+        set({ reasoningError: text });
+        announce(text);
+        return null;
+      }
+      if (stale()) return null;
+      // A finished run's marks show at once (Section 6: on after a run).
+      set({ reasoning: result, showInferred: result.status === "done" ? true : snapshot.showInferred });
+      const line = finishedLine(result);
+      announce(line.endsWith(".") ? line : `${line}.`);
+      return result;
+    } finally {
+      if (run === reasoningRun) set({ reasoningSince: null });
+    }
+  },
+
+  /** Stop the run: its process is killed, and its own answer says so. */
+  async stopReasoning(): Promise<void> {
+    const project = requireProject();
+    if (snapshot.reasoningSince === null) return;
+    await stopReasoning(project.id);
+  },
+
+  setShowInferred(on: boolean): void {
+    if (on !== snapshot.showInferred) set({ showInferred: on });
+  },
+
+  setReasoningData(on: boolean): void {
+    if (on !== snapshot.reasoningData) set({ reasoningData: on });
   },
 
   /** Ask the Turtle editor to move to what a shape is written as. */
@@ -505,6 +582,7 @@ export const projectStore = {
   /** For tests: back to nothing open. */
   _reset(): void {
     validationRun++;
+    reasoningRun++;
     snapshot = EMPTY;
     setApiLanguage(null);
     for (const listener of listeners) listener();

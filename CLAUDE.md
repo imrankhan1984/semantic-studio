@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1057 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1177 tests, vitest
+cd backend  && python -m pytest tests    # 1094 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1212 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -62,7 +62,7 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Twenty-seven backend tests carry
+**Timing budgets are separated, not deleted.** Thirty-one backend tests carry
 `@pytest.mark.perf`; ten frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
@@ -125,8 +125,9 @@ EXPECTED OUTPUT
 `query_schema.py` before writing any. The density is deliberate. Match it.
 
 **3. Do not add dependencies casually.** `frontend/package.json` carries eight
-runtime dependencies and `backend/requirements.txt` carries eight (pySHACL the
-sixth, D-092; openpyxl and defusedxml for Excel, D-100). Adding one is
+runtime dependencies and `backend/requirements.txt` carries nine (pySHACL the
+sixth, D-092; openpyxl and defusedxml for Excel, D-100; owlrl, already there
+through pySHACL, made direct for reasoning, D-102). Adding one is
 a decision that belongs in a spec, not in a commit.
 
 **4. SPARQL execution is SELECT-only.** `prepare_select` in `sparql_exec.py` is
@@ -165,6 +166,10 @@ backend/app/
   sparql_exec.py     SELECT-only execution, row cap, wall-clock timeout
   embedded_queries.py  SPARQL stored in the file (SHACL, SPIN), listed never run
   shacl.py           Validation on demand with pySHACL: one panel per shape, sentences
+  reasoning.py       Reasoning on demand (D-102 to D-104): the spawned run, Stop,
+                     the limits, what is shown, problems, and the explainer
+  reasoning_worker.py  The reasoner process's body: OWL-RL and the probe run;
+                     the only importer of owlrl
   shapes_form.py     A SHACL shape as the form reads it, read-only parts, suggestions
   queries_store.py   Saved queries, visual or text, one JSON file each
   tabular.py         A CSV file or a workbook's sheet read for the data import:
@@ -188,6 +193,8 @@ frontend/src/
   sparql/            Pure query-building logic
   explore/           Pure Explore-mode logic: the suggestion ranking and the
                      ontology summary sentence
+  reasoning/         Pure reasoning words: status lines, headings, endings and
+                     when a result is stale (reasonSentences.ts)
   home/              Pure home-screen logic: the card thumbnail's layout and
                      the composition bar's bands
   projects/          Pure New project form logic: the two kinds, defaults
@@ -206,7 +213,7 @@ frontend/src/
 docs/known-state.md  Why each load-bearing rule below exists
 ```
 
-`sparql/`, `explore/`, `home/`, `projects/` and `modeling/` are the same idea five times: logic a
+`sparql/`, `explore/`, `home/`, `projects/`, `modeling/` and `reasoning/` are the same idea six times: logic a
 component needs, kept out of the component so it can be tested without
 rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts`, `links.ts` and
 `catalogue.ts` are the same idea for one function and one constant. Prefer this
@@ -342,6 +349,16 @@ leaves one behind.
 - A sheet that gives no table is refused with the sheets and its rows (`detail.workbook`), so the pickers stay. [Excel workbooks]
 - Step 1's pickers stay mounted while a file is read again, and are rendered conditionally, never `hidden`. [Excel workbooks]
 - Links to no row are counted when asked, against the switched-on snapshots, never stored. [Excel workbooks]
+
+**Reasoning**
+- The reasoner runs in a `spawn` process on every platform, killed at 30 s or on Stop; only `reasoning_worker.py` imports `owlrl` (D-102). [Reasoning]
+- The worker gives blank nodes back under the labels it was sent, and the server parses its answer with `_SameLabels`: else a restriction's conclusions name blank nodes the server never had. [Reasoning]
+- A statement with a literal subject stays in the worker: N-Triples cannot carry it. [Reasoning]
+- A result's names come from the stated facts only: OWL-RL copies labels across `owl:sameAs`. [Reasoning]
+- No answer carries a `urn:semantic-studio:probe:` IRI; `test_reasoning.py` reads every route for one (D-104). [Reasoning]
+- A result is current only for its revision, generation and imports view; the tree and the canvas drop its marks themselves, before their refetch lands. [Reasoning]
+- Tree rows are keyed and focused by their path (`row.key`), never the id: a node under two parents is two rows. [Reasoning]
+- A pair concluded both ways is shown one way, by IRI order, never by set order. [Reasoning]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

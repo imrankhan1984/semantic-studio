@@ -20,11 +20,13 @@ BASIC IDEA
     and a class that inherits from two parents appears in both parents' child
     lists rather than being copied.
 
-    Every child edge carries an `origin`, "asserted" today. That one field is
-    the seam for a future inferred hierarchy (D-046): adding inferred edges is
-    appending refs with origin "inferred", not changing the payload. build_
-    hierarchy stays a pure function of the graph with no reasoning baked in, so
-    an inference layer can wrap it rather than fork it.
+    Every child edge carries an `origin`. That one field is the seam for the
+    inferred hierarchy (D-046): with_inferred appends refs with origin
+    "inferred" -- a reasoning result's new kinds in the class forest, and its
+    new memberships in the Examples section -- to a copy of the cached tree,
+    not changing the payload's shape (axioms-and-reasoning 5.7). build_
+    hierarchy stays a pure function of the graph with no reasoning baked in,
+    so the inference layer wraps it rather than forks it.
 
     Malformed data can state a subClassOf cycle. It is broken: a path-tracking
     walk marks a node that is its own ancestor and does not descend into it
@@ -98,10 +100,10 @@ _PROPERTY_FORESTS: tuple[tuple[str, str], ...] = (
 )
 _PROPERTY_KINDS = tuple(kind for kind, _ in _PROPERTY_FORESTS)
 
-# The origin every edge carries. "asserted" is the only value this version
-# emits; the field exists so an inferred hierarchy is data, not a schema change.
-# See the module docstring and D-046.
+# The origin every edge carries; the field exists so an inferred hierarchy is
+# data, not a schema change. See the module docstring and D-046.
 ASSERTED = "asserted"
+INFERRED = "inferred"
 
 # Soft cap on the total nodes across both forests. Deliberately generous — the
 # hierarchy carries only subClassOf / broader structure, so it is a fraction of
@@ -550,3 +552,47 @@ def build_hierarchy(
     if "examples" in forests:
         result["examples"] = forests["examples"][0]
     return result
+
+
+def with_inferred(tree: dict, kinds: list[tuple], members: list[tuple]) -> dict:
+    """The tree with a reasoning result laid on top (axioms-and-reasoning
+    5.7): each inferred *kind of* as a ref under its new parent in the class
+    forest, and each inferred membership of an example or a snapshot's
+    individual under its class in the Examples section, both with origin
+    "inferred". A class with no example yet joins the section as a root
+    heading. The cached tree is never changed; the forests touched are
+    copied."""
+    out = dict(tree)
+    out["classes"] = _with_refs(tree["classes"], [(str(c), str(p)) for c, _, p in kinds], None)
+    if members and "examples" in tree:
+        out["examples"] = _with_refs(
+            tree["examples"], [(str(s), str(c)) for s, _, c in members], tree["classes"]
+        )
+    return out
+
+
+def _with_refs(forest: dict, pairs: list[tuple[str, str]], headings: Optional[dict]) -> dict:
+    nodes = forest["nodes"]
+    added_nodes: dict = {}
+    children = {k: list(v) for k, v in forest["children"].items()}
+    roots = list(forest["roots"])
+    for child, parent in pairs:
+        if child not in nodes:
+            continue
+        if parent not in nodes and parent not in added_nodes:
+            source = (headings or {}).get("nodes", {}).get(parent) if headings is not None else None
+            if source is None:
+                continue
+            added_nodes[parent] = {**source}
+            roots.append(parent)
+        kids = children.setdefault(parent, [])
+        if any(ref["id"] == child for ref in kids):
+            continue
+        kids.append({"id": child, "origin": INFERRED})
+    if not added_nodes and children == forest["children"]:
+        return forest
+    merged = {**nodes, **added_nodes}
+    for parent, kids in children.items():
+        if kids and parent in merged and not merged[parent].get("hasChildren"):
+            merged[parent] = {**merged[parent], "hasChildren": True}
+    return {**forest, "nodes": merged, "children": children, "roots": sorted(set(roots))}

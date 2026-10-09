@@ -854,6 +854,9 @@ export interface CanvasNode {
   // Outside this document: the import it comes from, or "outside". Read-only.
   imported?: string;
   attributes: { iri: string; label: string; datatype: string | null }[];
+  // A current reasoning result found that this class can never have
+  // members (axioms-and-reasoning 5.5, 5.7); only with ?inferred=true.
+  neverMembers?: boolean;
 }
 
 export interface CanvasEdge {
@@ -869,6 +872,9 @@ export interface CanvasEdge {
   // from a box to itself is a loop (relationships 5.4).
   pair: number;
   pairs: number;
+  // A *kind of* a current reasoning result concluded (5.7): drawn dashed and
+  // labelled inferred, never changed from the canvas.
+  inferred?: boolean;
 }
 
 // A subclass, broader or related line the user clicked: the link panel's
@@ -1235,3 +1241,98 @@ export type RefreshResult =
       choices: DataChoices | null;
       generation: number;
     };
+
+// --- reasoning (axioms-and-reasoning Stage A) -------------------------------
+
+export type ReasoningStatus = "done" | "stopped" | "timedOut" | "failed" | "tooLarge";
+
+// The four groups of 5.4, in their order, and facts about imported terms alone.
+export type ReasoningGroupKind = "kinds" | "same" | "memberships" | "links" | "imported";
+
+/** A concluded fact, with its ends' names and its sentence. */
+export interface ReasoningFact {
+  s: string;
+  p: string;
+  o: string;
+  sLabel: string;
+  pLabel: string;
+  oLabel: string;
+  sentence: string;
+}
+
+/** One line of a reason: a fact used, or a class's rule (no `o`, no link). */
+export interface ReasoningPremise {
+  s: string;
+  p: string;
+  o: string | null;
+  sLabel?: string;
+  pLabel?: string;
+  oLabel?: string;
+  sentence: string;
+  inferred: boolean;
+}
+
+export interface ReasoningGroup {
+  kind: ReasoningGroupKind;
+  // The true total; `items` is one page of at most 200 from `offset`.
+  total: number;
+  offset: number;
+  items: ReasoningFact[];
+}
+
+export type ReasoningProblemKind =
+  | "neverMembers"
+  | "disjointMember"
+  | "irreflexive"
+  | "asymmetric"
+  | "differentSame"
+  | "other";
+
+export interface ReasoningProblem {
+  kind: ReasoningProblemKind;
+  sentence: string;
+  // The entity the sentence is about, a link; null for the reasoner's words.
+  subject: string | null;
+  // The stated facts that cause it, each a link to its subject.
+  causes: ReasoningPremise[];
+  // A class that can never have members: OWL-RL's own message, for Why?.
+  reasoner?: string;
+}
+
+export interface ReasoningResult {
+  status: ReasoningStatus;
+  key: string;
+  includeData: boolean;
+  imports: boolean;
+  // What the result was computed on: compared with the open model's revision,
+  // the snapshots' generation and the imports switch (5.3).
+  basis: { revision: number; generation: number; imports: boolean };
+  durationMs: number;
+  statements: number;
+  // The ending's sentence for anything but done.
+  sentence: string | null;
+  problems: ReasoningProblem[];
+  groups: ReasoningGroup[];
+  importedFacts: ReasoningGroup;
+  // Stale already when it was answered: the model moved during the run.
+  stale: boolean;
+}
+
+export interface ReasoningPage extends ReasoningGroup {
+  stale: boolean;
+}
+
+export interface ReasoningAbout {
+  iri: string;
+  facts: ReasoningFact[];
+  neverMembers: boolean;
+  stale: boolean;
+}
+
+/** One step of a reason (5.6). `family` is null when no plain-words reason
+ *  exists, "stated" for a fact that was written, not concluded. */
+export interface WhyReason {
+  family: string | null;
+  sentence: string;
+  premises: ReasoningPremise[];
+}

@@ -2261,7 +2261,8 @@ describe("App Hierarchy mode", () => {
       fireEvent.click(screen.getByRole("tab", { name: "Hierarchy" }));
     });
     await screen.findByRole("heading", { name: "Class hierarchy" });
-    expect(fetchHierarchy).toHaveBeenCalledWith("o1", false);
+    // The third argument: a reasoning result's inferred edges, none here.
+    expect(fetchHierarchy).toHaveBeenCalledWith("o1", false, false);
   });
 
   it("nothing selected shows the detail panel empty state", async () => {
@@ -2569,7 +2570,7 @@ describe("App imports (external-access Stage 2)", () => {
     await act(async () => {
       fireEvent.click(toggle);
     });
-    expect(fetchHierarchy).toHaveBeenLastCalledWith("o1", true);
+    expect(fetchHierarchy).toHaveBeenLastCalledWith("o1", true, false);
     expect(screen.getByRole("switch", { name: "Include imports" }).getAttribute("aria-checked")).toBe(
       "true",
     );
