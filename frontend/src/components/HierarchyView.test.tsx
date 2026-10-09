@@ -947,7 +947,7 @@ describe("HierarchyView, examples (shacl-authoring 5.8)", () => {
     expect(row.querySelector(".hierarchy-menu-btn")).toBeNull();
   });
 
-  it("offers Import data from CSV in the Examples section, there before the first example", async () => {
+  it("offers Import data from CSV or Excel in the Examples section, there before the first example", async () => {
     fetchHierarchy.mockResolvedValue(hierarchyOf(withExamples().classes, EMPTY));
     const onImportData = vi.fn();
     render(
@@ -956,7 +956,7 @@ describe("HierarchyView, examples (shacl-authoring 5.8)", () => {
     );
     await screen.findByRole("heading", { name: "Examples" });
     expect(screen.getByText("No examples or imported data yet.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Import data from CSV…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Import data from CSV or Excel…" }));
     expect(onImportData).toHaveBeenCalledTimes(1);
   });
 });

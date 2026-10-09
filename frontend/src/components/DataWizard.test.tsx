@@ -10,7 +10,9 @@ SUMMARY
     the identifier check and Use the row number instead, suggestions marked
     and preselected, a new attribute as one command, the preview as
     sentences, the import and its report, the heading focus on each step,
-    and Cancel asking only once the columns are mapped.
+    and Cancel asking only once the columns are mapped. Stage B: a
+    workbook's sheet and header row pickers, kept through a failed read, and
+    step 4 naming the links that match no row yet (5.8, 5.9).
 
 BASIC IDEA
     api.ts is mocked; the real project store is opened on a fixed project,
@@ -377,5 +379,200 @@ describe("Change the mapping (5.7)", () => {
     expect(updateData).toHaveBeenCalledWith(PID, SNAPSHOT.id, {
       choices: { classIri: `${X}Person`, idColumn: "id", columns: { id: { as: "ignore" }, name: { as: "name" }, born: { as: "ignore" }, age: { as: "ignore" } } },
     });
+  });
+});
+
+describe("Stage B: an Excel workbook (5.8) and links (5.9)", () => {
+  const BOOK = new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04])], "orgs.xlsx", {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const WORKBOOK = {
+    sheet: "Orgs", headerRow: 1,
+    sheets: [{ name: "Orgs", rows: 41 }, { name: "Big", rows: 5000 }],
+    top: [{ row: 1, cells: ["Organizations 2026"] }, { row: 2, cells: [] }, { row: 3, cells: ["id", "name", "founded"] }],
+  };
+
+  async function chooseBook(found: DataInspection) {
+    inspectData.mockResolvedValue(found);
+    const input = document.querySelector(".data-wizard input[type=file]") as HTMLInputElement;
+    expect(input.getAttribute("accept")).toContain(".xlsx");
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [BOOK] } });
+    });
+  }
+
+  it("offers the sheets with their rows and the first rows as header rows, and reads the workbook again on each", async () => {
+    await setup();
+    await chooseBook(inspection({ format: "xlsx", workbook: WORKBOOK, separator: ",", encoding: "utf-8" }));
+    const sheet = screen.getByLabelText("Sheet") as HTMLSelectElement;
+    expect(sheet.value).toBe("Orgs");
+    expect([...sheet.options].map((o) => o.text)).toEqual(["Orgs (41 rows)", "Big (5,000 rows)"]);
+    const header = screen.getByLabelText("Header row") as HTMLSelectElement;
+    expect(header.value).toBe("1");
+    expect([...header.options].map((o) => o.text)).toEqual([
+      "Row 1: Organizations 2026", "Row 2 (empty)", "Row 3: id, name, founded",
+    ]);
+    // A CSV file's detections mean nothing for a workbook.
+    expect(screen.queryByRole("checkbox", { name: "First row is the header" })).toBeNull();
+    expect(screen.queryByLabelText("Separator")).toBeNull();
+    expect(screen.queryByLabelText("Encoding")).toBeNull();
+
+    inspectData.mockResolvedValue(inspection({ format: "xlsx", workbook: { ...WORKBOOK, headerRow: 3 } }));
+    await act(async () => {
+      fireEvent.change(header, { target: { value: "3" } });
+    });
+    expect(inspectData).toHaveBeenLastCalledWith(PID, { file: BOOK }, { headerRow: 3, sample: false });
+    expect((screen.getByLabelText("Header row") as HTMLSelectElement).value).toBe("3");
+
+    // Another sheet starts again from its first row.
+    inspectData.mockResolvedValue(inspection({ format: "xlsx", workbook: { ...WORKBOOK, sheet: "Big" } }));
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Sheet"), { target: { value: "Big" } });
+    });
+    expect(inspectData).toHaveBeenLastCalledWith(PID, { file: BOOK }, { sheet: "Big", headerRow: undefined, sample: false });
+    expect(JSON.parse(JSON.stringify(inspectData.mock.lastCall![2]))).toEqual({ sheet: "Big", sample: false });
+  });
+
+  it("keeps both pickers when a header row reads nothing, so it can be put right", async () => {
+    await setup();
+    await chooseBook(inspection({ format: "xlsx", workbook: WORKBOOK }));
+    const { ApiError } = await import("../api");
+    inspectData.mockRejectedValue(new ApiError("Row 2 of sheet Orgs is empty: choose the row that holds the column names.", 422));
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Header row"), { target: { value: "2" } });
+    });
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Not readable. Row 2 of sheet Orgs is empty: choose the row that holds the column names.",
+    );
+    expect(next().getAttribute("aria-disabled")).toBe("true");
+    // Another sheet that cannot be read: its rows are offered by number,
+    // never labelled with the last sheet's cells (code review).
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Sheet"), { target: { value: "Big" } });
+    });
+    const rows = [...(screen.getByLabelText("Header row") as HTMLSelectElement).options].map((o) => o.text);
+    expect(rows.slice(0, 3)).toEqual(["Row 1", "Row 2", "Row 3"]);
+    expect(rows).toHaveLength(20);
+    inspectData.mockResolvedValue(inspection({ format: "xlsx", workbook: { ...WORKBOOK, headerRow: 3 } }));
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Header row"), { target: { value: "3" } });
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(next().getAttribute("aria-disabled")).toBe("false");
+  });
+
+  it("keeps both pickers when the first read finds an empty sheet or header row (PR #54 review)", async () => {
+    await setup();
+    const { ApiError } = await import("../api");
+    const sentence = "Sheet Cover is empty.";
+    const listed = {
+      sheet: "Cover", headerRow: 1, top: [],
+      sheets: [{ name: "Cover", rows: 0 }, { name: "Orgs", rows: 41 }],
+    };
+    const input = document.querySelector(".data-wizard input[type=file]") as HTMLInputElement;
+    inspectData.mockRejectedValue(new ApiError(sentence, 422, { message: sentence, kind: "empty", workbook: listed }));
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [BOOK] } });
+    });
+    expect(screen.getByRole("alert").textContent).toBe(`Not readable. ${sentence}`);
+    const sheet = screen.getByLabelText("Sheet") as HTMLSelectElement;
+    expect([...sheet.options].map((o) => o.text)).toEqual(["Cover (0 rows)", "Orgs (41 rows)"]);
+    expect((screen.getByLabelText("Header row") as HTMLSelectElement).value).toBe("1");
+    // The pickers put it right.
+    inspectData.mockResolvedValue(inspection({ format: "xlsx", workbook: { ...WORKBOOK, headerRow: 3 } }));
+    await act(async () => {
+      fireEvent.change(sheet, { target: { value: "Orgs" } });
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect((screen.getByLabelText("Header row") as HTMLSelectElement).value).toBe("3");
+  });
+
+  it("applies only the latest read's reply, and Next waits until it lands (PR #54 review)", async () => {
+    await setup();
+    await chooseBook(inspection({ format: "xlsx", workbook: { ...WORKBOOK, sheets: [...WORKBOOK.sheets, { name: "People", rows: 5 }] } }));
+    const replies: ((found: DataInspection) => void)[] = [];
+    inspectData.mockImplementation(() => new Promise<DataInspection>((done) => replies.push(done)));
+    const pick = async (value: string) => {
+      await act(async () => {
+        fireEvent.change(screen.getByLabelText("Sheet"), { target: { value } });
+      });
+    };
+    const big = inspection({ format: "xlsx", columns: [profile("big_column")], workbook: { ...WORKBOOK, sheet: "Big" } });
+    const people = inspection({ format: "xlsx", columns: [profile("people_column")], workbook: { ...WORKBOOK, sheet: "People" } });
+    const blockedBy = () => document.getElementById(next().getAttribute("aria-describedby") ?? "")?.textContent;
+
+    await pick("Big");
+    await pick("People");
+    expect(next().getAttribute("aria-disabled")).toBe("true");
+    expect(blockedBy()).toBe("Reading the file…");
+    // The earlier read answers first: still reading, nothing applied.
+    await act(async () => replies[0](big));
+    expect(screen.queryByText("big_column")).toBeNull();
+    expect(next().getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByText("Reading…")).toBeTruthy();
+    await act(async () => replies[1](people));
+    expect(screen.getByText("people_column")).toBeTruthy();
+    expect(next().getAttribute("aria-disabled")).toBe("false");
+
+    // Out of order: the later read answers first, and the earlier one,
+    // landing after, changes nothing.
+    await pick("Big");
+    await pick("Orgs");
+    const orgs = inspection({ format: "xlsx", columns: [profile("orgs_column")], workbook: WORKBOOK });
+    await act(async () => replies[3](orgs));
+    expect(screen.getByText("orgs_column")).toBeTruthy();
+    expect(next().getAttribute("aria-disabled")).toBe("false");
+    await act(async () => replies[2](big));
+    expect(screen.queryByText("big_column")).toBeNull();
+    expect(screen.getByText("orgs_column")).toBeTruthy();
+    expect((screen.getByLabelText("Sheet") as HTMLSelectElement).value).toBe("Orgs");
+    expect(screen.queryByText("Reading…")).toBeNull();
+  });
+
+  it("keeps the changed picker mounted and focused while the file is read again (X4)", async () => {
+    await setup();
+    await chooseBook(inspection({ format: "xlsx", workbook: WORKBOOK }));
+    for (const [label, value] of [["Sheet", "Big"], ["Header row", "3"]] as const) {
+      const picker = screen.getByLabelText(label) as HTMLSelectElement;
+      picker.focus();
+      let finish: (found: DataInspection) => void = () => {};
+      inspectData.mockReturnValue(new Promise<DataInspection>((done) => (finish = done)));
+      await act(async () => {
+        fireEvent.change(picker, { target: { value } });
+      });
+      // Mid-read: the same element, still in the page, still focused.
+      expect(screen.getByText("Reading…")).toBeTruthy();
+      expect(picker.isConnected).toBe(true);
+      expect(document.activeElement).toBe(picker);
+      await act(async () => {
+        finish(inspection({ format: "xlsx", workbook: { ...WORKBOOK, sheet: label === "Sheet" ? "Big" : "Orgs" } }));
+      });
+      expect(document.activeElement).toBe(screen.getByLabelText(label));
+    }
+    // A CSV file's separator, the same way (Stage A had the same drop).
+    await chooseFile();
+    const separator = screen.getByLabelText("Separator") as HTMLSelectElement;
+    separator.focus();
+    inspectData.mockReturnValue(new Promise(() => {}));
+    await act(async () => {
+      fireEvent.change(separator, { target: { value: ";" } });
+    });
+    expect(separator.isConnected && document.activeElement === separator).toBe(true);
+  });
+
+  it("says in step 4 which links match no row yet, and that they are still written", async () => {
+    await setup();
+    await chooseFile();
+    await press(next());
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Each row is"), { target: { value: `${X}Person` } });
+    });
+    await press(next());
+    previewData.mockResolvedValue(preview({
+      report: { ...REPORT, unmatched: [{ column: "org", className: "Organization", classIri: `${X}Organization`, count: 12, rows: [3, 9] }] },
+    }));
+    await press(next());
+    expect(screen.getByText("org: 12 values match no Organization row (rows 3, 9 and 10 more)")).toBeTruthy();
+    expect(screen.getByText(/These links are still written\. Import the rows they point to, before or after this file/)).toBeTruthy();
   });
 });

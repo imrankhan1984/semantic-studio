@@ -108,6 +108,12 @@ describe("why Next waits", () => {
     expect(stepBlocked(1, { inspection, options: { sample: true }, classIri: null })).toBeNull();
     expect(stepBlocked(1, { inspection: null, options: {}, classIri: null })).toBe("Choose a file first.");
   });
+  it("waits while the file is read again: the table shown may be the last read's (PR #54 review)", () => {
+    const ready = { inspection, options: { sample: true }, classIri: null };
+    expect(stepBlocked(1, { ...ready, reading: true })).toBe("Reading the file…");
+    expect(stepBlocked(1, { ...ready, inspection: null, reading: true })).toBe("Reading the file…");
+    expect(stepBlocked(1, { ...ready, reading: false })).toBeNull();
+  });
   it("waits for what a row is, and for that class's own reading (PR #53 review)", () => {
     const base = { inspection, options: { sample: true } };
     expect(stepBlocked(2, { ...base, classIri: null })).toBe("Choose what each row is.");

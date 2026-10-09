@@ -70,7 +70,7 @@ INPUTS / INPUT SOURCES (props)
       Examples section beside the examples, each such row carrying its
       snapshot's label -- *from people.csv, imported 2 October 2026*, and a
       sample's words -- and no actions: snapshot data is read-only. The
-      section's header offers *Import data from CSV…*, and in a project
+      section's header offers *Import data from CSV or Excel…*, and in a project
       the section is there to offer it even before there is an example.
 
       A project's examples (shacl-authoring 5.8) have a section of their
@@ -136,7 +136,7 @@ interface Props {
   /** The project's data snapshots, whose labels name the rows they made
    *  (csv-data-import 5.6). */
   dataSources?: DataSource[];
-  /** Import data from CSV (csv-data-import 5.1), offered in the Examples
+  /** Import data from CSV or Excel (csv-data-import 5.1), offered in the Examples
    *  section's header. */
   onImportData?: () => void;
 }
@@ -605,7 +605,7 @@ export default function HierarchyView({
       return (
         <div className="hierarchy-actions">
           <button type="button" className="ghost" onClick={onImportData}>
-            Import data from CSV…
+            Import data from CSV or Excel…
           </button>
         </div>
       );

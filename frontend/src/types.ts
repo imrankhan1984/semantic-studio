@@ -1077,7 +1077,18 @@ export interface ImportReportData {
   repeated: RowList;
   keptAsText: (RowList & { column: string; datatype: string })[];
   empty: { column: string; count: number }[];
+  // Per relationship column, the rows whose id matches no row of a
+  // switched-on snapshot (5.9): still written, so a Points to rule reports
+  // them. Counted when asked, so it changes as other data comes and goes.
+  unmatched?: (RowList & { column: string; className: string; classIri: string })[];
   clean: boolean;
+}
+
+// The sheet and header row a workbook was read with (5.8); a refresh reads
+// the new workbook the same way.
+export interface WorkbookChoice {
+  sheet: string;
+  headerRow: number;
 }
 
 export interface SnapshotSummary extends DataSource {
@@ -1091,6 +1102,8 @@ export interface SnapshotSummary extends DataSource {
   // the last good data is kept and `message` says why.
   mapping: { status: "ok" | "outside"; message: string | null };
   mappingText?: string | null;
+  // Set when the source was an Excel workbook.
+  workbook?: WorkbookChoice | null;
 }
 
 export interface SnapshotListing {
@@ -1118,6 +1131,18 @@ export interface DataOptions {
   header?: boolean;
   // The user chose "Use the first 2,000 rows" (5.2).
   sample?: boolean;
+  // A workbook's sheet, by name, and the row holding the column names (5.8).
+  sheet?: string;
+  headerRow?: number;
+}
+
+export interface WorkbookInspection extends WorkbookChoice {
+  // Every sheet with its rows below its first row holding a value; the chosen one's
+  // below its own header row.
+  sheets: { name: string; rows: number }[];
+  // The chosen sheet's first physical rows, a few cells each, for the
+  // header row picker.
+  top: { row: number; cells: string[]; unread?: boolean }[];
 }
 
 export interface DataInspection {
@@ -1138,6 +1163,8 @@ export interface DataInspection {
   // Inspecting a snapshot's own copy (Change the mapping): its choices.
   choices?: DataChoices | null;
   snapshot?: string;
+  format?: "csv" | "xlsx";
+  workbook?: WorkbookInspection | null;
 }
 
 export type ColumnUse = "name" | "attribute" | "relationship" | "ignore";

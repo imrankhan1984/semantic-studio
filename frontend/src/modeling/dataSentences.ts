@@ -8,8 +8,10 @@ SUMMARY
     every place puts on snapshot data (*from people.csv, imported 2 October
     2026; sample: first 2,000 of 12,480 rows*), the preview's rows as
     sentences (*Bob is a Person. Bob's birth date is "yesterday" — not a
-    date, kept as text.*), the import report's lines, the identifier
-    check, and the one word a snapshot's row gives its report.
+    date, kept as text.*), the import report's lines -- links to rows no
+    snapshot holds among them (5.9) -- the identifier check, the one word
+    a snapshot's row gives its report, and a workbook's sheet and header
+    row as the pickers offer them (5.8).
 
 BASIC IDEA
     The learner's safeguard (Section 7) is that bad data is shown and
@@ -31,7 +33,8 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - dataLabel, sampleWords, importedOn, rowList, previewSentences,
-      reportLines, reportWord, idProblems, typeWord.
+      reportLines, unmatchedLines, reportWord, idProblems, typeWord;
+      sheetOption and headerRowOption for a workbook's pickers (5.8).
 ================================================================================
 */
 
@@ -148,15 +151,27 @@ export function reportLines(
   for (const empty of report.empty) {
     lines.push(`${empty.column}: ${count(empty.count)} empty, nothing written`);
   }
+  for (const line of unmatchedLines(report)) lines.push(line);
   if (report.clean) lines.push("Every row has an id and every value fits its type.");
   return lines;
+}
+
+/** "org: 12 values match no Organization row (rows 3, 9 and 10 more)" (5.9):
+ *  links still written, so a Points to rule reports them. */
+export function unmatchedLines(report: ImportReportData): string[] {
+  return (report.unmatched ?? []).map((u) => {
+    const values = u.count === 1 ? "1 value matches" : `${count(u.count)} values match`;
+    return `${u.column}: ${values} no ${u.className} row (${rowList(u)})`;
+  });
 }
 
 /** The word a snapshot's row gives its report (5.7): "clean", or what is not. */
 export function reportWord(report: ImportReportData): string {
   const kept = report.keptAsText.reduce((sum, k) => sum + k.count, 0);
+  const unmatched = (report.unmatched ?? []).reduce((sum, u) => sum + u.count, 0);
   const parts: string[] = [];
   if (kept) parts.push(kept === 1 ? "1 value kept as text" : `${count(kept)} values kept as text`);
+  if (unmatched) parts.push(unmatched === 1 ? "1 link to no row" : `${count(unmatched)} links to no row`);
   if (report.skipped.count) parts.push(`${rows(report.skipped.count)} without an id`);
   if (report.repeated.count) parts.push(`${rows(report.repeated.count)} repeating an id`);
   return parts.length ? parts.join(", ") : "clean";
@@ -174,4 +189,19 @@ export function idProblems(check: IdCheck): string[] {
     out.push(`${check.column} is not unique: ${values} (${rowList(check.repeated)}).`);
   }
   return out;
+}
+
+/** A sheet as the sheet picker offers it (5.8): "Orgs (41 rows)". */
+export function sheetOption(sheet: { name: string; rows: number }): string {
+  return `${sheet.name} (${rows(sheet.rows)})`;
+}
+
+/** A physical row as the header row picker offers it (5.8): "Row 3: id,
+ *  name, founded, …" from its first cells, or "Row 2 (empty)". */
+export function headerRowOption(row: { row: number; cells: string[]; unread?: boolean }): string {
+  // A sheet that could not be read: its rows are offered by number.
+  if (row.unread) return `Row ${count(row.row)}`;
+  if (row.cells.length === 0) return `Row ${count(row.row)} (empty)`;
+  const shown = row.cells.map((c) => (c.length > 24 ? `${c.slice(0, 23)}…` : c));
+  return `Row ${count(row.row)}: ${shown.join(", ")}`;
 }

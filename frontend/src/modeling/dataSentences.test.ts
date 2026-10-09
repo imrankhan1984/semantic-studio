@@ -6,7 +6,8 @@ FILE: frontend/src/modeling/dataSentences.test.ts
 SUMMARY
     The words the data import says (csv-data-import 5.2 to 5.7): the label on
     snapshot data with a sample's words in it, row lists, the preview's
-    sentences, the import report's lines and word, and the identifier check.
+    sentences, the import report's lines and word, and the identifier check;
+    links to no row and a workbook's pickers (Stage B).
 
 BASIC IDEA
     Pure functions, tested without rendering. Dates are fixed at midday UTC
@@ -23,6 +24,7 @@ EXPECTED OUTPUT
 import { describe, expect, it } from "vitest";
 import {
   dataLabel,
+  headerRowOption,
   idProblems,
   importedOn,
   previewSentences,
@@ -30,6 +32,8 @@ import {
   reportWord,
   rowList,
   sampleWords,
+  sheetOption,
+  unmatchedLines,
 } from "./dataSentences";
 import type { ImportReportData } from "../types";
 
@@ -166,5 +170,37 @@ describe("the identifier check (5.3)", () => {
       }),
     ).toEqual(["14 rows have no id (rows 7, 19, 230 and 11 more).", "id is not unique: 3 values repeat (rows 8, 9, 10 and 11)."]);
     expect(idProblems({ column: "id", ok: true, missing: { count: 0, rows: [] }, repeats: 0, repeated: { count: 0, rows: [] } })).toEqual([]);
+  });
+});
+
+describe("Stage B: links that match no row (5.9) and a workbook's pickers (5.8)", () => {
+  const ORG = { column: "org", className: "Organization", classIri: "http://x#Organization" };
+
+  it("says a link to no row as the spec does, on the report and in the row's word", () => {
+    const unmatched = [{ ...ORG, count: 12, rows: [3, 9, 14] }];
+    expect(unmatchedLines(report({ clean: false, unmatched }))).toEqual([
+      "org: 12 values match no Organization row (rows 3, 9, 14 and 9 more)",
+    ]);
+    const lines = reportLines(report({ clean: false, unmatched }), "Person");
+    expect(lines[lines.length - 1]).toBe("org: 12 values match no Organization row (rows 3, 9, 14 and 9 more)");
+    expect(lines).not.toContain("Every row has an id and every value fits its type.");
+    expect(reportWord(report({ clean: false, unmatched }))).toBe("12 links to no row");
+    expect(reportWord(report({ clean: false, unmatched: [{ ...ORG, count: 1, rows: [3] }] }))).toBe("1 link to no row");
+    expect(unmatchedLines(report({ clean: false, unmatched: [{ ...ORG, count: 1, rows: [3] }] }))).toEqual([
+      "org: 1 value matches no Organization row (row 3)",
+    ]);
+    // A report written before Stage B has no unmatched list at all.
+    expect(unmatchedLines(report())).toEqual([]);
+  });
+
+  it("names a sheet with its rows, and a header row by its first cells", () => {
+    expect(sheetOption({ name: "Orgs", rows: 1 })).toBe("Orgs (1 row)");
+    expect(sheetOption({ name: "Big", rows: 5000 })).toBe("Big (5,000 rows)");
+    expect(headerRowOption({ row: 2, cells: [] })).toBe("Row 2 (empty)");
+    expect(headerRowOption({ row: 2, cells: [], unread: true })).toBe("Row 2");
+    expect(headerRowOption({ row: 3, cells: ["id", "name"] })).toBe("Row 3: id, name");
+    expect(headerRowOption({ row: 1, cells: ["Organizations of the whole wide world"] })).toBe(
+      "Row 1: Organizations of the wh…",
+    );
   });
 });

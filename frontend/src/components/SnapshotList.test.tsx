@@ -9,7 +9,8 @@ SUMMARY
     sample's words included; the switch; Refresh at once, with the limit's
     two choices, and handing a header mismatch to the wizard; Edit as RML
     run, kept outside the engine, and refused; Remove after saying how many
-    statements leave. None of it is a model change.
+    statements leave. None of it is a model change. Stage B: a workbook's
+    snapshot refreshed by its sheet and header row, and its links to no row.
 
 BASIC IDEA
     api.ts is mocked and the real project store is opened on a fixed
@@ -104,8 +105,20 @@ describe("SnapshotList", () => {
   it("says there is no data yet, and offers the import", async () => {
     await setup([]);
     expect(screen.getByText(/No data yet/)).toBeTruthy();
-    await press(screen.getByRole("button", { name: "Import data from CSV…" }));
+    await press(screen.getByRole("button", { name: "Import data from CSV or Excel…" }));
     expect(onWizard).toHaveBeenCalledWith({ kind: "new" });
+  });
+
+  it("takes focus on its heading when the wizard hands back, never dropping it to the page (X4)", async () => {
+    openProject.mockResolvedValue({ project: PROJECT, documents: [MODEL], recovery: { available: false, draftTime: null } });
+    listData.mockResolvedValue({ generation: 1, snapshots: [SNAP] });
+    await act(async () => {
+      await projectStore.open(PID);
+    });
+    await act(async () => {
+      render(<SnapshotList projectId={PID} onWizard={() => {}} focusOnMount />);
+    });
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Data" }));
   });
 
   it("labels each snapshot with where it came from, a sample's words included", async () => {
@@ -138,7 +151,7 @@ describe("SnapshotList", () => {
     await act(async () => {
       fireEvent.change(document.querySelector(".snapshot-row input[type=file]")!, { target: { files: [FILE] } });
     });
-    expect(inspectData).toHaveBeenCalledWith(PID, { file: FILE });
+    expect(inspectData).toHaveBeenCalledWith(PID, { file: FILE }, {});
     expect(refreshData).toHaveBeenCalledWith(PID, SNAP.id, FILE, { sample: false });
     expect(projectStore.getSnapshot().announcement.text).toBe("Refreshed people.csv from people-2.csv.");
     expect(screen.getByRole("button", { name: "Report" }).getAttribute("aria-expanded")).toBe("true");
@@ -160,6 +173,29 @@ describe("SnapshotList", () => {
     expect(onWizard).toHaveBeenCalledWith({
       kind: "refresh", snapshot: SNAP, file: FILE, options: { sample: true }, inspection, missing: ["born"], choices: null,
     });
+  });
+
+  it("reads a workbook's new version by the same sheet and header row, and counts its links to no row (Stage B)", async () => {
+    const ORGS: SnapshotSummary = {
+      ...SNAP, id: "orgs-def456", source: "orgs.xlsx", rows: 41, total: 41, sample: false,
+      workbook: { sheet: "Orgs", headerRow: 3 },
+      report: { ...REPORT, total: 41, sample: false, keptAsText: [],
+        unmatched: [{ column: "parent", className: "Organization", classIri: "http://x#Organization", count: 2, rows: [4, 7] }] },
+    };
+    await setup([ORGS]);
+    expect(screen.getByText(/· sheet Orgs · 2 links to no row/)).toBeTruthy();
+    const book = new File(["PK"], "orgs-2.xlsx");
+    inspectData.mockResolvedValue({ sample: false, limit: 2000 });
+    refreshData.mockResolvedValue({ status: "imported", snapshot: { ...ORGS, source: "orgs-2.xlsx" }, generation: 2 });
+    const input = document.querySelector(".snapshot-row input[type=file]") as HTMLInputElement;
+    expect(input.getAttribute("accept")).toContain(".xlsx");
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [book] } });
+    });
+    expect(inspectData).toHaveBeenCalledWith(PID, { file: book }, { sheet: "Orgs", headerRow: 3 });
+    expect(refreshData).toHaveBeenCalledWith(PID, ORGS.id, book, { sheet: "Orgs", headerRow: 3, sample: false });
+    // The refresh opened the report.
+    expect(screen.getByText("parent: 2 values match no Organization row (rows 4 and 7)")).toBeTruthy();
   });
 
   it("edits the mapping as RML: run, kept outside the engine, or refused", async () => {

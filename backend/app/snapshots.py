@@ -34,6 +34,20 @@ BASIC IDEA
     Switched off, a snapshot stays on disk and leaves every view and
     validation.
 
+    A workbook (5.8) takes the same path: its sheet is written as the CSV
+    copy, UTF-8 with a comma, and the original is kept beside it as
+    source.xlsx; the mapping reads the CSV, so it stays standard RML. A
+    refresh reads the new workbook by the same sheet and header row.
+
+    A relationship column (5.9) writes each id into the target class's IRI
+    pattern -- the one a snapshot of that class gives its rows, else the
+    default every wizard-made snapshot uses -- so it links to those rows
+    with no join, whichever file came first. Which row points where is
+    kept in snapshot.json, and the report counts the links matching no
+    individual of a switched-on snapshot each time it is asked, since that
+    changes as other snapshots come, go and switch. They are still written,
+    so a Points to rule reports them.
+
     Step 3's choices for a column are the attributes and relationships of
     the row's class, its own and inherited, exactly as a shape's rule is
     offered them (shapes_form.paths_for); in a taxonomy, the concept's
@@ -47,10 +61,11 @@ INPUTS / INPUT SOURCES
     - A file's bytes and the user's dialect, sample and mapping choices.
 
 EXPECTED OUTPUT
-    - data/<sid>/ folders; the manifest's `data` list for the project card.
+    - data/<sid>/ folders (source.xlsx too for a workbook); the manifest's
+      `data` list for the project card.
     - active(pid) -> (generation, [(graph, info)]) for the views.
     - JSON for the wizard: preview rows, the identifier check, the fields
-      and suggestions, the report.
+      and suggestions, the report with its links to no row.
     - SnapshotError (422, a sentence) and UnknownSnapshot (404).
 ================================================================================
 """
@@ -78,6 +93,8 @@ from .shapes_form import paths_for
 DATA_DIR = "data"
 TRASH_DIR = ".trash"
 SOURCE = "source.csv"
+# A workbook's original, kept beside the CSV copy its mapping reads (5.8).
+SOURCE_XLSX = "source.xlsx"
 MAPPING = "mapping.rml.ttl"
 DATA = "data.ttl"
 META = "snapshot.json"
@@ -145,8 +162,16 @@ def _info(meta: dict) -> dict:
     }
 
 
-def summary(meta: dict) -> dict:
-    report = meta.get("report", {})
+def summary(meta: dict, known: Optional[set] = None) -> dict:
+    """A snapshot as the list shows it. With `known` -- every individual of
+    the switched-on snapshots -- its report counts the links that match no
+    row (5.9), which changes as other snapshots come and go, so it is
+    worked out when asked, never stored."""
+    report = dict(meta.get("report", {}))
+    unmatched = _unmatched(meta.get("links") or [], known) if known is not None else []
+    report["unmatched"] = unmatched
+    if unmatched:
+        report["clean"] = False
     return {
         **_info(meta),
         "enabled": meta.get("enabled", True),
@@ -156,7 +181,43 @@ def summary(meta: dict) -> dict:
         "individuals": report.get("individuals", 0),
         "report": report,
         "mapping": meta.get("mapping", {"status": "ok", "message": None}),
+        "workbook": meta.get("workbook"),
     }
+
+
+def _unmatched(links: list, known: set) -> list[dict]:
+    """Per linking column, the rows whose value names no individual of a
+    switched-on snapshot: still written, so a Points to rule reports them."""
+    out = []
+    for link in links:
+        rows = sorted(r for iri, found in link.get("targets", {}).items() if iri not in known for r in found)
+        if rows:
+            out.append({"column": link["column"], "className": link["className"],
+                        "classIri": link["classIri"], **tabular.listed(rows)})
+    return out
+
+
+def _links(definitions: list, out: dict, mapping: rml.Mapping) -> list[dict]:
+    """The link columns still in the mapping, with the rows the run pointed
+    at each target."""
+    held = {(str(p), om.value) for p, om in mapping.poms if om.kind == "template"}
+    found = {(link["predicate"], link["template"]): link["targets"] for link in out.get("links", [])}
+    result = []
+    for link in definitions:
+        key = (link["property"], link["template"])
+        if key in held:
+            definition = {k: v for k, v in link.items() if k != "targets"}
+            result.append({**definition, "targets": found.get(key, {})})
+    return result
+
+
+def _subject_prefix(mapping: rml.Mapping) -> Optional[str]:
+    """The text before the identifier in a subject template of the form
+    prefix{column}, or None for any other form."""
+    parts = rml.template_parts(mapping.subject)
+    if len(parts) == 2 and isinstance(parts[0], str) and isinstance(parts[1], tuple):
+        return parts[0]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +301,7 @@ class Plan:
     class_iri: URIRef
     class_name: str
     row_column: Optional[str]     # the server's row-number column, if any
+    links: list                   # the relationship columns, by target class (5.9)
 
 
 def plan(
@@ -252,8 +314,15 @@ def plan(
     map_iri: str,
     separator: str,
     encoding: str,
+    patterns: Optional[dict] = None,
 ) -> Plan:
-    """The wizard's choices as an RML mapping, each one checked."""
+    """The wizard's choices as an RML mapping, each one checked.
+
+    `patterns` maps a class to the IRI prefix a snapshot of it gives its
+    rows: a relationship to that class uses it, so a column of ids links to
+    those rows with no join (5.9). Without one, the class's default
+    pattern, which is what the wizard gives every snapshot -- so either
+    file may be imported first."""
     if not isinstance(choices, dict):
         raise SnapshotError("The mapping choices are an object.")
     kind = manifest.get("kind") or "ontology"
@@ -276,6 +345,7 @@ def plan(
     subject = rml.escape(f"{base}{DATA_DIR}/{class_slug(cls)}/") + "{" + rml.escape(reference) + "}"
     offered = {f["property"]: f for f in fields(model, cls, kind, names, [primary])}
     poms: list = []
+    links: list = []
     columns = choices.get("columns") or {}
     if not isinstance(columns, dict):
         raise SnapshotError("The column choices are an object.")
@@ -314,8 +384,13 @@ def plan(
                 raise SnapshotError(
                     f"Column {column}: {field['label']} has no end class, so its ids cannot name rows."
                 )
-            template = rml.escape(f"{base}{DATA_DIR}/{class_slug(target)}/") + "{" + rml.escape(column) + "}"
+            prefix = (patterns or {}).get(str(target)) or f"{base}{DATA_DIR}/{class_slug(target)}/"
+            template = rml.escape(prefix) + "{" + rml.escape(column) + "}"
             poms.append((prop_iri, rml.ObjectMap("template", template)))
+            links.append({
+                "column": column, "property": str(prop_iri), "template": template,
+                "classIri": str(target), "className": field.get("rangeLabel") or local_name(str(target)),
+            })
     if taxonomy:
         schemes = sorted(s for s in model.subjects(RDF.type, SKOS.ConceptScheme) if isinstance(s, URIRef))
         if schemes:
@@ -327,7 +402,7 @@ def plan(
         separator=separator, encoding=encoding,
     )
     class_name = "concept" if taxonomy else names(cls)
-    return Plan(graph, cls, class_name, row_column)
+    return Plan(graph, cls, class_name, row_column, links)
 
 
 def preview_rows(
@@ -499,7 +574,24 @@ class SnapshotService:
     def listing(self, pid: str) -> dict:
         self.projects.folder(pid)
         with self._lock(pid):
-            return {"generation": self.generation(pid), "snapshots": [summary(m) for m in self._metas(pid)]}
+            metas = self._metas(pid)
+            known = _known(metas)
+            return {"generation": self.generation(pid), "snapshots": [summary(m, known) for m in metas]}
+
+    def _summary(self, pid: str, meta: dict) -> dict:
+        """summary() with the links counted against the project's snapshots
+        as they now stand."""
+        return summary(meta, _known(self._metas(pid)))
+
+    def patterns(self, pid: str) -> dict:
+        """class IRI -> the IRI prefix a snapshot of that class gives its rows
+        (5.9); a switched-on snapshot's wins over one switched off."""
+        out: dict = {}
+        metas = sorted(self._metas(pid), key=lambda m: (m.get("enabled", True), m.get("importedAt", "")))
+        for meta in metas:
+            if meta.get("classIri") and meta.get("subjectPrefix"):
+                out[meta["classIri"]] = meta["subjectPrefix"]
+        return out
 
     def _changed(self, pid: str) -> None:
         """Move the generation and write the card's line into the manifest --
@@ -512,14 +604,9 @@ class SnapshotService:
     # --- reading a file and the snapshot's own copy ----------------------------
 
     @staticmethod
-    def read(data: bytes, options: dict) -> tabular.Table:
-        options = options or {}
-        return tabular.read_table(
-            data,
-            separator=options.get("separator"),
-            encoding=options.get("encoding"),
-            header=bool(options.get("header", True)),
-        )
+    def read(data: bytes, options: dict, filename: str = "") -> tabular.Table:
+        """A CSV file, or a workbook's sheet (5.8), under the same limits."""
+        return tabular.read_file(data, filename, options or {})
 
     def stored_table(self, pid: str, sid: str) -> tuple[tabular.Table, dict]:
         """The snapshot's copy as the wizard reads it: the server's row
@@ -543,7 +630,10 @@ class SnapshotService:
     def _map_iri(self, manifest: dict, sid: str) -> str:
         return f"{manifest['baseIri']}mapping/{sid}"
 
-    def preview(self, *, model: Graph, manifest: dict, names: Names, table: tabular.Table, choices: dict) -> dict:
+    def preview(
+        self, *, model: Graph, manifest: dict, names: Names, table: tabular.Table, choices: dict,
+        pid: Optional[str] = None,
+    ) -> dict:
         """Steps 2 to 4 (5.3 to 5.5): the identifier checked, the choices for
         each column with suggestions, and -- once something is mapped -- the
         first rows as sentences with the report the import would give."""
@@ -563,41 +653,60 @@ class SnapshotService:
         result["fields"] = offered
         result["suggestions"] = suggestions(model, table, offered, tabular.suggest_name(table))
         result["className"] = "concept" if cls == SKOS.Concept else names(cls)
+        metas: list = []
+        patterns: dict = {}
+        if pid is not None:
+            with self._lock(pid):
+                metas = self._metas(pid)
+                patterns = self.patterns(pid)
         made = plan(
             model=model, manifest=manifest, table=table, choices=choices, names=names,
             map_iri=self._map_iri(manifest, "preview-000000"), separator=table.separator,
-            encoding=table.encoding,
+            encoding=table.encoding, patterns=patterns,
         )
         mapping = rml.read_graph(made.graph)
         work = _with_row_column(table, made.row_column)
         graph, out = rml.run(mapping, work)
         labels = {f["property"]: f["label"] for f in offered}
         result["rows"] = preview_rows(work, mapping, graph, out["subjects"], labels, made.row_column)
-        result["report"] = out["report"]
+        # The links are counted against the snapshots there now, and this
+        # file's own rows, which a link may point at (5.9).
+        known = _known(metas) | set(out["subjects"])
+        report = dict(out["report"])
+        report["unmatched"] = _unmatched(_links(made.links, out, mapping), known)
+        if report["unmatched"]:
+            report["clean"] = False
+        result["report"] = report
         return result
 
     def _run_into(
         self, *, table: tabular.Table, mapping_text: str, base: str,
         separator: str, encoding: str, row_column: Optional[str],
-    ) -> tuple[Graph, dict, bytes]:
+    ) -> tuple[Graph, dict, bytes, rml.Mapping]:
         """Write the copy, read it back and run the mapping on it: the one path
-        every import takes. Nothing in `folder` is replaced until it ran."""
+        every import takes. Nothing in `folder` is replaced until it ran. A
+        workbook's sheet takes it too, written as UTF-8 CSV with a comma
+        (5.8), so its mapping is standard RML reading a CSV file."""
         source = tabular.write_csv(table, encoding, separator, row_column)
         mapping = rml.read(mapping_text, base)
         stored = tabular.read_table(
             source, separator=mapping.separator, encoding=mapping.encoding, header=True,
         )
         graph, out = rml.run(mapping, stored)
-        return graph, out, source
+        return graph, out, source, mapping
 
-    def _commit(self, pid: str, folder: Path, meta: dict, graph: Graph, files: dict) -> dict:
+    def _commit(
+        self, pid: str, folder: Path, meta: dict, graph: Graph, files: dict, drop: tuple = (),
+    ) -> dict:
         for name, data in files.items():
             self._write(folder / name, data)
         self._write(folder / DATA, graph.serialize(format="nt", encoding="utf-8"))
         self._write_meta(folder, meta)
+        for name in drop:
+            (folder / name).unlink(missing_ok=True)
         self._loaded.setdefault(pid, {})[meta["id"]] = Loaded(meta, graph)
         self._changed(pid)
-        return summary(meta)
+        return self._summary(pid, meta)
 
     @staticmethod
     def _sample_check(table: tabular.Table, accept: bool) -> None:
@@ -612,7 +721,7 @@ class SnapshotService:
         filename: str, options: dict, choices: dict,
     ) -> dict:
         """Import a file as a new snapshot, switched on (5.5)."""
-        table = self.read(data, options)
+        table = self.read(data, options, filename)
         self._sample_check(table, bool((options or {}).get("sample")))
         name = display_name(filename)
         stem = name.rsplit(".", 1)[0]
@@ -623,10 +732,10 @@ class SnapshotService:
             made = plan(
                 model=model, manifest=manifest, table=table, choices=choices, names=names,
                 map_iri=self._map_iri(manifest, sid), separator=table.separator,
-                encoding=table.encoding,
+                encoding=table.encoding, patterns=self.patterns(pid),
             )
             text = rml.to_turtle(made.graph)
-            graph, out, source = self._run_into(
+            graph, out, source, mapping = self._run_into(
                 table=table, mapping_text=text, base=manifest["baseIri"],
                 separator=table.separator, encoding=table.encoding, row_column=made.row_column,
             )
@@ -649,8 +758,14 @@ class SnapshotService:
                 "report": report,
                 "subjects": out["subjects"],
                 "mapping": {"status": "ok", "message": None},
+                "workbook": _workbook(table),
+                "subjectPrefix": _subject_prefix(mapping),
+                "links": _links(made.links, out, mapping),
             }
-            return self._commit(pid, folder, meta, graph, {SOURCE: source, MAPPING: text.encode("utf-8")})
+            files = {SOURCE: source, MAPPING: text.encode("utf-8")}
+            if table.workbook:
+                files[SOURCE_XLSX] = data
+            return self._commit(pid, folder, meta, graph, files)
 
     def refresh(
         self, pid: str, sid: str, *, data: bytes, filename: str, options: dict,
@@ -659,9 +774,19 @@ class SnapshotService:
     ) -> dict:
         """The same mapping on a new version of the file (5.7). Headers that
         no longer match leave everything as it was and say which columns are
-        missing; the wizard then sends `choices` for the new file."""
-        table = self.read(data, options)
-        self._sample_check(table, bool((options or {}).get("sample")))
+        missing; the wizard then sends `choices` for the new file.
+
+        A new workbook is read the same way as the last (5.8): the sheet of
+        the same name, from the same header row, unless the options say
+        otherwise."""
+        options = dict(options or {})
+        earlier = self._read_meta(self.folder(pid, sid)).get("workbook") or {}
+        # Only when neither is sent: another sheet starts from its own row 1,
+        # never from the last sheet's header row (code review).
+        if "sheet" not in options and "headerRow" not in options:
+            options.update({k: v for k, v in earlier.items() if k in ("sheet", "headerRow")})
+        table = self.read(data, options, filename)
+        self._sample_check(table, bool(options.get("sample")))
         with self._lock(pid):
             folder = self.folder(pid, sid)
             meta = self._read_meta(folder)
@@ -672,12 +797,13 @@ class SnapshotService:
                 made = plan(
                     model=model, manifest=manifest, table=table, choices=choices, names=names,
                     map_iri=self._map_iri(manifest, sid), separator=table.separator,
-                    encoding=table.encoding,
+                    encoding=table.encoding, patterns=self.patterns(pid),
                 )
                 text = rml.to_turtle(made.graph)
                 row_column, separator, encoding = made.row_column, table.separator, table.encoding
                 files[MAPPING] = text.encode("utf-8")
                 meta.update(choices=choices, classIri=str(made.class_iri), className=made.class_name)
+                definitions = made.links
             else:
                 text = (folder / MAPPING).read_text(encoding="utf-8")
                 try:
@@ -697,8 +823,9 @@ class SnapshotService:
                 # The copy is written in the dialect the mapping declares, so
                 # an edited mapping is never rewritten by a refresh.
                 separator, encoding = mapping.separator, mapping.encoding
+                definitions = meta.get("links") or []
             try:
-                graph, out, source = self._run_into(
+                graph, out, source, mapping = self._run_into(
                     table=table, mapping_text=text, base=base,
                     separator=separator, encoding=encoding, row_column=row_column,
                 )
@@ -718,8 +845,15 @@ class SnapshotService:
                 report={**out["report"], "total": table.total, "sample": table.sample},
                 subjects=out["subjects"],
                 mapping={"status": "ok", "message": None},
+                workbook=_workbook(table),
+                subjectPrefix=_subject_prefix(mapping),
+                links=_links(definitions, out, mapping),
             )
-            return {"status": "imported", "snapshot": self._commit(pid, folder, meta, graph, files)}
+            # A CSV refreshing a workbook's snapshot leaves no stale original.
+            if table.workbook:
+                files[SOURCE_XLSX] = data
+            drop = () if table.workbook else (SOURCE_XLSX,)
+            return {"status": "imported", "snapshot": self._commit(pid, folder, meta, graph, files, drop)}
 
     def remap(self, pid: str, sid: str, *, model: Graph, manifest: dict, names: Names, choices: dict) -> dict:
         """Change the mapping (5.7): steps 2 to 4 again, on the copy kept."""
@@ -729,10 +863,10 @@ class SnapshotService:
             made = plan(
                 model=model, manifest=manifest, table=table, choices=choices, names=names,
                 map_iri=self._map_iri(manifest, sid), separator=meta["dialect"]["separator"],
-                encoding=meta["dialect"]["encoding"],
+                encoding=meta["dialect"]["encoding"], patterns=self.patterns(pid),
             )
             text = rml.to_turtle(made.graph)
-            graph, out, source = self._run_into(
+            graph, out, source, mapping = self._run_into(
                 table=table, mapping_text=text, base=manifest["baseIri"],
                 separator=meta["dialect"]["separator"], encoding=meta["dialect"]["encoding"],
                 row_column=made.row_column,
@@ -743,6 +877,7 @@ class SnapshotService:
                 report={**out["report"], "total": meta["rows"]["total"],
                         "sample": meta["rows"]["total"] > meta["rows"]["kept"]},
                 subjects=out["subjects"], mapping={"status": "ok", "message": None},
+                subjectPrefix=_subject_prefix(mapping), links=_links(made.links, out, mapping),
             )
             return self._commit(pid, folder, meta, graph, {SOURCE: source, MAPPING: text.encode("utf-8")})
 
@@ -786,7 +921,7 @@ class SnapshotService:
                 if sid in self._loaded.get(pid, {}):
                     self._loaded[pid][sid].meta = meta
                 self._changed(pid)
-                return summary(meta)
+                return self._summary(pid, meta)
             table = tabular.read_table(
                 (folder / SOURCE).read_bytes(), separator=mapping.separator,
                 encoding=mapping.encoding, header=True,
@@ -802,8 +937,11 @@ class SnapshotService:
                         "sample": meta["rows"]["total"] > meta["rows"]["kept"]},
                 subjects=out["subjects"], mapping={"status": "ok", "message": None},
                 dialect={"separator": mapping.separator, "encoding": mapping.encoding},
-                # The expert's mapping is the wizard's no longer.
+                # The expert's mapping is the wizard's no longer; its link
+                # columns are kept while the mapping still writes them.
                 choices=None,
+                subjectPrefix=_subject_prefix(mapping),
+                links=_links(meta.get("links") or [], out, mapping),
             )
             return self._commit(pid, folder, meta, graph, {MAPPING: text.encode("utf-8")})
 
@@ -816,7 +954,7 @@ class SnapshotService:
             if sid in self._loaded.get(pid, {}):
                 self._loaded[pid][sid].meta = meta
             self._changed(pid)
-            return summary(meta)
+            return self._summary(pid, meta)
 
     def remove(self, pid: str, sid: str) -> dict:
         """Move the folder to the project's .trash/ (5.7)."""
@@ -879,6 +1017,22 @@ def read_ntriples(text: str) -> Graph:
 
     graph.addN(triples())
     return graph
+
+
+def _known(metas: list) -> set:
+    """Every individual of the switched-on snapshots: what a link matches."""
+    known: set = set()
+    for meta in metas:
+        if meta.get("enabled", True):
+            known.update(meta.get("subjects", {}))
+    return known
+
+
+def _workbook(table: tabular.Table) -> Optional[dict]:
+    """What a refresh reads a new workbook with: the sheet and header row."""
+    if not table.workbook:
+        return None
+    return {"sheet": table.workbook["sheet"], "headerRow": table.workbook["headerRow"]}
 
 
 def _with_row_column(table: tabular.Table, row_column: Optional[str]) -> tabular.Table:

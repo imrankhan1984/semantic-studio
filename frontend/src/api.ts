@@ -121,11 +121,15 @@ export const CLIENT_HEADER = { "X-Semantic-Studio": "1" } as const;
  */
 export class ApiError extends Error {
   readonly status: number;
+  // The backend's `detail` as sent, for a caller that reads more than the
+  // sentence: a workbook refused with its sheets (csv-data-import 5.8).
+  readonly detail: unknown;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, detail?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.detail = detail;
   }
 }
 
@@ -203,9 +207,11 @@ async function send(url: string, init?: RequestInit): Promise<Response> {
 async function handle<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let detail = response.statusText;
+    let raw: unknown;
     try {
       // Backend errors put a human message in { detail: ... }.
       const body = await response.json();
+      raw = body?.detail;
       if (body.detail?.code === "approval_required") {
         // Reached only with no dialog registered: say what was needed.
         const hosts = (body.detail.requests as ApprovalRequest[]).map((r) => r.host);
@@ -224,7 +230,7 @@ async function handle<T>(response: Response): Promise<T> {
     } catch {
       /* keep statusText */
     }
-    throw new ApiError(detail, response.status);
+    throw new ApiError(detail, response.status, raw);
   }
   return response.json() as Promise<T>;
 }
