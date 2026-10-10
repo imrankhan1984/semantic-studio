@@ -33,7 +33,7 @@ INPUTS / INPUT SOURCES (props)
     - cls, name: the class and its name.
     - choices: what the selects offer, from /node.
     - initial: the state to open on (an edit, or a rule begun on the canvas).
-    - editing: an existing rule is being changed (Save, not Add).
+    - replacing: the key of an existing rule being changed (Save, not Add).
     - busy, error: the command in flight and the server's refusal.
     - onSubmit(command, sentence), onCancel.
 
@@ -124,7 +124,9 @@ export default function RuleBuilder({
     // A kind the new property is not offered goes, and so does a filler of
     // the other sort (a class for an attribute, a type for a relationship).
     const keepKind = state.kind && offered.includes(state.kind) ? state.kind : null;
-    const sameSort = chosen?.kind === pkind;
+    // A class chosen before any property -- the other end of a line drawn
+    // on the canvas -- stays for a relationship (code review: it was lost).
+    const sameSort = chosen?.kind === pkind || (pkind === null && chosen?.kind === "relationship");
     set({ property: iri || null, kind: keepKind, filler: sameSort ? state.filler : null, value: sameSort ? state.value : "" });
   };
 

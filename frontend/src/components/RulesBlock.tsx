@@ -70,12 +70,17 @@ interface Props {
 }
 
 /** The builder's place: closed, adding, or changing one rule. */
-type Open = null | { initial: BuilderState | null; replacing: RuleKey | null; from: string };
+// `token` keys the builder: a draft arriving while one is open must start
+// it afresh, since a builder reads its initial state once (code review).
+type Open = null | { initial: BuilderState | null; replacing: RuleKey | null; from: string; token: number };
 
 export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props) {
   const { busy, errors, run, clear } = runner;
   const shapes = useRunner("shapes");
-  const [open, setOpen] = useState<Open>(null);
+  const [open, setOpenState] = useState<Open>(null);
+  const opened = useRef(0);
+  const setOpen = (next: Omit<NonNullable<Open>, "token"> | null) =>
+    setOpenState(next && { ...next, token: ++opened.current });
   const addRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   // After a remove: the key of the rule to focus once the removed one has
@@ -256,6 +261,7 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
                 )}
                 {open && open.replacing && open.from === key && (
                   <RuleBuilder
+                    key={open.token}
                     cls={iri}
                     name={name}
                     choices={rules.choices}
@@ -277,6 +283,7 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
       )}
       {open && !open.replacing ? (
         <RuleBuilder
+          key={open.token}
           cls={iri}
           name={name}
           choices={rules.choices}

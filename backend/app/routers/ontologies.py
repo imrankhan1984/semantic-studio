@@ -76,7 +76,6 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field  # declares/validates JSON request bodies
 from rdflib import URIRef
-from rdflib.namespace import RDF
 from starlette.concurrency import run_in_threadpool
 
 # Delegate the real work to the domain modules.
@@ -316,6 +315,22 @@ def _from_data(ontology, iri: str) -> Optional[dict]:
     split = split_document_id(ontology.id)
     origin = editing_service.snapshots.origins(split[0]).get(iri) if split else None
     return {**info, "row": origin[1] if origin else None}
+
+
+def _rule_choices(ontology, graph, imports: bool, lang: Optional[str], name) -> dict:
+    """The sentence builder's options, built once per revision of the view:
+    every class's form asked for them on every click (code review). Keyed on
+    what the view is built from -- the revision and the view itself -- and
+    the display language, as every cache is (D-081)."""
+    key = (ontology.revision, imports, lang)
+    held = ontology.choices_cache
+    # The view itself is compared by identity, as the canvas's cache does:
+    # it is rebuilt when the imports or the snapshots change.
+    if held is not None and held[0] == key and held[1] is graph:
+        return held[2]
+    value = axioms.choices(graph, ontology.graph, name)
+    ontology.choices_cache = (key, graph, value)
+    return value
 
 
 def _get_or_404(oid: str):
@@ -604,11 +619,11 @@ def get_node(
         if details is not None and ontology.editable and details.get("kind") == "class":
             name = labeler(graph, ontology.label_langs(lang))
             cls = URIRef(iri)
-            own = any((cls, RDF.type, t) in ontology.graph for t in examples.CLASS_TYPES)
             details["rules"] = {
                 "items": axioms.class_rules(graph, cls, ontology.graph, name),
                 "warnings": modeling_checks.never_members(graph, cls, name),
-                "choices": axioms.choices(graph, name) if own else None,
+                "choices": _rule_choices(ontology, graph, imports, lang, name)
+                if examples.is_class(ontology.graph, cls) else None,
             }
         # A snapshot's individual is read-only data (csv-data-import 5.6):
         # where it came from, never an example's form.

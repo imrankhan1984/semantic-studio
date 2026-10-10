@@ -224,6 +224,23 @@ describe("the builder (5.9)", () => {
     expect(command.args.with).toBe(item.with?.iri);
   });
 
+  it("Edit and Save of a value sends it back with its language or type (code review)", () => {
+    for (const value of [
+      { kind: "text" as const, value: "red", lang: "en" },
+      { kind: "typed" as const, value: "5", datatype: "xsd:integer" },
+    ]) {
+      const item = rule({ property: status, kind: "value", filler: value });
+      expect(builderCommand(EX + "C", stateOf(item), choices, item.key)!.args.filler).toEqual(value);
+      // Changed, it takes the attribute's own type.
+      const changed = { ...stateOf(item), value: "blue" };
+      expect(builderCommand(EX + "C", changed, choices, item.key)!.args.filler).toEqual({
+        kind: "typed",
+        value: "blue",
+        datatype: "xsd:string",
+      });
+    }
+  });
+
   it("removes each kind of item by its own command, and nothing read-only", () => {
     expect(removeCommand(EX + "Order", rule({}))).toEqual({
       name: "RemoveRestriction",

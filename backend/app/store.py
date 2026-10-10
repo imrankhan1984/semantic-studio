@@ -315,6 +315,9 @@ class Ontology:
     # the imports switch, each keyed on the revision, the snapshots'
     # generation and the imports view it was built on.
     data_cache: Optional[dict] = field(default=None, repr=False)
+    # The sentence builder's choices for a project class's form (axioms 5.9):
+    # (key, the view they were read from, value), built once per revision.
+    choices_cache: Optional[tuple] = field(default=None, repr=False)
     # A project model's snapshots, supplied by editing.py on open:
     # () -> (generation, [(graph, info)]). None everywhere else.
     snapshots: Optional[Callable[[], tuple]] = field(default=None, repr=False, compare=False)

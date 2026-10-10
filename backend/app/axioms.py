@@ -51,7 +51,7 @@ EXPECTED OUTPUT
     - find(graph, cls, key) -> the (predicate, node) pairs with that content.
     - restriction_triples(...) -> (node, triples) for a new restriction.
     - shacl_plain / shacl_triples -> what Check it in data too writes.
-    - choices(graph, name) -> what the sentence builder's selects offer.
+    - choices(graph, own, name) -> what the sentence builder's selects offer.
 ================================================================================
 """
 
@@ -378,7 +378,7 @@ def class_rules(g: Graph, cls: URIRef, own: Graph, name: Name) -> list[dict]:
     fixed order -- *every*, *defines*, same meaning, disjoint -- then what
     is outside them, as Turtle. An item is editable only when this document
     defines the class and holds the statement."""
-    defined = any((cls, RDF.type, t) in own for t in (OWL.Class, RDFS.Class))
+    defined = examples.is_class(own, cls)
 
     def mine(triple) -> bool:
         return defined and triple in own
@@ -398,7 +398,10 @@ def class_rules(g: Graph, cls: URIRef, own: Graph, name: Name) -> list[dict]:
     outside = []
     for predicate in (RDFS.subClassOf, OWL.equivalentClass, OWL.disjointWith, OWL.disjointUnionOf):
         for node in g.objects(cls, predicate):
-            if node in readable or (isinstance(node, URIRef) and predicate != OWL.disjointUnionOf):
+            # A class disjoint with or the same as itself is no sentence of
+            # 5.8, but it must not vanish either (code review): its Turtle.
+            itself = node == cls and predicate != RDFS.subClassOf
+            if node in readable or (isinstance(node, URIRef) and predicate != OWL.disjointUnionOf and not itself):
                 continue
             triples = [(cls, predicate, node), *closure(g, node)]
             outside.append({"type": "turtle", "turtle": turtle_of(g, triples), "editable": False})
@@ -511,10 +514,12 @@ def signature_of(triples: list, node) -> frozenset:
 # --- what the sentence builder offers ---------------------------------------------------
 
 
-def choices(g: Graph, name: Name) -> dict:
-    """The selects' options: relationships and attributes, classes, and the
-    things a *has value* can name, from the view with its imports, each
-    capped with its true total (CLAUDE.md rule 6)."""
+def choices(g: Graph, own: Graph, name: Name) -> dict:
+    """The selects' options: relationships and attributes and classes from
+    the view with its imports, and the things a *has value* can name -- the
+    project's own examples, which the command accepts; never a snapshot's
+    rows or an import's individuals (code review) -- each capped with its
+    true total (CLAUDE.md rule 6)."""
     def capped(items: list) -> dict:
         items.sort(key=lambda i: (i["label"].casefold(), i["iri"]))
         return {"items": items[:CHOICES_CAP], "total": len(items)}
@@ -531,7 +536,7 @@ def choices(g: Graph, name: Name) -> dict:
     classes = set()
     for t in examples.CLASS_TYPES:
         classes |= {s for s in g.subjects(RDF.type, t) if isinstance(s, URIRef)}
-    things = examples.examples(g)
+    things = examples.examples(g, own)
     return {
         "properties": capped(properties),
         "classes": capped([_ref(c, name) for c in classes]),

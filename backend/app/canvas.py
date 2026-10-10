@@ -261,7 +261,10 @@ def build_canvas(
         for predicate in (RDFS.subClassOf, OWL.equivalentClass, OWL.disjointWith, OWL.disjointUnionOf):
             unread += sum(
                 1 for o in graph.objects(cls, predicate)
-                if o not in readable and (not isinstance(o, URIRef) or predicate == OWL.disjointUnionOf)
+                if o not in readable and (
+                    not isinstance(o, URIRef) or predicate == OWL.disjointUnionOf
+                    or (o == cls and predicate != RDFS.subClassOf)
+                )
             )
         if unread:
             more[cls] = more.get(cls, 0) + unread

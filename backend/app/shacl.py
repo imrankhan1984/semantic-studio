@@ -80,6 +80,7 @@ import pyshacl
 from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 
+from . import examples
 from .graph_builder import pick_label_in, prefixed
 from .shapes_form import (
     DEFINITION_PATH,
@@ -175,19 +176,6 @@ def noun(label: str) -> str:
 
 def article(word: str) -> str:
     return "an" if word[:1].lower() in "aeiou" else "a"
-
-
-def _below(graph: Graph, cls) -> set:
-    """The class and every class under it, as sh:class reads them in the
-    data graph: what counts toward a qualified count of that class."""
-    seen = {cls}
-    queue = [cls]
-    while queue:
-        for child in graph.subjects(RDFS.subClassOf, queue.pop()):
-            if child not in seen:
-                seen.add(child)
-                queue.append(child)
-    return seen
 
 
 def possessive(name: str) -> str:
@@ -494,12 +482,15 @@ class Sentences:
         limit = self._number(source, SH.qualifiedMinCount if low else SH.qualifiedMaxCount)
         values = list(self.data.objects(focus, path)) if isinstance(path, URIRef) else []
         if cls is not None:
-            kinds = _below(self.data, cls)
+            kinds = examples.subclasses(self.data, cls)
             have = sum(1 for v in values if set(self.data.objects(v, RDF.type)) & kinds)
             one = f"{article(self.name(cls))} {self.name(cls)}"
             many = plural(self.name(cls))
         else:
-            have = sum(1 for v in values if isinstance(v, Literal) and v.datatype == datatype)
+            # pySHACL takes a plain literal for xsd:string (RDF 1.1), and so does the count.
+            have = sum(1 for v in values if isinstance(v, Literal) and (
+                v.datatype == datatype
+                or (datatype == XSD.string and v.datatype is None and not v.language)))
             one = DATATYPE_WORDS.get(datatype) or f"of the type {datatype_json(datatype)}"
             # *a date*, *dates*; a word with no article (*text*) reads the same.
             bare = one.split(" ", 1)[1] if one.startswith(("a ", "an ")) else None

@@ -312,6 +312,23 @@ describe("the Rules block (5.9)", () => {
     expect(projectStore.getSnapshot().ruleDraft).toBeNull();
   });
 
+  it("a canvas draft keeps its class when the relationship is chosen (code review)", async () => {
+    await show(rulesOf([]));
+    await act(async () => projectStore.startRule(EX + "Order", EX + "OrderLine"));
+    fireEvent.change(screen.getByRole("combobox", { name: "Relationship or attribute" }), { target: { value: EX + "hasLine" } });
+    expect((screen.getByRole("combobox", { name: "That is a (class)" }) as HTMLSelectElement).value).toBe(EX + "OrderLine");
+    expect(screen.getByRole("group").getAttribute("aria-label")).toBe("Every Order has at least one has line that is an Order line");
+  });
+
+  it("a canvas draft arriving while the builder is open starts it afresh (code review)", async () => {
+    await show(rulesOf([]));
+    fireEvent.click(screen.getByRole("button", { name: "Add a rule" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Rule" }), { target: { value: "disjoint" } });
+    await act(async () => projectStore.startRule(EX + "Order", EX + "Person"));
+    expect((screen.getByRole("combobox", { name: "That is a (class)" }) as HTMLSelectElement).value).toBe(EX + "Person");
+    expect(projectStore.getSnapshot().ruleDraft).toBeNull();
+  });
+
   it("never disables a control: every one keeps its focus (aria-disabled)", async () => {
     await show(rulesOf([some(), disjoint]));
     fireEvent.click(screen.getByRole("button", { name: "Add a rule" }));

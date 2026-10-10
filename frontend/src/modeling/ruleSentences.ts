@@ -235,6 +235,10 @@ export interface BuilderState {
   with: string | null;
   /** The other class of a disjoint or same-meaning rule. */
   other: string | null;
+  /** An existing *has value*'s value as it was read, so Edit and Save
+   *  without a change send it back with its language or type (code review:
+   *  "red"@en came back as plain text). */
+  original?: AnnotationValue | null;
 }
 
 export const EMPTY_BUILDER: BuilderState = {
@@ -347,6 +351,8 @@ export function builderProblem(state: BuilderState, choices: RuleChoices | null)
  *  attribute's own type when it is one of the seven, else text without a
  *  language (written plain). */
 function attributeValue(state: BuilderState, choices: RuleChoices | null): AnnotationValue {
+  const was = state.original;
+  if (was && was.kind !== "link" && was.value === state.value.trim()) return was;
   const datatype = choices?.properties.items.find((p) => p.iri === state.property)?.datatype ?? null;
   const offered = datatype && datatype.startsWith(XSD) ? `xsd:${datatype.slice(XSD.length)}` : null;
   const known = offered && VALUE_TYPES.some((t) => t.label === offered) ? offered : "xsd:string";
@@ -395,6 +401,7 @@ export function stateOf(item: RuleRestriction): BuilderState {
     value: value && value.kind !== "link" ? value.value : "",
     with: item.with?.iri ?? null,
     other: null,
+    original: value && value.kind !== "link" ? { ...value } : null,
   };
 }
 

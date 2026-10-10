@@ -671,3 +671,81 @@ def test_a_checked_value_and_count_are_reported_in_words(pid):
     said = {p["sentence"] for s in report["shapes"] for p in s["problems"]}
     assert 'Gail does not have status "gold"; every Gold customer must.' in said
     assert "Pat has 2 birth dates that are dates; every Person may have at most 1." in said
+
+
+# --- found in the code review of PR #56 ----------------------------------------------------
+
+
+def test_a_counted_relationship_cannot_be_made_to_chain_afterwards(pid):
+    """One rule, both directions: a count needs a simple relationship, so
+    making the counted one chain, or putting a chaining one under it, is
+    refused as adding the count to a chaining one is."""
+    ok(pid, "AddRestriction", **{"class": EX + "Order"}, property=EX + "manages", kind="atMost", n=1)
+    before = copy(graph(pid))
+    response = run(pid, "SetCharacteristic", property=EX + "manages", characteristic="transitive", on=True)
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        'A rule counts manages, and OWL 2 does not allow counting a relationship that chains. '
+        'Remove the count, or leave "Chains" off.'
+    )
+    response = run(pid, "AddSubPropertyOf", child=EX + "partOf", parent=EX + "manages")
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "A rule counts manages, and part of chains and is under it; OWL 2 does not allow counting it then."
+    )
+    assert isomorphic(graph(pid), before)
+
+
+def test_a_rule_command_on_the_shapes_document_says_so(pid):
+    response = run(pid, "AddDisjointWith", "shapes", a=EX + "Person", b=EX + "Order")
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "A class's rules live in model.ttl; run rule commands on the model document."
+    )
+
+
+def test_a_class_disjoint_with_itself_in_turtle_is_shown_warned_and_counted(pid):
+    apply(pid, "shop:Robot owl:disjointWith shop:Robot .")
+    got = rules(pid, EX + "Robot")
+    assert [i["type"] for i in got["items"]] == ["turtle"]
+    assert "owl:disjointWith shop:Robot" in got["items"][0]["turtle"]
+    assert got["warnings"] == [{"text": "Robot can never have members: it is disjoint with itself."}]
+    view = client.get(f"/api/projects/{pid}/documents/model/canvas").json()
+    assert next(n for n in view["nodes"] if n["iri"] == EX + "Robot")["moreRules"] == 1
+
+
+def test_a_plain_text_value_counts_as_text_in_the_checks_sentence(pid):
+    """pySHACL takes Turtle's plain "P" for xsd:string, and so does the count."""
+    apply(pid, '''
+shop:nickname a owl:DatatypeProperty ; rdfs:label "nickname"@en ; rdfs:domain shop:Person ; rdfs:range xsd:string .
+shop:Person rdfs:subClassOf [ a owl:Restriction ; owl:onProperty shop:nickname ;
+    owl:maxQualifiedCardinality "1"^^xsd:nonNegativeInteger ; owl:onDataRange xsd:string ] .
+shop:pat a shop:Person, owl:NamedIndividual ; rdfs:label "Pat"@en ; shop:nickname "P", "Patty" .
+''')
+    key = {"form": "every", "property": EX + "nickname", "kind": "atMost", "filler": str(XSD.string), "n": 1}
+    ok(pid, "CheckInData", "shapes", **{"class": EX + "Person"}, restriction=key)
+    report = client.post(f"/api/projects/{pid}/validate").json()
+    said = {p["sentence"] for s in report["shapes"] for p in s["problems"]}
+    assert "Pat has 2 nicknames that are text; every Person may have at most 1." in said
+
+
+def test_the_builder_offers_only_the_projects_own_examples_as_things():
+    own = Graph()
+    own.parse(data=MODEL, format="turtle")
+    view = Graph()
+    view.parse(data=MODEL + "shop:imported a owl:NamedIndividual , shop:Organization .", format="turtle")
+    things = {t["iri"] for t in axioms.choices(view, own, str)["things"]["items"]}
+    assert EX + "acme" in things and EX + "imported" not in things
+
+
+def test_the_builders_choices_are_built_once_per_revision(pid, monkeypatch):
+    calls = []
+    real = axioms.choices
+    monkeypatch.setattr(axioms, "choices", lambda *a: calls.append(1) or real(*a))
+    rules(pid, EX + "Order")
+    rules(pid, EX + "Person")
+    assert len(calls) == 1
+    ok(pid, "CreateClass", label="Invoice")
+    choices = rules(pid, EX + "Order")["choices"]
+    assert len(calls) == 2
+    assert EX + "Invoice" in {c["iri"] for c in choices["classes"]["items"]}

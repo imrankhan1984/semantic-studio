@@ -1681,11 +1681,16 @@ class NoSuchRule(CommandError):
     """A restriction named by content that the class does not have (404)."""
 
 
+def _rules_doc(ctx: Context) -> None:
+    if ctx.doc != "model":
+        raise CommandError("A class's rules live in model.ttl; run rule commands on the model document.")
+
+
 def _own_class(ctx: Context, a: dict, key: str = "class") -> URIRef:
     """A class this document defines: a rule is written on it, never on an
     imported class, which is read-only (5.10)."""
     cls = ctx.iri(a.get(key), "class")
-    if not any((cls, RDF.type, t) in ctx.graph for t in examples.CLASS_TYPES):
+    if not examples.is_class(ctx.graph, cls):
         raise CommandError(f"There is no class {ctx.short(cls)} in this document.")
     return cls
 
@@ -1825,7 +1830,7 @@ def _check_restriction(ctx: Context, cls: URIRef, new: axioms.Content, ignoring=
     """5.10's checks, before anything is written: a count on a relationship
     that is not simple, *at least* above *at most*, and a duplicate."""
     for _, node, content in axioms.contents(ctx.graph, cls):
-        if node is ignoring:
+        if node == ignoring:
             continue
         if content.same(new):
             raise CommandError(f"{ctx.name(cls)} already has this rule.")
@@ -1839,7 +1844,7 @@ def _check_restriction(ctx: Context, cls: URIRef, new: axioms.Content, ignoring=
         return
     low, high = _bounds(new)
     for _, node, content in axioms.contents(ctx.graph, cls):
-        if node is ignoring or content.form != "every" or content.property != new.property:
+        if node == ignoring or content.form != "every" or content.property != new.property:
             continue
         if content.kind not in axioms.COUNT_KINDS or not axioms.same_term(content.filler, new.filler):
             continue
@@ -1865,7 +1870,7 @@ def _restriction_adds(ctx: Context, cls: URIRef, content: axioms.Content) -> lis
 
 def cmd_add_restriction(ctx: Context, a: dict) -> Change:
     """One sentence of 5.8 on a class, in its Turtle shape (5.10)."""
-    _model_doc(ctx)
+    _rules_doc(ctx)
     cls = _own_class(ctx, a)
     content = _restriction_args(ctx, a)
     _check_restriction(ctx, cls, content)
@@ -1878,12 +1883,12 @@ def cmd_add_restriction(ctx: Context, a: dict) -> Change:
 def cmd_replace_restriction(ctx: Context, a: dict) -> Change:
     """The rule named by `restriction` swept and the new one written, as
     one undo step. The new one is checked with the old one set aside."""
-    _model_doc(ctx)
+    _rules_doc(ctx)
     cls = _own_class(ctx, a)
     old_key = _restriction_key(ctx, a.get("restriction"))
     predicate, node = _found(ctx, cls, old_key)
     content = _restriction_args(ctx, a)
-    old = next(c for p, n, c in axioms.contents(ctx.graph, cls) if n is node)
+    old = next(c for p, n, c in axioms.contents(ctx.graph, cls) if n == node)
     if old.same(content):
         raise CommandError("That would change nothing.")
     _check_restriction(ctx, cls, content, ignoring=node)
@@ -1894,7 +1899,7 @@ def cmd_replace_restriction(ctx: Context, a: dict) -> Change:
 
 
 def cmd_remove_restriction(ctx: Context, a: dict) -> Change:
-    _model_doc(ctx)
+    _rules_doc(ctx)
     cls = _own_class(ctx, a)
     key = _restriction_key(ctx, a.get("restriction"))
     predicate, node = _found(ctx, cls, key)
@@ -1905,7 +1910,7 @@ def cmd_remove_restriction(ctx: Context, a: dict) -> Change:
 
 
 def _class_pair(ctx: Context, a: dict, predicate) -> tuple[URIRef, URIRef]:
-    _model_doc(ctx)
+    _rules_doc(ctx)
     first = _own_class(ctx, a, "a")
     second = _rule_class(ctx, a.get("b"), "class")
     refusal = modeling_checks.pair_refusal(_view(ctx), first, second, predicate, lambda i: _rule_name(ctx, i))
@@ -1931,7 +1936,7 @@ def cmd_add_disjoint_with(ctx: Context, a: dict) -> Change:
 
 
 def cmd_remove_disjoint_with(ctx: Context, a: dict) -> Change:
-    _model_doc(ctx)
+    _rules_doc(ctx)
     first = _own_class(ctx, a, "a")
     second = ctx.iri(a.get("b"), "class")
     removes = _pair_statements(ctx, first, second, OWL.disjointWith)
@@ -1954,7 +1959,7 @@ def cmd_add_equivalent_class(ctx: Context, a: dict) -> Change:
 
 
 def cmd_remove_equivalent_class(ctx: Context, a: dict) -> Change:
-    _model_doc(ctx)
+    _rules_doc(ctx)
     first = _own_class(ctx, a, "a")
     second = ctx.iri(a.get("b"), "class")
     removes = _pair_statements(ctx, first, second, OWL.equivalentClass)

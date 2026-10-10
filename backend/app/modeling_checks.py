@@ -59,8 +59,10 @@ from __future__ import annotations
 
 from typing import Callable, Iterable, Optional
 
-from rdflib import Graph, URIRef
+from rdflib import BNode, Graph, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS
+
+from .axioms import named_pairs
 
 Name = Callable[[URIRef], str]
 
@@ -128,6 +130,12 @@ def characteristic_refusal(
 
 SIMPLE_ONLY = ("functional", "inverseFunctional", "asymmetric", "irreflexive")
 
+# The cardinality predicates of a restriction: a count of the property.
+COUNT_PREDICATES = (
+    OWL.cardinality, OWL.minCardinality, OWL.maxCardinality,
+    OWL.qualifiedCardinality, OWL.minQualifiedCardinality, OWL.maxQualifiedCardinality,
+)
+
 
 class _Facts:
     """The property facts the rule reads, each from one scan of its predicate,
@@ -137,8 +145,16 @@ class _Facts:
         self.chars: dict = {}
         self.parents: dict = {}
         self.inverses: dict = {}
+        # Relationships a cardinality restriction counts (axioms 5.10): OWL 2
+        # asks them to be simple, as the four characteristics below do.
+        self.counted: set = set()
         if graph is None:
             return
+        for node, prop in graph.subject_objects(OWL.onProperty):
+            if isinstance(node, BNode) and isinstance(prop, URIRef) and any(
+                (node, p, None) in graph for p in COUNT_PREDICATES
+            ):
+                self.counted.add(prop)
         for name, iri in CHARACTERISTICS.items():
             for s in graph.subjects(RDF.type, iri):
                 self.chars.setdefault(s, set()).add(name)
@@ -153,6 +169,7 @@ class _Facts:
         other.chars = {k: set(v) for k, v in self.chars.items()}
         other.parents = {k: set(v) for k, v in self.parents.items()}
         other.inverses = {k: set(v) for k, v in self.inverses.items()}
+        other.counted = set(self.counted)
         return other
 
     def not_simple(self) -> dict:
@@ -185,7 +202,7 @@ class _Facts:
             for prop in sorted(why)
             for name in SIMPLE_ONLY
             if name in self.chars.get(prop, ())
-        ]
+        ] + [(prop, "counted", why[prop]) for prop in sorted(why) if prop in self.counted]
 
     def refusal(self, subject, label: Name, change: Callable[["_Facts"], None]) -> Optional[str]:
         """The sentence for the first violation `change` would add, one on
@@ -202,8 +219,17 @@ class _Facts:
 
 
 def chaining_sentence(prop, name: str, why: tuple, label: Name, subject=None) -> str:
-    """5.9's three sentences, naming the checkbox that cannot stay."""
+    """5.9's three sentences, naming the checkbox that cannot stay; and, for
+    a relationship a rule counts, why the count and the chain cannot both
+    stand (axioms 5.10)."""
     source, how = why
+    if name == "counted":
+        if how == "self":
+            return (f"A rule counts {label(prop)}, and OWL 2 does not allow counting a relationship "
+                    'that chains. Remove the count, or leave "Chains" off.')
+        where = "is under it" if how == "under" else "is its other way round"
+        return (f"A rule counts {label(prop)}, and {label(source)} chains and {where}; "
+                "OWL 2 does not allow counting it then.")
     word = WORDS[name]
     if how == "self":
         return (
@@ -368,22 +394,15 @@ def broader_related_refusal(graph: Graph, concept: URIRef, broader: URIRef, name
 # --- disjoint and equivalent classes (axioms 5.10) -------------------------------------
 
 
-def _named_either_way(graph: Graph, cls: URIRef, predicate: URIRef) -> set:
-    found = {o for o in graph.objects(cls, predicate) if isinstance(o, URIRef)}
-    found |= {s for s in graph.subjects(predicate, cls) if isinstance(s, URIRef)}
-    found.discard(cls)
-    return found
-
-
 def pair_refusal(graph: Graph, a: URIRef, b: URIRef, predicate: URIRef, name: Name) -> Optional[str]:
     """Disjoint with itself, the same as itself, or both disjoint with and
     the same as one class: each is refused before it is written."""
     disjoint = predicate == OWL.disjointWith
     if a == b:
         return "A class cannot be disjoint with itself." if disjoint else "A class cannot mean the same as itself."
-    if disjoint and b in _named_either_way(graph, a, OWL.equivalentClass):
+    if disjoint and b in named_pairs(graph, a, OWL.equivalentClass):
         return f"{name(a)} cannot be disjoint with {name(b)} and mean the same as it."
-    if not disjoint and b in _named_either_way(graph, a, OWL.disjointWith):
+    if not disjoint and b in named_pairs(graph, a, OWL.disjointWith):
         return f"{name(a)} cannot mean the same as {name(b)} and be disjoint with it."
     return None
 
@@ -403,12 +422,15 @@ def never_members(graph: Graph, cls: URIRef, name: Name) -> list[dict]:
         if isinstance(child, URIRef) and isinstance(parent, URIRef):
             parents.setdefault(child, []).append(parent)
     pairs = set()
+    out: list[dict] = []
     for x, y in graph.subject_objects(OWL.disjointWith):
         if isinstance(x, URIRef) and isinstance(y, URIRef) and x != y:
             pairs.add(tuple(sorted((x, y))))
+    if (cls, OWL.disjointWith, cls) in graph:
+        # Written in Turtle only (the command refuses it): still said.
+        out.append({"text": f"{name(cls)} can never have members: it is disjoint with itself."})
     if not pairs:
-        return []
-    out: list[dict] = []
+        return out
     above = {cls} | _above(parents, cls)
     for x, y in sorted(pairs):
         if x not in above or y not in above:
