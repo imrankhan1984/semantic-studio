@@ -217,7 +217,8 @@ def build_canvas(
     # content; any other rule on a class -- a value, an attribute's count,
     # a filler that is no class, same meaning, Turtle outside 5.8 -- is
     # counted on the box, *1 more rule in the form*. Disjointness is a line
-    # in the box, never a line between boxes, to keep the canvas legible.
+    # in the box, never a line between boxes, to keep the canvas legible:
+    # an owl:AllDisjointClasses gives each member its *never* lines too.
     # One scan of each predicate, then only the classes that have a rule:
     # asking every class for its rules doubled the 10,000-statement view's
     # time (measured, 45 ms to 110 ms).
@@ -230,6 +231,9 @@ def build_canvas(
                 with_rules.add(s)
                 if isinstance(o, URIRef):
                     with_rules.add(o)
+    groups = axioms.disjoint_groups(graph)
+    for _, members in groups:
+        with_rules.update(members)
     for cls in sorted(classes & with_rules):
         readable = set()
         for _, node, content in axioms.contents(graph, cls):
@@ -254,7 +258,7 @@ def build_canvas(
                 },
                 "key": axioms.key_json(content),
             })
-        others = axioms.named_pairs(graph, cls, OWL.disjointWith)
+        others = axioms.disjoint_with(graph, cls, groups)
         if others:
             disjoint[cls] = [{"iri": str(o), "label": outside_label(o)} for o in others]
         unread = len(axioms.named_pairs(graph, cls, OWL.equivalentClass))

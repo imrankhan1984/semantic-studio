@@ -41,6 +41,8 @@ BASIC IDEA
     itself, or both disjoint with and the same as another (pair_refusal);
     and, warned and kept, the classes that can never have members because
     of a disjointness (never_members), from one scan of each predicate.
+    Disjointness is owl:disjointWith or a shared owl:AllDisjointClasses,
+    read alike (axioms.disjoint_pairs).
 
     This is not an OWL 2 DL profile check; that is V-7's reasoner.
 
@@ -62,7 +64,7 @@ from typing import Callable, Iterable, Optional
 from rdflib import BNode, Graph, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS
 
-from .axioms import named_pairs
+from .axioms import disjoint_pairs, disjoint_with, named_pairs
 
 Name = Callable[[URIRef], str]
 
@@ -402,7 +404,8 @@ def pair_refusal(graph: Graph, a: URIRef, b: URIRef, predicate: URIRef, name: Na
         return "A class cannot be disjoint with itself." if disjoint else "A class cannot mean the same as itself."
     if disjoint and b in named_pairs(graph, a, OWL.equivalentClass):
         return f"{name(a)} cannot be disjoint with {name(b)} and mean the same as it."
-    if not disjoint and b in named_pairs(graph, a, OWL.disjointWith):
+    # Disjoint by owl:AllDisjointClasses too (PR #56 review).
+    if not disjoint and b in disjoint_with(graph, a):
         return f"{name(a)} cannot mean the same as {name(b)} and be disjoint with it."
     return None
 
@@ -421,11 +424,9 @@ def never_members(graph: Graph, cls: URIRef, name: Name) -> list[dict]:
     for child, parent in graph.subject_objects(RDFS.subClassOf):
         if isinstance(child, URIRef) and isinstance(parent, URIRef):
             parents.setdefault(child, []).append(parent)
-    pairs = set()
+    # Either form of disjointness: owl:disjointWith or owl:AllDisjointClasses.
+    pairs = disjoint_pairs(graph)
     out: list[dict] = []
-    for x, y in graph.subject_objects(OWL.disjointWith):
-        if isinstance(x, URIRef) and isinstance(y, URIRef) and x != y:
-            pairs.add(tuple(sorted((x, y))))
     if (cls, OWL.disjointWith, cls) in graph:
         # Written in Turtle only (the command refuses it): still said.
         out.append({"text": f"{name(cls)} can never have members: it is disjoint with itself."})

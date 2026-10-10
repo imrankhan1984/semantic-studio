@@ -8,7 +8,8 @@ SUMMARY
     5.8, 5.9, D-105): its restrictions, in the two forms *every X ...* and
     *an X is exactly ...*, its disjoint classes and its equivalent classes,
     each read out of the graph by its content, and anything outside 5.8's
-    subset kept as its Turtle text, read-only. Also the Turtle shape each
+    subset kept as its Turtle text, read-only: an owl:AllDisjointClasses
+    among them, though its pairs count for every disjointness check. Also the Turtle shape each
     sentence is written as, and the SHACL rule *Check it in data too*
     writes for a restriction (D-106 Q3). Reads only; the commands that
     write are editing.py's.
@@ -52,6 +53,8 @@ EXPECTED OUTPUT
     - restriction_triples(...) -> (node, triples) for a new restriction.
     - shacl_plain / shacl_triples -> what Check it in data too writes.
     - choices(graph, own, name) -> what the sentence builder's selects offer.
+    - disjoint_with / disjoint_pairs -> disjointness, owl:disjointWith and
+      owl:AllDisjointClasses alike, for the checks and the canvas.
 ================================================================================
 """
 
@@ -269,6 +272,57 @@ def named_pairs(g: Graph, cls, predicate) -> list[URIRef]:
     return sorted(found)
 
 
+def disjoint_groups(g: Graph) -> list[tuple]:
+    """Every owl:AllDisjointClasses, as (node, its named members). Protégé
+    writes disjointness of three or more classes this way, so a check that
+    read owl:disjointWith alone let *Person means the same as Organization*
+    through (PR #56 review). owl:AllDisjointProperties is not read (known
+    state)."""
+    found = []
+    for node in set(g.subjects(RDF.type, OWL.AllDisjointClasses)):
+        for head in g.objects(node, OWL.members):
+            members = _list(g, head) or []
+            found.append((node, [m for m in members if isinstance(m, URIRef)]))
+    return sorted(found, key=lambda pair: [str(m) for m in pair[1]])
+
+
+def disjoint_with(g: Graph, cls, groups: Optional[list] = None) -> list[URIRef]:
+    """The named classes `cls` is disjoint with, by owl:disjointWith either
+    way round or by sharing an owl:AllDisjointClasses. `groups` lets a
+    caller asking for many classes read the groups once."""
+    found = set(named_pairs(g, cls, OWL.disjointWith))
+    for _, members in disjoint_groups(g) if groups is None else groups:
+        if cls in members:
+            found.update(members)
+    found.discard(cls)
+    return sorted(found)
+
+
+def disjoint_pairs(g: Graph) -> set[tuple]:
+    """Every pair of distinct named classes stated disjoint, either form,
+    each pair once in IRI order. One scan of each."""
+    pairs = set()
+    for x, y in g.subject_objects(OWL.disjointWith):
+        if isinstance(x, URIRef) and isinstance(y, URIRef) and x != y:
+            pairs.add(tuple(sorted((x, y))))
+    for _, members in disjoint_groups(g):
+        for i, x in enumerate(members):
+            for y in members[i + 1:]:
+                if x != y:
+                    pairs.add(tuple(sorted((x, y))))
+    return pairs
+
+
+def _statements(g: Graph, node) -> list:
+    """A node's statements and every blank node under them."""
+    if isinstance(node, BNode):
+        return closure(g, node)
+    found = list(g.triples((node, None, None)))
+    for _, _, o in list(found):
+        found.extend(closure(g, o))
+    return found
+
+
 # --- the form's items ---------------------------------------------------------------
 
 
@@ -405,6 +459,11 @@ def class_rules(g: Graph, cls: URIRef, own: Graph, name: Name) -> list[dict]:
                 continue
             triples = [(cls, predicate, node), *closure(g, node)]
             outside.append({"type": "turtle", "turtle": turtle_of(g, triples), "editable": False})
+    # Disjointness of a group is no sentence of 5.8 and names other classes
+    # than this one: its Turtle, which no command rewrites (AC-9).
+    for node, members in disjoint_groups(g):
+        if cls in members:
+            outside.append({"type": "turtle", "turtle": turtle_of(g, _statements(g, node)), "editable": False})
     outside.sort(key=lambda i: i["turtle"])
     return items + outside
 

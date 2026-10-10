@@ -11,7 +11,9 @@ SUMMARY
     duplicate refused, a missing one 404, a removal sweeping its blank node;
     every check of 5.10 refusing before anything is written; the warnings
     kept; the Turtle round trip of every 5.8 row both ways (AC-9), with a
-    union read-only and never rewritten; the canvas's rule lines; and Check
+    union read-only and never rewritten; owl:AllDisjointClasses shown as
+    read-only Turtle and counted by every disjointness check and the
+    canvas's *never* lines (PR #56 review); the canvas's rule lines; and Check
     it in data too, one undo step in shapes.ttl, read-only in the shapes
     form and never rewritten by it (AC-12, row R13 as the server sees it).
 
@@ -512,6 +514,79 @@ def test_disjoint_with_one_of_its_own_kinds_is_kept_and_warned(pid):
     assert rules(pid, EX + "Employee")["warnings"] == [{"text": text, "disjoint": EX + "Person"}]
     assert rules(pid, EX + "Person")["warnings"] == [{"text": text, "disjoint": EX + "Employee"}]
 
+
+
+# --- owl:AllDisjointClasses, as Protégé writes three or more (PR #56 review) -------------
+
+
+GROUP = "[] a owl:AllDisjointClasses ; owl:members ( shop:Person shop:Organization shop:Robot ) ."
+
+
+def test_an_all_disjoint_group_is_read_only_turtle_in_each_members_block(pid):
+    apply(pid, GROUP)
+    for member in ("Person", "Organization", "Robot"):
+        items = rules(pid, EX + member)["items"]
+        assert [i["type"] for i in items] == ["turtle"], member
+        assert items[0]["editable"] is False
+        turtle = items[0]["turtle"]
+        assert "owl:AllDisjointClasses" in turtle
+        assert all(f"shop:{m}" in turtle for m in ("Person", "Organization", "Robot"))
+    assert rules(pid, EX + "Order")["items"] == []
+
+
+def _group(g: Graph) -> Graph:
+    out = Graph()
+    for t in axioms.closure(g, next(g.subjects(RDF.type, OWL.AllDisjointClasses))):
+        out.add(t)
+    return out
+
+
+def test_no_command_rewrites_an_all_disjoint_group(pid):
+    apply(pid, GROUP)
+    before = copy(graph(pid))
+    response = run(pid, "RemoveDisjointWith", a=EX + "Person", b=EX + "Organization")
+    assert response.status_code == 422
+    assert isomorphic(graph(pid), before)
+    # A rule added beside it leaves it as it was, and both are shown.
+    ok(pid, "AddRestriction", **{"class": EX + "Person"}, property=EX + "birthDate", kind="atMost", n=1)
+    assert [i["type"] for i in rules(pid, EX + "Person")["items"]] == ["restriction", "turtle"]
+    assert isomorphic(_group(graph(pid)), _group(before))
+
+
+def test_equivalent_to_a_class_in_its_all_disjoint_group_is_refused(pid):
+    apply(pid, GROUP)
+    _refused(pid, "AddEquivalentClass", "Person cannot mean the same as Organization and be disjoint with it.",
+             a=EX + "Person", b=EX + "Organization")
+    _refused(pid, "AddEquivalentClass", "Robot cannot mean the same as Person and be disjoint with it.",
+             a=EX + "Robot", b=EX + "Person")
+    ok(pid, "AddEquivalentClass", a=EX + "Person", b=EX + "Client")
+
+
+def test_a_kind_of_two_classes_of_an_all_disjoint_group_is_kept_and_warned(pid):
+    apply(pid, GROUP)
+    ok(pid, "AddSubClassOf", child=EX + "Employee", parent=EX + "Person")
+    ok(pid, "AddSubClassOf", child=EX + "Employee", parent=EX + "Organization")
+    sentence = "Employee can never have members: it would be a kind of Organization and of Person."
+    assert rules(pid, EX + "Employee")["warnings"] == [{"text": sentence}]
+    assert {"text": sentence, "disjoint": EX + "Organization"} in rules(pid, EX + "Person")["warnings"]
+
+
+def test_a_kind_of_a_class_in_its_own_all_disjoint_group_is_kept_and_warned(pid):
+    apply(pid, GROUP)
+    ok(pid, "AddSubClassOf", child=EX + "Robot", parent=EX + "Person")
+    text = "Robot can never have members: it is a kind of Person and disjoint with it."
+    assert rules(pid, EX + "Robot")["warnings"] == [{"text": text, "disjoint": EX + "Person"}]
+    assert rules(pid, EX + "Person")["warnings"] == [{"text": text, "disjoint": EX + "Robot"}]
+
+
+def test_an_all_disjoint_group_gives_each_box_its_never_lines(pid):
+    apply(pid, GROUP)
+    view = client.get(f"/api/projects/{pid}/documents/model/canvas").json()
+    nodes = {n["iri"]: n for n in view["nodes"]}
+    ref = lambda local, label: {"iri": EX + local, "label": label}  # noqa: E731
+    assert nodes[EX + "Person"]["disjoint"] == [ref("Organization", "Organization"), ref("Robot", "Robot")]
+    assert nodes[EX + "Robot"]["disjoint"] == [ref("Organization", "Organization"), ref("Person", "Person")]
+    assert "disjoint" not in nodes[EX + "Order"]
 
 # --- the builder's choices ---------------------------------------------------------------
 

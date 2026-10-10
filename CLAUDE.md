@@ -49,7 +49,7 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1178 tests (+2 marked `network`, deselected)
+cd backend  && python -m pytest tests    # 1184 tests (+2 marked `network`, deselected)
 cd frontend && npm run test              # 1271 tests, vitest
 ```
 
@@ -366,6 +366,7 @@ leaves one behind.
 - CheckInData never touches a statement already in shapes.ttl: a qualified rule is its own property shape, a plain one joins the form's rule only when nothing disagrees. [Rules on a class]
 - The canvas reads rules only for classes a predicate scan finds with them: asking every class doubled the 10,000-statement view. [Rules on a class]
 - A rule line's id carries its key: two rules can join the same two boxes. [Rules on a class]
+- Disjointness is `owl:disjointWith` or `owl:AllDisjointClasses`, read through `axioms.disjoint_with`/`disjoint_pairs`; a group is read-only Turtle. [AllDisjointClasses counts]
 - The relate menu and a relationship's pointer start a rule through `projectStore.ruleDraft`; the rule is written in the form (D-078). [Rules on a class]
 
 **Screens and focus**

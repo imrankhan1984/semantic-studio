@@ -1575,3 +1575,19 @@ EXPECTED OUTPUT
   **Budgets under load.** The full backend suite run beside the Chrome
   server missed three timing budgets (explain 6,000 facts, two snapshots);
   each passed alone, on `main` and on the branch.
+
+  **owl:AllDisjointClasses counts.** Protégé writes the disjointness of
+  three or more classes as one `owl:AllDisjointClasses` with `owl:members`.
+  Stage B first read `owl:disjointWith` only, and the analyst's review of
+  PR #56 found the group invisible: the class's block showed nothing, *Person
+  means the same as Organization* was accepted though the two were disjoint,
+  and the box had no *never* note, while the reasoner found the
+  contradiction. Every disjointness check now reads both forms through
+  `axioms.disjoint_with` and `axioms.disjoint_pairs`: the equivalence
+  refusal, both *can never have members* warnings (so a subclass made
+  through E-8's command is warned too), and the canvas's *never* lines. The
+  group itself is no sentence of 5.8 and names other classes than the one
+  shown, so each member's block shows it as read-only Turtle, and
+  `RemoveDisjointWith` never touches it. `owl:AllDisjointProperties` is not
+  in scope: no Stage B check is about disjoint properties, so nothing reads
+  it, and it is neither shown nor checked.
