@@ -721,3 +721,38 @@ def test_filter_group_and_explain_six_thousand_conclusions_budget(two_snapshots)
     median = median_ms(work)
     assert min(counted) >= 6000
     assert median <= limit_ms(300), f"filtering, grouping and explaining took {median:.0f} ms (median of 5)"
+
+
+# --- PR review fixes ---------------------------------------------------------------------
+
+
+def test_why_finds_a_value_premise_with_its_type_or_language_and_colon_text_is_no_iri():
+    # A typed or tagged value must come back the same term, or Why? on it
+    # was 404 for a fact the result holds (code review).
+    stated = Graph().parse(data=PREFIXES + """
+        :status a owl:DatatypeProperty ; rdfs:label "status"@en .
+        :level a owl:DatatypeProperty ; rdfs:label "level"@en ; rdfs:subPropertyOf :status .
+        :carol rdfs:label "carol"@en ; :level "gold"@en , "Status: high" .
+    """, format="turtle")
+    raw = reasoning.reason(stated.serialize(format="nt"), "", [])
+    outcome = reasoning.analyse(list(stated), raw, key=reasoning.Key(1, 0, False, False), languages=["en"], probes=[])
+    from rdflib import Literal
+
+    for value in (Literal("gold", lang="en"), Literal("Status: high")):
+        fact = reasoning.triple_json((U("carol"), U("status"), value), outcome.names)
+        assert fact["o"] == value.n3()
+        answer = outcome.why(fact["s"], fact["p"], fact["o"])
+        assert answer is not None and answer["family"] == "subProperty", (value, answer)
+    # The bare text of a tagged value is another term: not held.
+    assert outcome.why(EX + "carol", EX + "status", "gold") is None
+
+
+def test_a_run_ended_after_its_project_closed_keeps_nothing():
+    pid = "prj-closed-meanwhile"
+    handle = reasoning.service.begin(pid)
+    reasoning.service.forget(pid)
+    reasoning.service.end(pid, handle, reasoning.Outcome("stopped", reasoning.Key(1, 0, False, False)))
+    assert reasoning.service.result(pid) is None
+    assert not reasoning.service.running(pid)
+    # The next run is not refused for the closed one.
+    reasoning.service.end(pid, reasoning.service.begin(pid), None)

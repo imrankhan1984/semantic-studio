@@ -146,6 +146,8 @@ interface Props {
   onImportData?: () => void;
   /** A current reasoning result's edges, shown (axioms-and-reasoning 5.7). */
   inferred?: boolean;
+  /** Which result: a new one refetches even when its basis is the same. */
+  inferredToken?: number;
   /** Reason and Show inferred for the toolbar, and the panel below it. */
   reasoning?: { controls: ReactNode; panel: ReactNode } | null;
 }
@@ -453,6 +455,7 @@ export default function HierarchyView({
   dataSources,
   onImportData,
   inferred = false,
+  inferredToken = 0,
   reasoning = null,
 }: Props) {
   const [fetched, setData] = useState<Hierarchy | null>(null);
@@ -497,7 +500,7 @@ export default function HierarchyView({
   // An edit, a language switch, or the inferred marks coming or going: the
   // same ontology, new forests. Only the data is replaced; the first run is
   // the effect above's.
-  const refreshKey = `${revision}|${language}|${inferred}`;
+  const refreshKey = `${revision}|${language}|${inferred ? inferredToken : "off"}`;
   const lastRefresh = useRef(refreshKey);
   useEffect(() => {
     if (!ontologyId || lastRefresh.current === refreshKey) return;

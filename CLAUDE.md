@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1094 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1212 tests, vitest
+cd backend  && python -m pytest tests    # 1096 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1214 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both

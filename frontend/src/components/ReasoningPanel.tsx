@@ -130,6 +130,7 @@ function useElapsed(since: number | null): number {
 export default function ReasoningPanel({ projectId, kind, hasData, now, onSelect }: Props) {
   const since = useRunning();
   const result = useProjectSelector((s) => s.reasoning);
+  const token = useProjectSelector((s) => s.reasoningToken);
   const error = useProjectSelector((s) => s.reasoningError);
   const includeData = useProjectSelector((s) => s.reasoningData);
   const [open, setOpen] = useState(true);
@@ -194,7 +195,7 @@ export default function ReasoningPanel({ projectId, kind, hasData, now, onSelect
               </button>
             </p>
           )}
-          {result && <Results projectId={projectId} result={result} imports={now.imports} onSelect={onSelect} />}
+          {result && <Results projectId={projectId} result={result} token={token} imports={now.imports} onSelect={onSelect} />}
           <p className="detail-note reasoning-footer">
             {VALUES_FOOTER} {NOT_SAVED}
           </p>
@@ -207,11 +208,15 @@ export default function ReasoningPanel({ projectId, kind, hasData, now, onSelect
 function Results({
   projectId,
   result,
+  token,
   imports,
   onSelect,
 }: {
   projectId: string;
   result: ReasoningResult;
+  // Which run: a group's pages belong to one, so a new one starts them
+  // again even when its key reads the same (code review).
+  token: number;
   imports: boolean;
   onSelect: (iri: string) => void;
 }) {
@@ -237,7 +242,7 @@ function Results({
       {result.groups.map((group) =>
         group.total > 0 ? (
           <Group
-            key={`${result.key}|${group.kind}`}
+            key={`${token}|${group.kind}`}
             projectId={projectId}
             group={group}
             imports={imports}
@@ -247,7 +252,7 @@ function Results({
         ) : null,
       )}
       {result.importedFacts.total > 0 && (
-        <Imported key={`${result.key}|imported`} projectId={projectId} group={result.importedFacts} imports={imports} onSelect={onSelect} />
+        <Imported key={`${token}|imported`} projectId={projectId} group={result.importedFacts} imports={imports} onSelect={onSelect} />
       )}
     </>
   );

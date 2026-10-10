@@ -134,6 +134,10 @@ export interface ProjectSnapshot {
   showInferred: boolean;
   /** Include data snapshots (5.1, Q1): off by default for every project. */
   reasoningData: boolean;
+  /** One more for every result kept: what the views refetch on. Two runs
+   *  can share a basis (Reason again with the data ticked), and keyed on the
+   *  basis alone the tree kept the first run's marks (code review). */
+  reasoningToken: number;
 }
 
 const EMPTY: ProjectSnapshot = {
@@ -155,6 +159,7 @@ const EMPTY: ProjectSnapshot = {
   reasoningError: null,
   showInferred: false,
   reasoningData: false,
+  reasoningToken: 0,
 };
 
 let snapshot: ProjectSnapshot = EMPTY;
@@ -443,7 +448,11 @@ export const projectStore = {
       }
       if (stale()) return null;
       // A finished run's marks show at once (Section 6: on after a run).
-      set({ reasoning: result, showInferred: result.status === "done" ? true : snapshot.showInferred });
+      set({
+        reasoning: result,
+        reasoningToken: snapshot.reasoningToken + 1,
+        showInferred: result.status === "done" ? true : snapshot.showInferred,
+      });
       const line = finishedLine(result);
       announce(line.endsWith(".") ? line : `${line}.`);
       return result;

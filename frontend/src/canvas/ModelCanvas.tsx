@@ -121,7 +121,7 @@ export interface ModelCanvasProps {
   onCanvasSet?: (set: CanvasSet | null) => void;
   /** A current reasoning result's lines and marks (axioms-and-reasoning
    *  5.7), with the imports switch it was computed on; null for none. */
-  inferred?: { imports: boolean } | null;
+  inferred?: { imports: boolean; token?: number } | null;
 }
 
 /** The palette's drag data, one type per kind: dragover cannot read the

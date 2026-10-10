@@ -586,23 +586,27 @@ export default function App() {
   // together the moment anything moves (5.3).
   const reasoningResult = useProjectSelector((s) => s.reasoning);
   const showInferred = useProjectSelector((s) => s.showInferred);
+  const reasoningToken = useProjectSelector((s) => s.reasoningToken);
   const modelRevision = projectDocuments.find((d) => d.doc === "model")?.revision ?? 0;
   const reasoningNow = useMemo(
     () => ({ revision: modelRevision, generation: dataGeneration, imports: includeImports }),
     [modelRevision, dataGeneration, includeImports],
   );
   const inferredMarks = editingModel !== null && marksShown(reasoningResult, reasoningNow, showInferred);
-  const canvasInferred = useMemo(() => (inferredMarks ? { imports: includeImports } : null), [inferredMarks, includeImports]);
+  const canvasInferred = useMemo(
+    () => (inferredMarks ? { imports: includeImports, token: reasoningToken } : null),
+    [inferredMarks, includeImports, reasoningToken],
+  );
   const detailInferred = useMemo(
     () =>
       inferredMarks && openProjectSummary && reasoningResult
         ? {
             projectId: openProjectSummary.id,
-            resultKey: `${reasoningResult.key}|${reasoningResult.durationMs}`,
+            resultKey: String(reasoningToken),
             imports: includeImports,
           }
         : null,
-    [inferredMarks, openProjectSummary, reasoningResult, includeImports],
+    [inferredMarks, openProjectSummary, reasoningResult, includeImports, reasoningToken],
   );
   const hasSnapshotOn = (projectData?.snapshots ?? []).some((d) => d.enabled);
   // The canvas beside the tree (visual-modeling 5.4): its lazily loaded
@@ -1979,6 +1983,7 @@ export default function App() {
             dataSources={projectData?.snapshots}
             onImportData={editingModel ? openDataImport : undefined}
             inferred={inferredMarks}
+            inferredToken={reasoningToken}
             reasoning={
               editingModel && openProjectSummary
                 ? {

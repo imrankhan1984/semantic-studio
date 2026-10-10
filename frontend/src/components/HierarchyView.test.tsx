@@ -1067,6 +1067,20 @@ describe("HierarchyView inferred edges (axioms-and-reasoning 5.7)", () => {
     expect(screen.getByRole("menu")).toBeTruthy();
   });
 
+  it("asks again for a new result on the same basis (code review)", async () => {
+    fetchHierarchy.mockResolvedValue(concluded());
+    const marked = (token: number) => (
+      <HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} inferred inferredToken={token} />
+    );
+    const { rerender } = render(marked(1));
+    await waitFor(() => expect(itemByLabel("Agent")).toBeTruthy());
+    const before = fetchHierarchy.mock.calls.length;
+    // Reason again with the data ticked: same revision, a new result.
+    rerender(marked(2));
+    await waitFor(() => expect(fetchHierarchy.mock.calls.length).toBe(before + 1));
+    expect(fetchHierarchy).toHaveBeenLastCalledWith("o1", false, true);
+  });
+
   it("renders each of 200 inferred rows once (count, not timing)", async () => {
     const nodes: Record<string, HierarchyForest["nodes"][string]> = { [EX + "Agent"]: node("Agent", "class", true) };
     const kids: string[] = [];

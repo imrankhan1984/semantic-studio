@@ -335,6 +335,24 @@ describe("Reason and the results panel (Section 6)", () => {
     expect(screen.getByRole("button", { name: "f199 is a Person" })).toBeTruthy();
   });
 
+  it("starts a group's pages again for a new run whose key reads the same (code review)", async () => {
+    await setup();
+    const many = (prefix: string) => Array.from({ length: 200 }, (_, i) => fact(`${prefix}${i}`, "Person", `${prefix}${i} is a Person`));
+    const first = pending();
+    await press("Reason");
+    await first.answer(result({ problems: [], groups: [group("memberships", many("a"), 450)] }));
+    getReasoningPage.mockResolvedValue({ ...group("memberships", many("b"), 450), offset: 200, stale: false });
+    await press("Show more");
+    expect(screen.getByText("400 of 450 shown")).toBeTruthy();
+    // The same key text, another result: its own first page only.
+    const second = pending();
+    await press("Reason");
+    await second.answer(result({ problems: [], groups: [group("memberships", many("c"), 450)] }));
+    expect(screen.getByText("200 of 450 shown")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "b0 is a Person" })).toBeNull();
+    expect(screen.getByRole("button", { name: "c0 is a Person" })).toBeTruthy();
+  });
+
   it("counts facts about imported terms alone in one line, collapsed until opened", async () => {
     await setup();
     const run = pending();

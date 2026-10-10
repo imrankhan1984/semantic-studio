@@ -93,9 +93,10 @@ export function useCanvasData(
   doc: ProjectDocName,
   revision: number,
   language: string | null,
-  inferred: { imports: boolean } | null = null,
+  inferred: { imports: boolean; token?: number } | null = null,
 ) {
-  const inferredKey = inferred ? `on|${inferred.imports}` : "off";
+  // The result's token too: a new run on the same basis brings new lines.
+  const inferredKey = inferred ? `on|${inferred.imports}|${inferred.token ?? 0}` : "off";
   const [view, setView] = useState<CanvasView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -181,7 +182,7 @@ export function useCanvasData(
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    getCanvas(projectId, doc, inferred)
+    getCanvas(projectId, doc, inferred ? { imports: inferred.imports } : null)
       .then((fetched) => {
         if (cancelled) return;
         const local = layout.current;

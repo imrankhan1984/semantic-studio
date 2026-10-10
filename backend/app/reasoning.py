@@ -80,6 +80,7 @@ from typing import Callable, Iterable, Optional
 
 from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, XSD
+from rdflib.util import from_n3
 
 from . import reasoning_worker
 from .graph_builder import pick_label_in
@@ -462,18 +463,30 @@ class Outcome:
 
 
 def _term(text: str):
-    """An IRI from the request, or a plain literal for a value premise."""
-    return URIRef(text) if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", text) else Literal(text)
+    """A term from the request as triple_json wrote it: an IRI as itself, a
+    value or a blank node in N3, so a typed or tagged value is the same
+    term again ("gold"@en, not "gold"), and "Status: gold" is no IRI."""
+    if text.startswith('"') or text.startswith("_:"):
+        try:
+            return from_n3(text)
+        except Exception:  # noqa: BLE001 - a malformed term is a fact not held
+            return Literal(text)
+    return URIRef(text)
 
 
 def _public(fact: dict) -> dict:
     return {k: v for k, v in fact.items() if k != "t"}
 
 
+def _wire(term) -> str:
+    """An IRI as itself; a value or a blank node in N3, which _term reads."""
+    return str(term) if isinstance(term, URIRef) else term.n3()
+
+
 def triple_json(t: tuple, names: Callable) -> dict:
     s, p, o = t
     return {
-        "s": str(s), "p": str(p), "o": str(o),
+        "s": _wire(s), "p": str(p), "o": _wire(o),
         "sLabel": names(s), "pLabel": names(p), "oLabel": names(o),
     }
 
@@ -1140,9 +1153,13 @@ class ReasoningService:
             return handle
 
     def end(self, pid: str, handle: RunHandle, outcome: Optional[Outcome]) -> None:
+        """Release the run and keep its outcome -- only while it is still
+        the project's run: one whose project closed meanwhile (forget) keeps
+        nothing, or a reopened project would show the closed one's result."""
         with self._lock:
-            if self._running.get(pid) is handle:
-                del self._running[pid]
+            if self._running.get(pid) is not handle:
+                return
+            del self._running[pid]
             if outcome is not None:
                 self._results[pid] = outcome
 
@@ -1163,9 +1180,10 @@ class ReasoningService:
             return self._results.get(pid)
 
     def forget(self, pid: str) -> None:
-        """The project closed: stop its run and drop its result."""
+        """The project closed: stop its run, release it, and drop its result."""
         self.stop(pid)
         with self._lock:
+            self._running.pop(pid, None)
             self._results.pop(pid, None)
 
 
