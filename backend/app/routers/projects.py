@@ -10,7 +10,8 @@ SUMMARY
     run commands, apply Turtle, undo, redo, save and recover a document; and
     the modeling canvas's view and layout (visual-modeling Stage 2); the
     SHACL shapes in the form's structure, their suggestions, and validation
-    on demand (shacl-authoring 5.1 to 5.7).
+    on demand (shacl-authoring 5.1 to 5.7); and reasoning on demand, its
+    Stop, its pages and its reasons (axioms-and-reasoning Stage A).
 
 BASIC IDEA
     Thin, like the other routers: shape the request, call projects.py or
@@ -52,10 +53,12 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
+from .. import reasoning
 from ..editing import (
     CommandError,
     Dirty,
     NotOpen,
+    ReasoningRefused,
     TurtleSyntaxError,
     editing_service,
     project_store,
@@ -105,6 +108,13 @@ class Recover(BaseModel):
     action: Literal["recover", "discard"]
 
 
+class Reason(BaseModel):
+    includeData: bool = False
+    # The imports switch the views are on (5.1): a request parameter there,
+    # so the run is told it too.
+    imports: bool = False
+
+
 @contextmanager
 def _errors():
     """The one mapping from the domain's refusals to status codes."""
@@ -124,8 +134,10 @@ def _errors():
             status_code=422,
             detail={"line": exc.line, "column": exc.column, "message": str(exc), "detail": exc.detail},
         ) from exc
-    except (CommandError, ProjectError) as exc:
+    except (CommandError, ProjectError, ReasoningRefused) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except reasoning.AlreadyRunning as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ParseTimeout as exc:
         raise HTTPException(status_code=504, detail=str(exc)) from exc
     except ParseError as exc:
@@ -294,10 +306,18 @@ LAYOUT_TOO_LARGE = f"A layout is at most {LAYOUT_MAX_BYTES // (1024 * 1024)} MB.
 
 
 @router.get("/{pid}/documents/{doc}/canvas")
-def get_canvas(pid: str, doc: str, lang: Optional[str] = ontologies.LANG_PARAM) -> dict:
-    """What the modeling canvas draws, with the saved layout (5.4 to 5.6)."""
+def get_canvas(
+    pid: str,
+    doc: str,
+    lang: Optional[str] = ontologies.LANG_PARAM,
+    inferred: bool = False,
+    imports: bool = ontologies.IMPORTS_PARAM,
+) -> dict:
+    """What the modeling canvas draws, with the saved layout (5.4 to 5.6).
+    With `inferred`, a current reasoning result's kinds and the classes
+    that can never have members are added; a stale one adds nothing."""
     with _errors():
-        return editing_service.canvas_view(pid, doc, lang)
+        return editing_service.canvas_view(pid, doc, lang, inferred=inferred, imports=imports)
 
 
 @router.get("/{pid}/documents/{doc}/layout")
@@ -377,6 +397,71 @@ def validate(pid: str) -> dict:
     every shape, on demand only (5.6, D-094). Reads; changes nothing."""
     with _errors():
         return editing_service.validate(pid)
+
+
+@router.post("/{pid}/reasoning")
+def reason(pid: str, body: Optional[Reason] = None) -> dict:
+    """One run of the reasoner (axioms-and-reasoning 5.2). Blocks until the
+    run ends, as Validate does; 409 while another runs for the project.
+    Reads; changes nothing in the model, its revision or its history."""
+    body = body or Reason()
+    with _errors():
+        return editing_service.reason(pid, body.includeData, body.imports)
+
+
+@router.delete("/{pid}/reasoning")
+def stop_reasoning(pid: str) -> dict:
+    """Stop: the run's process is killed, not asked (5.2)."""
+    with _errors():
+        return {"stopped": editing_service.stop_reasoning(pid)}
+
+
+NOT_REASONED = "Nothing has been reasoned in this project yet."
+
+
+def _last(pid: str) -> "reasoning.Outcome":
+    outcome = editing_service.reasoning_result(pid)
+    if outcome is None:
+        raise HTTPException(status_code=404, detail=NOT_REASONED)
+    return outcome
+
+
+@router.get("/{pid}/reasoning")
+def get_reasoning(
+    pid: str,
+    group: Optional[str] = None,
+    offset: int = 0,
+    about: Optional[str] = None,
+    imports: bool = ontologies.IMPORTS_PARAM,
+) -> dict:
+    """The last result: whole, a page of one group, or the facts about one
+    entity; each says whether it is stale for the view asking (5.3)."""
+    with _errors():
+        outcome = _last(pid)
+        current = editing_service.reasoning_key(pid, imports)
+        if about is not None:
+            return outcome.about(about, current)
+        if group is not None:
+            try:
+                return outcome.page(group, offset, current)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="There is no such group.") from exc
+        return outcome.summary(current)
+
+
+@router.get("/{pid}/reasoning/why")
+def why(pid: str, s: Optional[str] = None, p: Optional[str] = None, o: Optional[str] = None) -> dict:
+    """One fact's one-step reason (5.6); 404 for a fact the result does not
+    hold. The fact is optional to FastAPI so that an id the server never
+    issued is 404 before anything about the query is said."""
+    with _errors():
+        outcome = _last(pid)
+        if s is None or p is None or o is None:
+            raise HTTPException(status_code=422, detail="Name the fact: s, p and o.")
+        reason_ = outcome.why(s, p, o)
+        if reason_ is None:
+            raise HTTPException(status_code=404, detail="That fact is not in the last result.")
+        return reason_
 
 
 @router.get("/{pid}/documents/{doc}/annotation-properties")

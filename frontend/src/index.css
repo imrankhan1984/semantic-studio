@@ -1784,6 +1784,8 @@ button.legend-row:hover {
 .hierarchy-inferred {
   color: var(--accent);
   border-color: var(--accent);
+  /* With the word, a dashed outline: never colour alone (axioms-and-reasoning 5.7). */
+  border-style: dashed;
 }
 
 .hierarchy-depth {
@@ -5433,4 +5435,111 @@ kbd {
 
 .result-data {
   margin: 0 12px 6px;
+}
+
+/* --- reasoning (axioms-and-reasoning 5.1 to 5.7) ---------------------------
+   Every inferred mark is the word "inferred" and a dashed outline; colour
+   only ever repeats what those two say. */
+
+.reasoning {
+  /* A share of the tree's column, scrolled inside: a long result never
+     squeezes the tree out of sight (found in Chrome, R5). */
+  flex: none;
+  max-height: 35%;
+  overflow-y: auto;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.reasoning-intro,
+.reasoning-status {
+  margin: 4px 0;
+}
+
+.reasoning-status:empty {
+  display: none;
+}
+
+.reasoning-results {
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 6px 10px 8px;
+  margin: 6px 0;
+  background: var(--bg-raised);
+}
+
+.reasoning-results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.reasoning-results h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.reasoning-group h4 {
+  margin: 8px 0 2px;
+  font-size: 13px;
+}
+
+.reasoning-group ul,
+.reasoning-causes,
+.why-premises {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.reasoning-fact,
+.reasoning-problem {
+  margin: 2px 0;
+}
+
+.why-reason {
+  margin: 2px 0 4px;
+  padding: 2px 8px;
+  border-left: 2px dashed var(--border);
+}
+
+.why-because {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.why-mark {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.why-premise.inferred .why-mark {
+  border-style: dashed;
+}
+
+.detail-inferred {
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.canvas-surface .canvas-edge.inferred {
+  stroke-dasharray: 3 4;
+}
+
+.canvas-box.never-members {
+  border-style: dashed;
+}
+
+.canvas-box-never {
+  display: block;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-dim);
 }

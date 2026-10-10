@@ -41,6 +41,12 @@ BASIC IDEA
     choosing what to show changes the layout file, not the model, and must
     not rebuild the view.
 
+    A current reasoning result (axioms-and-reasoning 5.7) is laid on top
+    the same way, per request: its *kind of* lines between boxes already
+    drawn, each `inferred: true` so the canvas dashes and labels it, and a
+    class that can never have members flagged on its box. Never cached into
+    the view: the result goes stale without the revision moving.
+
 INPUTS / INPUT SOURCES
     - The document graph and its label languages (display, primary).
     - The merged imports view and its importedFrom map, or None.
@@ -49,6 +55,8 @@ EXPECTED OUTPUT
     - build_canvas(...) -> {nodes, edges, undrawn, total}; each edge with
       `pair` and `pairs`.
     - restrict(view, shown) -> the same shape, cut to the shown set.
+    - with_inferred(view, kinds, never) -> the view with inferred lines and
+      never-members flags added, the cached view untouched.
 ================================================================================
 """
 
@@ -272,3 +280,21 @@ def restrict(view: dict, shown: Optional[list]) -> dict:
         "edges": [e for e in view["edges"] if e["source"] in keep and e["target"] in keep],
         "limited": True,
     }
+
+
+def with_inferred(view: dict, kinds: list[tuple], never: set) -> dict:
+    """Inferred *kind of* lines between boxes on the canvas, and the boxes
+    that can never have members (5.7). A line the model already states is
+    not drawn twice; the cached view's lists are copied, never changed."""
+    boxes = {node["iri"] for node in view["nodes"]}
+    stated = {(e["source"], e["target"]) for e in view["edges"] if e["kind"] == "subClassOf"}
+    edges = [dict(e) for e in view["edges"]]
+    for child, _, parent in kinds:
+        pair = (str(child), str(parent))
+        if pair[0] in boxes and pair[1] in boxes and pair not in stated:
+            stated.add(pair)
+            edges.append({"kind": "subClassOf", "source": pair[0], "target": pair[1], "inferred": True})
+    _spread(edges)
+    flagged = {str(c) for c in never}
+    nodes = [{**node, "neverMembers": True} if node["iri"] in flagged else node for node in view["nodes"]]
+    return {**view, "nodes": nodes, "edges": edges}

@@ -30,10 +30,12 @@ BASIC IDEA
     flattening: a child already on the current path is shown once, marked, and
     not descended into, so no expansion can loop.
 
-    Every child edge carries an `origin`, "asserted" today. The rendering path
-    for an "inferred" edge — a derived badge, a non-colour cue, and an aria
-    mention — is present and exercised by a test, so adding real inference later
-    is data, not new rendering code (D-046).
+    Every child edge carries an `origin`. An "inferred" edge -- a reasoning
+    result's new kind, or a new membership in the Examples section -- renders
+    with the derived badge, a non-colour cue and an aria mention (D-046); the
+    tree asks for them with `inferred` while a current result exists and
+    Show inferred is on (axioms-and-reasoning 5.7), and an inferred row's
+    menu offers no edit.
 
     With imports on (external-access Stage 2) the forests come from the merged
     view. A row for an entity defined only in an import carries a "from FOAF"
@@ -83,6 +85,9 @@ INPUTS / INPUT SOURCES (props)
       canvas* (visual-modeling 5.6).
     - canvasSwitch: the *Canvas* toggle in the toolbar (5.4), shown with the
       canvas beside the tree; the choice itself is App's to keep.
+    - inferred: fetch the forests with a current reasoning result's edges.
+    - reasoning: *Reason* and *Show inferred* for the toolbar, and the
+      reasoning panel under it (axioms-and-reasoning 5.1, 5.7).
 
     The tree's forms and its delete run through one command runner, so a
     command in flight shows the view busy (5.8 item 1); they close when the
@@ -139,6 +144,12 @@ interface Props {
   /** Import data from CSV or Excel (csv-data-import 5.1), offered in the Examples
    *  section's header. */
   onImportData?: () => void;
+  /** A current reasoning result's edges, shown (axioms-and-reasoning 5.7). */
+  inferred?: boolean;
+  /** Which result: a new one refetches even when its basis is the same. */
+  inferredToken?: number;
+  /** Reason and Show inferred for the toolbar, and the panel below it. */
+  reasoning?: { controls: ReactNode; panel: ReactNode } | null;
 }
 
 /** A "New ..." form open at the top of a section. */
@@ -225,6 +236,12 @@ function keepForFilter(forest: HierarchyForest, query: string): Set<string> | nu
 /** One row in the flattened, expansion-aware sequence the tree renders. */
 interface Row {
   id: string;
+  /** The row's path from its root: unique where the id is not, since a node
+   *  under two parents is two rows. React keys on it; keyed on the id, the
+   *  duplicate rows were left behind in the DOM when the tree changed --
+   *  found when inferred memberships put Bea under Person and Agent and the
+   *  inferred rows outlived Show inferred (axioms-and-reasoning R5). */
+  key: string;
   depth: number;
   label: string;
   prefixed: string;
@@ -263,7 +280,7 @@ function flatten(
   const rows: Row[] = [];
   const path = new Set<string>();
 
-  const visit = (id: string, depth: number, origin: HierarchyOrigin) => {
+  const visit = (id: string, depth: number, origin: HierarchyOrigin, parentKey: string) => {
     if (keep && !keep.has(id)) return;
     const node = forest.nodes[id];
     if (!node) return;
@@ -275,8 +292,10 @@ function flatten(
     // A filter forces every kept internal node open, so the path to a match is
     // visible; otherwise expansion is the user's own set.
     const isExpanded = expandable && (keep ? true : expanded.has(id));
+    const key = `${parentKey}>${id}`;
     rows.push({
       id,
+      key,
       depth,
       label: node.label,
       prefixed: node.prefixed,
@@ -297,7 +316,7 @@ function flatten(
       path.add(id);
       keptKids.forEach((child, i) => {
         const before = rows.length;
-        visit(child.id, depth + 1, child.origin);
+        visit(child.id, depth + 1, child.origin, key);
         // Set sibling position on the child's own row (the first pushed).
         if (rows.length > before) {
           rows[before].posinset = i + 1;
@@ -311,7 +330,7 @@ function flatten(
   const roots = keep ? forest.roots.filter((r) => keep.has(r)) : forest.roots;
   roots.forEach((rootId, i) => {
     const before = rows.length;
-    visit(rootId, 0, "asserted");
+    visit(rootId, 0, "asserted", "");
     if (rows.length > before) {
       rows[before].posinset = i + 1;
       rows[before].setsize = roots.length;
@@ -384,6 +403,39 @@ function withDataLabels(data: Hierarchy | null, sources: DataSource[] | undefine
   return { ...data, examples: relabel(data.examples), concepts: relabel(data.concepts)!, classes: relabel(data.classes)! };
 }
 
+/** The tree without a reasoning result's edges. The marks leave at once
+ *  when the result goes stale or Show inferred is turned off (5.3), not when
+ *  the refetch lands: found in Chrome (R5), where the last forests kept four
+ *  inferred rows for the length of a request. A class the result alone had
+ *  made a heading in the Examples section goes with its last inferred row. */
+export function withoutInferred(data: Hierarchy | null): Hierarchy | null {
+  if (!data) return data;
+  const strip = (forest: HierarchyForest | undefined): HierarchyForest | undefined => {
+    if (!forest || !Object.values(forest.children).some((kids) => kids.some((k) => k.origin === "inferred"))) {
+      return forest;
+    }
+    const children: Record<string, HierarchyForest["children"][string]> = {};
+    const emptied = new Set<string>();
+    for (const [parent, kids] of Object.entries(forest.children)) {
+      const kept = kids.filter((k) => k.origin !== "inferred");
+      if (kept.length) children[parent] = kept;
+      else emptied.add(parent);
+    }
+    const nodes = { ...forest.nodes };
+    for (const id of emptied) nodes[id] = { ...nodes[id], hasChildren: false };
+    return { ...forest, nodes, children };
+  };
+  const out: Hierarchy = { ...data, classes: strip(data.classes)!, concepts: strip(data.concepts)! };
+  if (data.examples) {
+    const examples = strip(data.examples)!;
+    // A heading whose every member is inferred is one the result added.
+    const added = (id: string) => (data.examples!.children[id] ?? []).length > 0 &&
+      data.examples!.children[id].every((k) => k.origin === "inferred");
+    out.examples = { ...examples, roots: examples.roots.filter((id) => !added(id)) };
+  }
+  return out;
+}
+
 const CLASS_SECTION = "Class hierarchy";
 const CONCEPT_SECTION = "Concept hierarchy";
 const EXAMPLES_SECTION = "Examples";
@@ -402,10 +454,16 @@ export default function HierarchyView({
   canvasSwitch = null,
   dataSources,
   onImportData,
+  inferred = false,
+  inferredToken = 0,
+  reasoning = null,
 }: Props) {
   const [fetched, setData] = useState<Hierarchy | null>(null);
   // Snapshot rows named by their snapshot's label (csv-data-import 5.6).
-  const data = useMemo(() => withDataLabels(fetched, dataSources), [fetched, dataSources]);
+  const data = useMemo(
+    () => withDataLabels(inferred ? fetched : withoutInferred(fetched), dataSources),
+    [fetched, dataSources, inferred],
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
@@ -425,7 +483,7 @@ export default function HierarchyView({
     setFilter("");
     setExpanded(new Set());
     let cancelled = false;
-    fetchHierarchy(ontologyId, imports)
+    fetchHierarchy(ontologyId, imports, inferred)
       .then((h) => !cancelled && setData(h))
       .catch((e: unknown) => {
         if (cancelled) return;
@@ -435,17 +493,20 @@ export default function HierarchyView({
     return () => {
       cancelled = true;
     };
+    // `inferred` is read here but refetches through refreshKey below, so
+    // turning the marks on or off keeps what is expanded.
   }, [ontologyId, imports]);
 
-  // An edit or a language switch: the same ontology, new forests. Only the
-  // data is replaced; the first run is the effect above's.
-  const refreshKey = `${revision}|${language}`;
+  // An edit, a language switch, or the inferred marks coming or going: the
+  // same ontology, new forests. Only the data is replaced; the first run is
+  // the effect above's.
+  const refreshKey = `${revision}|${language}|${inferred ? inferredToken : "off"}`;
   const lastRefresh = useRef(refreshKey);
   useEffect(() => {
     if (!ontologyId || lastRefresh.current === refreshKey) return;
     lastRefresh.current = refreshKey;
     let cancelled = false;
-    fetchHierarchy(ontologyId, imports)
+    fetchHierarchy(ontologyId, imports, inferred)
       .then((h) => !cancelled && setData(h))
       .catch((e: unknown) => !cancelled && setError(e instanceof ApiError ? e.message : String(e)));
     return () => {
@@ -690,7 +751,9 @@ export default function HierarchyView({
             Canvas
           </button>
         )}
+        {reasoning?.controls}
       </div>
+      {reasoning?.panel}
       {editing && (
         <p className="detail-note edit-status" role="status">
           {busy ? "Saving change…" : ""}
@@ -701,7 +764,8 @@ export default function HierarchyView({
       <p className="hierarchy-note">
         Showing <strong>asserted</strong> {" "}
         <code>rdfs:subClassOf</code>, <code>skos:broader</code> and{" "}
-        <code>rdfs:subPropertyOf</code>, not inferred relationships.
+        <code>rdfs:subPropertyOf</code>
+        {inferred ? ", and what reasoning concluded, each marked inferred." : ", not inferred relationships."}
         {editing && (
           <>
             {" "}
@@ -769,7 +833,8 @@ export default function HierarchyView({
             menu.row.kind,
             Boolean(menu.row.importedFrom || menu.row.fromData),
             canvas ? { limited: canvas.limited, shown: canvas.shown.includes(menu.row.id) } : null,
-            menu.fixed,
+            // An inferred row is a conclusion: none of its own actions (5.7).
+            menu.fixed || menu.row.origin === "inferred",
           )}
           anchor={menu.anchor}
           onChoose={(action) => choose(menu.row, action)}
@@ -843,7 +908,7 @@ function Forest({
   onRevealed,
 }: ForestProps) {
   const actionsOf = (row: Row) =>
-    rowActions(row.kind, Boolean(row.importedFrom || row.fromData), null, fixedRow?.(row) ?? false);
+    rowActions(row.kind, Boolean(row.importedFrom || row.fromData), null, (fixedRow?.(row) ?? false) || row.origin === "inferred");
   const appears = useMemo(() => appearanceCounts(forest), [forest]);
   const keep = useMemo(() => keepForFilter(forest, filter), [forest, filter]);
   const rows = useMemo(
@@ -854,8 +919,11 @@ function Forest({
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(DEFAULT_VIEWPORT);
-  // The roving tab stop: which row id is focusable. It follows navigation and is
-  // clamped back onto the visible rows whenever they change under it.
+  // The roving tab stop: which row is focusable, by its path key -- a node
+  // under two parents is two rows, and by id the keyboard landed on the
+  // first of them (Shift+F10 opened the other row's menu). It follows
+  // navigation and is clamped back onto the visible rows whenever they
+  // change under it.
   const [focusId, setFocusId] = useState<string | null>(null);
   // Set on a keyboard move so the layout effect focuses the new row once it is
   // rendered, without stealing focus on an ordinary re-render.
@@ -866,8 +934,8 @@ function Forest({
   useEffect(() => {
     if (rows.length === 0) {
       setFocusId(null);
-    } else if (focusId === null || !rows.some((r) => r.id === focusId)) {
-      setFocusId(rows[0].id);
+    } else if (focusId === null || !rows.some((r) => r.key === focusId)) {
+      setFocusId(rows[0].key);
     }
   }, [rows, focusId]);
 
@@ -888,18 +956,18 @@ function Forest({
     const target = pendingFocus.current;
     if (target === null) return;
     pendingFocus.current = null;
-    const el = containerRef.current?.querySelector<HTMLElement>(`[data-id="${cssAttr(target)}"]`);
+    const el = containerRef.current?.querySelector<HTMLElement>(`[data-key="${cssAttr(target)}"]`);
     el?.focus();
   }, [windowRows]);
 
-  const focusIndex = focusId === null ? -1 : rows.findIndex((r) => r.id === focusId);
+  const focusIndex = focusId === null ? -1 : rows.findIndex((r) => r.key === focusId);
 
   /** Move the roving stop to a row by index, scrolling it into view. */
   const moveTo = (index: number) => {
     if (index < 0 || index >= rows.length) return;
-    const id = rows[index].id;
-    setFocusId(id);
-    pendingFocus.current = id;
+    const key = rows[index].key;
+    setFocusId(key);
+    pendingFocus.current = key;
     const container = containerRef.current;
     if (!container) return;
     const top = index * ROW_HEIGHT;
@@ -1037,12 +1105,12 @@ function Forest({
               const index = first + i;
               return (
                 <TreeRow
-                  key={row.id}
+                  key={row.key}
                   row={row}
                   index={index}
                   theme={theme}
                   isSelected={row.id === selected}
-                  isFocus={row.id === focusId}
+                  isFocus={row.key === focusId}
                   onToggle={onToggle}
                   onSelect={onSelect}
                   onFocus={setFocusId}
@@ -1071,7 +1139,8 @@ interface TreeRowProps {
   onToggle: (id: string, next: boolean) => void;
   onSelect: (iri: string) => void;
   /** Keeps the roving tab stop on a row focused by script or pointer. */
-  onFocus?: (id: string) => void;
+  /** Called with the row's path key, the roving stop's identity. */
+  onFocus?: (key: string) => void;
   /** In a project: open this row's menu. */
   menu?: (row: Row, element: Element | null) => void;
   /** This row is being renamed. `onDone(null)` cancels. */
@@ -1137,6 +1206,7 @@ function TreeRow({
     <div
       role="treeitem"
       data-id={row.id}
+      data-key={row.key}
       aria-level={level}
       aria-posinset={row.posinset || undefined}
       aria-setsize={row.setsize || undefined}
@@ -1152,7 +1222,7 @@ function TreeRow({
       style={{ top: index * ROW_HEIGHT, height: ROW_HEIGHT }}
       title={row.prefixed || row.id}
       onClick={() => onSelect(row.id)}
-      onFocus={(e) => e.target === e.currentTarget && onFocus?.(row.id)}
+      onFocus={(e) => e.target === e.currentTarget && onFocus?.(row.key)}
     >
       <span className="hierarchy-indent" style={{ width: cappedDepth * INDENT }} aria-hidden="true" />
       {row.depth > MAX_VISUAL_DEPTH && (

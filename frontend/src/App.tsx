@@ -171,6 +171,8 @@ import {
 } from "./state/projectStore";
 import AboutPanel from "./components/AboutPanel";
 import DetailPanel from "./components/DetailPanel";
+import ReasoningPanel, { ReasonControls } from "./components/ReasoningPanel";
+import { marksShown } from "./reasoning/reasonSentences";
 import ExploreStart from "./components/ExploreStart";
 import GraphNotice from "./components/GraphNotice";
 import GraphView from "./components/GraphView";
@@ -577,6 +579,36 @@ export default function App() {
         : null,
     [openProjectSummary, openDocName],
   );
+  // Reasoning (axioms-and-reasoning 5.1 to 5.7). The marks show in the tree,
+  // the canvas and the detail panel only while the last result is current
+  // for the model, the data and the imports switch on screen, and Show
+  // inferred is on; all three read this one flag, so they come and go
+  // together the moment anything moves (5.3).
+  const reasoningResult = useProjectSelector((s) => s.reasoning);
+  const showInferred = useProjectSelector((s) => s.showInferred);
+  const reasoningToken = useProjectSelector((s) => s.reasoningToken);
+  const modelRevision = projectDocuments.find((d) => d.doc === "model")?.revision ?? 0;
+  const reasoningNow = useMemo(
+    () => ({ revision: modelRevision, generation: dataGeneration, imports: includeImports }),
+    [modelRevision, dataGeneration, includeImports],
+  );
+  const inferredMarks = editingModel !== null && marksShown(reasoningResult, reasoningNow, showInferred);
+  const canvasInferred = useMemo(
+    () => (inferredMarks ? { imports: includeImports, token: reasoningToken } : null),
+    [inferredMarks, includeImports, reasoningToken],
+  );
+  const detailInferred = useMemo(
+    () =>
+      inferredMarks && openProjectSummary && reasoningResult
+        ? {
+            projectId: openProjectSummary.id,
+            resultKey: String(reasoningToken),
+            imports: includeImports,
+          }
+        : null,
+    [inferredMarks, openProjectSummary, reasoningResult, includeImports, reasoningToken],
+  );
+  const hasSnapshotOn = (projectData?.snapshots ?? []).some((d) => d.enabled);
   // The canvas beside the tree (visual-modeling 5.4): its lazily loaded
   // component, the per-browser switch, and the shown set it lends the tree
   // and the form past 300 boxes (5.6).
@@ -1950,6 +1982,24 @@ export default function App() {
             canvasSwitch={editingModel ? { on: canvasOn, onToggle: toggleCanvas } : null}
             dataSources={projectData?.snapshots}
             onImportData={editingModel ? openDataImport : undefined}
+            inferred={inferredMarks}
+            inferredToken={reasoningToken}
+            reasoning={
+              editingModel && openProjectSummary
+                ? {
+                    controls: <ReasonControls kind={editingModel.kind} now={reasoningNow} hasData={hasSnapshotOn} />,
+                    panel: (
+                      <ReasoningPanel
+                        projectId={openProjectSummary.id}
+                        kind={editingModel.kind}
+                        hasData={hasSnapshotOn}
+                        now={reasoningNow}
+                        onSelect={selectFromOutsideGraph}
+                      />
+                    ),
+                  }
+                : null
+            }
           />
           {showCanvas && openProjectSummary && editingModel && (
             <CanvasBoundary onRetry={() => setModelCanvas(loadCanvas)}>
@@ -1971,6 +2021,7 @@ export default function App() {
                   onSelectLink={selectLink}
                   onDeleted={onEntityDeleted}
                   onCanvasSet={setCanvasSet}
+                  inferred={canvasInferred}
                 />
               </Suspense>
             </CanvasBoundary>
@@ -1999,6 +2050,7 @@ export default function App() {
               readOnlyNote={readOnlyNote}
               onDeleted={onEntityDeleted}
               canvas={canvasLent}
+              inferred={detailInferred}
             />
           )}
         </main>

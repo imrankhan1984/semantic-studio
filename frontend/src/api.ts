@@ -89,6 +89,11 @@ import type {
   ShapesListing,
   ShapeSuggestions,
   ValidationResult,
+  WhyReason,
+  ReasoningAbout,
+  ReasoningGroupKind,
+  ReasoningPage,
+  ReasoningResult,
   DataChoices,
   DataInspection,
   DataOptions,
@@ -344,8 +349,11 @@ export function getNeighborhood(
  * the frontend virtualizes it, so the whole asserted structure comes back. The
  * server caches it on the ontology, so re-opening the tab is cheap.
  */
-export function fetchHierarchy(id: string, imports = false): Promise<Hierarchy> {
-  return send(withLang(withImports(`/api/ontologies/${id}/hierarchy`, imports))).then((r) =>
+export function fetchHierarchy(id: string, imports = false, inferred = false): Promise<Hierarchy> {
+  // With `inferred`, a current reasoning result's edges come with the origin
+  // "inferred" (D-046); a stale one adds nothing.
+  const url = withImports(`/api/ontologies/${id}/hierarchy`, imports);
+  return send(withLang(inferred ? `${url}${url.includes("?") ? "&" : "?"}inferred=true` : url)).then((r) =>
     handle<Hierarchy>(r),
   );
 }
@@ -754,8 +762,15 @@ export function getAnnotationProperties(
 }
 
 // What the modeling canvas draws, in the display language, with its layout.
-export function getCanvas(pid: string, doc: ProjectDocName): Promise<CanvasView> {
-  return send(withLang(documentUrl(pid, doc, "/canvas"))).then((r) => handle<CanvasView>(r));
+export function getCanvas(
+  pid: string,
+  doc: ProjectDocName,
+  inferred: { imports: boolean } | null = null,
+): Promise<CanvasView> {
+  // With a current reasoning result: its kind-of lines and the boxes that can
+  // never have members (axioms-and-reasoning 5.7).
+  const query = inferred ? `?inferred=true${inferred.imports ? "&imports=true" : ""}` : "";
+  return send(withLang(documentUrl(pid, doc, "/canvas") + query)).then((r) => handle<CanvasView>(r));
 }
 
 export function getLayout(pid: string, doc: ProjectDocName): Promise<CanvasLayout> {
@@ -883,6 +898,47 @@ export function validateProject(pid: string): Promise<ValidationResult> {
   return send(projectUrl(pid, "/validate"), { method: "POST", headers: { ...CLIENT_HEADER } }).then((r) =>
     handle<ValidationResult>(r),
   );
+}
+
+/* --- reasoning (axioms-and-reasoning Stage A) -------------------------------- */
+
+/** One run; it blocks until the run ends, and is 409 while another runs. */
+export function reasonProject(pid: string, includeData: boolean, imports: boolean): Promise<ReasoningResult> {
+  return send(projectUrl(pid, "/reasoning"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
+    body: JSON.stringify({ includeData, imports }),
+  }).then((r) => handle<ReasoningResult>(r));
+}
+
+/** Stop: the run's process is killed. */
+export function stopReasoning(pid: string): Promise<{ stopped: boolean }> {
+  return send(projectUrl(pid, "/reasoning"), { method: "DELETE", headers: { ...CLIENT_HEADER } }).then((r) =>
+    handle<{ stopped: boolean }>(r),
+  );
+}
+
+/** A page of one group of the last result: Show more. */
+export function getReasoningPage(
+  pid: string,
+  group: ReasoningGroupKind,
+  offset: number,
+  imports: boolean,
+): Promise<ReasoningPage> {
+  const query = `?group=${group}&offset=${offset}${imports ? "&imports=true" : ""}`;
+  return send(projectUrl(pid, `/reasoning${query}`)).then((r) => handle<ReasoningPage>(r));
+}
+
+/** The last result's facts about one entity, for the detail panel. */
+export function getReasoningAbout(pid: string, iri: string, imports: boolean): Promise<ReasoningAbout> {
+  const query = `?about=${encodeURIComponent(iri)}${imports ? "&imports=true" : ""}`;
+  return send(projectUrl(pid, `/reasoning${query}`)).then((r) => handle<ReasoningAbout>(r));
+}
+
+/** One fact's one-step reason (5.6). */
+export function getWhy(pid: string, fact: { s: string; p: string; o: string }): Promise<WhyReason> {
+  const query = ["s", "p", "o"].map((k) => `${k}=${encodeURIComponent(fact[k as "s" | "p" | "o"])}`).join("&");
+  return send(projectUrl(pid, `/reasoning/why?${query}`)).then((r) => handle<WhyReason>(r));
 }
 
 /* --- data snapshots (csv-data-import) ---------------------------------------- */

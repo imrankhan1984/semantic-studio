@@ -514,3 +514,41 @@ def test_hierarchy_build_time(big_graph):
         gc.enable()
     median = sorted(samples)[len(samples) // 2]
     assert median < limit_ms(500) / 1000, f"hierarchy build median was {median * 1000:.1f} ms"
+
+
+# --- axioms-and-reasoning 5.7: inferred edges through the D-046 seam ---------------------
+
+def test_inferred_kinds_and_memberships_are_edges_with_origin_inferred_on_a_copy():
+    from rdflib import URIRef
+    from rdflib.namespace import RDF, RDFS
+
+    from app.hierarchy import with_inferred
+
+    ex = "http://example.org/shop#"
+    graph = Graph().parse(data=f"""
+        @prefix : <{ex}> . @prefix owl: <http://www.w3.org/2002/07/owl#> .
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        :Agent a owl:Class . :Person a owl:Class ; rdfs:subClassOf :Agent .
+        :Employee a owl:Class ; rdfs:subClassOf :Person .
+        :bob a owl:NamedIndividual, :Employee .
+    """, format="turtle")
+    tree = build_hierarchy(graph, langs=["en"], own=graph)
+    before = json.dumps(tree, sort_keys=True)
+    U = lambda local: URIRef(ex + local)  # noqa: E731
+    out = with_inferred(
+        tree,
+        [(U("Employee"), RDFS.subClassOf, U("Agent"))],
+        [(U("bob"), RDF.type, U("Person")), (U("bob"), RDF.type, U("Agent"))],
+    )
+    kids = {ref["id"]: ref["origin"] for ref in out["classes"]["children"][ex + "Agent"]}
+    assert kids == {ex + "Person": "asserted", ex + "Employee": "inferred"}
+    # bob under Person and Agent in the Examples section, which had neither
+    # class as a heading: each joins as a root.
+    examples = out["examples"]
+    assert {ref["id"]: ref["origin"] for ref in examples["children"][ex + "Person"]} == {ex + "bob": "inferred"}
+    assert ex + "Agent" in examples["roots"] and examples["nodes"][ex + "Agent"]["hasChildren"] is True
+    # The cached tree is untouched.
+    assert json.dumps(tree, sort_keys=True) == before
+    # A kind already stated is not added twice.
+    again = with_inferred(tree, [(U("Employee"), RDFS.subClassOf, U("Person"))], [])
+    assert again["classes"]["children"][ex + "Person"] == tree["classes"]["children"][ex + "Person"]

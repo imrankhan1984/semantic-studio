@@ -1352,3 +1352,87 @@ describe("relationships Stage B: related lines and the Stage A follow-ups (5.8, 
     expect(onSelect).not.toHaveBeenCalledWith(EX + "Invoice");
   });
 });
+
+describe("inferred lines and boxes (axioms-and-reasoning 5.7)", () => {
+  // Invoice is concluded a kind of Agent; Document can never have members.
+  const reasoned = () =>
+    viewOf({
+      nodes: viewOf().nodes.map((n) => (n.iri === EX + "Document" ? { ...n, neverMembers: true } : n)),
+      edges: [
+        ...viewOf().edges,
+        { kind: "subClassOf", source: EX + "Invoice", target: "http://xmlns.com/foaf/0.1/Agent", pair: 1, pairs: 2, inferred: true },
+      ],
+    });
+
+  async function renderInferred(inferred: { imports: boolean } | null) {
+    getCanvas.mockResolvedValue(reasoned());
+    const result = render(
+      <ModelCanvas
+        projectId={PID}
+        doc="model"
+        revision={2}
+        language="en"
+        primaryLanguage="en"
+        selected={null}
+        onSelect={onSelect}
+        onSelectLink={onSelectLink}
+        onDeleted={onDeleted}
+        onCanvasSet={onCanvasSet}
+        inferred={inferred}
+      />,
+    );
+    await waitFor(() => expect(document.querySelectorAll(".react-flow__node")).toHaveLength(5));
+    return result;
+  }
+
+  const inferredLine = () => (flow.props.edges as any[]).find((e) => e.data.inferred);
+
+  it("asks for them, draws the line dashed and labelled inferred, and says so on the box", async () => {
+    await renderInferred({ imports: false });
+    expect(getCanvas).toHaveBeenCalledWith(PID, "model", { imports: false });
+    const line = inferredLine();
+    expect(line.ariaLabel).toBe("Invoice (en) is a kind of Agent, inferred");
+    // The word, always shown, and the dash: never colour alone.
+    expect(line.data.text).toBe("inferred");
+    expect(line.data.always).toBe(true);
+    expect(within(box("Document")).getByText("can never have members")).toBeTruthy();
+    expect(box("Document").querySelector(".canvas-box")!.classList.contains("never-members")).toBe(true);
+    expect(within(box("Invoice (en)")).queryByText("can never have members")).toBeNull();
+  });
+
+  it("never removes an inferred line: Delete says why and changes nothing", async () => {
+    await renderInferred({ imports: false });
+    await act(async () => flow.props.onEdgeClick({}, inferredLine()));
+    expect(screen.getByText(/inferred by reasoning: a conclusion, not part of your model, so it is not removed here/)).toBeTruthy();
+    await act(async () => {
+      fireEvent.keyDown(document.activeElement!, { key: "Delete" });
+    });
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(onSelectLink).not.toHaveBeenCalled();
+  });
+
+  it("drops the marks at once when they go, before the refetch answers", async () => {
+    const { rerender } = await renderInferred({ imports: false });
+    expect(inferredLine()).toBeTruthy();
+    // Stale, or Show inferred off: before any refetch answers.
+    getCanvas.mockReturnValue(new Promise(() => {}));
+    rerender(
+      <ModelCanvas
+        projectId={PID}
+        doc="model"
+        revision={2}
+        language="en"
+        primaryLanguage="en"
+        selected={null}
+        onSelect={onSelect}
+        onSelectLink={onSelectLink}
+        onDeleted={onDeleted}
+        onCanvasSet={onCanvasSet}
+        inferred={null}
+      />,
+    );
+    expect(inferredLine()).toBeUndefined();
+    expect(within(box("Document")).queryByText("can never have members")).toBeNull();
+    expect(getCanvas).toHaveBeenLastCalledWith(PID, "model", null);
+  });
+});

@@ -91,3 +91,36 @@ def test_only_the_broker_and_the_guard_reach_the_network():
         for hit in violations(path.read_text(encoding="utf-8")):
             offenders.append(f"{path.relative_to(APP_DIR.parent)} {hit}")
     assert offenders == [], "\n".join(offenders)
+
+
+# The reasoner (axioms-and-reasoning Section 9): its two modules are named,
+# so a rename cannot drop them from the scan above unnoticed, and OWL-RL is
+# imported by them alone. The worker runs in a process of its own, where the
+# broker's guards are not installed, so OWL-RL's own source is scanned too:
+# Section 9 says it fetches nothing, and this is where that stays true.
+REASONER = ("reasoning.py", "reasoning_worker.py")
+
+
+def test_the_reasoner_modules_are_scanned_and_reach_no_network():
+    for name in REASONER:
+        path = APP_DIR / name
+        assert path.exists(), name
+        source = path.read_text(encoding="utf-8")
+        assert "import" in source and violations(source) == [], name
+
+
+def test_only_the_reasoner_imports_owlrl():
+    importing = sorted(
+        path.name for path in APP_DIR.rglob("*.py")
+        if re.search(r"^\s*(?:import|from)\s+owlrl\b", path.read_text(encoding="utf-8"), re.M)
+    )
+    assert importing == ["reasoning_worker.py"]
+
+
+def test_owlrl_itself_holds_no_network_client():
+    import owlrl
+
+    files = sorted(Path(owlrl.__file__).parent.rglob("*.py"))
+    assert len(files) > 5
+    offenders = [f"{path.name} {hit}" for path in files for hit in violations(path.read_text(encoding="utf-8"))]
+    assert offenders == []
