@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1096 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1214 tests, vitest
+cd backend  && python -m pytest tests    # 1171 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1268 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -359,6 +359,14 @@ leaves one behind.
 - A result is current only for its revision, generation and imports view; the tree and the canvas drop its marks themselves, before their refetch lands. [Reasoning]
 - Tree rows are keyed and focused by their path (`row.key`), never the id: a node under two parents is two rows. [Reasoning]
 - A pair concluded both ways is shown one way, by IRI order, never by set order. [Reasoning]
+
+**Rules on a class**
+- A restriction is read only in one of 5.8's exact shapes; anything else is its Turtle, read-only, and no command rewrites it (D-105). [Rules on a class]
+- A rule is named by its content and matched in the document's own graph; none is `NoSuchRule` (404), never a near match. [Rules on a class]
+- CheckInData never touches a statement already in shapes.ttl: a qualified rule is its own property shape, a plain one joins the form's rule only when nothing disagrees. [Rules on a class]
+- The canvas reads rules only for classes a predicate scan finds with them: asking every class doubled the 10,000-statement view. [Rules on a class]
+- A rule line's id carries its key: two rules can join the same two boxes. [Rules on a class]
+- The relate menu and a relationship's pointer start a rule through `projectStore.ruleDraft`; the rule is written in the form (D-078). [Rules on a class]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

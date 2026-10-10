@@ -1540,3 +1540,38 @@ EXPECTED OUTPUT
   cleanup: the mock was called with no arguments after each test. Brace the
   body.
 
+- **Rules on a class** (2026-10-10, V-7 Stage B, `axioms-and-reasoning.md` 5.8
+  to 5.10, D-105, D-106 Q3).
+
+  **Read strictly, so the round trip holds.** `axioms.parse_restriction`
+  accepts a blank node only when every predicate on it is one 5.8's shape
+  uses, once: one `owl:onProperty` naming a property, one value predicate, a
+  qualified count's one `owl:onClass` or `owl:onDataRange`. A looser reader
+  showed a restriction with an extra `rdfs:comment` as a sentence, and Edit
+  would have written it back without the comment. *some* and *only* over a
+  datatype are legal OWL but outside the sentences, so they are Turtle too.
+
+  **Named by content, matched in the document.** A restriction has no IRI.
+  Two identical ones written in Turtle are one rule by content; Remove takes
+  one and the other stays. The key's filler compares Turtle's plain `"gold"`
+  and the form's `"gold"^^xsd:string` as one value, as `_stored` already did
+  for annotations.
+
+  **Check it in data too never rewrites.** The V-6 form reads a qualified
+  count only as the language rule, so a shape that gets one is read-only in
+  the Shapes view and its commands refuse it; CheckInData itself adds a new
+  property shape and touches nothing there. A plain rule (`sh:class`, a
+  count) joins the form's rule on the path, as Add on a suggestion does, so
+  an editable shape stays editable, and is refused when it disagrees. The
+  validator's own words for a qualified count were *Focus node does not
+  conform to shape MinCount 1*; `shacl.py` now says *order 7 is not linked by
+  has line to an Order line; every Order must be.*
+
+  **The canvas cost.** Asking every class for its rules took the
+  10,000-statement view from about 45 ms to 110 ms on this machine; one scan
+  of each predicate first, then only the classes with rules, brought it back
+  to about 48 ms.
+
+  **Budgets under load.** The full backend suite run beside the Chrome
+  server missed three timing budgets (explain 6,000 facts, two snapshots);
+  each passed alone, on `main` and on the branch.
