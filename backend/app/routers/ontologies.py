@@ -49,7 +49,9 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - JSON responses (ontology summaries, graph, one entity's neighbourhood,
-      node details -- for a project's example, its classes and fields
+      node details -- for a project's class, its rules, their warnings and
+      the sentence builder's choices (axioms-and-reasoning 5.9); for a
+      project's example, its classes and fields
       (shacl-authoring 5.8) --, search results, query schema, the queries stored in the
       file, source text, SPARQL results)
       and appropriate HTTP errors:
@@ -90,7 +92,7 @@ from ..graph_builder import (
     node_details,
     search_nodes,
 )
-from .. import examples, modeling_checks
+from .. import axioms, examples, modeling_checks
 from .. import imports as imports_mod
 from ..imports import imports_service
 from ..net_guard import BlockedAddress
@@ -313,6 +315,22 @@ def _from_data(ontology, iri: str) -> Optional[dict]:
     split = split_document_id(ontology.id)
     origin = editing_service.snapshots.origins(split[0]).get(iri) if split else None
     return {**info, "row": origin[1] if origin else None}
+
+
+def _rule_choices(ontology, graph, imports: bool, lang: Optional[str], name) -> dict:
+    """The sentence builder's options, built once per revision of the view:
+    every class's form asked for them on every click (code review). Keyed on
+    what the view is built from -- the revision and the view itself -- and
+    the display language, as every cache is (D-081)."""
+    key = (ontology.revision, imports, lang)
+    held = ontology.choices_cache
+    # The view itself is compared by identity, as the canvas's cache does:
+    # it is rebuilt when the imports or the snapshots change.
+    if held is not None and held[0] == key and held[1] is graph:
+        return held[2]
+    value = axioms.choices(graph, ontology.graph, name)
+    ontology.choices_cache = (key, graph, value)
+    return value
 
 
 def _get_or_404(oid: str):
@@ -594,6 +612,19 @@ def get_node(
         if details is not None and ontology.editable and details.get("kind") in PROPERTY_KINDS:
             name = labeler(ontology.graph, ontology.label_langs(lang))
             details["warnings"] = modeling_checks.warnings(ontology.graph, URIRef(iri), name)
+        # A project's class carries its rules (axioms-and-reasoning 5.9):
+        # the sentences of 5.8 read from the view, so an import's rule shows
+        # read-only, the warnings of 5.10, and the builder's choices when
+        # the class is this document's to change.
+        if details is not None and ontology.editable and details.get("kind") == "class":
+            name = labeler(graph, ontology.label_langs(lang))
+            cls = URIRef(iri)
+            details["rules"] = {
+                "items": axioms.class_rules(graph, cls, ontology.graph, name),
+                "warnings": modeling_checks.never_members(graph, cls, name),
+                "choices": _rule_choices(ontology, graph, imports, lang, name)
+                if examples.is_class(ontology.graph, cls) else None,
+            }
         # A snapshot's individual is read-only data (csv-data-import 5.6):
         # where it came from, never an example's form.
         from_data = _from_data(ontology, iri) if details is not None and ontology.editable else None

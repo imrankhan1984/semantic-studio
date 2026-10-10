@@ -8,7 +8,10 @@ SUMMARY
     display language, its attributes listed inside as *name : type*, and a
     *+ attribute* control; an imported class dashed, named by its import, and
     read-only; in a taxonomy, a class dotted and marked *read-only in a
-    taxonomy*, without *+ attribute* (relationships 5.1, D-089). Also
+    taxonomy*, without *+ attribute* (relationships 5.1, D-089). The
+    classes it is disjoint with are lines in it, *never an Organization*,
+    and the rules the canvas does not draw are counted, *1 more rule in the
+    form* (axioms-and-reasoning 5.9). Also
     NameLine, the name or its rename field, which the concept box shares.
 
 BASIC IDEA
@@ -35,6 +38,8 @@ EXPECTED OUTPUT
 
 import { memo, useState } from "react";
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
+import { moreRulesText } from "../modeling/ruleSentences";
+import { article } from "../modeling/sentences";
 import { DATATYPES } from "../modeling/values";
 import type { CanvasNode } from "../types";
 
@@ -154,6 +159,15 @@ function ClassNode({ data, selected }: NodeProps<BoxNode>) {
       {/* A reasoning result found it can never have members (5.5, 5.7):
           said in text, and outlined dashed, never by colour alone. */}
       {node.neverMembers && <span className="canvas-box-never">can never have members</span>}
+      {/* Rules (axioms-and-reasoning 5.9): disjointness is a line in the
+          box, never a line between boxes; a rule the canvas does not draw
+          is counted, so the form is where to look. */}
+      {node.disjoint?.map((d) => (
+        <span key={d.iri} className="canvas-box-rule">
+          never {article(d.label)} {d.label}
+        </span>
+      ))}
+      {node.moreRules ? <span className="canvas-box-rule">{moreRulesText(node.moreRules)}</span> : null}
       {node.attributes.length > 0 && (
         <ul className="canvas-attributes">
           {node.attributes.map((a) => (

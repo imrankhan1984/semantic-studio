@@ -10,7 +10,9 @@ SUMMARY
     and (ConceptRelations) its related concepts and mappings. A relationship
     or an attribute has a form of its own, RelationshipForm or AttributeForm
     (relationships 5.6, 5.7), which this hands over to. It is the form half
-    of every canvas action's keyboard route (5.2, D-078).
+    of every canvas action's keyboard route (5.2, D-078). A class's rules
+    (axioms-and-reasoning 5.9) are RulesBlock, between its kinds and its
+    attributes and relationships.
 
 BASIC IDEA
     Each list names what is there, as links that select it, with Remove where
@@ -40,13 +42,14 @@ EXPECTED OUTPUT
 
 import { useRef, useState } from "react";
 import { structureOf, type EntityModel, type Ref } from "../modeling/entity";
-import type { ModelWarning, SearchKind } from "../types";
+import type { ClassRules, ModelWarning, SearchKind } from "../types";
 import AttributeForm from "./AttributeForm";
 import ConceptRelations from "./ConceptRelations";
 import { Block, type Runner } from "./EditParts";
 import EntityPicker from "./EntityPicker";
 import NewEntityForm from "./NewEntityForm";
 import RelationshipForm from "./RelationshipForm";
+import RulesBlock from "./RulesBlock";
 
 interface Props {
   ontologyId: string;
@@ -59,6 +62,9 @@ interface Props {
   follow: (created: string | undefined) => void;
   /** A property's 5.9 warnings, shown under the block each concerns. */
   warnings?: ModelWarning[];
+  /** A class's rules (axioms 5.9), shown between its kinds and its
+   *  relationships. */
+  rules?: ClassRules;
 }
 
 /** Which small form is open: at most one at a time. */
@@ -117,6 +123,7 @@ export default function EditStructure({
   onSelect,
   follow,
   warnings = [],
+  rules,
 }: Props) {
   const { busy, errors, run, clear } = runner;
   const [open, setOpen] = useState<Open>(null);
@@ -206,6 +213,8 @@ export default function EditStructure({
         ) : (
           button("subclass", "Add subclass")
         )}
+
+        {rules && <RulesBlock iri={iri} name={name} rules={rules} runner={runner} onSelect={onSelect} />}
 
         <h5>Attributes</h5>
         <Links refs={model.attributes} empty="No attributes." onSelect={onSelect} />

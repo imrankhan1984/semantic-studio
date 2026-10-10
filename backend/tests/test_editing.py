@@ -256,6 +256,29 @@ COMMAND_CASES = [
     ("RemoveExampleValue", {"iri": "shop:bob", "property": "shop:memberOf",
                             "value": {"kind": "link", "value": "shop:acme"}},
      [], [(U("bob"), U("memberOf"), U("acme"))], "Removed the link from Bob to Acme by member of"),
+    # axioms-and-reasoning Stage B (5.10): a restriction is blank nodes, so
+    # its exact shape is test_axioms.py's; here, label, revision and delta.
+    ("AddRestriction", {"class": "shop:Person", "property": "shop:memberOf", "kind": "some",
+                        "filler": "shop:Organization"},
+     [], [], "Added a rule on member of to Person"),
+    ("ReplaceRestriction", {"class": "shop:Person", "property": "shop:memberOf", "kind": "only",
+                            "filler": "shop:Organization",
+                            "restriction": {"form": "every", "property": "shop:memberOf", "kind": "some",
+                                            "filler": "shop:Organization", "n": None}},
+     [], [], "Changed a rule on member of of Person"),
+    ("RemoveRestriction", {"class": "shop:Person",
+                           "restriction": {"form": "every", "property": "shop:memberOf", "kind": "only",
+                                           "filler": "shop:Organization", "n": None}},
+     [], [], "Removed a rule on member of from Person"),
+    ("AddDisjointWith", {"a": "shop:Person", "b": "shop:Organization"},
+     [(U("Person"), OWL.disjointWith, U("Organization"))], [], "Made Person and Organization disjoint"),
+    ("RemoveDisjointWith", {"a": "shop:Organization", "b": "shop:Person"},
+     [], [(U("Person"), OWL.disjointWith, U("Organization"))], "Removed the disjointness of Organization and Person"),
+    ("AddEquivalentClass", {"a": "shop:Invoice", "b": "shop:Organization"},
+     [(U("Invoice"), OWL.equivalentClass, U("Organization"))], [], "Made Bill and Organization mean the same thing"),
+    ("RemoveEquivalentClass", {"a": "shop:Invoice", "b": "shop:Organization"},
+     [], [(U("Invoice"), OWL.equivalentClass, U("Organization"))],
+     "Removed that Bill and Organization mean the same thing"),
 ]
 
 
@@ -1286,6 +1309,8 @@ def test_a_rule_with_several_kinds_is_one_property_shape_with_exact_triples(pid)
 
 
 def test_every_shape_command_is_one_undo_step_and_survives_save_and_reload(pid):
+    # Check it in data too (axioms 5.8) checks a rule of the model.
+    ok(pid, "AddRestriction", **{"class": "shop:Person"}, property="shop:memberOf", kind="atMost", n=1)
     sid = shapes_ok(pid, "CreateShape", target="shop:Person")["created"]
     steps = [
         ("AddRule", {"shape": sid, "rule": {"path": [str(RDFS.label)], "uniqueLang": True,
@@ -1293,6 +1318,8 @@ def test_every_shape_command_is_one_undo_step_and_survives_save_and_reload(pid):
         ("AddRule", {"shape": sid, "rule": {"path": ["shop:memberOf"], "maxCount": 1}}),
         ("ReplaceRule", {"shape": sid, "path": ["shop:memberOf"],
                          "rule": {"path": ["shop:memberOf"], "minCount": 1, "class": "shop:Organization"}}),
+        ("CheckInData", {"class": "shop:Person", "restriction": {"form": "every", "property": "shop:memberOf",
+                                                                  "kind": "atMost", "filler": None, "n": 1}}),
         ("SetShapeTarget", {"shape": sid, "target": "shop:Organization"}),
         ("SetShapeName", {"shape": sid, "value": "People rules"}),
         ("SetShapeSeverity", {"shape": sid, "severity": "warning"}),
@@ -1320,7 +1347,8 @@ def test_every_shape_command_is_one_undo_step_and_survives_save_and_reload(pid):
         client.post(f"/api/projects/{pid}/documents/shapes/undo")
     kept = shapes_graph(pid)
     assert client.post(f"/api/projects/{pid}/documents/shapes/save", json={}).status_code == 200
-    editing_service.close(pid)
+    # The model's rule for CheckInData is not saved: only shapes.ttl is asked about.
+    editing_service.close(pid, discard=True)
     client.post(f"/api/projects/{pid}/open")
     assert isomorphic(shapes_graph(pid), kept)
     text = (project_store.folder(pid) / "shapes.ttl").read_text(encoding="utf-8")

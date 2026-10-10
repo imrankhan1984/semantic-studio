@@ -44,7 +44,11 @@ BASIC IDEA
     so each constraint component the form offers has its own sentence,
     built from the data's names: *Bob has no name; every Person must have at
     least 1.* A shape's own sh:message replaces it, as the learner asked for
-    it. Any other component keeps pySHACL's message, prefixed with the rule.
+    it. What *Check it in data too* writes (axioms-and-reasoning 5.8) has
+    sentences too: a qualified count of a class or a type (*order 7 is not
+    linked by has line to an Order line; every Order must be.*) and a
+    sh:hasValue. Any other component keeps pySHACL's message, prefixed with
+    the rule.
 
     A panel carries at most 200 problems and the true total (Section 9), so
     a run with 100,000 problems cannot make a huge response.
@@ -76,6 +80,7 @@ import pyshacl
 from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 
+from . import examples
 from .graph_builder import pick_label_in, prefixed
 from .shapes_form import (
     DEFINITION_PATH,
@@ -415,6 +420,15 @@ class Sentences:
             lang = self._qualified_language(source)
             if lang is not None:
                 return f"{who} has no {label} in {language_name(lang)}; {every} must have one."
+        if component in (SH.QualifiedMinCountConstraintComponent, SH.QualifiedMaxCountConstraintComponent):
+            # What Check it in data too writes for a restriction (axioms 5.8):
+            # a count of values that are of a class, or of a type.
+            said = self._qualified_count(component, source, focus, result["path"], who, label, every, relationship)
+            if said is not None:
+                return said
+        if component == SH.HasValueConstraintComponent:
+            wanted = self.shapes.value(source, SH.hasValue)
+            return f"{who} does not have {label} {self.value(wanted)}; {every} must."
         message = result["message"]
         rule = label if label != "value" else self._shape_name(owner)
         return f"{rule}: {message}" if message is not None else f"{rule}: this value breaks the rule."
@@ -452,6 +466,46 @@ class Sentences:
         inner = self.shapes.value(source, SH.qualifiedValueShape) if source is not None else None
         tags = _list(self.shapes, self.shapes.value(inner, SH.languageIn)) if inner is not None else None
         return str(tags[0]) if tags and len(tags) == 1 else None
+
+    def _qualified_count(self, component, source, focus, path, who, label, every, relationship) -> Optional[str]:
+        """*order 7 is not linked by has line to an Order line; every Order
+        must be.* A qualified shape saying only sh:class or sh:datatype; any
+        other is left to the generic sentence."""
+        inner = self.shapes.value(source, SH.qualifiedValueShape) if source is not None else None
+        if inner is None:
+            return None
+        cls = self.shapes.value(inner, SH["class"])
+        datatype = self.shapes.value(inner, SH.datatype)
+        if (cls is None) == (datatype is None):
+            return None
+        low = component == SH.QualifiedMinCountConstraintComponent
+        limit = self._number(source, SH.qualifiedMinCount if low else SH.qualifiedMaxCount)
+        values = list(self.data.objects(focus, path)) if isinstance(path, URIRef) else []
+        if cls is not None:
+            kinds = examples.subclasses(self.data, cls)
+            have = sum(1 for v in values if set(self.data.objects(v, RDF.type)) & kinds)
+            one = f"{article(self.name(cls))} {self.name(cls)}"
+            many = plural(self.name(cls))
+        else:
+            # pySHACL takes a plain literal for xsd:string (RDF 1.1), and so does the count.
+            have = sum(1 for v in values if isinstance(v, Literal) and (
+                v.datatype == datatype
+                or (datatype == XSD.string and v.datatype is None and not v.language)))
+            one = DATATYPE_WORDS.get(datatype) or f"of the type {datatype_json(datatype)}"
+            # *a date*, *dates*; a word with no article (*text*) reads the same.
+            bare = one.split(" ", 1)[1] if one.startswith(("a ", "an ")) else None
+            many = plural(bare) if bare else one
+        times = "time" if limit == 1 else "times"
+        if relationship and low and have == 0:
+            tail = "must be." if limit == 1 else f"must be, at least {limit} {times}."
+            return f"{who} is not linked by {label} to {one}; {every} {tail}"
+        if relationship:
+            bound = "at least" if low else "at most"
+            return f"{who} is linked by {label} to {have} {many if have != 1 else one}; {every} must be {bound} {limit} {times}."
+        words = f"{label if have == 1 else plural(label)} that {'is' if have == 1 else 'are'} {one if have == 1 else many}"
+        if low:
+            return f"{who} has {have or 'no'} {words}; {every} must have at least {limit}."
+        return f"{who} has {have} {words}; {every} may have at most {limit}."
 
     def _shape_name(self, owner) -> str:
         label = self.shapes.value(owner, RDFS.label) if owner is not None else None

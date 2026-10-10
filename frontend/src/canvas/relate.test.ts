@@ -62,11 +62,13 @@ describe("relateChoices", () => {
     expect(result.choices.map((c) => c.label)).toEqual([
       "Order is a kind of Invoice",
       "new relationship…",
+      "Every Order has at least one… (a rule)",
       "Order related to Invoice (existing relationship)",
       "Order placed by Invoice (existing relationship)",
     ]);
-    expect(result.choices[2]).toMatchObject({ kind: "existing", setDomain: true, setRange: true });
-    expect(result.choices[3]).toMatchObject({ kind: "existing", setDomain: false, setRange: true });
+    expect(result.choices[2]).toMatchObject({ kind: "rule" });
+    expect(result.choices[3]).toMatchObject({ kind: "existing", setDomain: true, setRange: true });
+    expect(result.choices[4]).toMatchObject({ kind: "existing", setDomain: false, setRange: true });
   });
 
   it("never offers one already linking other classes, and says so", () => {

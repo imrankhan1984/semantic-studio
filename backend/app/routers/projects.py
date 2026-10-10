@@ -57,6 +57,7 @@ from .. import reasoning
 from ..editing import (
     CommandError,
     Dirty,
+    NoSuchRule,
     NotOpen,
     ReasoningRefused,
     TurtleSyntaxError,
@@ -134,6 +135,9 @@ def _errors():
             status_code=422,
             detail={"line": exc.line, "column": exc.column, "message": str(exc), "detail": exc.detail},
         ) from exc
+    except NoSuchRule as exc:
+        # A restriction named by its content that is not there (axioms 5.10).
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (CommandError, ProjectError, ReasoningRefused) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except reasoning.AlreadyRunning as exc:

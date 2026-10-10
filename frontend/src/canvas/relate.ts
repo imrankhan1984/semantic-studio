@@ -23,7 +23,9 @@ BASIC IDEA
     5.8), each only where the server would accept it: not when the target is
     already narrower than the source, directly or through others, and not
     *narrower than* between two related concepts. A class and a concept cannot be
-    linked here at all. A line that would change an imported box is refused
+    linked here at all. Class to class also offers *a rule* (axioms 5.9),
+    which opens the sentence builder in the form with both classes filled
+    in. A line that would change an imported box is refused
     with a sentence. A link that already exists is not offered again.
 
     Each choice is labelled by the sentence it would make (relationships
@@ -46,7 +48,8 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { existingSentence, linkSentence } from "../modeling/sentences";
+import { moreRulesText } from "../modeling/ruleSentences";
+import { article, existingSentence, linkSentence } from "../modeling/sentences";
 import type { CanvasNode, CanvasView } from "../types";
 
 export type RelateChoice =
@@ -54,6 +57,9 @@ export type RelateChoice =
   | { kind: "broader"; label: string }
   | { kind: "related"; label: string }
   | { kind: "newRelationship"; label: string }
+  // A rule (axioms 5.9): opens the from class's sentence builder with the
+  // to class at the other end.
+  | { kind: "rule"; label: string }
   | {
       kind: "existing";
       label: string;
@@ -136,6 +142,7 @@ export function relateChoices(view: CanvasView, fromIri: string, toIri: string):
     choices.push({ kind: "subClassOf", label: linkSentence("subClassOf", from.label, to.label) });
   }
   choices.push({ kind: "newRelationship", label: "new relationship…" });
+  choices.push({ kind: "rule", label: `Every ${from.label} has at least one… (a rule)` });
   for (const u of view.undrawn) {
     // An end that is an expression is set, not missing: completing it would
     // replace what it says.
@@ -204,5 +211,8 @@ export function boxName(view: CanvasView, iri: string): string {
     parts.push(`${children} ${children === 1 ? word[0] : word[1]}`);
   }
   if (n.imported) parts.push(n.imported === "outside" ? "outside this model, read-only" : `from ${n.imported}, read-only`);
+  // What the box says in text is said aloud too (axioms 5.9).
+  for (const d of n.disjoint ?? []) parts.push(`never ${article(d.label)} ${d.label}`);
+  if (n.moreRules) parts.push(moreRulesText(n.moreRules));
   return parts.join(", ");
 }

@@ -1048,8 +1048,16 @@ describe("relationship form (AC-7)", () => {
 
   it("points to restrictions and shapes for what a relationship cannot say", async () => {
     await renderForm(worksFor());
-    expect(screen.getByText(/see Restrictions \(coming with axioms\)/)).toBeTruthy();
     expect(screen.getByText("To require values in data, see Shapes (SHACL).")).toBeTruthy();
+    // axioms 5.9: the pointer is a link to the start class's Rules block,
+    // the builder opened on this relationship and its end.
+    fireEvent.click(screen.getByRole("button", { name: "add a rule to Person" }));
+    expect(onSelect).toHaveBeenCalledWith(EX + "Person");
+    expect(projectStore.getSnapshot().ruleDraft).toMatchObject({
+      cls: EX + "Person",
+      filler: EX + "Organization",
+      property: EX + "worksFor",
+    });
   });
 
   it("is read-only in a taxonomy, with the note (5.10 item 2)", async () => {

@@ -23,6 +23,9 @@ BASIC IDEA
     answers, so a create does not move the selection away from something the
     user picked meanwhile (item 4).
 
+    A caller may also be told a refusal's sentence (`refused`), to say it
+    in the live region as well as under the field (axioms 5.9).
+
     useReturnFocus gives focus back to the control that opened a small form
     once the form has gone (item 2). useCopy copies and says "Copied" in a
     polite live region it renders itself (item 11).
@@ -53,6 +56,9 @@ export interface Runner {
     command: string,
     args: Record<string, unknown>,
     announcement?: (result: ChangeResult) => string,
+    /** Told the server's sentence when the command is refused, to say it in
+     *  the live region as well (axioms 5.9). */
+    refused?: (message: string) => void,
   ) => Promise<ChangeResult | null>;
   clear: (field: string) => void;
   /** The form that made this runner is still mounted. */
@@ -80,6 +86,7 @@ export function useRunner(doc?: ProjectDocName): Runner {
       command: string,
       args: Record<string, unknown>,
       announcement?: (result: ChangeResult) => string,
+      refused?: (message: string) => void,
     ) => {
       if (inFlight.current) return null;
       inFlight.current = true;
@@ -88,9 +95,11 @@ export function useRunner(doc?: ProjectDocName): Runner {
       try {
         return await projectStore.command(command, args, announcement, doc);
       } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
         if (mounted.current) {
-          setErrors((prev) => ({ ...prev, [field]: e instanceof Error ? e.message : String(e) }));
+          setErrors((prev) => ({ ...prev, [field]: message }));
         }
+        refused?.(message);
         return null;
       } finally {
         inFlight.current = false;

@@ -469,6 +469,69 @@ export interface NodeDetails {
   // An individual from a data snapshot: where it came from, and its row
   // (csv-data-import 5.6). Read-only; it has no example form.
   fromData?: DataSource & { row: number | null };
+  // A project's class: its rules (axioms-and-reasoning 5.9), the 5.10
+  // warnings, and what the sentence builder offers when the class is this
+  // document's to change (null when it is not).
+  rules?: ClassRules;
+}
+
+/* --- rules on a class (axioms-and-reasoning Stage B) -------------------- */
+
+export type RuleForm = "every" | "defines";
+export type RuleKind = "some" | "only" | "exactly" | "atLeast" | "atMost" | "value";
+
+/** How a command names a restriction: by what it says (5.10). A filler is
+ *  an IRI (a class or a type of value), a value for *has value*, or null. */
+export interface RuleKey {
+  form: RuleForm;
+  property: string;
+  kind: RuleKind;
+  filler: string | AnnotationValue | null;
+  n: number | null;
+  with?: string;
+}
+
+export interface RuleRef {
+  iri: string;
+  label: string;
+}
+
+export interface RuleRestriction {
+  type: "restriction";
+  form: RuleForm;
+  property: RuleRef & { kind: "relationship" | "attribute" | null };
+  kind: RuleKind;
+  // A class or a type of value ({iri, label}); for *has value*, the value.
+  filler: RuleRef | (AnnotationValue & { label?: string }) | null;
+  n: number | null;
+  with: RuleRef | null;
+  key: RuleKey;
+  editable: boolean;
+}
+
+export type RuleItem =
+  | RuleRestriction
+  | { type: "disjoint" | "equivalent"; other: RuleRef; editable: boolean }
+  | { type: "turtle"; turtle: string; editable: false };
+
+export interface RuleChoice extends RuleRef {
+  kind?: "relationship" | "attribute";
+  // An attribute's type of value, as a full IRI, or null.
+  datatype?: string | null;
+}
+
+export interface RuleChoices {
+  properties: { items: RuleChoice[]; total: number };
+  classes: { items: RuleRef[]; total: number };
+  things: { items: RuleRef[]; total: number };
+}
+
+export interface ClassRules {
+  items: RuleItem[];
+  // The 5.10 warnings: a class that can never have members. `disjoint` names
+  // the class of the disjoint rule it stands under; without it, the block.
+  warnings: { text: string; disjoint?: string }[];
+  choices: RuleChoices | null;
 }
 
 export interface ExampleInfo {
@@ -857,12 +920,19 @@ export interface CanvasNode {
   // A current reasoning result found that this class can never have
   // members (axioms-and-reasoning 5.5, 5.7); only with ?inferred=true.
   neverMembers?: boolean;
+  // The classes this one is disjoint with: written in the box, never as
+  // lines between boxes (axioms-and-reasoning 5.9).
+  disjoint?: RuleRef[];
+  // Rules on this class the canvas does not draw: *1 more rule in the form*.
+  moreRules?: number;
 }
 
 export interface CanvasEdge {
   // "related": skos:related, one line per pair, drawn dashed with no arrow
   // because it reads the same both ways (relationships 5.8).
-  kind: "subClassOf" | "broader" | "relationship" | "related";
+  // "rule": a restriction to a named class (axioms-and-reasoning 5.9),
+  // dashed, labelled from `rule` by ruleSentences.shortLabel.
+  kind: "subClassOf" | "broader" | "relationship" | "related" | "rule";
   source: string;
   target: string;
   property?: string;
@@ -875,6 +945,17 @@ export interface CanvasEdge {
   // A *kind of* a current reasoning result concluded (5.7): drawn dashed and
   // labelled inferred, never changed from the canvas.
   inferred?: boolean;
+  rule?: {
+    form: RuleForm;
+    kind: RuleKind;
+    n: number | null;
+    property: string;
+    propertyLabel: string;
+    fillerLabel: string;
+    // A defining form's named class: *A Manager is exactly a Person that ...*
+    withLabel: string | null;
+  };
+  key?: RuleKey;
 }
 
 // A subclass, broader or related line the user clicked: the link panel's

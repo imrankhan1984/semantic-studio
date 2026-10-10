@@ -5543,3 +5543,85 @@ kbd {
   font-style: italic;
   color: var(--text-dim);
 }
+
+/* --- rules on a class (axioms-and-reasoning Stage B) ---------------------- */
+
+.rules-block h5 {
+  margin: 10px 0 4px;
+}
+
+.rule-item {
+  display: block;
+  padding: 4px 0;
+}
+
+.rule-sentence {
+  font-weight: 500;
+}
+
+.rule-actions {
+  margin-left: 4px;
+}
+
+.rule-note {
+  margin: 2px 0 0 12px;
+  font-size: 12px;
+}
+
+.rule-note .detail-note {
+  margin: 0;
+}
+
+.rule-turtle {
+  margin: 4px 0;
+  padding: 6px 8px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.rule-builder {
+  margin: 8px 0;
+  padding: 10px;
+  border: 1px solid var(--accent-soft);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  animation: shapes-in 160ms ease-out;
+}
+
+.rule-builder select,
+.rule-builder input[type="text"],
+.rule-builder input[type="number"] {
+  display: block;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  max-width: 100%;
+}
+
+.rule-builder input[type="number"] {
+  width: 5.5em;
+}
+
+/* A rule's line: dashed, apart from a related line's dash, and labelled. */
+.canvas-surface .canvas-edge.rule {
+  stroke-dasharray: 8 3 2 3;
+}
+
+.canvas-box-rule {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rule-builder {
+    animation: none;
+  }
+}

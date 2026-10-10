@@ -385,6 +385,7 @@ describe("relating (AC-12)", () => {
     expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
       "Document is a kind of Agent",
       "new relationship…",
+      "Every Document has at least one… (a rule)",
     ]);
     await act(async () => {
       fireEvent.click(within(menu).getByRole("menuitem", { name: "Document is a kind of Agent" }));
@@ -1080,6 +1081,7 @@ describe("relationships Stage A: seeing and drawing relationships", () => {
     // what the swapped line would complete is.
     expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
       "new relationship…",
+      "Every Invoice (en) has at least one… (a rule)",
       "Invoice (en) mentions Document (existing relationship)",
     ]);
     expect(runCommand).not.toHaveBeenCalled();
@@ -1105,7 +1107,10 @@ describe("relationships Stage A: seeing and drawing relationships", () => {
   it("a class linked to itself offers a relationship and never is a kind of (R5)", async () => {
     await renderCanvas();
     await draw(EX + "Document", EX + "Document");
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["new relationship…"]);
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "new relationship…",
+      "Every Document has at least one… (a rule)",
+    ]);
   });
 
   it("lines sharing two boxes carry their place, and a loop leaves on the right and enters the top (AC-5)", async () => {
@@ -1434,5 +1439,78 @@ describe("inferred lines and boxes (axioms-and-reasoning 5.7)", () => {
     expect(inferredLine()).toBeUndefined();
     expect(within(box("Document")).queryByText("can never have members")).toBeNull();
     expect(getCanvas).toHaveBeenLastCalledWith(PID, "model", null);
+  });
+});
+
+describe("rule lines and boxes (axioms-and-reasoning 5.9, AC-11)", () => {
+  const someKey = { form: "every" as const, property: EX + "hasLine", kind: "some" as const, filler: EX + "Document", n: null };
+  const ruled = () =>
+    viewOf({
+      nodes: viewOf().nodes.map((n) =>
+        n.iri === EX + "Invoice"
+          ? { ...n, disjoint: [{ iri: EX + "Document", label: "Document" }], moreRules: 1 }
+          : n,
+      ),
+      edges: [
+        ...viewOf().edges,
+        {
+          kind: "rule", source: EX + "Invoice", target: EX + "Document", pair: 1, pairs: 3,
+          rule: { form: "every", kind: "some", n: null, property: EX + "hasLine", propertyLabel: "has line", fillerLabel: "Document", withLabel: null },
+          key: someKey,
+        },
+        {
+          kind: "rule", source: EX + "Invoice", target: EX + "Document", pair: 2, pairs: 3,
+          rule: { form: "defines", kind: "some", n: null, property: EX + "hasLine", propertyLabel: "has line", fillerLabel: "Document", withLabel: "Agent" },
+          key: { ...someKey, form: "defines" as const, with: "http://xmlns.com/foaf/0.1/Agent" },
+        },
+      ],
+    });
+  const rules = () => (flow.props.edges as any[]).filter((e) => e.data.rule);
+
+  it("draws each rule as a dashed line labelled with its short form, read as its sentence", async () => {
+    await renderCanvas(ruled());
+    const [every, defines] = rules();
+    expect(every.data.text).toBe("at least 1 · has line");
+    expect(every.data.always).toBe(true);
+    expect(every.ariaLabel).toBe("Every Invoice (en) has at least one has line that is a Document, a rule");
+    expect(defines.data.text).toBe("defines");
+    expect(defines.ariaLabel).toBe("An Invoice (en) is exactly an Agent that has line at least one Document, a rule");
+    // Two rules on the same two boxes are two lines.
+    expect(every.id).not.toBe(defines.id);
+  });
+
+  it("writes disjointness in the box and counts the rules it does not draw", async () => {
+    await renderCanvas(ruled());
+    expect(within(box("Invoice (en)")).getByText("never a Document")).toBeTruthy();
+    expect(within(box("Invoice (en)")).getByText("1 more rule in the form")).toBeTruthy();
+    expect(box("Invoice (en)").getAttribute("aria-label")).toBe(
+      "Invoice (en), class, kind of Document, never a Document, 1 more rule in the form",
+    );
+  });
+
+  it("a click on a rule selects its class; Delete removes it by its key", async () => {
+    await renderCanvas(ruled());
+    await act(async () => flow.props.onEdgeClick({}, rules()[0]));
+    expect(onSelect).toHaveBeenCalledWith(EX + "Invoice");
+    expect(screen.getByText("Every Invoice (en) has at least one has line that is a Document selected. Delete removes it.")).toBeTruthy();
+    await act(async () => {
+      fireEvent.keyDown(document.activeElement!, { key: "Delete" });
+    });
+    expect(lastCommand()).toEqual(["RemoveRestriction", { class: EX + "Invoice", restriction: someKey }]);
+  });
+
+  it("the relate menu's rule entry selects the class and opens its builder through the store", async () => {
+    await renderCanvas();
+    await act(async () => {
+      flow.props.onConnect({ source: EX + "Document", target: EX + "Invoice", sourceHandle: null, targetHandle: null });
+      flow.props.onConnectEnd({ clientX: 40, clientY: 50 });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Every Document has at least one… (a rule)" }));
+    });
+    expect(onSelect).toHaveBeenCalledWith(EX + "Document");
+    expect(projectStore.getSnapshot().ruleDraft).toMatchObject({ cls: EX + "Document", filler: EX + "Invoice" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(runCommand).not.toHaveBeenCalled();
   });
 });
