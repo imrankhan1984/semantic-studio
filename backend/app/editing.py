@@ -35,6 +35,18 @@ BASIC IDEA
     other, a loop of broader or sub-relationship links -- are modeling_checks'
     sentences, raised the same way.
 
+    A class's rules (axioms-and-reasoning 5.8 to 5.10, D-105) are seven
+    commands: AddRestriction, ReplaceRestriction and RemoveRestriction, the
+    disjoint pair and the equivalent pair. A restriction has no IRI, so a
+    command names it by its content, which axioms.py matches; a duplicate is
+    refused, one not there is NoSuchRule (404), and a removal sweeps its
+    blank node as DeleteEntity does. The 5.10 checks are modeling_checks'
+    and run before anything is written. *Check it in data too* (D-106 Q3)
+    is CheckInData, a shape command: the SHACL rule for a restriction of the
+    model, added to the class's shape in one undo step of shapes.ttl, under
+    the shapes document's lock and then the model's, like every shape
+    command.
+
     Examples (shacl-authoring 5.8) are individuals of the model's classes,
     made so a shape has something to check: CreateExample types one with its
     class and owl:NamedIndividual, and SetExampleValue, AddExampleValue and
@@ -105,8 +117,9 @@ EXPECTED OUTPUT
     - Files: <doc>.ttl on save, <doc>.original.ttl once, .draft/<doc>.ttl and
       .draft/<doc>.json while unsaved.
     - The canvas view, and layout entries moved by a rename or pruned on open.
-    - CommandError (422, a sentence), TurtleSyntaxError (422, line and column),
-      NotOpen and Dirty (409), ReasoningRefused (422, a taxonomy).
+    - CommandError (422, a sentence), NoSuchRule (404, a sentence),
+      TurtleSyntaxError (422, line and column), NotOpen and Dirty (409),
+      ReasoningRefused (422, a taxonomy).
     - reason(...) -> a reasoning result's summary; the current result for the
       tree and the canvas (current_inferred).
 ================================================================================
@@ -144,7 +157,7 @@ from .projects import (
     graph_counts,
     valid_lang,
 )
-from . import examples, lexical, modeling_checks, reasoning, shacl, shapes_form
+from . import axioms, examples, lexical, modeling_checks, reasoning, shacl, shapes_form
 from .canvas import build_canvas, restrict, with_inferred
 from .imports import imports_service, load_state
 from .snapshots import SnapshotService
@@ -1661,6 +1674,311 @@ def cmd_remove_example_value(ctx: Context, a: dict) -> Change:
     return _change(ctx.graph, label, removes=[(iri, prop, term)])
 
 
+# --- rules on a class: restrictions, disjoint and equivalent classes (axioms 5.8 to 5.10) ----
+
+
+class NoSuchRule(CommandError):
+    """A restriction named by content that the class does not have (404)."""
+
+
+def _own_class(ctx: Context, a: dict, key: str = "class") -> URIRef:
+    """A class this document defines: a rule is written on it, never on an
+    imported class, which is read-only (5.10)."""
+    cls = ctx.iri(a.get(key), "class")
+    if not any((cls, RDF.type, t) in ctx.graph for t in examples.CLASS_TYPES):
+        raise CommandError(f"There is no class {ctx.short(cls)} in this document.")
+    return cls
+
+
+def _view(ctx: Context) -> Graph:
+    """The document with its imports when they are resolved: a property, a
+    filler or a chain may be an import's (5.10, allowed)."""
+    return ctx.imported if ctx.imported is not None else ctx.graph
+
+
+def _rule_name(ctx: Context, iri) -> str:
+    return pick_label_in(_view(ctx), iri, ctx.languages)[0]
+
+
+def _rule_property(ctx: Context, value) -> tuple[URIRef, bool]:
+    """The property a rule is about, and whether it is an attribute."""
+    prop = ctx.iri(value, "relationship or attribute")
+    ctx.require(prop, "relationship or attribute")
+    kind = _property_kind(ctx, prop)
+    if kind is None:
+        raise CommandError(f"{_rule_name(ctx, prop)} is not a relationship or an attribute.")
+    return prop, kind == OWL.DatatypeProperty
+
+
+def _rule_class(ctx: Context, value, what: str) -> URIRef:
+    cls = ctx.iri(value, what)
+    ctx.require(cls, "class")
+    if cls != OWL.Thing and not examples.is_class(_view(ctx), cls):
+        raise CommandError(f"{_rule_name(ctx, cls)} is not a class.")
+    return cls
+
+
+def _rule_value(ctx: Context, value, attribute: bool):
+    """A *has value*: a thing for a relationship, a value for an attribute.
+    Text without a language is written plain, as Turtle writes it, so the
+    two read back as one rule (see axioms.same_term)."""
+    if not attribute:
+        spec = value if isinstance(value, dict) else {"kind": "link", "value": value}
+        if spec.get("kind") != "link":
+            raise CommandError("A relationship's value is a thing, by its IRI.")
+        thing = ctx.iri(spec.get("value"), "thing")
+        ctx.require(thing, "thing")
+        return thing
+    if not isinstance(value, dict):
+        raise CommandError("An attribute's value is text or a typed value.")
+    term = parse_value(value, ctx.primary, lambda v: ctx.iri(v, "link"))
+    if not isinstance(term, Literal):
+        raise CommandError("An attribute's value is text or a typed value, not a link.")
+    return Literal(str(term)) if term.datatype == XSD.string else term
+
+
+def _restriction_args(ctx: Context, a: dict) -> axioms.Content:
+    """The arguments of AddRestriction (and the new side of a replace) as
+    what the rule says, checked one by one, each refusal a sentence."""
+    form = a.get("form") or "every"
+    if form not in axioms.FORMS:
+        raise CommandError('The form is "every" or "defines".')
+    prop, attribute = _rule_property(ctx, a.get("property"))
+    kind = a.get("kind")
+    if kind not in axioms.KINDS:
+        raise CommandError("The kind is some, only, exactly, atLeast, atMost or value.")
+    if attribute and kind not in axioms.ATTRIBUTE_KINDS:
+        raise CommandError(
+            f"{_rule_name(ctx, prop)} is an attribute; an attribute takes exactly, at least, at most or a value."
+        )
+    n = a.get("n")
+    if kind in axioms.COUNT_KINDS:
+        if isinstance(n, bool) or not isinstance(n, int) or not 0 <= n <= axioms.MAX_N:
+            raise CommandError("A number of 0 to 1,000.")
+    elif n is not None:
+        raise CommandError("Only exactly, at least and at most take a number.")
+    filler = a.get("filler")
+    if kind == "value":
+        if filler in (None, ""):
+            raise CommandError("Choose the value.")
+        term = _rule_value(ctx, filler, attribute)
+    elif filler in (None, ""):
+        if kind in ("some", "only"):
+            raise CommandError("Choose the class it points to.")
+        term = None
+    elif attribute:
+        term = ctx.iri(filler, "type of value")
+        if not axioms.is_datatype(term):
+            raise CommandError(f"{ctx.short(term)} is not a type of value.")
+    else:
+        term = _rule_class(ctx, filler, "class")
+    with_ = None
+    if a.get("with"):
+        if form != "defines":
+            raise CommandError('Only the defining form ("is exactly") names a class with the rule.')
+        with_ = _rule_class(ctx, a["with"], "class")
+    return axioms.Content(form, prop, kind, term, n if kind in axioms.COUNT_KINDS else None, with_)
+
+
+def _restriction_key(ctx: Context, value) -> axioms.Content:
+    """The key a command names an existing restriction by, read as loosely
+    as the graph allows: what Turtle wrote is matched, not judged."""
+    if not isinstance(value, dict):
+        raise CommandError("Name the rule by what it says: form, property, kind, filler and n.")
+    form = value.get("form") or "every"
+    prop = ctx.iri(value.get("property"), "property")
+    kind = value.get("kind")
+    filler = value.get("filler")
+    if kind == "value" and isinstance(filler, dict):
+        term = _stored_value(ctx, filler)
+        term = Literal(str(term)) if isinstance(term, Literal) and term.datatype == XSD.string else term
+    elif filler not in (None, ""):
+        term = ctx.iri(filler, "filler")
+    else:
+        term = None
+    n = value.get("n")
+    with_ = ctx.iri(value["with"], "class") if value.get("with") else None
+    return axioms.Content(form, prop, kind, term, n if isinstance(n, int) and not isinstance(n, bool) else None, with_)
+
+
+def _found(ctx: Context, cls: URIRef, key: axioms.Content) -> tuple:
+    matches = axioms.find(ctx.graph, cls, key)
+    if not matches:
+        raise NoSuchRule(f"{ctx.name(cls)} has no such rule; it may have been changed or removed meanwhile.")
+    return matches[0]
+
+
+def _sweep(ctx: Context, cls: URIRef, predicate, node) -> list:
+    """The statement pointing at a restriction, its blank node and every
+    statement inside it: the restriction sweep DeleteEntity uses."""
+    pointing = {(cls, predicate, node)}
+    return [*pointing, *_bnode_closure(ctx.graph, [node], pointing)]
+
+
+def _bounds(content: axioms.Content) -> tuple:
+    low = content.n if content.kind in ("exactly", "atLeast") else None
+    high = content.n if content.kind in ("exactly", "atMost") else None
+    return low, high
+
+
+def _check_restriction(ctx: Context, cls: URIRef, new: axioms.Content, ignoring=None) -> None:
+    """5.10's checks, before anything is written: a count on a relationship
+    that is not simple, *at least* above *at most*, and a duplicate."""
+    for _, node, content in axioms.contents(ctx.graph, cls):
+        if node is ignoring:
+            continue
+        if content.same(new):
+            raise CommandError(f"{ctx.name(cls)} already has this rule.")
+    if new.kind not in axioms.COUNT_KINDS:
+        return
+    if _property_kind(ctx, new.property) == OWL.ObjectProperty:
+        refusal = modeling_checks.counting_refusal(_view(ctx), new.property, lambda i: _rule_name(ctx, i))
+        if refusal:
+            raise CommandError(refusal)
+    if new.form != "every":
+        return
+    low, high = _bounds(new)
+    for _, node, content in axioms.contents(ctx.graph, cls):
+        if node is ignoring or content.form != "every" or content.property != new.property:
+            continue
+        if content.kind not in axioms.COUNT_KINDS or not axioms.same_term(content.filler, new.filler):
+            continue
+        other_low, other_high = _bounds(content)
+        lows = [v for v in (low, other_low) if v is not None]
+        highs = [v for v in (high, other_high) if v is not None]
+        if lows and highs:
+            refusal = modeling_checks.count_conflict_refusal(
+                ctx.name(cls), _rule_name(ctx, new.property), max(lows), min(highs)
+            )
+            if refusal:
+                raise CommandError(refusal)
+
+
+def _restriction_adds(ctx: Context, cls: URIRef, content: axioms.Content) -> list:
+    attribute = _property_kind(ctx, content.property) == OWL.DatatypeProperty
+    restriction = axioms.restriction_triples(content.property, content.kind, content.filler, content.n, attribute)
+    if content.form == "every":
+        node, triples = restriction
+        return [(cls, RDFS.subClassOf, node), *triples]
+    return axioms.defining_triples(cls, restriction, content.with_)[1]
+
+
+def cmd_add_restriction(ctx: Context, a: dict) -> Change:
+    """One sentence of 5.8 on a class, in its Turtle shape (5.10)."""
+    _model_doc(ctx)
+    cls = _own_class(ctx, a)
+    content = _restriction_args(ctx, a)
+    _check_restriction(ctx, cls, content)
+    return _change(
+        ctx.graph, f"Added a rule on {_rule_name(ctx, content.property)} to {ctx.name(cls)}",
+        _restriction_adds(ctx, cls, content),
+    )
+
+
+def cmd_replace_restriction(ctx: Context, a: dict) -> Change:
+    """The rule named by `restriction` swept and the new one written, as
+    one undo step. The new one is checked with the old one set aside."""
+    _model_doc(ctx)
+    cls = _own_class(ctx, a)
+    old_key = _restriction_key(ctx, a.get("restriction"))
+    predicate, node = _found(ctx, cls, old_key)
+    content = _restriction_args(ctx, a)
+    old = next(c for p, n, c in axioms.contents(ctx.graph, cls) if n is node)
+    if old.same(content):
+        raise CommandError("That would change nothing.")
+    _check_restriction(ctx, cls, content, ignoring=node)
+    return _change(
+        ctx.graph, f"Changed a rule on {_rule_name(ctx, content.property)} of {ctx.name(cls)}",
+        _restriction_adds(ctx, cls, content), _sweep(ctx, cls, predicate, node),
+    )
+
+
+def cmd_remove_restriction(ctx: Context, a: dict) -> Change:
+    _model_doc(ctx)
+    cls = _own_class(ctx, a)
+    key = _restriction_key(ctx, a.get("restriction"))
+    predicate, node = _found(ctx, cls, key)
+    return _change(
+        ctx.graph, f"Removed a rule on {_rule_name(ctx, key.property)} from {ctx.name(cls)}",
+        removes=_sweep(ctx, cls, predicate, node),
+    )
+
+
+def _class_pair(ctx: Context, a: dict, predicate) -> tuple[URIRef, URIRef]:
+    _model_doc(ctx)
+    first = _own_class(ctx, a, "a")
+    second = _rule_class(ctx, a.get("b"), "class")
+    refusal = modeling_checks.pair_refusal(_view(ctx), first, second, predicate, lambda i: _rule_name(ctx, i))
+    if refusal:
+        raise CommandError(refusal)
+    return first, second
+
+
+def _pair_statements(ctx: Context, first, second, predicate) -> list:
+    return [t for t in ((first, predicate, second), (second, predicate, first)) if t in ctx.graph]
+
+
+def cmd_add_disjoint_with(ctx: Context, a: dict) -> Change:
+    """*No Person is an Organization* (5.8). Disjoint with one of its own
+    kinds is kept, and warned on the form (modeling_checks.never_members)."""
+    first, second = _class_pair(ctx, a, OWL.disjointWith)
+    if _pair_statements(ctx, first, second, OWL.disjointWith):
+        raise CommandError(f"{ctx.name(first)} and {_rule_name(ctx, second)} are already disjoint.")
+    return _change(
+        ctx.graph, f"Made {ctx.name(first)} and {_rule_name(ctx, second)} disjoint",
+        [(first, OWL.disjointWith, second)],
+    )
+
+
+def cmd_remove_disjoint_with(ctx: Context, a: dict) -> Change:
+    _model_doc(ctx)
+    first = _own_class(ctx, a, "a")
+    second = ctx.iri(a.get("b"), "class")
+    removes = _pair_statements(ctx, first, second, OWL.disjointWith)
+    if not removes:
+        raise CommandError(f"{ctx.name(first)} and {_rule_name(ctx, second)} are not disjoint in this document.")
+    return _change(
+        ctx.graph, f"Removed the disjointness of {ctx.name(first)} and {_rule_name(ctx, second)}", removes=removes
+    )
+
+
+def cmd_add_equivalent_class(ctx: Context, a: dict) -> Change:
+    """*Client and Customer mean the same thing* (5.8)."""
+    first, second = _class_pair(ctx, a, OWL.equivalentClass)
+    if _pair_statements(ctx, first, second, OWL.equivalentClass):
+        raise CommandError(f"{ctx.name(first)} and {_rule_name(ctx, second)} already mean the same thing.")
+    return _change(
+        ctx.graph, f"Made {ctx.name(first)} and {_rule_name(ctx, second)} mean the same thing",
+        [(first, OWL.equivalentClass, second)],
+    )
+
+
+def cmd_remove_equivalent_class(ctx: Context, a: dict) -> Change:
+    _model_doc(ctx)
+    first = _own_class(ctx, a, "a")
+    second = ctx.iri(a.get("b"), "class")
+    removes = _pair_statements(ctx, first, second, OWL.equivalentClass)
+    if not removes:
+        raise CommandError(
+            f"{ctx.name(first)} and {_rule_name(ctx, second)} do not mean the same thing in this document."
+        )
+    return _change(
+        ctx.graph, f"Removed that {ctx.name(first)} and {_rule_name(ctx, second)} mean the same thing",
+        removes=removes,
+    )
+
+
+AXIOM_COMMANDS = {
+    "AddRestriction": cmd_add_restriction,
+    "ReplaceRestriction": cmd_replace_restriction,
+    "RemoveRestriction": cmd_remove_restriction,
+    "AddDisjointWith": cmd_add_disjoint_with,
+    "RemoveDisjointWith": cmd_remove_disjoint_with,
+    "AddEquivalentClass": cmd_add_equivalent_class,
+    "RemoveEquivalentClass": cmd_remove_equivalent_class,
+}
+
+
 # --- SHACL shapes, one shape and one rule at a time (shacl-authoring 5.2, 5.3, D-093) ----
 
 SH = shapes_form.SH
@@ -2058,7 +2376,72 @@ def cmd_delete_shape(ctx: Context, a: dict) -> Change:
     return _change(g, f"Deleted shape {_shape_label(ctx, node)}", removes=list(removes))
 
 
+def cmd_check_in_data(ctx: Context, a: dict) -> Change:
+    """*Check it in data too* (axioms 5.8, D-106 Q3): the SHACL rule that
+    checks a restriction of the model, added to the class's shape -- the
+    first shape that targets it, or a new one named as CreateShape names it
+    -- as one undo step in the shapes document.
+
+    The V-6 commands' own pieces write it. A rule the rule editor can say
+    (sh:class, sh:minCount, sh:maxCount) joins the rule already on that
+    path, as Add on a suggestion does, so an editable shape stays editable;
+    one that disagrees with it is refused, never overwritten. A qualified
+    count or a value is a property shape of its own: the form shows such a
+    shape read-only and never rewrites it (shapes_form), and nothing here
+    touches a statement already there."""
+    _shapes_ctx(ctx)
+    model = ctx.model
+    cls = ctx.iri(a.get("class"), "class")
+    key = _restriction_key(ctx, a.get("restriction"))
+    matches = [c for _, _, c in axioms.contents(model, cls) if c.same(key, with_matters=key.with_ is not None)]
+    if not matches:
+        raise NoSuchRule(f"{_model_name(ctx, cls)} has no such rule in the model.")
+    content = matches[0]
+    attribute = axioms.property_kind(model, content.property) == "attribute"
+    path = (content.property,)
+    path_label = shapes_form.path_label(model, path, ctx.languages)
+    targeting = [s for s in shapes_form.listed_shapes(ctx.graph) if (s, SH.targetClass, cls) in ctx.graph]
+    adds: list = []
+    removes: list = []
+    if targeting:
+        node = targeting[0]
+        shape_name = _shape_label(ctx, node)
+        severity = _severity_of(ctx, node)
+        editable = shapes_form.read_shape(
+            ctx.graph, node, model, lambda i: _model_name(ctx, i), ctx.languages
+        )["editable"]
+    else:
+        made = cmd_create_shape(ctx, {"target": str(cls)})
+        node, adds = made.created, list(made.added)
+        shape_name = f"{_model_name(ctx, cls)} rules"
+        severity, editable = None, True
+    plain = axioms.shacl_plain(content, attribute)
+    if plain is not None and editable:
+        existing = _read_rules(ctx, node).get(path) if targeting else None
+        if existing is not None:
+            if all(existing.get(k) == v for k, v in plain.items()):
+                raise CommandError(f"{shape_name} already checks this.")
+            if any(k in existing and existing[k] != v for k, v in plain.items()):
+                raise CommandError(
+                    f"{shape_name} already checks {path_label} differently; change that rule in the Shapes view."
+                )
+            rule = _merged(existing, plain)
+            removes = _rules_on(ctx, node, path)
+        else:
+            rule = {"path": [str(content.property)], **plain}
+        adds += _rule_triples(ctx, node, rule, severity)[1]
+    else:
+        prop, triples = axioms.shacl_triples(content, attribute, severity)
+        wanted = axioms.signature_of(triples, prop)
+        if any(axioms.signature(ctx.graph, p) == wanted for p in ctx.graph.objects(node, SH.property)):
+            raise CommandError(f"{shape_name} already checks this.")
+        adds += [(node, SH.property, prop), *triples]
+    _bind_shapes(ctx)
+    return _change(ctx.graph, f"Added a check on {path_label} to {shape_name}", adds, removes)
+
+
 SHAPE_COMMANDS = {
+    "CheckInData": cmd_check_in_data,
     "CreateShape": cmd_create_shape,
     "SetShapeTarget": cmd_set_shape_target,
     "SetShapeName": cmd_set_shape_name,
@@ -2107,6 +2490,7 @@ COMMANDS: dict[str, Callable[[Context, dict], Change]] = {
     "SetExampleValue": cmd_set_example_value,
     "AddExampleValue": cmd_add_example_value,
     "RemoveExampleValue": cmd_remove_example_value,
+    **AXIOM_COMMANDS,
     **SHAPE_COMMANDS,
 }
 

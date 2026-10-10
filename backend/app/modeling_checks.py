@@ -34,6 +34,14 @@ BASIC IDEA
     visible until it is resolved rather than surfacing only at the next
     click.
 
+    axioms-and-reasoning 5.10 adds the checks on a class's rules, in the
+    same words: a count on a relationship that is not simple, found by the
+    same walk the chaining rule uses (counting_refusal); *at least* above
+    *at most* (count_conflict_refusal); a class disjoint with or the same as
+    itself, or both disjoint with and the same as another (pair_refusal);
+    and, warned and kept, the classes that can never have members because
+    of a disjointness (never_members), from one scan of each predicate.
+
     This is not an OWL 2 DL profile check; that is V-7's reasoner.
 
 INPUTS / INPUT SOURCES
@@ -43,6 +51,7 @@ INPUTS / INPUT SOURCES
 EXPECTED OUTPUT
     - *_refusal(...) -> the sentence, or None.
     - warnings(graph, prop, name) -> [{"text", "fix"?}] for one property.
+    - never_members(graph, cls, name) -> [{"text", "disjoint"?}] for one class.
 ================================================================================
 """
 
@@ -227,6 +236,40 @@ def inverse_chaining_refusal(graph: Graph, prop: URIRef, inverse: URIRef, label:
     return _Facts(graph).refusal(prop, label, change)
 
 
+def counting_refusal(graph: Graph, prop: URIRef, label: Name) -> Optional[str]:
+    """A count on a relationship that is not simple (axioms 5.10): OWL 2 DL
+    forbids it as it forbids the four characteristics above, and the walk
+    that finds why is the same one (Section 11.2 of the structural
+    specification)."""
+    why = _Facts(graph).not_simple().get(prop)
+    if why is None:
+        return None
+    source, how = why
+    tail = 'Use "has at least one" instead.'
+    if how == "self":
+        return f"{label(prop)} chains, so OWL 2 does not allow counting it. {tail}"
+    if how == "under":
+        return f"{label(source)} chains and is under {label(prop)}, so OWL 2 does not allow counting {label(prop)}. {tail}"
+    return f"The other way round of {label(prop)} chains, so OWL 2 does not allow counting it. {tail}"
+
+
+def _noun(prop_label: str, many: bool) -> str:
+    """*has line* read as the thing counted, *lines*, as the spec's sentence
+    says it; any other name is quoted, never guessed at."""
+    words = prop_label.strip()
+    if words.lower().startswith("has ") and len(words) > 4:
+        noun = words[4:]
+        return noun + ("" if not many or noun.endswith("s") else "s")
+    return f'"{words}" values'
+
+
+def count_conflict_refusal(cls_name: str, prop_label: str, low: int, high: int) -> Optional[str]:
+    """*At least* above *at most* on one class and property (5.10)."""
+    if low <= high:
+        return None
+    return f"{cls_name} cannot have at least {low} and at most {high} {_noun(prop_label, True)}."
+
+
 def own_inverse_refusal(prop: URIRef, inverse: URIRef, name: str) -> Optional[str]:
     if prop == inverse:
         return f'{name} cannot be its own other way round. Use "Works both ways" instead.'
@@ -320,6 +363,84 @@ def broader_related_refusal(graph: Graph, concept: URIRef, broader: URIRef, name
                 "narrower than the other as well."
             )
     return None
+
+
+# --- disjoint and equivalent classes (axioms 5.10) -------------------------------------
+
+
+def _named_either_way(graph: Graph, cls: URIRef, predicate: URIRef) -> set:
+    found = {o for o in graph.objects(cls, predicate) if isinstance(o, URIRef)}
+    found |= {s for s in graph.subjects(predicate, cls) if isinstance(s, URIRef)}
+    found.discard(cls)
+    return found
+
+
+def pair_refusal(graph: Graph, a: URIRef, b: URIRef, predicate: URIRef, name: Name) -> Optional[str]:
+    """Disjoint with itself, the same as itself, or both disjoint with and
+    the same as one class: each is refused before it is written."""
+    disjoint = predicate == OWL.disjointWith
+    if a == b:
+        return "A class cannot be disjoint with itself." if disjoint else "A class cannot mean the same as itself."
+    if disjoint and b in _named_either_way(graph, a, OWL.equivalentClass):
+        return f"{name(a)} cannot be disjoint with {name(b)} and mean the same as it."
+    if not disjoint and b in _named_either_way(graph, a, OWL.disjointWith):
+        return f"{name(a)} cannot mean the same as {name(b)} and be disjoint with it."
+    return None
+
+
+def never_members(graph: Graph, cls: URIRef, name: Name) -> list[dict]:
+    """The classes that can never have members because of a disjointness
+    this class takes part in (5.10, warned, kept). One scan of each
+    predicate. Each warning names the disjoint class it concerns
+    (`disjoint`) when `cls` is one of the pair, so the form stands it under
+    that rule; the rest stand under the block.
+
+    - `cls` is a kind of two disjoint classes (directly or through others),
+      or disjoint with one of its own kinds;
+    - a class below both `cls` and a class it is disjoint with."""
+    parents: dict = {}
+    for child, parent in graph.subject_objects(RDFS.subClassOf):
+        if isinstance(child, URIRef) and isinstance(parent, URIRef):
+            parents.setdefault(child, []).append(parent)
+    pairs = set()
+    for x, y in graph.subject_objects(OWL.disjointWith):
+        if isinstance(x, URIRef) and isinstance(y, URIRef) and x != y:
+            pairs.add(tuple(sorted((x, y))))
+    if not pairs:
+        return []
+    out: list[dict] = []
+    above = {cls} | _above(parents, cls)
+    for x, y in sorted(pairs):
+        if x not in above or y not in above:
+            continue
+        if cls in (x, y):
+            other = y if cls == x else x
+            out.append({
+                "text": f"{name(cls)} can never have members: it is a kind of {name(other)} and disjoint with it.",
+                "disjoint": str(other),
+            })
+        else:
+            first, second = sorted((name(x), name(y)), key=str.casefold)
+            out.append({"text": f"{name(cls)} can never have members: it would be a kind of {first} and of {second}."})
+    children: dict = {}
+    for child, ups in parents.items():
+        for up in ups:
+            children.setdefault(up, []).append(child)
+    below = {cls} | _above(children, cls)
+    for x, y in sorted(pairs):
+        if cls not in (x, y):
+            continue
+        other = y if cls == x else x
+        for under in sorted(below & ({other} | _above(children, other))):
+            if under == cls:
+                continue  # cls below the other: said above, from cls's side
+            if under == other:
+                text = f"{name(other)} can never have members: it is a kind of {name(cls)} and disjoint with it."
+            else:
+                first, second = sorted((name(cls), name(other)), key=str.casefold)
+                text = f"{name(under)} can never have members: it would be a kind of {first} and of {second}."
+            out.append({"text": text, "disjoint": str(other)})
+    return out
 
 
 # --- warnings, read on each view of a property ---------------------------------------

@@ -41,6 +41,14 @@ BASIC IDEA
     choosing what to show changes the layout file, not the model, and must
     not rebuild the view.
 
+    A class's rules (axioms-and-reasoning 5.9) are drawn too: a restriction
+    whose filler is a named class is a `rule` line carrying its content, so
+    the frontend labels it (*at least 1 · has line*, *defines*) and removes
+    it by its key; disjointness is listed in the box (`disjoint`), never a
+    line between boxes; anything else is counted (`moreRules`). Only the
+    classes a predicate scan finds with rules are read: asking every class
+    doubled the view's time.
+
     A current reasoning result (axioms-and-reasoning 5.7) is laid on top
     the same way, per request: its *kind of* lines between boxes already
     drawn, each `inferred: true` so the canvas dashes and labels it, and a
@@ -53,7 +61,8 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - build_canvas(...) -> {nodes, edges, undrawn, total}; each edge with
-      `pair` and `pairs`.
+      `pair` and `pairs`; a `rule` edge with `rule` and `key`; a class box
+      with `disjoint` and `moreRules` when it has them.
     - restrict(view, shown) -> the same shape, cut to the shown set.
     - with_inferred(view, kinds, never) -> the view with inferred lines and
       never-members flags added, the cached view untouched.
@@ -67,6 +76,7 @@ from typing import Optional, Sequence
 from rdflib import Graph, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 
+from . import axioms
 from .graph_builder import labeler, lang_matches, pick_label_in, prefixed
 
 # Past this many classes and concepts the canvas draws only a chosen set
@@ -202,6 +212,60 @@ def build_canvas(
                 "label": label(prop),
             })
 
+    # Rules (axioms-and-reasoning 5.9): a restriction whose filler is a named
+    # class is a dashed line to it, labelled by the frontend from its
+    # content; any other rule on a class -- a value, an attribute's count,
+    # a filler that is no class, same meaning, Turtle outside 5.8 -- is
+    # counted on the box, *1 more rule in the form*. Disjointness is a line
+    # in the box, never a line between boxes, to keep the canvas legible.
+    # One scan of each predicate, then only the classes that have a rule:
+    # asking every class for its rules doubled the 10,000-statement view's
+    # time (measured, 45 ms to 110 ms).
+    more: dict[URIRef, int] = {}
+    disjoint: dict[URIRef, list] = {}
+    with_rules: set = set()
+    for predicate in (RDFS.subClassOf, OWL.equivalentClass, OWL.disjointWith, OWL.disjointUnionOf):
+        for s, o in graph.subject_objects(predicate):
+            if predicate != RDFS.subClassOf or not isinstance(o, URIRef):
+                with_rules.add(s)
+                if isinstance(o, URIRef):
+                    with_rules.add(o)
+    for cls in sorted(classes & with_rules):
+        readable = set()
+        for _, node, content in axioms.contents(graph, cls):
+            readable.add(node)
+            filler = content.filler
+            drawn = (
+                content.kind != "value" and isinstance(filler, URIRef)
+                and not axioms.is_datatype(filler) and end(filler, "class")
+            )
+            if not drawn:
+                more[cls] = more.get(cls, 0) + 1
+                continue
+            edges.append({
+                "kind": "rule",
+                "source": str(cls),
+                "target": str(filler),
+                "rule": {
+                    "form": content.form, "kind": content.kind, "n": content.n,
+                    "property": str(content.property), "propertyLabel": outside_label(content.property),
+                    "fillerLabel": outside_label(filler),
+                    "withLabel": outside_label(content.with_) if content.with_ is not None else None,
+                },
+                "key": axioms.key_json(content),
+            })
+        others = axioms.named_pairs(graph, cls, OWL.disjointWith)
+        if others:
+            disjoint[cls] = [{"iri": str(o), "label": outside_label(o)} for o in others]
+        unread = len(axioms.named_pairs(graph, cls, OWL.equivalentClass))
+        for predicate in (RDFS.subClassOf, OWL.equivalentClass, OWL.disjointWith, OWL.disjointUnionOf):
+            unread += sum(
+                1 for o in graph.objects(cls, predicate)
+                if o not in readable and (not isinstance(o, URIRef) or predicate == OWL.disjointUnionOf)
+            )
+        if unread:
+            more[cls] = more.get(cls, 0) + unread
+
     _spread(edges)
 
     # An attribute is drawn in its class's box; a class outside the model is
@@ -223,6 +287,8 @@ def build_canvas(
             "label": label(iri),
             "fallback": fallback(iri),
             "attributes": attributes.get(iri, []),
+            **({"disjoint": disjoint[iri]} if iri in disjoint else {}),
+            **({"moreRules": more[iri]} if iri in more else {}),
         }
         for iri in sorted(classes | concepts)
     ]

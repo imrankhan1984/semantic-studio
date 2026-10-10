@@ -49,7 +49,9 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - JSON responses (ontology summaries, graph, one entity's neighbourhood,
-      node details -- for a project's example, its classes and fields
+      node details -- for a project's class, its rules, their warnings and
+      the sentence builder's choices (axioms-and-reasoning 5.9); for a
+      project's example, its classes and fields
       (shacl-authoring 5.8) --, search results, query schema, the queries stored in the
       file, source text, SPARQL results)
       and appropriate HTTP errors:
@@ -74,6 +76,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field  # declares/validates JSON request bodies
 from rdflib import URIRef
+from rdflib.namespace import RDF
 from starlette.concurrency import run_in_threadpool
 
 # Delegate the real work to the domain modules.
@@ -90,7 +93,7 @@ from ..graph_builder import (
     node_details,
     search_nodes,
 )
-from .. import examples, modeling_checks
+from .. import axioms, examples, modeling_checks
 from .. import imports as imports_mod
 from ..imports import imports_service
 from ..net_guard import BlockedAddress
@@ -594,6 +597,19 @@ def get_node(
         if details is not None and ontology.editable and details.get("kind") in PROPERTY_KINDS:
             name = labeler(ontology.graph, ontology.label_langs(lang))
             details["warnings"] = modeling_checks.warnings(ontology.graph, URIRef(iri), name)
+        # A project's class carries its rules (axioms-and-reasoning 5.9):
+        # the sentences of 5.8 read from the view, so an import's rule shows
+        # read-only, the warnings of 5.10, and the builder's choices when
+        # the class is this document's to change.
+        if details is not None and ontology.editable and details.get("kind") == "class":
+            name = labeler(graph, ontology.label_langs(lang))
+            cls = URIRef(iri)
+            own = any((cls, RDF.type, t) in ontology.graph for t in examples.CLASS_TYPES)
+            details["rules"] = {
+                "items": axioms.class_rules(graph, cls, ontology.graph, name),
+                "warnings": modeling_checks.never_members(graph, cls, name),
+                "choices": axioms.choices(graph, name) if own else None,
+            }
         # A snapshot's individual is read-only data (csv-data-import 5.6):
         # where it came from, never an example's form.
         from_data = _from_data(ontology, iri) if details is not None and ontology.editable else None
