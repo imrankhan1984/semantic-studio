@@ -31,6 +31,9 @@ BASIC IDEA
     shapes.ttl are decided by DetailPanel, which does not render this at all
     for them.
 
+    A class's structure carries its rules, RulesBlock.tsx (axioms 5.9):
+    the sentences of 5.8, the builder, and Check it in data too.
+
     A class's form lists its examples and offers *Add an example*
     (shacl-authoring 5.8); an example's form shows, in place of a class's
     structure, which class it is an example of and one field per attribute
@@ -341,6 +344,7 @@ export default function EditSection({
           onSelect={onSelect}
           follow={follow}
           warnings={details.warnings ?? []}
+          rules={details.rules}
         />
       )}
 

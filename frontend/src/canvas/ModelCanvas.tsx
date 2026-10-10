@@ -47,6 +47,15 @@ BASIC IDEA
     a loop (curves.ts). Completing an existing relationship is one command,
     SetEnds, so one undo step (it was two).
 
+    Rules (axioms-and-reasoning 5.9) are dashed lines from a class to the
+    class at the other end, always labelled with their short form (*at least
+    1 · has line*, *only · has line*, *defines*) and read aloud as their
+    sentence. A click selects the class, whose form lists the rule; Delete
+    removes it (RemoveRestriction). The relate menu's *a rule* entry selects
+    the class and leaves a draft in the project store, which the class's
+    Rules block opens its sentence builder on: the rule is written in the
+    form, which is where every canvas action also lives (D-078).
+
     The project's kind decides the palette (Class for an ontology, Concept
     for a taxonomy) and which boxes the canvas may change (D-089). The other
     kind's boxes are still drawn, never hidden, marked read-only, with one
@@ -97,6 +106,7 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import DeleteDialog from "../components/DeleteDialog";
 import { getNodeDetails } from "../api";
 import { useRunner } from "../components/EditParts";
+import { restrictionSentence, shortLabel } from "../modeling/ruleSentences";
 import { createdAnnouncement, linkSentence, otherKindNote } from "../modeling/sentences";
 import { projectStore } from "../state/projectStore";
 import type { CanvasLink, CanvasNode, CanvasSet, CanvasView, ProjectDocName } from "../types";
@@ -141,6 +151,8 @@ interface LineData extends Record<string, unknown> {
   dashed: boolean;
   // A reasoning conclusion: dashed and labelled *inferred* (5.7).
   inferred: boolean;
+  // A rule (axioms 5.9): dashed, always labelled with its short form.
+  rule: boolean;
   // A click on the label is a click on its line (5.10 item 7).
   onLabel: (id: string) => void;
 }
@@ -176,7 +188,7 @@ function LabelledEdge(props: EdgeProps<Edge<LineData>>) {
         id={props.id}
         path={path}
         markerEnd={props.markerEnd}
-        className={`canvas-edge${data.always ? " relationship" : ""}${data.dashed ? " related" : ""}${data.inferred ? " inferred" : ""}${props.selected ? " selected" : ""}`}
+        className={`canvas-edge${data.always ? " relationship" : ""}${data.dashed ? " related" : ""}${data.inferred ? " inferred" : ""}${data.rule ? " rule" : ""}${props.selected ? " selected" : ""}`}
       />
       {show && (
         <EdgeLabelRenderer>
@@ -343,6 +355,15 @@ function Canvas(props: ModelCanvasProps) {
     // The relationship a line made or completed: selected once it exists, so
     // its details are on screen at once (5.2).
     let relationship: string | null = null;
+    if (choice.kind === "rule") {
+      // The rule is written in the form (D-078): select the class and leave
+      // the draft, which its Rules block opens the sentence builder on, with
+      // this line's end as the class at the other end (axioms 5.9).
+      projectStore.startRule(from, to);
+      setRelate(null);
+      selectHere(from);
+      return;
+    }
     if (choice.kind === "subClassOf") ok = !!(await run("relate", "AddSubClassOf", { child: from, parent: to }));
     else if (choice.kind === "broader") ok = !!(await run("relate", "AddBroader", { concept: from, broader: to }));
     else if (choice.kind === "related") ok = !!(await run("relate", "AddRelated", { concept: from, related: to }));
@@ -434,6 +455,10 @@ function Canvas(props: ModelCanvasProps) {
     if (edge.kind === "subClassOf") await run("edge", "RemoveSubClassOf", { child: edge.source, parent: edge.target });
     else if (edge.kind === "broader") await run("edge", "RemoveBroader", { concept: edge.source, broader: edge.target });
     else if (edge.kind === "related") await run("edge", "RemoveRelated", { concept: edge.source, related: edge.target });
+    else if (edge.kind === "rule" && edge.key) {
+      const said = ruleWords(view!, edge);
+      await run("edge", "RemoveRestriction", { class: edge.source, restriction: edge.key }, (r) => `Removed: ${said}. ${r.label}.`);
+    }
     else if (edge.property) setDeleting({ iri: edge.property, label: edge.label ?? edge.property });
     setSelectedEdge(null);
   };
@@ -452,13 +477,20 @@ function Canvas(props: ModelCanvasProps) {
     const words =
       line.kind === "relationship"
         ? `${label(view, line.source)} ${line.label} ${label(view, line.target)}`
-        : linkSentence(line.kind, label(view, line.source), label(view, line.target));
+        : line.kind === "rule"
+          ? ruleWords(view, line)
+          : linkSentence(line.kind, label(view, line.source), label(view, line.target));
     setSelectedEdge(id);
     setHint(fixed ?? `${words} selected. Delete removes it.`);
     wrapper.current?.focus();
     if (line.kind === "relationship" && line.property) {
       edgeSelection.current = line.property;
       selectHere(line.property);
+    } else if (line.kind === "rule") {
+      // A rule is its class's (5.9): the form opens on the class, where
+      // the rule is listed, and the line stays lit while it is selected.
+      edgeSelection.current = line.source;
+      selectHere(line.source);
     } else if (line.kind !== "relationship" && !line.inferred) {
       edgeSelection.current = null;
       onSelectLink?.({
@@ -544,7 +576,9 @@ function Canvas(props: ModelCanvasProps) {
         ariaLabel:
           e.kind === "relationship"
             ? `${label(view, e.source)} ${e.label} ${label(view, e.target)}`
-            : `${linkSentence(e.kind, label(view, e.source), label(view, e.target))}${e.inferred ? ", inferred" : ""}`,
+            : e.kind === "rule"
+              ? `${ruleWords(view, e)}, a rule`
+              : `${linkSentence(e.kind, label(view, e.source), label(view, e.target))}${e.inferred ? ", inferred" : ""}`,
         // A hollow triangle at the parent for a subclass (5.4); an arrow for
         // broader and relationships; none for related, which reads the same
         // both ways (5.8). The hollow one is ours: React Flow draws only
@@ -557,14 +591,24 @@ function Canvas(props: ModelCanvasProps) {
               : { type: relationship ? MarkerType.ArrowClosed : MarkerType.Arrow },
         data: {
           // An inferred line always says so, in words: never by its dash alone.
-          text: e.kind === "relationship" ? (e.label ?? "") : e.inferred ? "inferred" : LINE_WORDS[e.kind],
-          always: relationship || Boolean(e.inferred),
+          text:
+            e.kind === "relationship"
+              ? (e.label ?? "")
+              : e.kind === "rule"
+                ? e.rule
+                  ? shortLabel(e.rule)
+                  : "rule"
+                : e.inferred
+                  ? "inferred"
+                  : LINE_WORDS[e.kind],
+          always: relationship || Boolean(e.inferred) || e.kind === "rule",
           hover: hover === id,
           pair: e.pair ?? 0,
           pairs: e.pairs ?? 1,
           forward: e.source < e.target,
           dashed: e.kind === "related",
           inferred: Boolean(e.inferred),
+          rule: e.kind === "rule",
           onLabel: clickLabel,
         },
       };
@@ -1025,7 +1069,7 @@ function sides(from?: [number, number], to?: [number, number]): ["t" | "r" | "b"
 }
 
 /** What a hierarchy or related line says, on hover and when selected. */
-const LINE_WORDS: Record<Exclude<CanvasView["edges"][number]["kind"], "relationship">, string> = {
+const LINE_WORDS: Record<Exclude<CanvasView["edges"][number]["kind"], "relationship" | "rule">, string> = {
   subClassOf: "is a kind of",
   broader: "narrower than",
   related: "related to",
@@ -1040,7 +1084,21 @@ const UNDRAWN_WHY: Record<CanvasView["undrawn"][number]["missing"], string> = {
 };
 
 function edgeId(e: CanvasView["edges"][number]): string {
-  return `${e.kind}|${e.source}|${e.target}|${e.property ?? ""}`;
+  // Two rules may join the same two boxes: a rule's line is told by its key.
+  return `${e.kind}|${e.source}|${e.target}|${e.property ?? (e.key ? JSON.stringify(e.key) : "")}`;
+}
+
+/** A rule's line read as its sentence (5.9). */
+function ruleWords(view: CanvasView, e: CanvasView["edges"][number]): string {
+  if (!e.rule) return `A rule from ${label(view, e.source)} to ${label(view, e.target)}`;
+  return restrictionSentence(label(view, e.source), {
+    form: e.rule.form,
+    kind: e.rule.kind,
+    property: e.rule.propertyLabel,
+    filler: e.rule.fillerLabel,
+    n: e.rule.n,
+    with: e.rule.withLabel,
+  });
 }
 
 /** One line when the document holds the other kind (5.1). Imported boxes

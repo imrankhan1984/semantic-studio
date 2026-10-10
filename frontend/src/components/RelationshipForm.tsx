@@ -10,7 +10,9 @@ SUMMARY
     characteristics each with an example in the relationship's own names,
     its more general relationship, and pointers to what it cannot say. Also
     PropertyHead, the sentence at the top of both property forms, and
-    Warnings, the 5.9 warnings shown under the block each concerns.
+    Warnings, the 5.9 warnings shown under the block each concerns. The
+    Pointers block links to the start class's rules (axioms 5.9): it opens
+    the class's sentence builder with this relationship and its end.
 
 BASIC IDEA
     Every control is one command, so one labelled undo step, sent through
@@ -82,7 +84,7 @@ export function datatypeOf(range: Ref | null): string | null {
 /** Say each warning a change brings, once, in the project's live region.
  *  Those there when the entity is opened are not: they are read with the
  *  form. Keyed by entity, so moving to another does not announce its own. */
-function useWarningAnnouncer(iri: string, warnings: ModelWarning[]) {
+export function useWarningAnnouncer(iri: string, warnings: { text: string }[]) {
   const seen = useRef<{ iri: string; texts: Set<string> } | null>(null);
   const texts = warnings.map((w) => w.text).join("\n");
   useEffect(() => {
@@ -444,9 +446,29 @@ export default function RelationshipForm({
       </Block>
 
       <Block title="Pointers">
-        <p className="detail-note">
-          To say "every Invoice has at least one Invoice Item", see Restrictions (coming with axioms).
-        </p>
+        {model.domain ? (
+          // axioms 5.9: the pointer is now the way there. It opens the start
+          // class's Rules block with this relationship and its end chosen.
+          <p className="detail-note">
+            To say "every {model.domain.label} has at least one {to ?? "…"}",{" "}
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => {
+                projectStore.startRule(model.domain!.iri, model.range?.iri ?? "", iri);
+                onSelect(model.domain!.iri);
+              }}
+            >
+              add a rule to {model.domain.label}
+            </button>
+            .
+          </p>
+        ) : (
+          <p className="detail-note">
+            To say "every Invoice has at least one Invoice Item", add a rule in the class's form, under What is true
+            of every Invoice.
+          </p>
+        )}
         <p className="detail-note">To require values in data, see Shapes (SHACL).</p>
       </Block>
     </>

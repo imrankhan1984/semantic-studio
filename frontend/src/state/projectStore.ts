@@ -40,6 +40,10 @@ BASIC IDEA
     server refuses says so. A run whose answer arrives after the model moved
     is announced as such, never as current (PR #55 review).
 
+    A rule begun on the canvas waits here for the form (axioms 5.9): the
+    relate menu selects the class and leaves the draft, and the class's
+    Rules block opens its sentence builder on it once.
+
     Data snapshots are not documents: changing one moves no revision and no
     undo step (5.7). The server counts their changes in a generation of its
     own, which every view's fetch key carries beside the revision, so
@@ -145,6 +149,10 @@ export interface ProjectSnapshot {
    *  can share a basis (Reason again with the data ticked), and keyed on the
    *  basis alone the tree kept the first run's marks (code review). */
   reasoningToken: number;
+  /** A rule started on the canvas (axioms-and-reasoning 5.9): the relate
+   *  menu's *a rule* entry opens the class's sentence builder with both
+   *  classes filled. The form takes it once, by its token. */
+  ruleDraft: { cls: string; filler: string; property?: string; token: number } | null;
 }
 
 const EMPTY: ProjectSnapshot = {
@@ -168,6 +176,7 @@ const EMPTY: ProjectSnapshot = {
   showInferred: false,
   reasoningData: false,
   reasoningToken: 0,
+  ruleDraft: null,
 };
 
 let snapshot: ProjectSnapshot = EMPTY;
@@ -513,6 +522,18 @@ export const projectStore = {
   /** Ask the Turtle editor to move to what a shape is written as. */
   showInEditor(find: string[]): void {
     set({ editorTarget: { find, token: (snapshot.editorTarget?.token ?? 0) + 1 } });
+  },
+
+  /** Open the class's sentence builder with its other class chosen: the
+   *  relate menu's rule entry, or a relationship form's pointer with the
+   *  relationship too (axioms 5.9). The form opens it once. */
+  startRule(cls: string, filler: string, property?: string): void {
+    set({ ruleDraft: { cls, filler, ...(property ? { property } : {}), token: (snapshot.ruleDraft?.token ?? 0) + 1 } });
+  },
+
+  /** The form has opened the builder for the draft: it is spent. */
+  ruleDraftTaken(): void {
+    if (snapshot.ruleDraft !== null) set({ ruleDraft: null });
   },
 
   /** The editor has moved to the target: it is spent, so a later visit to

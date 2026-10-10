@@ -345,6 +345,28 @@ describe("ShapesView: the form", () => {
     expect(props.onEditInTurtle).toHaveBeenCalledWith(CONTACT);
   });
 
+  // axioms-and-reasoning AC-12: Check it in data too writes a qualified
+  // count, which the form reads only as the language rule. The shape is
+  // then the server's read-only one, and the form offers nothing that could
+  // rewrite or drop the rule.
+  it("never offers to rewrite a shape that holds a rule checked from the model", async () => {
+    const checked: ShapeForm = {
+      ...PERSON,
+      id: `${X}OrderRules`, iri: `${X}OrderRules`, name: "Order rules",
+      editable: false, unsupported: ["uses sh:qualifiedValueShape"],
+    };
+    await setup([checked]);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Order rules/ }));
+    });
+    expect(screen.getByText("uses sh:qualifiedValueShape")).toBeTruthy();
+    for (const name of [/^Edit the rule/, /^Remove the rule/, "+ Add a rule"]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    expect(screen.queryByLabelText("A warning")).toBeNull();
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
   // Found in review: editing a rule must change only what was changed.
   it("keeps a one-sided count one-sided when a rule is edited", async () => {
     await openPerson([{ ...PERSON, rules: [{ path: [`${X}name`], pathLabel: "name", pathKind: "attribute", minCount: 2 }] }]);

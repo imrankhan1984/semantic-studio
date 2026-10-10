@@ -1340,6 +1340,13 @@ export default function App() {
     [],
   );
 
+  // Edit in Turtle from a class's Rules block (axioms 5.9) leaves its target
+  // in the store, as the shapes form's does; the editor is in View.
+  const editorTarget = useProjectSelector((s) => s.editorTarget);
+  useEffect(() => {
+    if (editorTarget) setMode("view");
+  }, [editorTarget]);
+
   useEffect(() => {
     if (pendingSelection.current === null) return;
     const iri = pendingSelection.current;
