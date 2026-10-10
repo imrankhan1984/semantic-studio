@@ -377,7 +377,7 @@ describe("Reason and the results panel (Section 6)", () => {
     expect(screen.getByRole("button", { name: "Reason" })).toBeTruthy();
   });
 
-  it("ignores a run that outlives its project, and the panel can be closed", async () => {
+  it("ignores a run that outlives its project, and the panel stays: it has no close (PR #55 review)", async () => {
     await setup();
     const run = pending();
     await press("Reason");
@@ -392,7 +392,125 @@ describe("Reason and the results panel (Section 6)", () => {
     const second = pending();
     await press("Reason");
     await second.answer(result());
-    await press("Close the results");
-    expect(screen.queryByRole("region")).toBeNull();
+    // 5.3: the panel stays. A close unmounted it, focus fell to <body>, and
+    // nothing brought it back.
+    expect(screen.getByRole("region", { name: "Results: reasoned in 4 s" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /close/i })).toBeNull();
+  });
+});
+
+describe("Focus and endings (PR #55 review)", () => {
+  /** Record a change to the model as a command's answer would. */
+  const edit = async (revision: number) => {
+    const model = projectStore.getSnapshot().documents.find((d) => d.doc === "model")!;
+    await act(async () => {
+      projectStore.applied({ state: { ...model, revision, dirty: true }, label: "Renamed Robot" } as Parameters<
+        typeof projectStore.applied
+      >[0]);
+    });
+  };
+
+  it("gives Reason again's focus to the results heading when its run is current", async () => {
+    const { rerender } = await setup();
+    const run = pending();
+    await press("Reason");
+    await run.answer(result());
+    rerender(view("ontology", { ...NOW, imports: true }));
+    const again = screen.getByRole("button", { name: "Reason again" });
+    again.focus();
+    const next = pending();
+    await press("Reason again");
+    // Still there while it runs, and still focused.
+    expect(document.activeElement).toBe(again);
+    await next.answer(result({ basis: { revision: 3, generation: 0, imports: true } }));
+    expect(screen.queryByRole("button", { name: "Reason again" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Results: reasoned in 4 s" }));
+  });
+
+  it("gives the last Show more's focus to the first fact it showed", async () => {
+    await setup();
+    const many = Array.from({ length: 200 }, (_, i) => fact(`e${i}`, "Person", `e${i} is a Person`));
+    const run = pending();
+    await press("Reason");
+    await run.answer(result({ problems: [], groups: [group("memberships", many, 250)] }));
+    getReasoningPage.mockResolvedValue({
+      ...group("memberships", Array.from({ length: 50 }, (_, i) => fact(`f${i}`, "Person", `f${i} is a Person`)), 250),
+      offset: 200,
+      stale: false,
+    });
+    screen.getByRole("button", { name: "Show more" }).focus();
+    await press("Show more");
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "f0 is a Person" }));
+  });
+
+  it("presses Stop once: it is aria-disabled until the run's answer arrives", async () => {
+    await setup();
+    const run = pending();
+    let stopped: (v: { stopped: boolean }) => void = () => {};
+    stopReasoning.mockReturnValue(new Promise((done) => (stopped = done)));
+    await press("Reason");
+    const button = screen.getByRole("button", { name: "Stop" });
+    expect(button.getAttribute("aria-disabled")).toBe("false");
+    await press("Stop");
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    await press("Stop");
+    await act(async () => {
+      stopped({ stopped: true });
+    });
+    // The DELETE answered, the run's own answer not yet: still stopping.
+    await press("Stop");
+    expect(stopReasoning).toHaveBeenCalledTimes(1);
+    await run.answer(result({ status: "stopped", sentence: "Stopped. Nothing was concluded.", problems: [], groups: [] }));
+    expect(button.textContent).toBe("Reason");
+    expect(button.getAttribute("aria-disabled")).toBe("false");
+  });
+
+  it("says a Stop that failed, and Stop can be pressed again", async () => {
+    await setup();
+    const run = pending();
+    stopReasoning.mockRejectedValue(new Error("The connection was lost."));
+    await press("Reason");
+    await press("Stop");
+    expect(screen.getByRole("alert").textContent).toBe("The run could not be stopped: The connection was lost.");
+    expect(said()).toBe("The run could not be stopped: The connection was lost.");
+    const button = screen.getByRole("button", { name: "Stop" });
+    expect(button.getAttribute("aria-disabled")).toBe("false");
+    stopReasoning.mockResolvedValue({ stopped: true });
+    await press("Stop");
+    expect(stopReasoning).toHaveBeenCalledTimes(2);
+    await run.answer(result({ status: "stopped", sentence: "Stopped. Nothing was concluded.", problems: [], groups: [] }));
+    // The run's answer replaces the failed Stop's sentence.
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("announces a run that ends after an edit as stale, and shows it so", async () => {
+    const { rerender } = await setup();
+    const run = pending();
+    await press("Reason");
+    // An edit while it runs: the store and the view both move to revision 4.
+    await edit(4);
+    rerender(view("ontology", { ...NOW, revision: 4 }));
+    await run.answer(result());
+    expect(said()).toBe("Reasoned in 4 s, but the model changed meanwhile: Reason again.");
+    expect(screen.getByText("The model changed after this run.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reason again" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Show inferred/ })).toBeNull();
+    expect(document.querySelector(".reasoning-status")!.textContent).toBe("");
+    // Reason again over the edited model is current, and said so.
+    const again = pending();
+    await press("Reason again");
+    await again.answer(result({ basis: { revision: 4, generation: 0, imports: false } }));
+    expect(said()).toBe("Reasoned in 4 s: 1 problem, 3 new facts.");
+    expect(screen.queryByText("The model changed after this run.")).toBeNull();
+  });
+
+  it("announces a run that ends after the imports switch moved as stale", async () => {
+    const { rerender } = await setup();
+    const run = pending();
+    await press("Reason");
+    rerender(view("ontology", { ...NOW, imports: true }));
+    await run.answer(result());
+    expect(said()).toBe("Reasoned in 4 s, but the model changed meanwhile: Reason again.");
   });
 });

@@ -500,6 +500,36 @@ def a(name: str) -> str:
     return f"{article(name)} {name}"
 
 
+# First words that already read as a verb, and last words that mark a label
+# needing *is*: "unit A part of Acme" was the sentence (PR #55 review).
+_AUXILIARIES = frozenset({
+    "is", "are", "was", "were", "be", "been", "has", "have", "had", "can", "could",
+    "may", "might", "must", "shall", "should", "will", "would", "does", "do", "did",
+})
+_PREPOSITIONS = frozenset({
+    "of", "to", "in", "at", "by", "for", "with", "from", "on", "into", "onto", "about",
+    "above", "below", "under", "over", "inside", "near", "before", "after", "within", "than",
+})
+
+
+def verb(name: str) -> str:
+    """A relationship's label as the verb of a sentence. *employs*,
+    *worksFor* and *has part* stay as they are; *part of*, *above* and
+    *located in* read after *is*. A bare noun (*holder*) is left alone:
+    *passport 1 is holder Ann* would say the passport holds."""
+    words = [w.lower() for w in re.findall(r"[A-Za-z][a-z]*", name)]
+    if not words:
+        return name
+    first = words[0]
+    # A first word ending in a single s is a verb's third person, as E-8
+    # names relationships.
+    if first in _AUXILIARIES or (first.endswith("s") and not first.endswith(("ss", "us"))):
+        return name
+    if words[-1] in _PREPOSITIONS or first.endswith("ed"):
+        return f"is {name}"
+    return name
+
+
 def fact_sentence(t: tuple, names: Callable) -> str:
     s, p, o = t
     if p == RDF.type:
@@ -520,7 +550,7 @@ def fact_sentence(t: tuple, names: Callable) -> str:
         return f"whoever {names(s)} something is {a(names(o))}"
     if p == RDFS.range:
         return f"whatever something {names(s)} is {a(names(o))}"
-    return f"{names(s)} {names(p)} {names(o)}"
+    return f"{names(s)} {verb(names(p))} {names(o)}"
 
 
 _CHARACTERISTIC = {
@@ -652,14 +682,14 @@ class Explainer:
             if x == o:
                 for y in c.objects(s, prop):
                     yield "domainRange", [(s, prop, y), (prop, RDFS.domain, o)], [], (
-                        f"{n(s)} {n(prop)} {n(y)}, and whoever {n(prop)} something is {a(n(o))}"
+                        f"{n(s)} {verb(n(prop))} {n(y)}, and whoever {verb(n(prop))} something is {a(n(o))}"
                     )
                     break
         for prop, x in c.pairs(RDFS.range):
             if x == o:
                 for y in c.subjects(prop, s):
                     yield "domainRange", [(y, prop, s), (prop, RDFS.range, o)], [], (
-                        f"{n(y)} {n(prop)} {n(s)}, and whatever something {n(prop)} is {a(n(o))}"
+                        f"{n(y)} {verb(n(prop))} {n(s)}, and whatever something {verb(n(prop))} is {a(n(o))}"
                     )
                     break
         # A defining restriction: o is exactly something the restriction
@@ -692,7 +722,7 @@ class Explainer:
                     )
                     triples = [(x, prop, s)] + ([(x, RDF.type, owner)] if owner is not None else [])
                     yield "only", triples, [definition(owner or o, rule, RDFS.subClassOf)], (
-                        f"{n(x)} {n(prop)} {n(s)}, and {rule}"
+                        f"{n(x)} {verb(n(prop))} {n(s)}, and {rule}"
                     )
         for m in c.objects(s, OWL.sameAs):
             if m != s and (m, RDF.type, o) in c:
@@ -753,11 +783,11 @@ class Explainer:
             return "meets a rule"
         value = c.first(d, OWL.hasValue)
         if value is not None:
-            return f"{n(prop)} {n(value)}"
+            return f"{verb(n(prop))} {n(value)}"
         filler = c.first(d, OWL.someValuesFrom)
         if filler is not None:
-            return f"{n(prop)} at least one {n(filler)}" if filler != OWL.Thing else f"{n(prop)} something"
-        return f"{n(prop)} as a rule says"
+            return f"{verb(n(prop))} at least one {n(filler)}" if filler != OWL.Thing else f"{verb(n(prop))} something"
+        return f"{verb(n(prop))} as a rule says"
 
     def _same_thing(self, s, o):
         c, n = self.c, self._n
@@ -765,13 +795,13 @@ class Explainer:
             for x in c.subjects(prop, s):
                 if (x, prop, o) in c:
                     yield "sameThing", [(x, prop, s), (x, prop, o), (prop, RDF.type, OWL.FunctionalProperty)], [], (
-                        f"{n(x)} {n(prop)} {n(s)} and {n(o)}, and {n(prop)} is at most one, so they are the same"
+                        f"{n(x)} {verb(n(prop))} {n(s)} and {n(o)}, and {n(prop)} is at most one, so they are the same"
                     )
         for prop in c.subjects(RDF.type, OWL.InverseFunctionalProperty):
             for y in c.objects(s, prop):
                 if (o, prop, y) in c:
                     yield "sameThing", [(s, prop, y), (o, prop, y), (prop, RDF.type, OWL.InverseFunctionalProperty)], [], (
-                        f"{n(s)} and {n(o)} both {n(prop)} {n(y)}, and {n(prop)} identifies its start, so they are the same"
+                        f"{n(s)} and {n(o)} both {verb(n(prop))} {n(y)}, and {n(prop)} identifies its start, so they are the same"
                     )
         for kind in (OWL.maxCardinality, OWL.maxQualifiedCardinality):
             for r, value in c.pairs(kind):
@@ -780,8 +810,8 @@ class Explainer:
                 prop = c.first(r, OWL.onProperty)
                 for x in c.subjects(RDF.type, r):
                     if prop is not None and (x, prop, s) in c and (x, prop, o) in c:
-                        yield "sameThing", [(x, prop, s), (x, prop, o)], [definition(r, f"{n(x)} {n(prop)} at most one thing", RDFS.subClassOf)], (
-                            f"{n(x)} {n(prop)} {n(s)} and {n(o)}, and has at most one, so they are the same"
+                        yield "sameThing", [(x, prop, s), (x, prop, o)], [definition(r, f"{n(x)} {verb(n(prop))} at most one thing", RDFS.subClassOf)], (
+                            f"{n(x)} {verb(n(prop))} {n(s)} and {n(o)}, and has at most one, so they are the same"
                         )
         for m in c.objects(s, OWL.sameAs):
             if m not in (s, o) and ((m, OWL.sameAs, o) in c):
@@ -795,28 +825,28 @@ class Explainer:
             if (o, q, s) in c:
                 rule = (p, OWL.inverseOf, q) if (p, OWL.inverseOf, q) in c else (q, OWL.inverseOf, p)
                 yield "inverse", [(o, q, s), rule], [], (
-                    f"{n(o)} {n(q)} {n(s)}, and {n(p)} is {n(q)} the other way round"
+                    f"{n(o)} {verb(n(q))} {n(s)}, and {n(p)} is {n(q)} the other way round"
                 )
         if (p, RDF.type, OWL.SymmetricProperty) in c and (o, p, s) in c:
             yield "symmetric", [(o, p, s), (p, RDF.type, OWL.SymmetricProperty)], [], (
-                f"{n(o)} {n(p)} {n(s)}, and {n(p)} works both ways"
+                f"{n(o)} {verb(n(p))} {n(s)}, and {n(p)} works both ways"
             )
         if (p, RDF.type, OWL.TransitiveProperty) in c:
             for m in c.objects(s, p):
                 if m not in (s, o) and (m, p, o) in c:
                     yield "transitive", [(s, p, m), (m, p, o), (p, RDF.type, OWL.TransitiveProperty)], [], (
-                        f"{n(s)} {n(p)} {n(m)}, {n(m)} {n(p)} {n(o)}, and {n(p)} chains"
+                        f"{n(s)} {verb(n(p))} {n(m)}, {n(m)} {verb(n(p))} {n(o)}, and {n(p)} chains"
                     )
         for q in c.subjects(RDFS.subPropertyOf, p):
             if q != p and (s, q, o) in c:
                 yield "subProperty", [(s, q, o), (q, RDFS.subPropertyOf, p)], [], (
-                    f"{n(s)} {n(q)} {n(o)}, and {n(q)} is a kind of {n(p)}"
+                    f"{n(s)} {verb(n(q))} {n(o)}, and {n(q)} is a kind of {n(p)}"
                 )
         for q in c.objects(p, OWL.equivalentProperty) | c.subjects(OWL.equivalentProperty, p):
             if q != p and (s, q, o) in c:
                 rule = (p, OWL.equivalentProperty, q) if (p, OWL.equivalentProperty, q) in c else (q, OWL.equivalentProperty, p)
                 yield "same", [(s, q, o), rule], [], (
-                    f"{n(s)} {n(q)} {n(o)}, and {n(q)} and {n(p)} mean the same thing"
+                    f"{n(s)} {verb(n(q))} {n(o)}, and {n(q)} and {n(p)} mean the same thing"
                 )
         # *Every Gold customer has status gold*: a has-value rule on one of
         # s's classes.
@@ -824,19 +854,19 @@ class Explainer:
             if c.first(r, OWL.onProperty) == p:
                 for k in c.objects(s, RDF.type):
                     if isinstance(k, URIRef) and (k, RDFS.subClassOf, r) in c:
-                        rule = f"every {n(k)} {n(p)} {n(o)}"
+                        rule = f"every {n(k)} {verb(n(p))} {n(o)}"
                         yield "defining", [(s, RDF.type, k)], [definition(k, rule, RDFS.subClassOf)], (
                             f"{n(s)} is {a(n(k))}, and {rule}"
                         )
         for m in c.objects(s, OWL.sameAs):
             if m != s and (m, p, o) in c:
                 yield "same", [(s, OWL.sameAs, m), (m, p, o)], [], (
-                    f"{n(s)} and {n(m)} are the same thing, and {n(m)} {n(p)} {n(o)}"
+                    f"{n(s)} and {n(m)} are the same thing, and {n(m)} {verb(n(p))} {n(o)}"
                 )
         for m in c.objects(o, OWL.sameAs):
             if m != o and (s, p, m) in c:
                 yield "same", [(o, OWL.sameAs, m), (s, p, m)], [], (
-                    f"{n(o)} and {n(m)} are the same thing, and {n(s)} {n(p)} {n(m)}"
+                    f"{n(o)} and {n(m)} are the same thing, and {n(s)} {verb(n(p))} {n(m)}"
                 )
 
 
@@ -1021,7 +1051,7 @@ def _problem(message: str, stated: Index, closure: Index, names: Callable) -> Op
             "id": ("asymmetric", p, frozenset((x, y))),
             "kind": "asymmetric",
             "sentence": (
-                f"{names(first)} {names(p)} {names(second)} and {names(second)} {names(p)} "
+                f"{names(first)} {verb(names(p))} {names(second)} and {names(second)} {verb(names(p))} "
                 f"{names(first)}, but {names(p)} is never both ways."
             ),
             "subject": str(first),

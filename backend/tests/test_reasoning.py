@@ -147,7 +147,7 @@ SHOP_FACTS = {
         "Acme is an Organization", "Alice is a Manager", "Alice is a Person", "Alice is an Agent",
         "bob is a Person", "bob is an Agent", "Team A is a Team",
     ],
-    "links": ["Acme employs Alice", "Ann married to Bo", "Ann member of Team A", "unit A part of Acme"],
+    "links": ["Acme employs Alice", "Ann is married to Bo", "Ann is member of Team A", "unit A is part of Acme"],
 }
 
 
@@ -325,7 +325,7 @@ def test_never_to_itself_never_both_ways_and_different_things_made_the_same_each
     # OWL-RL reports the pair once per direction; it is shown once.
     assert sum(1 for p in result["problems"] if p["kind"] == "asymmetric") == 1
     assert problems["asymmetric"]["sentence"] == (
-        "division B above unit A and unit A above division B, but above is never both ways."
+        "division B is above unit A and unit A is above division B, but above is never both ways."
     )
     assert problems["differentSame"]["sentence"] == (
         "Ann and Anne are stated to be different things, but the reasoner concludes they are the same thing."
@@ -371,9 +371,9 @@ EXPECTED_REASONS = {
         "domainRange", "Alice works for Acme, and whatever something works for is an Organization",
     ),
     "Acme employs Alice": ("inverse", "Alice works for Acme, and employs is works for the other way round"),
-    "Ann married to Bo": ("symmetric", "Bo married to Ann, and married to works both ways"),
-    "unit A part of Acme": ("transitive", "unit A part of division B, division B part of Acme, and part of chains"),
-    "Ann member of Team A": ("subProperty", "Ann leads Team A, and leads is a kind of member of"),
+    "Ann is married to Bo": ("symmetric", "Bo is married to Ann, and married to works both ways"),
+    "unit A is part of Acme": ("transitive", "unit A is part of division B, division B is part of Acme, and part of chains"),
+    "Ann is member of Team A": ("subProperty", "Ann leads Team A, and leads is a kind of member of"),
     "Alice is a Manager": (
         "defining",
         "Alice is a Person and Alice manages bob and bob is an Employee, and a Manager is exactly "
@@ -385,6 +385,18 @@ EXPECTED_REASONS = {
         "sameThing", "passport 1 holder Ann and Anne, and holder is at most one, so they are the same",
     ),
 }
+
+
+def test_a_label_that_is_no_verb_reads_after_is():
+    # PR #55 review: "unit A part of Acme". A verb stays; a label ending in a
+    # preposition, or starting with a participle, takes *is*; a bare noun is
+    # left alone rather than made to say the subject is it.
+    for label in ("employs", "works for", "worksFor", "has line", "is part of", "leads", "can see"):
+        assert reasoning.verb(label) == label
+    for label in ("part of", "partOf", "married to", "member of", "above", "located in", "Owned by"):
+        assert reasoning.verb(label) == f"is {label}"
+    for label in ("holder", "address", "status", "", "42"):
+        assert reasoning.verb(label) == label
 
 
 def why(pid: str, fact: dict) -> dict:
@@ -406,9 +418,9 @@ def test_each_family_gives_its_reason_one_step_with_its_premises(shop):
         families.add(family)
     assert families == set(reasoning.FAMILIES)
     # The transitive reason's three lines, as the spec draws them.
-    lines = why(shop, facts["unit A part of Acme"])["premises"]
+    lines = why(shop, facts["unit A is part of Acme"])["premises"]
     assert [(p["sentence"], p["inferred"]) for p in lines] == [
-        ("unit A part of division B", False), ("division B part of Acme", False), ("part of chains", False),
+        ("unit A is part of division B", False), ("division B is part of Acme", False), ("part of chains", False),
     ]
     # An inferred premise is marked, and has its own reason: walking back.
     manager = why(shop, facts["Alice is a Manager"])

@@ -99,6 +99,14 @@ export function finishedLine(result: ReasoningResult): string {
   )}`;
 }
 
+/** The announcement for a run whose answer arrives after the model moved
+ *  (5.3): its seconds, and that it is not current. A run that did not
+ *  finish says only how it ended. */
+export function staleLine(result: ReasoningResult): string {
+  if (result.status !== "done") return finishedLine(result);
+  return `Reasoned in ${seconds(result.durationMs)}, but the model changed meanwhile: Reason again.`;
+}
+
 /** The results panel's heading. */
 export function panelHeading(result: ReasoningResult | null): string {
   if (!result) return "Results";

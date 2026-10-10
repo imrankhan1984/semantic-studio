@@ -16,7 +16,14 @@ BASIC IDEA
     them by selector and asks the store to act. Reason and Stop are one
     button whose name changes, so focus stays on it from start to end; the
     start and the end are announced through the store's live region, the
-    seconds counted on the status line are not.
+    seconds counted on the status line are not. Once pressed, Stop is
+    aria-disabled until the run's answer arrives.
+
+    The results panel stays (5.3): it has no close, so nothing hides it
+    that could not be brought back. A control that leaves while it has
+    focus hands focus on rather than dropping it to the page: **Reason
+    again**, gone once its run is current, to the results heading; the last
+    **Show more** to the first fact it showed (PR #55 review).
 
     A result belongs to the revision, the snapshot generation and the
     imports switch it was computed on (5.3). Once any of them moves the
@@ -41,7 +48,7 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { getReasoningPage } from "../api";
 import {
   DATA_SLOWER,
@@ -84,6 +91,8 @@ export function ReasonControls({ kind, now, hasData }: Pick<Props, "kind" | "now
   const result = useProjectSelector((s) => s.reasoning);
   const showInferred = useProjectSelector((s) => s.showInferred);
   const includeData = useProjectSelector((s) => s.reasoningData);
+  const stopping = useProjectSelector((s) => s.reasoningStopping);
+  const importsNow = useImportsNow(now.imports);
   if (kind === "taxonomy") return null;
   const running = since !== null;
   const current = result !== null && result.status === "done" && !isStale(result, now);
@@ -92,9 +101,11 @@ export function ReasonControls({ kind, now, hasData }: Pick<Props, "kind" | "now
       <button
         type="button"
         className="ghost reason-button"
+        aria-disabled={running && stopping}
         onClick={() => {
-          if (running) void projectStore.stopReasoning();
-          else void projectStore.reason(includeData && hasData, now.imports);
+          if (running) {
+            if (!stopping) void projectStore.stopReasoning();
+          } else void projectStore.reason(includeData && hasData, now.imports, importsNow);
         }}
       >
         {running ? "Stop" : "Reason"}
@@ -115,6 +126,30 @@ export function ReasonControls({ kind, now, hasData }: Pick<Props, "kind" | "now
   );
 }
 
+/** The imports switch as it is when a run's answer arrives, not as it was
+ *  pressed: the store reads it to tell a stale answer from a current one. */
+function useImportsNow(imports: boolean): () => boolean {
+  const ref = useRef(imports);
+  ref.current = imports;
+  return () => ref.current;
+}
+
+/** A ref for a control that may leave while focused: `onLeave` runs when it
+ *  unmounts holding focus. A layout cleanup runs before React removes the
+ *  node, so focus is still there to see; after, it is already on <body>. */
+function useFocusLeave<T extends HTMLElement>(onLeave: () => void) {
+  const ref = useRef<T>(null);
+  const leave = useRef(onLeave);
+  leave.current = onLeave;
+  useLayoutEffect(() => {
+    const node = ref.current;
+    return () => {
+      if (node && document.activeElement === node) leave.current();
+    };
+  }, []);
+  return ref;
+}
+
 /** The seconds a run has taken, counted on the status line only. */
 function useElapsed(since: number | null): number {
   const [now, setNow] = useState(() => Date.now());
@@ -133,15 +168,19 @@ export default function ReasoningPanel({ projectId, kind, hasData, now, onSelect
   const token = useProjectSelector((s) => s.reasoningToken);
   const error = useProjectSelector((s) => s.reasoningError);
   const includeData = useProjectSelector((s) => s.reasoningData);
-  const [open, setOpen] = useState(true);
   const elapsed = useElapsed(since);
   const headingId = useId();
   const dataId = useId();
-
-  // A new result opens the panel again after it was closed.
-  useEffect(() => {
-    if (result) setOpen(true);
-  }, [result]);
+  const importsNow = useImportsNow(now.imports);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  // Set when Reason again leaves holding focus; the heading takes it once
+  // the commit that removed it is done.
+  const focusHeading = useRef(false);
+  useLayoutEffect(() => {
+    if (!focusHeading.current) return;
+    focusHeading.current = false;
+    headingRef.current?.focus();
+  });
 
   if (kind === "taxonomy") {
     return <p className="detail-note reasoning-intro">{TAXONOMY}</p>;
@@ -166,42 +205,55 @@ export default function ReasoningPanel({ projectId, kind, hasData, now, onSelect
       <p className="detail-note reasoning-status">
         {running ? runningLine(elapsed) : result && !stale ? finishedLine(result) : ""}
       </p>
-      {open && (
-        <section className="reasoning-results" aria-labelledby={headingId}>
-          <div className="reasoning-results-head">
-            <h3 id={headingId}>{panelHeading(stale ? null : result)}</h3>
-            <button type="button" className="ghost icon-button" aria-label="Close the results" onClick={() => setOpen(false)}>
-              ✕
-            </button>
-          </div>
-          {error && (
-            <p className="edit-error" role="alert">
-              {error}
-            </p>
-          )}
-          {!result && !error && <p className="detail-note">{EMPTY}</p>}
-          {result && stale && (
-            <p className="detail-note reasoning-stale">
-              {STALE}{" "}
-              <button
-                type="button"
-                className="ghost"
-                aria-disabled={running}
-                onClick={() => {
-                  if (!running) void projectStore.reason(includeData && hasData, now.imports);
-                }}
-              >
-                Reason again
-              </button>
-            </p>
-          )}
-          {result && <Results projectId={projectId} result={result} token={token} imports={now.imports} onSelect={onSelect} />}
-          <p className="detail-note reasoning-footer">
-            {VALUES_FOOTER} {NOT_SAVED}
+      <section className="reasoning-results" aria-labelledby={headingId}>
+        <div className="reasoning-results-head">
+          <h3 id={headingId} ref={headingRef} tabIndex={-1}>
+            {panelHeading(stale ? null : result)}
+          </h3>
+        </div>
+        {error && (
+          <p className="edit-error" role="alert">
+            {error}
           </p>
-        </section>
-      )}
+        )}
+        {!result && !error && <p className="detail-note">{EMPTY}</p>}
+        {result && stale && (
+          <ReasonAgain
+            running={running}
+            onReason={() => void projectStore.reason(includeData && hasData, now.imports, importsNow)}
+            onLeave={() => {
+              focusHeading.current = true;
+            }}
+          />
+        )}
+        {result && <Results projectId={projectId} result={result} token={token} imports={now.imports} onSelect={onSelect} />}
+        <p className="detail-note reasoning-footer">
+          {VALUES_FOOTER} {NOT_SAVED}
+        </p>
+      </section>
     </div>
+  );
+}
+
+/** *The model changed after this run.* with **Reason again**, which goes
+ *  once its run is current: if it had focus, the heading takes it. */
+function ReasonAgain({ running, onReason, onLeave }: { running: boolean; onReason: () => void; onLeave: () => void }) {
+  const ref = useFocusLeave<HTMLButtonElement>(onLeave);
+  return (
+    <p className="detail-note reasoning-stale">
+      {STALE}{" "}
+      <button
+        ref={ref}
+        type="button"
+        className="ghost"
+        aria-disabled={running}
+        onClick={() => {
+          if (!running) onReason();
+        }}
+      >
+        Reason again
+      </button>
+    </p>
   );
 }
 
@@ -330,15 +382,22 @@ function usePages(projectId: string, group: ReasoningGroup, imports: boolean) {
   const [items, setItems] = useState<ReasoningFact[]>(group.items);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Where the last page began: the fact focus goes to when Show more leaves.
+  const from = useRef(0);
   const more = () => {
     setLoading(true);
     setError(null);
     getReasoningPage(projectId, group.kind, items.length, imports)
-      .then((page) => setItems((current) => [...current, ...page.items]))
+      .then((page) =>
+        setItems((current) => {
+          from.current = current.length;
+          return [...current, ...page.items];
+        }),
+      )
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
   };
-  return { items, more, loading, error };
+  return { items, more, loading, error, from };
 }
 
 function FactList({
@@ -352,10 +411,19 @@ function FactList({
   imports: boolean;
   onSelect: (iri: string) => void;
 }) {
-  const { items, more, loading, error } = usePages(projectId, group, imports);
+  const { items, more, loading, error, from } = usePages(projectId, group, imports);
+  const listRef = useRef<HTMLUListElement>(null);
+  // Set when the last Show more leaves holding focus; the first fact it
+  // showed takes it once the commit that removed it is done.
+  const focusFrom = useRef(false);
+  useLayoutEffect(() => {
+    if (!focusFrom.current) return;
+    focusFrom.current = false;
+    listRef.current?.children[from.current]?.querySelector<HTMLButtonElement>("button")?.focus();
+  });
   return (
     <>
-      <ul>
+      <ul ref={listRef}>
         {items.map((fact) => (
           <li key={`${fact.s}|${fact.p}|${fact.o}`} className="reasoning-fact">
             <button type="button" className="term-link" onClick={() => onSelect(fact.s)}>
@@ -366,14 +434,15 @@ function FactList({
         ))}
       </ul>
       {items.length < group.total && (
-        <p>
-          <button type="button" className="ghost" aria-disabled={loading} onClick={() => !loading && more()}>
-            Show more
-          </button>{" "}
-          <span className="detail-note">
-            {items.length.toLocaleString("en-US")} of {group.total.toLocaleString("en-US")} shown
-          </span>
-        </p>
+        <ShowMore
+          loading={loading}
+          shown={items.length}
+          total={group.total}
+          onMore={more}
+          onLeave={() => {
+            focusFrom.current = true;
+          }}
+        />
       )}
       {error && (
         <p className="edit-error" role="alert">
@@ -381,6 +450,34 @@ function FactList({
         </p>
       )}
     </>
+  );
+}
+
+/** **Show more** with how many are shown; gone on the last page, when the
+ *  first fact it showed takes its focus. */
+function ShowMore({
+  loading,
+  shown,
+  total,
+  onMore,
+  onLeave,
+}: {
+  loading: boolean;
+  shown: number;
+  total: number;
+  onMore: () => void;
+  onLeave: () => void;
+}) {
+  const ref = useFocusLeave<HTMLButtonElement>(onLeave);
+  return (
+    <p>
+      <button ref={ref} type="button" className="ghost" aria-disabled={loading} onClick={() => !loading && onMore()}>
+        Show more
+      </button>{" "}
+      <span className="detail-note">
+        {shown.toLocaleString("en-US")} of {total.toLocaleString("en-US")} shown
+      </span>
+    </p>
   );
 }
 

@@ -37,6 +37,7 @@ import {
   panelHeading,
   premiseMark,
   runningLine,
+  staleLine,
   seconds,
 } from "./reasonSentences";
 
@@ -88,6 +89,14 @@ describe("the words around a run (5.1, 5.2, Section 6)", () => {
     );
     expect(finishedLine(result({ problems: [], groups: [], importedFacts: group("imported", 0) }))).toBe(
       `Reasoned in 4 s: ${NOTHING.toLowerCase()}`,
+    );
+  });
+
+  it("says a run that arrives after the model moved is not current (PR #55 review)", () => {
+    expect(staleLine(result())).toBe("Reasoned in 4 s, but the model changed meanwhile: Reason again.");
+    // A run that did not finish says only how it ended.
+    expect(staleLine(result({ status: "stopped", sentence: "Stopped. Nothing was concluded." }))).toBe(
+      "Stopped. Nothing was concluded.",
     );
   });
 

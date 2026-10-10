@@ -35,7 +35,10 @@ BASIC IDEA
     (shacl-authoring Stage B, follow-up 3). Reasoning follows the same rule:
     one run at a time, its start and end announced, its result kept for the
     session only with what it was computed on, and Stop asks the server to
-    kill the run, whose own answer then says *Stopped*.
+    kill the run, whose own answer then says *Stopped*. Between the press and
+    that answer the run is stopping: Stop is pressed once, and a Stop the
+    server refuses says so. A run whose answer arrives after the model moved
+    is announced as such, never as current (PR #55 review).
 
     Data snapshots are not documents: changing one moves no revision and no
     undo step (5.7). The server counts their changes in a generation of its
@@ -81,7 +84,7 @@ import {
   validateProject,
 } from "../api";
 import { validationSummary } from "../modeling/shapeSentences";
-import { finishedLine } from "../reasoning/reasonSentences";
+import { finishedLine, isStale, staleLine, type ReasoningNow } from "../reasoning/reasonSentences";
 import type {
   ChangeResult,
   ProjectDocName,
@@ -128,8 +131,12 @@ export interface ProjectSnapshot {
   /** When the run going started, for the seconds the status line counts;
    *  null when none is going. Reason reads Stop meanwhile. */
   reasoningSince: number | null;
-  /** A run that could not be asked for: a 409, a lost connection. */
+  /** A run that could not be asked for, or a Stop that failed: a 409, a
+   *  lost connection. */
   reasoningError: string | null;
+  /** Stop was pressed and the run's answer has not arrived: presses meanwhile
+   *  are ignored, rather than sent again (PR #55 review). */
+  reasoningStopping: boolean;
   /** Show inferred (5.7): on after a run, the user's toggle otherwise. */
   showInferred: boolean;
   /** Include data snapshots (5.1, Q1): off by default for every project. */
@@ -157,6 +164,7 @@ const EMPTY: ProjectSnapshot = {
   reasoning: null,
   reasoningSince: null,
   reasoningError: null,
+  reasoningStopping: false,
   showInferred: false,
   reasoningData: false,
   reasoningToken: 0,
@@ -427,8 +435,14 @@ export const projectStore = {
 
   /** Reason over the open project (axioms-and-reasoning 5.2). One run at a
    *  time; the start and the end are announced, the seconds are not. A run
-   *  that outlives its project says nothing in the next one. */
-  async reason(includeData: boolean, imports: boolean): Promise<ReasoningResult | null> {
+   *  that outlives its project says nothing in the next one. `importsNow`
+   *  reads the imports switch when the answer arrives: the switch is App's,
+   *  while the revision and the generation are read here. */
+  async reason(
+    includeData: boolean,
+    imports: boolean,
+    importsNow: () => boolean = () => imports,
+  ): Promise<ReasoningResult | null> {
     const project = requireProject();
     if (snapshot.reasoningSince !== null) return null;
     const run = ++reasoningRun;
@@ -448,24 +462,44 @@ export const projectStore = {
       }
       if (stale()) return null;
       // A finished run's marks show at once (Section 6: on after a run).
+      // Its answer supersedes a Stop that failed while it ran.
       set({
         reasoning: result,
+        reasoningError: null,
         reasoningToken: snapshot.reasoningToken + 1,
         showInferred: result.status === "done" ? true : snapshot.showInferred,
       });
-      const line = finishedLine(result);
+      // An edit made while it ran leaves it stale on arrival (5.3): saying
+      // only "Reasoned in 4 s" would call it current.
+      const now: ReasoningNow = {
+        revision: snapshot.documents.find((d) => d.doc === "model")?.revision ?? 0,
+        generation: dataGenerationOf(snapshot),
+        imports: importsNow(),
+      };
+      const line = isStale(result, now) ? staleLine(result) : finishedLine(result);
       announce(line.endsWith(".") ? line : `${line}.`);
       return result;
     } finally {
-      if (run === reasoningRun) set({ reasoningSince: null });
+      if (run === reasoningRun) set({ reasoningSince: null, reasoningStopping: false });
     }
   },
 
-  /** Stop the run: its process is killed, and its own answer says so. */
+  /** Stop the run: its process is killed, and its own answer says so. Once
+   *  pressed, presses are ignored until that answer; a refused Stop is
+   *  said, and Stop can be pressed again. */
   async stopReasoning(): Promise<void> {
     const project = requireProject();
-    if (snapshot.reasoningSince === null) return;
-    await stopReasoning(project.id);
+    if (snapshot.reasoningSince === null || snapshot.reasoningStopping) return;
+    const run = reasoningRun;
+    set({ reasoningStopping: true, reasoningError: null });
+    try {
+      await stopReasoning(project.id);
+    } catch (e) {
+      if (run !== reasoningRun || snapshot.reasoningSince === null) return;
+      const text = `The run could not be stopped: ${e instanceof Error ? e.message : String(e)}`;
+      set({ reasoningStopping: false, reasoningError: text });
+      announce(text);
+    }
   },
 
   setShowInferred(on: boolean): void {
