@@ -64,6 +64,16 @@ BASIC IDEA
     contributed. Replacing the graph response instead would rebuild the canvas
     and lose every settled position.
 
+    Edit (edit-page-rework, D-107; the mode keeps its id, "hierarchy") is the
+    page a project is changed on: the outline on the left, the modeling
+    canvas in the middle, and one side panel on the right with two tabs --
+    Details, where the reused DetailPanel and every New … form open, and
+    Reasoning, where a run's results are. A run ending chooses the Reasoning
+    tab only when Reason was pressed there or it found a problem; otherwise
+    the tab carries a count. A library ontology in Edit has no canvas and no
+    side panel, and a notice under the header says why, with Save as a
+    project.
+
     Every route that names an entity from outside the canvas — the search box
     and the results table — goes through one function, so a result row can draw
     an entity the budget left out exactly as a search hit does. A result also
@@ -1922,6 +1932,21 @@ export default function App() {
             />
           )}
         </div>
+        {/* A library ontology in Edit (edit-page-rework 5.9): why nothing
+            can be changed, and the way to change a copy -- where a project's
+            bar would stand, under the ontology's own row, which keeps its
+            picker, Close and Remove. */}
+        {!showHome && mode === "hierarchy" && active && !editingProjectDoc && (
+          <div className="readonly-notice" role="note">
+            <p>
+              {active.name} is a library ontology, so it is read-only here. To change it, save a copy as your own
+              project.
+            </p>
+            <button type="button" className="primary" onClick={() => setNewProject({ source: active.id })}>
+              Save as a project
+            </button>
+          </div>
+        )}
       </header>
 
       {error && (

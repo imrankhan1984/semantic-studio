@@ -6204,3 +6204,25 @@ kbd {
 .hierarchy-dot.kind-example { background: var(--kind-example-accent); }
 .hierarchy-dot.kind-attribute { background: var(--kind-attribute-accent); }
 .hierarchy-dot.kind-relationship { background: var(--line-relationship); }
+
+/* A library ontology in Edit (edit-page-rework 5.9): the reason it is
+   read-only, and the way to a copy that is not. */
+.readonly-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg-subhead);
+  font-size: 13px;
+}
+
+.readonly-notice p {
+  flex: 1;
+  margin: 0;
+}
+
+.readonly-notice button {
+  flex: none;
+  padding: 4px 12px;
+}

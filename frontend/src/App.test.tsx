@@ -3359,3 +3359,33 @@ describe("App Edit page (edit-page-rework)", () => {
     expect(tab("View").getAttribute("aria-selected")).toBe("true");
   });
 });
+
+describe("App Edit page, a library ontology (edit-page-rework 5.9, AC-9)", () => {
+  it("says it is read-only, and Save as a project opens New project with it as the source", async () => {
+    await renderAppOpened();
+    await act(async () => {
+      fireEvent.click(tab("Edit"));
+    });
+    await screen.findByRole("button", { name: /^Classes, \d/ });
+    const notice = screen.getByRole("note");
+    expect(notice.textContent).toContain("is a library ontology, so it is read-only here. To change it, save a copy as your own project.");
+    // No + in the outline, no canvas, no side panel.
+    expect(screen.queryByRole("button", { name: "New class" })).toBeNull();
+    expect(screen.queryByTestId("canvas")).toBeNull();
+    expect(screen.queryByRole("complementary", { name: "Side panel" })).toBeNull();
+    await act(async () => {
+      fireEvent.click(within(notice).getByRole("button", { name: "Save as a project" }));
+    });
+    const dialog = screen.getByRole("dialog", { name: "New project" });
+    expect((within(dialog).getByLabelText("Start from") as HTMLSelectElement).value).toBe("library:o1");
+  });
+
+  it("is not shown for a project, nor outside Edit", async () => {
+    await renderAppOpened();
+    expect(screen.queryByRole("note")).toBeNull();
+    cleanup();
+    projectStore._reset();
+    await renderProject();
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+});
