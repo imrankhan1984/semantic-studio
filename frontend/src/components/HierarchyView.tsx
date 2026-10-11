@@ -4,17 +4,29 @@ FILE: frontend/src/components/HierarchyView.tsx
 ================================================================================
 
 SUMMARY
-    The Hierarchy view: the ontology's structure as indented, expandable trees —
-    a class hierarchy over rdfs:subClassOf, a concept hierarchy over skos:broader
-    rooted at concept schemes, and (v0.3) one property hierarchy per property
-    kind (object / datatype / annotation) over rdfs:subPropertyOf. Each section
-    is shown only when its forest is non-empty. It is the force graph's
+    The Edit page's outline (edit-page-rework 5.3; the Hierarchy view before
+    it): the ontology's structure as indented, expandable trees -- classes
+    over rdfs:subClassOf, concepts over skos:broader rooted at concept
+    schemes, and (v0.3) one property tree per property kind (object /
+    datatype / annotation) over rdfs:subPropertyOf -- each a folding section
+    whose header names its count and, in a project, has a + that makes one of
+    its kind. A library ontology lists the sections it has. It is the force graph's
     accessible structural equivalent (D-025): a WAI-ARIA `tree` a screen reader
     and the keyboard can operate, which the WebGL canvas cannot be.
 
     The detail panel that explains a selected row is NOT here — App renders the
-    reused Explore DetailPanel beside this tree, driven by the same shared
-    selection (D-047), so this component stays the tree alone.
+    reused Explore DetailPanel in the side panel, driven by the same shared
+    selection (D-047), so this component stays the outline alone. Nor are the
+    New … forms: a + or a row's *Add subclass* begins the project store's one
+    draft, whose form is the side panel's and whose box is the canvas's; the
+    outline shows the draft's row, in italics, under its parent.
+
+    The height rule (CF-9): a folded section is its 32 px header; open ones
+    share what is left, at least 120 px each, and clip and scroll inside
+    themselves; past that the column scrolls. By default the kind's own
+    section and Relationships are open, and which are open is remembered
+    per ontology for the session (module state, so a test calls
+    _resetOutline).
 
 BASIC IDEA
     A tree is the natural shape for a hierarchy and the cheap one. The whole
@@ -53,11 +65,12 @@ INPUTS / INPUT SOURCES (props)
     - revision, language: a project document's revision and display language;
       either moving refetches the forests and keeps expansion and filter.
     - editing: the open project's model.ttl (visual-modeling 5.2). The class
-      section then always shows, with New class; the concept section has New
-      concept; and each row has a menu (HierarchyActions.tsx) to add a child,
-      rename in place in the primary language, or delete with its impact.
-      A new entity is selected, its parent expanded, and focus moved to its
-      row once the refreshed tree holds it.
+      section then always shows, with its + (New class); the concept section
+      has New concept; Relationships, Attributes and Examples have theirs;
+      and each row has a menu (HierarchyActions.tsx) to add a child, rename
+      in place in the primary language, or delete with its impact. A new
+      entity's section and parent open, and focus moves to its row once the
+      refreshed tree holds it, unless its canvas box takes it.
 
       Its `kind` (relationships 5.1, D-089) decides which: an ontology's
       tree leads with its classes and offers New class, a taxonomy's with
@@ -72,7 +85,7 @@ INPUTS / INPUT SOURCES (props)
       Examples section beside the examples, each such row carrying its
       snapshot's label -- *from people.csv, imported 2 October 2026*, and a
       sample's words -- and no actions: snapshot data is read-only. The
-      section's header offers *Import data from CSV or Excel…*, and in a project
+      section's + offers *Import data from CSV or Excel…*, and in a project
       the section is there to offer it even before there is an example.
 
       A project's examples (shacl-authoring 5.8) have a section of their
@@ -83,16 +96,15 @@ INPUTS / INPUT SOURCES (props)
     - onDeleted: an entity was deleted from the tree.
     - canvas: past 300 boxes, the row menu's *Show on canvas* and *Hide from
       canvas* (visual-modeling 5.6).
-    - canvasSwitch: the *Canvas* toggle in the toolbar (5.4), shown with the
-      canvas beside the tree; the choice itself is App's to keep.
     - inferred: fetch the forests with a current reasoning result's edges.
-    - reasoning: *Reason* and *Show inferred* for the toolbar, and the
-      reasoning panel under it (axioms-and-reasoning 5.1, 5.7).
+    - canvasShown: a new class or concept takes focus on its canvas box;
+      without the canvas, and for anything else, on its row here.
+    - onCounts: the model's counts, for the side panel's summary (5.4).
+    Each row's dot is in the Edit page's kind colours (5.8), by class.
 
-    The tree's forms and its delete run through one command runner, so a
-    command in flight shows the view busy (5.8 item 1); they close when the
-    document changes (item 6); and a new entity is selected only if the
-    selection has not moved while it was being made (item 4).
+    The tree's rename and delete run through one command runner, so a
+    command in flight shows the view busy (5.8 item 1); they, and a draft,
+    end when the document changes (item 6).
 
 EXPECTED OUTPUT
     - The rendered tree(s), an empty state, or the loading / error treatments.
@@ -108,18 +120,18 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import { ApiError, fetchHierarchy } from "../api";
 import type { CanvasSet, DataSource, Hierarchy, HierarchyForest, HierarchyNode, HierarchyOrigin, Theme } from "../types";
 import { dataLabel } from "../modeling/dataSentences";
 import { KIND_LABELS, kindColor } from "../types";
-import type { ProjectKind } from "../types";
+import type { CreatingKind, ProjectKind } from "../types";
 import { otherKindNote, otherKindReason, rowEnds } from "../modeling/sentences";
 import DeleteDialog from "./DeleteDialog";
 import { useRunner } from "./EditParts";
 import { RowMenu, rowActions, type RowAction } from "./HierarchyActions";
-import NewEntityForm, { type NewEntity } from "./NewEntityForm";
+import { projectStore, useProjectSelector } from "../state/projectStore";
+import type { ModelCounts } from "./NothingSelected";
 
 interface Props {
   ontologyId: string | null;
@@ -137,7 +149,6 @@ interface Props {
   editing?: { primaryLanguage: string; kind?: ProjectKind | null } | null;
   onDeleted?: (iri: string) => void;
   canvas?: CanvasSet | null;
-  canvasSwitch?: { on: boolean; onToggle: () => void } | null;
   /** The project's data snapshots, whose labels name the rows they made
    *  (csv-data-import 5.6). */
   dataSources?: DataSource[];
@@ -148,20 +159,17 @@ interface Props {
   inferred?: boolean;
   /** Which result: a new one refetches even when its basis is the same. */
   inferredToken?: number;
-  /** Reason and Show inferred for the toolbar, and the panel below it. */
-  reasoning?: { controls: ReactNode; panel: ReactNode } | null;
-}
-
-/** A "New ..." form open at the top of a section. */
-interface Creating {
-  section: "class" | "concept";
-  parent?: { iri: string; label: string };
-  /** The row the menu was opened on, for focus when the form is cancelled. */
-  from?: string;
+  /** The canvas is beside the outline: a new class or concept then takes
+   *  focus on its box, anything else on its row here (Section 6). */
+  canvasShown?: boolean;
+  /** The model's counts for the side panel's summary (5.4). */
+  onCounts?: (counts: ModelCounts) => void;
 }
 
 /** Fixed row height, in pixels, shared by the CSS and the windowing maths. */
 const ROW_HEIGHT = 28;
+/** A section's header, as the CSS draws it (.hierarchy-section-head). */
+const SECTION_HEAD = 32;
 /** Rows kept above and below the viewport so a small scroll shows no gap. */
 const OVERSCAN = 6;
 /** Viewport height used when the container reports none — jsdom always does,
@@ -262,6 +270,8 @@ interface Row {
   cyclic: boolean;
   /** The node appears under more than one parent somewhere in the forest. */
   appearsElsewhere: boolean;
+  /** A draft being named, not yet in the model (edit-page-rework 5.5). */
+  pending?: boolean;
   posinset: number;
   setsize: number;
 }
@@ -346,44 +356,121 @@ function internalIds(forest: HierarchyForest): string[] {
     .map(([id]) => id);
 }
 
-/** The forests to render, in order, with their section titles — each present
- *  only when its forest carries nodes. The class forest and the property forests
- *  (the T-box schema) come before the concept forest (the SKOS vocabulary),
- *  matching the spec's layout. `objectProperties` and friends are absent from the
- *  payload unless the ontology has that kind, so the optional chaining stands in
- *  for a missing key. */
+/** One folding section of the outline (edit-page-rework 5.3). */
+type SectionId = "classes" | "concepts" | "relationships" | "attributes" | "annotations" | "examples";
+
+interface OutlineSection {
+  id: SectionId;
+  title: string;
+  forest: HierarchyForest;
+  /** What its + makes, in a project; null for none. */
+  add: CreatingKind | "examples" | null;
+}
+
+/** The node kind a section counts in its header. */
+const COUNTED: Record<SectionId, string> = {
+  classes: "class",
+  concepts: "concept",
+  relationships: "objectProperty",
+  attributes: "datatypeProperty",
+  annotations: "annotationProperty",
+  examples: "individual",
+};
+
+/** The section a new thing's row is in. */
+const CREATED_IN: Record<CreatingKind, SectionId> = {
+  class: "classes",
+  concept: "concepts",
+  objectProperty: "relationships",
+  datatypeProperty: "attributes",
+  example: "examples",
+};
+
+/** Each + by its accessible name (Section 6). */
+const ADD_LABELS: Record<CreatingKind | "examples", string> = {
+  class: "New class",
+  concept: "New concept",
+  objectProperty: "New relationship",
+  datatypeProperty: "New attribute",
+  example: "New example",
+  examples: "New example or import",
+};
+
+/** The outline's sections, in order (5.3). In a project: the kind's own
+ *  section first (Classes, or Concepts in a taxonomy), then Relationships,
+ *  Attributes and Examples, always there so their + is; then annotation
+ *  properties when there are any, and the other kind's content, read-only,
+ *  when the file has some (D-089). A library ontology lists what it has,
+ *  with no +. `objectProperties` and friends are absent from the payload
+ *  unless the ontology has that kind. */
 function sectionsOf(
   data: Hierarchy,
   editing: { kind?: ProjectKind | null } | null = null,
   keepExamples = false,
-): { title: string; forest: HierarchyForest }[] {
-  // A project names its property sections as the learner does (5.5).
-  const project = editing !== null;
-  const candidates: { title: string; forest: HierarchyForest | undefined }[] = [
-    { title: CLASS_SECTION, forest: data.classes },
-    { title: project ? "Relationships" : "Object properties", forest: data.objectProperties },
-    { title: project ? "Attributes" : "Datatype properties", forest: data.datatypeProperties },
-    { title: "Annotation properties", forest: data.annotationProperties },
-    // A project's examples, by class (shacl-authoring 5.8). Before the
-    // concepts, which a taxonomy moves to the front.
-    // With an import to offer, it is there before the first example.
-    {
-      title: EXAMPLES_SECTION,
-      forest: project ? (data.examples ?? (keepExamples ? EMPTY_FOREST : undefined)) : undefined,
-    },
-    { title: CONCEPT_SECTION, forest: data.concepts },
-  ];
-  // A taxonomy leads with its scheme: it is the model (5.1).
-  if (editing?.kind === "taxonomy") candidates.unshift(candidates.pop()!);
-  // In a project the kind's own section stays, empty or not: it is where New
-  // class or New concept lives, and an empty model has to start somewhere.
-  // A project from before kinds keeps the class section, as it always did.
-  const kept = !project ? null : editing?.kind === "taxonomy" ? CONCEPT_SECTION : CLASS_SECTION;
-  return candidates.filter(
-    (c): c is { title: string; forest: HierarchyForest } =>
-      c.forest !== undefined &&
-      (Object.keys(c.forest.nodes).length > 0 || c.title === kept || (keepExamples && c.title === EXAMPLES_SECTION)),
-  );
+): OutlineSection[] {
+  const has = (forest: HierarchyForest | undefined): forest is HierarchyForest =>
+    forest !== undefined && Object.keys(forest.nodes).length > 0;
+  if (editing === null) {
+    const library: (OutlineSection | null)[] = [
+      has(data.classes) ? { id: "classes", title: "Classes", forest: data.classes, add: null } : null,
+      has(data.objectProperties) ? { id: "relationships", title: "Object properties", forest: data.objectProperties, add: null } : null,
+      has(data.datatypeProperties) ? { id: "attributes", title: "Datatype properties", forest: data.datatypeProperties, add: null } : null,
+      has(data.annotationProperties) ? { id: "annotations", title: "Annotation properties", forest: data.annotationProperties, add: null } : null,
+      has(data.concepts) ? { id: "concepts", title: "Concepts", forest: data.concepts, add: null } : null,
+    ];
+    return library.filter((x): x is OutlineSection => x !== null);
+  }
+  const kind = editing.kind ?? null;
+  const taxonomy = kind === "taxonomy";
+  // A project from before kinds keeps both New buttons, as it always did.
+  const classes: OutlineSection = { id: "classes", title: "Classes", forest: data.classes, add: kind === "taxonomy" ? null : "class" };
+  const concepts: OutlineSection = { id: "concepts", title: "Concepts", forest: data.concepts, add: kind === "ontology" ? null : "concept" };
+  const relationships: OutlineSection = {
+    id: "relationships", title: "Relationships", forest: data.objectProperties ?? EMPTY_FOREST, add: taxonomy ? null : "objectProperty",
+  };
+  const attributes: OutlineSection = {
+    id: "attributes", title: "Attributes", forest: data.datatypeProperties ?? EMPTY_FOREST, add: taxonomy ? null : "datatypeProperty",
+  };
+  const examples: OutlineSection = {
+    id: "examples", title: "Examples", forest: data.examples ?? EMPTY_FOREST, add: taxonomy || !keepExamples ? null : "examples",
+  };
+  const annotations: OutlineSection = {
+    id: "annotations", title: "Annotation properties", forest: data.annotationProperties ?? EMPTY_FOREST, add: null,
+  };
+  const out: OutlineSection[] = taxonomy
+    ? [concepts, ...[relationships, attributes].filter((x) => has(x.forest))]
+    : [classes, relationships, attributes];
+  if (has(examples.forest) || (keepExamples && !taxonomy)) out.push(examples);
+  if (has(annotations.forest)) out.push(annotations);
+  // The other kind's content: listed, never hidden (D-089).
+  if (taxonomy && has(data.classes)) out.push(classes);
+  if (!taxonomy && has(data.concepts)) out.push(concepts);
+  return out;
+}
+
+/** Which sections a view starts with open (5.3): the kind's own and
+ *  Relationships. Kept per ontology for the session, in module state. */
+function defaultOpen(sections: OutlineSection[], kind: ProjectKind | null | undefined): Set<SectionId> {
+  const ids = new Set(sections.map((x) => x.id));
+  const own: SectionId = kind === "taxonomy" || (!ids.has("classes") && ids.has("concepts")) ? "concepts" : "classes";
+  return new Set<SectionId>([own, "relationships"]);
+}
+const openSections = new Map<string, Set<SectionId>>();
+
+/** Forget every remembered section, for a test's clean start. */
+export function _resetOutline(): void {
+  openSections.clear();
+}
+
+/** How many of a section's own kind it holds, or match the filter. */
+function countOf(forest: HierarchyForest, kind: string, query: string): number {
+  const q = query.trim().toLowerCase();
+  let n = 0;
+  for (const [id, node] of Object.entries(forest.nodes)) {
+    if (node.kind !== kind) continue;
+    if (!q || node.label.toLowerCase().includes(q) || localName(id).toLowerCase().includes(q)) n++;
+  }
+  return n;
 }
 
 const EMPTY_FOREST: HierarchyForest = { nodes: {}, children: {}, roots: [] };
@@ -436,10 +523,6 @@ export function withoutInferred(data: Hierarchy | null): Hierarchy | null {
   return out;
 }
 
-const CLASS_SECTION = "Class hierarchy";
-const CONCEPT_SECTION = "Concept hierarchy";
-const EXAMPLES_SECTION = "Examples";
-
 export default function HierarchyView({
   ontologyId,
   theme,
@@ -451,12 +534,12 @@ export default function HierarchyView({
   editing = null,
   onDeleted,
   canvas = null,
-  canvasSwitch = null,
   dataSources,
   onImportData,
   inferred = false,
   inferredToken = 0,
-  reasoning = null,
+  canvasShown = false,
+  onCounts,
 }: Props) {
   const [fetched, setData] = useState<Hierarchy | null>(null);
   // Snapshot rows named by their snapshot's label (csv-data-import 5.6).
@@ -523,13 +606,33 @@ export default function HierarchyView({
     });
   }, []);
 
-  // Every forest currently present, in render order. Computed once and reused by
-  // expand-all, the empty-state check and the render.
+  // Every section currently present, in render order. Computed once and
+  // reused by expand-all, the empty-state check and the render.
   const sections = useMemo(
     () => (data ? sectionsOf(data, editing, onImportData !== undefined) : []),
     [data, editing, onImportData],
   );
   const kind = editing?.kind ?? null;
+
+  // Which sections are open (5.3): remembered per ontology for the session.
+  const [open, setOpen] = useState<Set<SectionId> | null>(() =>
+    ontologyId ? (openSections.get(ontologyId) ?? null) : null,
+  );
+  useEffect(() => {
+    setOpen(ontologyId ? (openSections.get(ontologyId) ?? null) : null);
+  }, [ontologyId]);
+  const openNow = useMemo(() => open ?? defaultOpen(sections, kind), [open, sections, kind]);
+  const toggleSection = useCallback(
+    (id: SectionId) => {
+      const next = new Set(openNow);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      if (ontologyId) openSections.set(ontologyId, next);
+      setOpen(next);
+    },
+    [openNow, ontologyId],
+  );
+
   // The other kind's content, counted for its one line (5.1).
   const otherNote = useMemo(() => {
     if (!data || !kind) return null;
@@ -561,28 +664,63 @@ export default function HierarchyView({
 
   // --- the project's actions (5.2) ------------------------------------------
   const sectionRef = useRef<HTMLElement>(null);
-  const [creating, setCreating] = useState<Creating | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<{ iri: string; label: string } | null>(null);
   const [menu, setMenu] = useState<{ row: Row; anchor: { top: number; left: number }; fixed: boolean } | null>(null);
+  const [examplesMenu, setExamplesMenu] = useState<{ anchor: { top: number; left: number }; button: HTMLElement } | null>(null);
   const [reveal, setReveal] = useState<string | null>(null);
   const runner = useRunner();
   const { busy, run, clear } = runner;
   const actionError = runner.errors.tree || null;
   const setActionError = (_: null) => clear("tree");
-  // The selection as it is now, for a create that answers after it moved.
-  const selectedNow = useRef(selected);
-  selectedNow.current = selected;
+  // A draft being named (edit-page-rework 5.5): its row, in italics, under
+  // its parent while it is named on the canvas or in the side panel.
+  const creating = useProjectSelector((s) => s.creating);
+  const created = useProjectSelector((s) => s.created);
 
-  // Another document: whatever was open in the tree was about the old one.
+  // Another document: whatever was open in the tree was about the old one,
+  // and so was a draft being named (only on a change, not on mount: a draft
+  // begun before the outline mounted is still about this document).
+  const shownDocument = useRef(ontologyId);
   useEffect(() => {
-    setCreating(null);
+    if (shownDocument.current !== ontologyId) projectStore.cancelCreating(false);
+    shownDocument.current = ontologyId;
     setRenaming(null);
     setDeleting(null);
     setMenu(null);
+    setExamplesMenu(null);
     setReveal(null);
     clear("tree");
   }, [ontologyId, clear]);
+
+  // Something a draft made: its section and its parent open so its row is
+  // in sight, and unless its box on the canvas takes focus, its row does
+  // (Section 6), App selecting it.
+  const lastCreated = useRef(created?.token ?? 0);
+  useEffect(() => {
+    if (!created || created.token === lastCreated.current) return;
+    lastCreated.current = created.token;
+    if (created.parent) setExpanded((prev) => new Set(prev).add(created.parent!));
+    const home = CREATED_IN[created.kind];
+    if (!openNow.has(home)) toggleSection(home);
+    const box = created.kind === "class" || created.kind === "concept";
+    if (!(box && canvasShown)) setReveal(created.iri);
+    // openNow and toggleSection are read, not followed: only a new thing made moves this.
+  }, [created, canvasShown]);
+
+  // The side panel's *This model* counts, from this fetch: no request of
+  // its own (5.4, Section 10).
+  useEffect(() => {
+    if (!data || !onCounts) return;
+    const count = (forest: HierarchyForest | undefined, kind: string) => (forest ? countOf(forest, kind, "") : 0);
+    onCounts({
+      classes: count(data.classes, "class"),
+      concepts: count(data.concepts, "concept"),
+      relationships: count(data.objectProperties, "objectProperty"),
+      attributes: count(data.datatypeProperties, "datatypeProperty"),
+      examples: count(data.examples, "individual"),
+    });
+  }, [data, onCounts]);
 
   const focusRow = useCallback((id: string) => {
     window.setTimeout(() => {
@@ -603,10 +741,12 @@ export default function HierarchyView({
     setMenu(null);
     setActionError(null);
     if (action === "addChild") {
-      setCreating({
-        section: row.kind === "concept" ? "concept" : "class",
+      // The one draft (5.5): a box under the parent on the canvas, and the
+      // side panel's form; Cancel gives focus back to this row.
+      const element = sectionRef.current?.querySelector<HTMLElement>(`[role="treeitem"][data-key="${cssAttr(row.key)}"]`);
+      projectStore.startCreating(row.kind === "concept" ? "concept" : "class", {
         parent: { iri: row.id, label: row.label },
-        from: row.id,
+        from: element ?? null,
       });
     } else if (action === "rename") {
       setRenaming(row.id);
@@ -618,33 +758,6 @@ export default function HierarchyView({
       focusRow(row.id);
       setDeleting({ iri: row.id, label: row.label });
     }
-  };
-
-  const create = async ({ name, iri }: NewEntity) => {
-    if (!creating || busy || !data) return;
-    const { section, parent } = creating;
-    const scheme = Object.entries(data.concepts.nodes).find(([, n]) => n.kind === "conceptScheme")?.[0];
-    const args =
-      section === "class"
-        ? { label: name, iri, parent: parent?.iri }
-        : { prefLabel: name, iri, ...(parent ? { broader: parent.iri } : scheme ? { scheme } : {}) };
-    const before = selectedNow.current;
-    const result = await run("tree", section === "class" ? "CreateClass" : "CreateConcept", args);
-    if (!result || !runner.alive()) return;
-    setCreating(null);
-    if (parent) setExpanded((prev) => new Set(prev).add(parent.iri));
-    // Only if nothing else was selected while the command ran (5.8 item 4).
-    if (result.created && selectedNow.current === before) {
-      onSelect(result.created);
-      setReveal(result.created);
-    }
-  };
-
-  const cancelCreate = () => {
-    const from = creating?.from;
-    setCreating(null);
-    setActionError(null);
-    if (from) focusRow(from);
   };
 
   const rename = async (row: Row, value: string | null) => {
@@ -660,49 +773,22 @@ export default function HierarchyView({
     }
   };
 
-  const header = (title: string): ReactNode => {
-    if (!editing) return null;
-    if (title === EXAMPLES_SECTION && onImportData) {
-      return (
-        <div className="hierarchy-actions">
-          <button type="button" className="ghost" onClick={onImportData}>
-            Import data from CSV or Excel…
-          </button>
-        </div>
-      );
+  /** A section's +: one of its kind, by the one draft (5.5). Examples'
+   *  offers a new example or an import. */
+  const add = (section: OutlineSection, button: HTMLElement) => {
+    if (section.add === "examples") {
+      if (!onImportData) {
+        projectStore.startCreating("example", { from: button });
+        return;
+      }
+      const rect = button.getBoundingClientRect();
+      setExamplesMenu({ anchor: { top: rect.bottom, left: Math.max(0, rect.right - 220) }, button });
+      return;
     }
-    const section = title === CLASS_SECTION ? "class" : title === CONCEPT_SECTION ? "concept" : null;
-    if (!section) return null;
-    // The kind's own New button only; a project from before kinds has both.
-    if ((kind === "ontology" && section === "concept") || (kind === "taxonomy" && section === "class")) return null;
-    const open = creating?.section === section;
-    return (
-      <div className="hierarchy-actions">
-        {!open && (
-          <button type="button" className="ghost" onClick={() => setCreating({ section })}>
-            {section === "class" ? "New class" : "New concept"}
-          </button>
-        )}
-        {open && creating && (
-          <NewEntityForm
-            title={
-              creating.parent
-                ? `New ${section === "class" ? "subclass" : "narrower concept"} of ${creating.parent.label}`
-                : section === "class"
-                  ? "New class"
-                  : "New concept"
-            }
-            primaryLanguage={editing.primaryLanguage}
-            busy={busy}
-            error={actionError}
-            onSubmit={(entity) => void create(entity)}
-            onCancel={cancelCreate}
-          />
-        )}
-      </div>
-    );
+    if (section.add) projectStore.startCreating(section.add, { from: button });
   };
 
+  const anyExpanded = expanded.size > 0;
   const expandAll = useCallback(() => {
     if (!data) return;
     setExpanded(new Set(sections.flatMap((s) => internalIds(s.forest))));
@@ -722,7 +808,7 @@ export default function HierarchyView({
     >
       <div className="hierarchy-toolbar">
         <h2 id={HEADING_ID} tabIndex={-1}>
-          Hierarchy
+          Outline
         </h2>
         <input
           type="search"
@@ -730,50 +816,24 @@ export default function HierarchyView({
           placeholder="Filter by name…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          aria-label="Filter the hierarchy by name"
+          aria-label="Filter the outline by name"
         />
-        <button className="ghost" onClick={expandAll} disabled={!data}>
-          Expand all
+        {/* One button, its name the action it takes: it stays put and keeps
+            focus as the name changes. */}
+        <button
+          type="button"
+          className="ghost hierarchy-expand"
+          aria-disabled={!data}
+          onClick={() => data && (anyExpanded ? collapseAll() : expandAll())}
+        >
+          {anyExpanded ? "Collapse all" : "Expand all"}
         </button>
-        <button className="ghost" onClick={collapseAll} disabled={!data}>
-          Collapse all
-        </button>
-        {canvasSwitch && (
-          <button
-            type="button"
-            className="ghost"
-            aria-pressed={canvasSwitch.on}
-            onClick={canvasSwitch.onToggle}
-            title={canvasSwitch.on ? "Show the tree only" : "Show the canvas beside the tree"}
-          >
-            {/* The state in sight as well as in aria-pressed; not by colour alone. */}
-            <span aria-hidden="true">{canvasSwitch.on ? "✓ " : ""}</span>
-            Canvas
-          </button>
-        )}
-        {reasoning?.controls}
       </div>
-      {reasoning?.panel}
       {editing && (
         <p className="detail-note edit-status" role="status">
           {busy ? "Saving change…" : ""}
         </p>
       )}
-      {/* Not colour-only: aria-expanded carries expansion and the note is text,
-          so nothing here depends on a triangle glyph being seen. */}
-      <p className="hierarchy-note">
-        Showing <strong>asserted</strong> {" "}
-        <code>rdfs:subClassOf</code>, <code>skos:broader</code> and{" "}
-        <code>rdfs:subPropertyOf</code>
-        {inferred ? ", and what reasoning concluded, each marked inferred." : ", not inferred relationships."}
-        {editing && (
-          <>
-            {" "}
-            A row's actions open with its <kbd>⋯</kbd> button, or <kbd>Shift</kbd>+<kbd>F10</kbd>{" "}
-            on the focused row.
-          </>
-        )}
-      </p>
       {otherNote && <p className="detail-note hierarchy-other-kind">{otherNote}</p>}
       {renaming && actionError && (
         <p className="edit-error" role="alert">
@@ -781,7 +841,7 @@ export default function HierarchyView({
         </p>
       )}
 
-      {loading && <p className="hint hierarchy-status">Loading the hierarchy…</p>}
+      {loading && <p className="hint hierarchy-status">Loading the outline…</p>}
       {error && (
         <div className="error-bar" onClick={() => setError(null)} title="Click to dismiss">
           {error}
@@ -798,30 +858,41 @@ export default function HierarchyView({
       {data && sections.length > 0 && (
         <div className="hierarchy-forests">
           {sections.map((section) => {
-            const isExamples = section.title === EXAMPLES_SECTION;
+            const isExamples = section.id === "examples";
             const fixed = isExamples ? fixedExampleRow : fixedRow;
+            const draftHere =
+              creating &&
+              ((creating.kind === "class" && section.id === "classes") ||
+                (creating.kind === "concept" && section.id === "concepts"))
+                ? {
+                    parent: creating.parent?.iri ?? null,
+                    label: creating.name.trim() || (creating.kind === "class" ? "New class" : "New concept"),
+                  }
+                : null;
             return (
-            <Forest
-              key={section.title}
-              title={section.title}
-              forest={section.forest}
-              filter={filter}
-              expanded={isExamples ? examplesOpen : expanded}
-              selected={selected}
-              theme={theme}
-              onToggle={isExamples ? toggleExamples : toggle}
-              onSelect={onSelect}
-              header={header(section.title)}
-              editable={editing !== null}
-              renaming={renaming}
-              renameValue={(row) => (language === null || language === editing?.primaryLanguage ? row.label : "")}
-              busy={busy}
-              onRename={(row, value) => void rename(row, value)}
-              onMenu={(row, anchor) => setMenu({ row, anchor, fixed: fixed(row) })}
-              fixedRow={fixed}
-              reveal={reveal}
-              onRevealed={() => setReveal(null)}
-            />
+              <Forest
+                key={section.id}
+                section={section}
+                open={openNow.has(section.id)}
+                onFold={() => toggleSection(section.id)}
+                onAdd={editing && section.add ? (button) => add(section, button) : undefined}
+                filter={filter}
+                expanded={isExamples ? examplesOpen : expanded}
+                selected={selected}
+                theme={theme}
+                onToggle={isExamples ? toggleExamples : toggle}
+                onSelect={onSelect}
+                editable={editing !== null}
+                renaming={renaming}
+                renameValue={(row) => (language === null || language === editing?.primaryLanguage ? row.label : "")}
+                busy={busy}
+                onRename={(row, value) => void rename(row, value)}
+                onMenu={(row, anchor) => setMenu({ row, anchor, fixed: fixed(row) })}
+                fixedRow={fixed}
+                reveal={reveal}
+                onRevealed={() => setReveal(null)}
+                pending={draftHere}
+              />
             );
           })}
         </div>
@@ -839,6 +910,28 @@ export default function HierarchyView({
           anchor={menu.anchor}
           onChoose={(action) => choose(menu.row, action)}
           onClose={closeMenu}
+        />
+      )}
+      {examplesMenu && (
+        <RowMenu<"example" | "import">
+          label="Examples"
+          name="New example or import"
+          items={[
+            { action: "example", label: "New example" },
+            { action: "import", label: "Import data from CSV or Excel…" },
+          ]}
+          anchor={examplesMenu.anchor}
+          onChoose={(action) => {
+            const button = examplesMenu.button;
+            setExamplesMenu(null);
+            if (action === "example") projectStore.startCreating("example", { from: button });
+            else onImportData?.();
+          }}
+          onClose={() => {
+            const button = examplesMenu.button;
+            setExamplesMenu(null);
+            window.setTimeout(() => button.focus(), 0);
+          }}
         />
       )}
       {deleting && (
@@ -861,16 +954,18 @@ export default function HierarchyView({
 }
 
 interface ForestProps {
-  title: string;
-  forest: HierarchyForest;
+  section: OutlineSection;
+  /** Folded sections show their header only (5.3). */
+  open: boolean;
+  onFold: () => void;
+  /** In a project: the section's +, handed the button pressed. */
+  onAdd?: (button: HTMLElement) => void;
   filter: string;
   expanded: Set<string>;
   selected: string | null;
   theme: Theme;
   onToggle: (id: string, next: boolean) => void;
   onSelect: (iri: string) => void;
-  /** In a project: the New button and its form, above the tree. */
-  header?: ReactNode;
   /** In a project: rows carry a menu, and one may be renamed in place. */
   editable?: boolean;
   renaming?: string | null;
@@ -883,20 +978,37 @@ interface ForestProps {
   /** A row to focus once it is in this forest (a new entity). */
   reveal?: string | null;
   onRevealed?: () => void;
+  /** A draft being named here: a row in italics under its parent (5.5). */
+  pending?: { parent: string | null; label: string } | null;
 }
 
-/** One labelled forest: a WAI-ARIA `tree`, virtualized, with one tab stop and
- *  full arrow-key navigation. */
+/** The empty sentence of a section (Section 6). */
+const EMPTY_WORDS: Record<SectionId, string> = {
+  classes: "No classes yet. Drag Class onto the canvas, or press +.",
+  concepts: "No concepts yet. Drag Concept onto the canvas, or press +.",
+  relationships: "No relationships yet. Draw a line between two classes, or press +.",
+  attributes: "No attributes yet. Press +.",
+  annotations: "No annotation properties.",
+  examples: "No examples or imported data yet.",
+};
+
+/** The draft row's id: no IRI looks like it. */
+const PENDING_ID = " pending";
+
+/** One folding section: a header button with its count and +, then, when
+ *  open, a labelled forest -- a WAI-ARIA `tree`, virtualized, with one tab
+ *  stop and full arrow-key navigation. */
 function Forest({
-  title,
-  forest,
+  section,
+  open,
+  onFold,
+  onAdd,
   filter,
   expanded,
   selected,
   theme,
   onToggle,
   onSelect,
-  header = null,
   editable = false,
   renaming = null,
   renameValue,
@@ -906,15 +1018,43 @@ function Forest({
   fixedRow,
   reveal = null,
   onRevealed,
+  pending = null,
 }: ForestProps) {
+  const { forest, title } = section;
   const actionsOf = (row: Row) =>
     rowActions(row.kind, Boolean(row.importedFrom || row.fromData), null, (fixedRow?.(row) ?? false) || row.origin === "inferred");
   const appears = useMemo(() => appearanceCounts(forest), [forest]);
   const keep = useMemo(() => keepForFilter(forest, filter), [forest, filter]);
-  const rows = useMemo(
+  const treeRows = useMemo(
     () => flatten(forest, expanded, keep, appears),
     [forest, expanded, keep, appears],
   );
+  // The draft's row, under its parent's (or last, for a top-level one).
+  const rows = useMemo(() => {
+    if (!pending) return treeRows;
+    const at = pending.parent === null ? -1 : treeRows.findIndex((r) => r.id === pending.parent);
+    const row: Row = {
+      id: PENDING_ID,
+      key: PENDING_ID,
+      depth: at >= 0 ? treeRows[at].depth + 1 : 0,
+      label: pending.label,
+      prefixed: "",
+      kind: section.id === "concepts" ? "concept" : "class",
+      origin: "asserted",
+      expandable: false,
+      expanded: false,
+      childCount: 0,
+      cyclic: false,
+      appearsElsewhere: false,
+      posinset: 0,
+      setsize: 0,
+      pending: true,
+    };
+    const out = [...treeRows];
+    out.splice(at >= 0 ? at + 1 : out.length, 0, row);
+    return out;
+  }, [treeRows, pending, section.id]);
+  const count = useMemo(() => countOf(forest, COUNTED[section.id], filter), [forest, section.id, filter]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -939,11 +1079,21 @@ function Forest({
     }
   }, [rows, focusId]);
 
-  // Measure the real viewport once mounted (jsdom reports 0, so keep the default).
+  // Measure the real viewport (jsdom reports 0, so keep the default). The
+  // section's height changes as others fold and the window resizes, so it
+  // is watched rather than read once.
+  const hasTree = open && rows.length > 0;
   useLayoutEffect(() => {
-    const h = containerRef.current?.clientHeight ?? 0;
-    if (h > 0) setViewport(h);
-  }, [rows.length]);
+    const el = containerRef.current;
+    if (!el) return;
+    if (el.clientHeight > 0) setViewport(el.clientHeight);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (el.clientHeight > 0) setViewport(el.clientHeight);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasTree]);
 
   const total = rows.length;
   const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
@@ -983,17 +1133,17 @@ function Forest({
 
   // A new entity: focus its row once the refreshed forest holds it.
   useEffect(() => {
-    if (!reveal) return;
+    if (!reveal || !open) return;
     const index = rows.findIndex((r) => r.id === reveal);
     if (index >= 0) {
       moveTo(index);
       onRevealed?.();
     }
-  }, [rows, reveal]);
+  }, [rows, reveal, open]);
 
   /** Open the row menu beside a row, from its button or the keyboard. */
   const openMenu = (row: Row, element: Element | null) => {
-    if (!onMenu || actionsOf(row).length === 0) return;
+    if (!onMenu || row.pending || actionsOf(row).length === 0) return;
     const rect = element?.getBoundingClientRect();
     onMenu(row, { top: rect ? rect.bottom : 0, left: rect ? Math.max(0, rect.right - 200) : 0 });
   };
@@ -1047,7 +1197,7 @@ function Forest({
       case "Enter":
       case " ":
         e.preventDefault();
-        onSelect(row.id);
+        if (!row.pending) onSelect(row.id);
         break;
       default:
         // Type-ahead: a printable key jumps to the next row whose label starts
@@ -1066,64 +1216,98 @@ function Forest({
     }
   };
 
-  const headingId = `hierarchy-${title.replace(/\s+/g, "-").toLowerCase()}`;
+  const headingId = `hierarchy-${section.id}`;
+  const bodyId = `${headingId}-body`;
   const empty = rows.length === 0;
   const filtering = filter.trim() !== "";
 
   return (
-    <section className="hierarchy-section">
-      <h3 id={headingId}>
-        {title}
-        {filter.trim() && !empty && (
-          <span className="hierarchy-match-count"> · {rows.length} shown</span>
+    <section
+      className={open ? "hierarchy-section open" : "hierarchy-section"}
+      aria-labelledby={headingId}
+      // An open section never takes more than its rows need, so the height
+      // it leaves goes to the other open sections: with two short sections
+      // and a long one, the long one shows its 8 rows at 1280x720 (E1),
+      // where an equal share gave each 6.8.
+      style={open ? { maxHeight: SECTION_HEAD + Math.max(rows.length, 2) * ROW_HEIGHT + 8 } : undefined}
+    >
+      <div className="hierarchy-section-head">
+        <h3>
+          <button
+            type="button"
+            id={headingId}
+            className="hierarchy-fold"
+            aria-expanded={open}
+            aria-controls={open ? bodyId : undefined}
+            onClick={onFold}
+            // The count in the name, *Classes, 3* (Section 6); with a filter,
+            // the matches.
+            aria-label={`${title}, ${count.toLocaleString()}${filtering ? " shown" : ""}`}
+          >
+            <span className="hierarchy-chevron" aria-hidden="true">
+              {open ? "▾" : "▸"}
+            </span>
+            <span className="hierarchy-section-title">{title}</span>
+            <span className="hierarchy-section-count">{count.toLocaleString()}</span>
+            {filtering && <span className="hierarchy-match-count"> shown</span>}
+          </button>
+        </h3>
+        {onAdd && (
+          <button
+            type="button"
+            className="hierarchy-add"
+            aria-label={ADD_LABELS[section.add!]}
+            title={ADD_LABELS[section.add!]}
+            aria-haspopup={section.add === "examples" ? "menu" : undefined}
+            onClick={(e) => onAdd(e.currentTarget)}
+          >
+            +
+          </button>
         )}
-      </h3>
-      {header}
-      {empty ? (
-        <p className="hint hierarchy-status">
-          {filtering
-            ? "No matches in this section."
-            : title === CONCEPT_SECTION
-              ? "No concepts yet. New concept makes the first."
-              : title === EXAMPLES_SECTION
-                ? "No examples or imported data yet."
-                : "No classes yet. New class makes the first."}
-        </p>
-      ) : (
-        <div
-          className="hierarchy-tree"
-          role="tree"
-          aria-labelledby={headingId}
-          ref={containerRef}
-          onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-          onKeyDown={onKeyDown}
-        >
-          {/* Sized to the full row count so the scrollbar reflects the whole
-              tree; only the window's rows are in the DOM, positioned by index. */}
-          <div className="hierarchy-scroll" style={{ height: total * ROW_HEIGHT }}>
-            {windowRows.map((row, i) => {
-              const index = first + i;
-              return (
-                <TreeRow
-                  key={row.key}
-                  row={row}
-                  index={index}
-                  theme={theme}
-                  isSelected={row.id === selected}
-                  isFocus={row.key === focusId}
-                  onToggle={onToggle}
-                  onSelect={onSelect}
-                  onFocus={setFocusId}
-                  menu={editable && actionsOf(row).length > 0 ? openMenu : undefined}
-                  rename={
-                    renaming === row.id && onRename
-                      ? { initial: renameValue?.(row) ?? row.label, busy, onDone: (v) => onRename(row, v) }
-                      : undefined
-                  }
-                />
-              );
-            })}
-          </div>
+      </div>
+      {open && (
+        <div className="hierarchy-section-body" id={bodyId}>
+          {empty ? (
+            <p className="hint hierarchy-status">
+              {filtering ? "No matches in this section." : EMPTY_WORDS[section.id]}
+            </p>
+          ) : (
+            <div
+              className="hierarchy-tree"
+              role="tree"
+              aria-labelledby={headingId}
+              ref={containerRef}
+              onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+              onKeyDown={onKeyDown}
+            >
+              {/* Sized to the full row count so the scrollbar reflects the whole
+                  tree; only the window's rows are in the DOM, positioned by index. */}
+              <div className="hierarchy-scroll" style={{ height: total * ROW_HEIGHT }}>
+                {windowRows.map((row, i) => {
+                  const index = first + i;
+                  return (
+                    <TreeRow
+                      key={row.key}
+                      row={row}
+                      index={index}
+                      theme={theme}
+                      isSelected={row.id === selected}
+                      isFocus={row.key === focusId}
+                      onToggle={onToggle}
+                      onSelect={onSelect}
+                      onFocus={setFocusId}
+                      menu={editable && !row.pending && actionsOf(row).length > 0 ? openMenu : undefined}
+                      rename={
+                        renaming === row.id && onRename
+                          ? { initial: renameValue?.(row) ?? row.label, busy, onDone: (v) => onRename(row, v) }
+                          : undefined
+                      }
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -1217,11 +1401,12 @@ function TreeRow({
       className={
         "hierarchy-row" +
         (isSelected ? " selected" : "") +
-        (inferred ? " inferred" : "")
+        (inferred ? " inferred" : "") +
+        (row.pending ? " pending" : "")
       }
       style={{ top: index * ROW_HEIGHT, height: ROW_HEIGHT }}
       title={row.prefixed || row.id}
-      onClick={() => onSelect(row.id)}
+      onClick={() => !row.pending && onSelect(row.id)}
       onFocus={(e) => e.target === e.currentTarget && onFocus?.(row.key)}
     >
       <span className="hierarchy-indent" style={{ width: cappedDepth * INDENT }} aria-hidden="true" />
@@ -1258,6 +1443,7 @@ function TreeRow({
       ) : (
         <span className="hierarchy-label">{row.label}</span>
       )}
+      {row.pending && <span className="visually-hidden">, being created</span>}
       {row.ends && !rename && <span className="hierarchy-ends">({row.ends})</span>}
       <span className="hierarchy-kind">{KIND_LABELS[row.kind] ?? KIND_LABELS.other}</span>
       {row.importedFrom && (

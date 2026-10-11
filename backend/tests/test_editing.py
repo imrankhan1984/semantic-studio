@@ -490,6 +490,24 @@ def test_iris_are_minted_from_labels_editable_and_never_follow_a_label(pid):
     assert not list(graph.triples((U("LineItem"), None, None)))
 
 
+def test_a_new_class_or_concept_takes_its_definition_in_the_same_one_undo_step(pid):
+    """edit-page-rework 5.4: the side panel's New class form has an optional
+    definition, made by the same command, so one undo removes both."""
+    before = graph_copy(pid)
+    ok(pid, "CreateClass", label="Invoice", definition="  A request for payment. ")
+    assert (U("Invoice"), SKOS.definition, Literal("A request for payment.", lang="en")) in doc(pid).graph
+    ok(pid, "CreateConcept", prefLabel="Paid", definition="Settled in full.")
+    assert (U("Paid"), SKOS.definition, Literal("Settled in full.", lang="en")) in doc(pid).graph
+    # An empty one adds nothing; one that is no text is refused.
+    ok(pid, "CreateClass", label="Blank", definition="  ")
+    assert not list(doc(pid).graph.triples((U("Blank"), SKOS.definition, None)))
+    response = run(pid, "CreateClass", label="Odd", definition=3)
+    assert response.status_code == 422 and "A definition is text." in response.text
+    for _ in range(3):
+        assert client.post(f"/api/projects/{pid}/documents/model/undo").status_code == 200
+    assert isomorphic(doc(pid).graph, before)
+
+
 # --- rename and delete (AC-7) ------------------------------------------------------------
 
 

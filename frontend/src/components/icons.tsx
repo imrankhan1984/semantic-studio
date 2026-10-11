@@ -101,6 +101,18 @@ export function IconHierarchy() {
   );
 }
 
+/* Edit (edit-page-rework 5.1): a pencil, the job rather than one view of
+   it. The Hierarchy tree above stays exported for anything still drawing it. */
+export function IconEdit() {
+  return (
+    <svg {...base}>
+      <path d="M4 20l1-4L16 5l3 3L8 19z" />
+      <path d="M14 7l3 3" />
+      <path d="M4 20h4" />
+    </svg>
+  );
+}
+
 /* Shapes (shacl-authoring 5.1): a shield with a tick, what a check on the
    data looks like, distinct from the tree of Hierarchy beside it. */
 export function IconShapes() {

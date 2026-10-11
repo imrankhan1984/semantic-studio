@@ -4,12 +4,14 @@ FILE: frontend/src/components/ReasoningPanel.tsx
 ================================================================================
 
 SUMMARY
-    Reasoning in the Hierarchy view (axioms-and-reasoning 5.1 to 5.7,
-    Section 6): **Reason**, which becomes **Stop** while a run goes, and
-    **Show inferred**, both in the view's toolbar; under them **Include data
-    snapshots**, the line saying what the reasoner does, the status line and
-    the results panel -- problems first, then the four groups with their
-    true counts, each fact with **Why?** and its subject a link.
+    Reasoning on the Edit page (axioms-and-reasoning 5.1 to 5.7, Section 6;
+    edit-page-rework 5.4, 5.6): **Reason**, which becomes **Stop** while a
+    run goes, and **Show inferred**, in the canvas toolbar (and in the side
+    panel's Reasoning tab before a run or with the canvas hidden); in that
+    tab, **Include data snapshots**, the status line and the results panel
+    -- problems first, then the four groups with their true counts, each
+    fact with **Why?** and its subject a link -- and under them one line
+    saying what the reasoner does and does not do.
 
 BASIC IDEA
     The run and its result live in the project store (D-084); this reads
@@ -42,9 +44,11 @@ INPUTS / INPUT SOURCES (props)
     - hasData: a snapshot is switched on, so the data checkbox shows.
     - now: the model's revision, the data generation and the imports switch.
     - onSelect: select an entity in the app's shared selection.
+    - onPress (ReasonControls): told when Reason is pressed, so App knows
+      which place the run was started from (edit-page-rework 5.4).
 
 EXPECTED OUTPUT
-    - ReasonControls (toolbar) and ReasoningPanel (below it).
+    - ReasonControls (toolbar) and ReasoningPanel (the Reasoning tab).
 ================================================================================
 */
 
@@ -85,8 +89,14 @@ function useRunning() {
   return since;
 }
 
-/** Reason / Stop and Show inferred, for the Hierarchy toolbar. */
-export function ReasonControls({ kind, now, hasData }: Pick<Props, "kind" | "now" | "hasData">) {
+/** Reason / Stop and Show inferred, for the canvas toolbar or the
+ *  Reasoning tab. */
+export function ReasonControls({
+  kind,
+  now,
+  hasData,
+  onPress,
+}: Pick<Props, "kind" | "now" | "hasData"> & { onPress?: () => void }) {
   const since = useRunning();
   const result = useProjectSelector((s) => s.reasoning);
   const showInferred = useProjectSelector((s) => s.showInferred);
@@ -105,7 +115,10 @@ export function ReasonControls({ kind, now, hasData }: Pick<Props, "kind" | "now
         onClick={() => {
           if (running) {
             if (!stopping) void projectStore.stopReasoning();
-          } else void projectStore.reason(includeData && hasData, now.imports, importsNow);
+          } else {
+            onPress?.();
+            void projectStore.reason(includeData && hasData, now.imports, importsNow);
+          }
         }}
       >
         {running ? "Stop" : "Reason"}
@@ -201,7 +214,6 @@ export default function ReasoningPanel({ projectId, kind, hasData, now, onSelect
           <label htmlFor={dataId}>Include data snapshots</label> <span className="detail-note">({DATA_SLOWER})</span>
         </p>
       )}
-      <p className="detail-note reasoning-intro">{INTRO}</p>
       <p className="detail-note reasoning-status">
         {running ? runningLine(elapsed) : result && !stale ? finishedLine(result) : ""}
       </p>
@@ -227,8 +239,10 @@ export default function ReasoningPanel({ projectId, kind, hasData, now, onSelect
           />
         )}
         {result && <Results projectId={projectId} result={result} token={token} imports={now.imports} onSelect={onSelect} />}
+        {/* What reasoning is, said once, under the results (5.4): the page
+            starts with the model, not with this. */}
         <p className="detail-note reasoning-footer">
-          {VALUES_FOOTER} {NOT_SAVED}
+          {INTRO} {VALUES_FOOTER} {NOT_SAVED}
         </p>
       </section>
     </div>

@@ -30,7 +30,7 @@ describe("icons", () => {
   const entries = Object.entries(icons).filter(([name]) => name.startsWith("Icon"));
 
   it("exports the Shapes icon beside the other mode icons", () => {
-    expect(entries.map(([name]) => name)).toEqual(expect.arrayContaining(["IconHierarchy", "IconShapes"]));
+    expect(entries.map(([name]) => name)).toEqual(expect.arrayContaining(["IconHierarchy", "IconShapes", "IconEdit"]));
   });
 
   it.each(entries)("%s is one stroked svg in the current colour, with no text", (_name, Icon) => {

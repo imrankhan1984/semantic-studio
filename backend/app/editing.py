@@ -730,7 +730,20 @@ def cmd_create_class(ctx: Context, a: dict) -> Change:
         parent = ctx.iri(a["parent"], "parent class")
         ctx.require(parent, "class")
         adds.append((iri, RDFS.subClassOf, parent))
+    adds += _definition(ctx, iri, a)
     return _created(_change(ctx.graph, f"Created class {label}", adds), iri)
+
+
+def _definition(ctx: Context, iri: URIRef, a: dict) -> list:
+    """The New class form's optional definition (edit-page-rework 5.4),
+    made in the same command so the class and its definition are one undo
+    step; skos:definition in the primary language, as the form writes it."""
+    text = a.get("definition")
+    if text is None:
+        return []
+    if not isinstance(text, str):
+        raise CommandError("A definition is text.")
+    return [(iri, SKOS.definition, Literal(text.strip(), lang=ctx.primary))] if text.strip() else []
 
 
 def cmd_create_object_property(ctx: Context, a: dict) -> Change:
@@ -796,6 +809,7 @@ def cmd_create_concept(ctx: Context, a: dict) -> Change:
         # A top concept exactly when nothing above it is in the scheme (D-091).
         if broader is None or not _in_scheme(ctx.graph, broader, scheme):
             adds.append((scheme, SKOS.hasTopConcept, iri))
+    adds += _definition(ctx, iri, a)
     return _created(_change(ctx.graph, f"Created concept {label}", adds), iri)
 
 

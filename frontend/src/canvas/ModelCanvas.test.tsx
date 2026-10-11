@@ -314,6 +314,29 @@ describe("creating (AC-12)", () => {
     expect(saved.positions[EX + "Receipt"]).toBeDefined();
   });
 
+  it("what a draft made takes focus on its box once the refetch draws it (row E4)", async () => {
+    runCommand.mockResolvedValueOnce({ revision: 3, label: "Created class Receipt", state: STATE, created: EX + "Receipt" });
+    const { rerender } = await renderCanvas();
+    fireEvent.click(screen.getByRole("button", { name: "Class" }));
+    const field = screen.getByRole("textbox", { name: "Name of the new class" });
+    fireEvent.change(field, { target: { value: "Receipt" } });
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+    // Not yet drawn: focus waits where the draft began, never the page.
+    expect(document.activeElement).not.toBe(document.body);
+    const next = viewOf();
+    next.nodes = [...next.nodes, { iri: EX + "Receipt", kind: "class", label: "Receipt", fallback: false, attributes: [] }];
+    getCanvas.mockResolvedValue({ ...next, revision: 3 });
+    await act(async () => {
+      rerender(
+        <ModelCanvas projectId={PID} doc="model" revision={3} language="en" primaryLanguage="en" selected={EX + "Receipt"}
+          onSelect={onSelect} onSelectLink={onSelectLink} onDeleted={onDeleted} onCanvasSet={onCanvasSet} />,
+      );
+    });
+    await waitFor(() => expect(document.activeElement).toBe(box("Receipt")));
+  });
+
   it("Escape or an empty name sends nothing", async () => {
     await renderCanvas();
     fireEvent.click(screen.getByRole("button", { name: "Concept" }));

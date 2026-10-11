@@ -72,6 +72,10 @@ INPUTS / INPUT SOURCES (props)
     - onDeleted: an entity deleted from the canvas.
     - onCanvasSet: tells App the shown set past 300 boxes, for the tree's and
       the form's Show on canvas and Hide from canvas (5.6).
+    - reason: Reason / Stop and Show inferred, drawn in the toolbar before
+      the zoom controls (edit-page-rework 5.6).
+    Plus the project store's draft (edit-page-rework 5.5): the box being
+    named here is the side panel form's too, one name in the store.
 
 EXPECTED OUTPUT
     - The canvas, its palette, toolbar, menus and dialogs; commands through
@@ -79,7 +83,7 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   applyNodeChanges,
   ConnectionMode,
@@ -108,7 +112,8 @@ import { getNodeDetails } from "../api";
 import { useRunner } from "../components/EditParts";
 import { restrictionSentence, shortLabel } from "../modeling/ruleSentences";
 import { createdAnnouncement, linkSentence, otherKindNote } from "../modeling/sentences";
-import { projectStore } from "../state/projectStore";
+import { projectStore, useProjectSelector } from "../state/projectStore";
+import { intoDraft } from "../components/CreateForm";
 import type { CanvasLink, CanvasNode, CanvasSet, CanvasView, ProjectDocName } from "../types";
 import ClassNode, { type BoxData, type BoxNode } from "./ClassNode";
 import ConceptNode from "./ConceptNode";
@@ -132,6 +137,7 @@ export interface ModelCanvasProps {
   /** A current reasoning result's lines and marks (axioms-and-reasoning
    *  5.7), with the imports switch it was computed on; null for none. */
   inferred?: { imports: boolean; token?: number } | null;
+  reason?: ReactNode;
 }
 
 /** The palette's drag data, one type per kind: dragover cannot read the
@@ -213,10 +219,11 @@ function LabelledEdge(props: EdgeProps<Edge<LineData>>) {
 
 const edgeTypes = { labelled: LabelledEdge };
 
-interface Draft {
-  kind: "class" | "concept";
+/** Where the store's draft is drawn: placed by a drop, or found once in
+ *  the free space for a draft begun anywhere else. */
+interface DraftPlace {
+  token: number;
   at: [number, number];
-  parent?: string;
 }
 
 function Canvas(props: ModelCanvasProps) {
@@ -252,8 +259,16 @@ function Canvas(props: ModelCanvasProps) {
   const [hover, setHover] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [draftName, setDraftName] = useState("");
+  // The one draft (edit-page-rework 5.5), a class or a concept: named here
+  // or in the side panel, made by the store whichever pressed Enter.
+  const creating = useProjectSelector((s) => s.creating);
+  const draftBusy = useProjectSelector((s) => s.creatingBusy);
+  const draftError = useProjectSelector((s) => s.creatingError);
+  const created = useProjectSelector((s) => s.created);
+  const draft = creating && (creating.kind === "class" || creating.kind === "concept") ? creating : null;
+  const [place, setPlace] = useState<DraftPlace | null>(null);
+  // The palette items, where a drag or a press began: Cancel's way back.
+  const chips = useRef<Record<string, HTMLButtonElement | null>>({});
   const [hint, setHint] = useState("");
   const [relate, setRelate] = useState<{
     from: string;
@@ -320,31 +335,31 @@ function Canvas(props: ModelCanvasProps) {
     [run],
   );
 
-  const createDraft = async () => {
-    if (!draft || busy) return;
-    const name = draftName.trim();
-    if (!name) {
-      setDraft(null);
-      return;
+  // What a draft made: placed where its box stood, selected and focused
+  // (Section 6) -- only if nothing else was selected while it was made (5.8
+  // item 4), and only a draft this canvas drew.
+  const madeFrom = useRef<{ token: number; selected: string | null } | null>(null);
+  useEffect(() => {
+    if (!created || !place || created.token !== place.token) return;
+    data.place(created.iri, place.at);
+    setPlace(null);
+    if (madeFrom.current?.token === created.token && selectedNow.current !== madeFrom.current.selected) return;
+    selectHere(created.iri);
+    // Its box is drawn once the refetch for the new revision lands, which
+    // may be before this or after: focus it now if it is there, or when it
+    // is (rows E4 and E6; focusing at once found no box, and focus stayed
+    // on the control the draft began from).
+    if (nodes.some((n) => n.id === created.iri)) focusBox(created.iri);
+    else focusWhenDrawn.current = created.iri;
+  }, [created, place, data, selectHere, nodes, focusBox]);
+  const focusWhenDrawn = useRef<string | null>(null);
+  useEffect(() => {
+    const iri = focusWhenDrawn.current;
+    if (iri && nodes.some((n) => n.id === iri)) {
+      focusWhenDrawn.current = null;
+      focusBox(iri);
     }
-    const before = selectedNow.current;
-    const args =
-      draft.kind === "class"
-        ? { label: name, ...(draft.parent ? { parent: draft.parent } : {}) }
-        : { prefLabel: name, ...(draft.parent ? { broader: draft.parent } : {}) };
-    const result = await run("draft", draft.kind === "class" ? "CreateClass" : "CreateConcept", args);
-    if (!result) return;
-    if (result.created) {
-      data.place(result.created, draft.at);
-      // Only if nothing else was selected while it ran (5.8 item 4).
-      if (alive() && selectedNow.current === before) {
-        selectHere(result.created);
-        focusBox(result.created);
-      }
-    }
-    setDraft(null);
-    setDraftName("");
-  };
+  }, [nodes, focusBox]);
 
   const choose = async (choice: RelateChoice, name?: string) => {
     if (!relate) return;
@@ -742,26 +757,45 @@ function Canvas(props: ModelCanvasProps) {
     setDropTarget(null);
     setHint("");
     const at = flow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
-    const place: [number, number] = target && positions[target.iri]
+    const spot: [number, number] = target && positions[target.iri]
       ? [positions[target.iri][0], positions[target.iri][1] + 170]
       : [at.x, at.y];
-    setDraft({ kind, at: place, parent: target?.iri });
-    setDraftName("");
+    const token = projectStore.startCreating(kind, {
+      parent: target ? { iri: target.iri, label: target.label } : null,
+      from: chips.current[kind] ?? null,
+    });
+    madeFrom.current = { token, selected: selectedNow.current };
+    setPlace({ token, at: spot });
   };
 
-  /** The palette by keyboard or click: a new box in the free space nearest
-   *  the middle of the view, never on top of another (5.10 item 3). */
+  /** The palette by keyboard or click: the one draft, begun here. */
   const startDraft = (kind: "class" | "concept") => {
-    const box = wrapper.current?.getBoundingClientRect();
-    const at = flow.screenToFlowPosition({ x: (box?.left ?? 0) + (box?.width ?? 0) / 2, y: (box?.top ?? 0) + (box?.height ?? 0) / 2 });
-    const taken = nodes.map((n) => ({
-      at: [n.position.x, n.position.y] as [number, number],
-      width: n.measured?.width,
-      height: n.measured?.height,
-    }));
-    setDraft({ kind, at: freeSpot([at.x, at.y], taken) });
-    setDraftName("");
+    const token = projectStore.startCreating(kind, { from: chips.current[kind] ?? null });
+    madeFrom.current = { token, selected: selectedNow.current };
   };
+
+  // A draft with no place yet -- the palette pressed, an outline +, a row's
+  // Add subclass, the side panel's button -- is drawn under its parent's box
+  // when the parent is drawn, or else in the free space nearest the middle
+  // of the view, never on top of another box (5.10 item 3).
+  useEffect(() => {
+    if (!draft || place?.token === draft.token) return;
+    const parent = draft.parent ? positions[draft.parent.iri] : undefined;
+    let spot: [number, number];
+    if (parent) spot = [parent[0], parent[1] + 170];
+    else {
+      const box = wrapper.current?.getBoundingClientRect();
+      const at = flow.screenToFlowPosition({ x: (box?.left ?? 0) + (box?.width ?? 0) / 2, y: (box?.top ?? 0) + (box?.height ?? 0) / 2 });
+      const taken = nodes.map((n) => ({
+        at: [n.position.x, n.position.y] as [number, number],
+        width: n.measured?.width,
+        height: n.measured?.height,
+      }));
+      spot = freeSpot([at.x, at.y], taken);
+    }
+    if (madeFrom.current?.token !== draft.token) madeFrom.current = { token: draft.token, selected: selectedNow.current };
+    setPlace({ token: draft.token, at: spot });
+  }, [draft, place, positions, nodes, flow]);
 
   const onKeyDownCapture = (e: React.KeyboardEvent) => {
     const target = e.target as HTMLElement;
@@ -827,9 +861,10 @@ function Canvas(props: ModelCanvasProps) {
   const palette: ("class" | "concept")[] =
     view.kind === "ontology" ? ["class"] : view.kind === "taxonomy" ? ["concept"] : ["class", "concept"];
   const otherNote = otherKindLine(view);
-  const draftNode = draft ? flow.flowToScreenPosition({ x: draft.at[0], y: draft.at[1] }) : null;
+  const drawnPlace = draft && place?.token === draft.token ? place.at : null;
+  const draftNode = drawnPlace ? flow.flowToScreenPosition({ x: drawnPlace[0], y: drawnPlace[1] }) : null;
   const origin = wrapper.current?.getBoundingClientRect();
-  const refused = errors.draft || errors.rename || errors.attribute || errors.edge || data.saveError || "";
+  const refused = errors.rename || errors.attribute || errors.edge || data.saveError || "";
 
   return (
     <section className="model-canvas" aria-label="Modeling canvas" aria-busy={busy} ref={section} tabIndex={-1}>
@@ -845,6 +880,9 @@ function Canvas(props: ModelCanvasProps) {
         {palette.map((kind) => (
           <button
             key={kind}
+            ref={(el) => {
+              chips.current[kind] = el;
+            }}
             type="button"
             className="canvas-palette-item"
             draggable
@@ -859,6 +897,7 @@ function Canvas(props: ModelCanvasProps) {
           </button>
         ))}
         <span className="canvas-toolbar-gap" />
+        {props.reason}
         <button type="button" className="ghost" onClick={() => void flow.zoomIn({ duration: reduced ? 0 : 150 })} aria-label="Zoom in">
           +
         </button>
@@ -979,25 +1018,28 @@ function Canvas(props: ModelCanvasProps) {
               autoFocus
               aria-label={
                 draft.parent
-                  ? `Name of the new ${draft.kind === "class" ? "subclass" : "narrower concept"} of ${label(view, draft.parent)}`
+                  ? `Name of the new ${draft.kind === "class" ? "subclass" : "narrower concept"} of ${draft.parent.label}`
                   : `Name of the new ${draft.kind}`
               }
-              value={draftName}
-              readOnly={busy}
-              onChange={(e) => setDraftName(e.target.value)}
+              value={draft.name}
+              readOnly={draftBusy}
+              onChange={(e) => projectStore.setCreatingName(e.target.value)}
               onKeyDown={(e) => {
                 e.stopPropagation();
                 if (e.key === "Enter") {
                   e.preventDefault();
-                  void createDraft();
+                  if (!draft.name.trim()) projectStore.cancelCreating();
+                  else void projectStore.createDraft();
                 } else if (e.key === "Escape") {
                   e.preventDefault();
-                  setDraft(null);
+                  projectStore.cancelCreating();
                 }
               }}
-              onBlur={() => !busy && !draftName.trim() && setDraft(null)}
+              // Focus leaving both fields empty ends the draft (5.5); the
+              // side panel's name field is the other one.
+              onBlur={(e) => !draftBusy && !draft.name.trim() && !intoDraft(e.relatedTarget) && projectStore.cancelCreating(false)}
             />
-            {errors.draft && <p className="edit-error">{errors.draft}</p>}
+            {draftError && <p className="edit-error">{draftError}</p>}
           </div>
         )}
         {relate && anchor && (
