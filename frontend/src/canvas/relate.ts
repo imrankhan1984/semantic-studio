@@ -51,6 +51,7 @@ EXPECTED OUTPUT
 import { moreRulesText } from "../modeling/ruleSentences";
 import { article, existingSentence, linkSentence } from "../modeling/sentences";
 import type { CanvasNode, CanvasView } from "../types";
+import { kindWord } from "./kindColours";
 
 export type RelateChoice =
   | { kind: "subClassOf"; label: string }
@@ -201,7 +202,10 @@ function narrowerThan(view: CanvasView, low: string, high: string): boolean {
 export function boxName(view: CanvasView, iri: string): string {
   const n = node(view, iri);
   if (!n) return iri;
-  const parts = [n.label, n.kind];
+  // The kind in words, as the box's header says it (edit-page-rework 5.8):
+  // *Person, OWL class*. An imported box's typing is its import's, so it is
+  // a class or a concept, and the import is named below.
+  const parts = [n.label, n.imported ? n.kind : kindWord(n)];
   const up = n.kind === "class" ? "subClassOf" : "broader";
   const parents = view.edges.filter((e) => e.kind === up && e.source === iri).map((e) => node(view, e.target)?.label);
   if (parents.length) parts.push(`${n.kind === "class" ? "kind of" : "narrower than"} ${parents.join(" and ")}`);

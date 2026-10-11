@@ -4,15 +4,18 @@ FILE: frontend/src/canvas/ClassNode.tsx
 ================================================================================
 
 SUMMARY
-    A class box on the modeling canvas (visual-modeling 5.4): its name in the
-    display language, its attributes listed inside as *name : type*, and a
-    *+ attribute* control; an imported class dashed, named by its import, and
-    read-only; in a taxonomy, a class dotted and marked *read-only in a
+    A class box on the modeling canvas (visual-modeling 5.4): a band and a
+    tinted header in its kind's colour with its kind in words at the
+    header's right, *OWL CLASS* or *RDFS CLASS* (edit-page-rework 5.8); its
+    name in the display language, its attributes listed inside as *name :
+    type*, and a *+ attribute* control; an imported class dashed with a grey
+    body, its word *IMPORTED · FOAF*, and read-only; in a taxonomy, a class dotted and marked *read-only in a
     taxonomy*, without *+ attribute* (relationships 5.1, D-089). The
     classes it is disjoint with are lines in it, *never an Organization*,
     and the rules the canvas does not draw are counted, *1 more rule in the
     form* (axioms-and-reasoning 5.9). Also
-    NameLine, the name or its rename field, which the concept box shares.
+    NameLine, the name or its rename field, and BoxHead, the header, which
+    the concept box shares.
 
 BASIC IDEA
     React Flow draws the box and makes it focusable; this draws what is in it.
@@ -24,8 +27,9 @@ BASIC IDEA
     Enter-to-rename and Delete handling.
 
     A fallback name keeps its *(en)* marker in the text (5.4), and the
-    imported box says *from FOAF* in text as well as being dashed: nothing is
-    told by colour or line style alone.
+    imported box says *imported · FOAF* in text as well as being dashed:
+    nothing is told by colour or line style alone. The colours are CSS
+    tokens chosen by a `kind-…` class (kindColours.ts holds their values).
 
 INPUTS / INPUT SOURCES
     - data: see BoxData.
@@ -42,6 +46,7 @@ import { moreRulesText } from "../modeling/ruleSentences";
 import { article } from "../modeling/sentences";
 import { DATATYPES } from "../modeling/values";
 import type { CanvasNode } from "../types";
+import { boxKind, kindWord } from "./kindColours";
 
 export interface BoxData extends Record<string, unknown> {
   node: CanvasNode;
@@ -93,6 +98,29 @@ export function NameLine({ data }: { data: BoxData }) {
   return <RenameField data={data} />;
 }
 
+/** The header: the name, and the kind in words at its right (5.8). */
+export function BoxHead({ data }: { data: BoxData }) {
+  return (
+    <div className="canvas-box-head">
+      <NameLine data={data} />
+      <span className="canvas-box-kind">{kindWord(data.node)}</span>
+    </div>
+  );
+}
+
+/** The classes a box is drawn with: its kind's colours, and its states. */
+export function boxClasses(data: BoxData, selected: boolean): string {
+  const { node } = data;
+  return (
+    `canvas-box canvas-${node.kind} kind-${boxKind(node)}` +
+    (node.imported ? " imported" : "") +
+    (node.neverMembers ? " never-members" : "") +
+    (data.otherKind ? " other-kind" : "") +
+    (selected ? " selected" : "") +
+    (data.dropTarget ? " drop-target" : "")
+  );
+}
+
 function RenameField({ data }: { data: BoxData }) {
   const { node, busy, onRenameDone } = data;
   // A fallback name is the primary language's, marked "(en)": this language
@@ -125,7 +153,7 @@ function RenameField({ data }: { data: BoxData }) {
 }
 
 function ClassNode({ data, selected }: NodeProps<BoxNode>) {
-  const { node, dropTarget, busy, onAddAttribute, otherKind } = data;
+  const { node, busy, onAddAttribute, otherKind } = data;
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [datatype, setDatatype] = useState("xsd:string");
@@ -138,103 +166,91 @@ function ClassNode({ data, selected }: NodeProps<BoxNode>) {
     }
   };
   return (
-    <div
-      className={
-        "canvas-box canvas-class" +
-        (imported ? " imported" : "") +
-        (node.neverMembers ? " never-members" : "") +
-        (otherKind ? " other-kind" : "") +
-        (selected ? " selected" : "") +
-        (dropTarget ? " drop-target" : "")
-      }
-    >
+    <div className={boxClasses(data, Boolean(selected))}>
       <Sides />
-      <NameLine data={data} />
-      {imported && (
-        <span className="canvas-box-from">
-          {node.imported === "outside" ? "outside this model" : `from ${node.imported}`}
-        </span>
-      )}
-      {otherKind && <span className="canvas-box-from">read-only in a taxonomy</span>}
-      {/* A reasoning result found it can never have members (5.5, 5.7):
-          said in text, and outlined dashed, never by colour alone. */}
-      {node.neverMembers && <span className="canvas-box-never">can never have members</span>}
-      {/* Rules (axioms-and-reasoning 5.9): disjointness is a line in the
-          box, never a line between boxes; a rule the canvas does not draw
-          is counted, so the form is where to look. */}
-      {node.disjoint?.map((d) => (
-        <span key={d.iri} className="canvas-box-rule">
-          never {article(d.label)} {d.label}
-        </span>
-      ))}
-      {node.moreRules ? <span className="canvas-box-rule">{moreRulesText(node.moreRules)}</span> : null}
-      {node.attributes.length > 0 && (
-        <ul className="canvas-attributes">
-          {node.attributes.map((a) => (
-            <li key={a.iri}>
-              {/* A button, so the row is a control a pointer can use; not
-                  a tab stop, as a box's lines are not: the tree and the
-                  class's form reach every attribute by keyboard (D-078). */}
-              <button
-                type="button"
-                className="canvas-attr nodrag"
-                tabIndex={-1}
-                onClick={(e) => {
-                  // The box's own click would select the class instead.
-                  e.stopPropagation();
-                  data.onSelectAttribute?.(a.iri);
-                }}
-              >
-                {a.label} : {a.datatype ?? "no type"}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {!imported &&
-        !otherKind &&
-        (adding ? (
-          <div className="canvas-attr-form nodrag" onKeyDown={keep}>
-            <input
-              aria-label={`Name of the new attribute of ${node.label}`}
-              autoFocus
-              value={name}
-              readOnly={busy}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void submit();
-                if (e.key === "Escape") setAdding(false);
-              }}
-            />
-            <select
-              aria-label="Type of value"
-              value={datatype}
-              aria-disabled={busy}
-              onChange={(e) => !busy && setDatatype(e.target.value)}
-            >
-              {DATATYPES.map((d) => (
-                <option key={d} value={`xsd:${d}`}>
-                  xsd:{d}
-                </option>
-              ))}
-            </select>
-            <button type="button" className="primary" aria-disabled={busy || !name.trim()} onClick={() => void submit()}>
-              Add
-            </button>
-            <button type="button" className="ghost" onClick={() => setAdding(false)}>
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            className="canvas-add-attr nodrag"
-            aria-label={`Add an attribute to ${node.label}`}
-            onClick={() => setAdding(true)}
-          >
-            + attribute
-          </button>
+      <BoxHead data={data} />
+      <div className="canvas-box-body">
+        {otherKind && <span className="canvas-box-from">read-only in a taxonomy</span>}
+        {/* A reasoning result found it can never have members (5.5, 5.7):
+            said in text, and outlined dashed, never by colour alone. */}
+        {node.neverMembers && <span className="canvas-box-never">can never have members</span>}
+        {/* Rules (axioms-and-reasoning 5.9): disjointness is a line in the
+            box, never a line between boxes; a rule the canvas does not draw
+            is counted, so the form is where to look. */}
+        {node.disjoint?.map((d) => (
+          <span key={d.iri} className="canvas-box-rule">
+            never {article(d.label)} {d.label}
+          </span>
         ))}
+        {node.moreRules ? <span className="canvas-box-rule">{moreRulesText(node.moreRules)}</span> : null}
+        {node.attributes.length > 0 && (
+          <ul className="canvas-attributes">
+            {node.attributes.map((a) => (
+              <li key={a.iri}>
+                {/* A button, so the row is a control a pointer can use; not
+                    a tab stop, as a box's lines are not: the tree and the
+                    class's form reach every attribute by keyboard (D-078). */}
+                <button
+                  type="button"
+                  className="canvas-attr nodrag"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    // The box's own click would select the class instead.
+                    e.stopPropagation();
+                    data.onSelectAttribute?.(a.iri);
+                  }}
+                >
+                  {a.label} : {a.datatype ?? "no type"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {!imported &&
+          !otherKind &&
+          (adding ? (
+            <div className="canvas-attr-form nodrag" onKeyDown={keep}>
+              <input
+                aria-label={`Name of the new attribute of ${node.label}`}
+                autoFocus
+                value={name}
+                readOnly={busy}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void submit();
+                  if (e.key === "Escape") setAdding(false);
+                }}
+              />
+              <select
+                aria-label="Type of value"
+                value={datatype}
+                aria-disabled={busy}
+                onChange={(e) => !busy && setDatatype(e.target.value)}
+              >
+                {DATATYPES.map((d) => (
+                  <option key={d} value={`xsd:${d}`}>
+                    xsd:{d}
+                  </option>
+                ))}
+              </select>
+              <button type="button" className="primary" aria-disabled={busy || !name.trim()} onClick={() => void submit()}>
+                Add
+              </button>
+              <button type="button" className="ghost" onClick={() => setAdding(false)}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="canvas-add-attr nodrag"
+              aria-label={`Add an attribute to ${node.label}`}
+              onClick={() => setAdding(true)}
+            >
+              + attribute
+            </button>
+          ))}
+      </div>
     </div>
   );
 }

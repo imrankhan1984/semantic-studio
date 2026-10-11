@@ -56,7 +56,6 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES (props)
     - ontologyId: which ontology's hierarchy to fetch (null renders nothing).
-    - theme: for the kind swatches, via the same kindColor the legend uses.
     - selected: the shared selection, so the matching row is aria-selected.
     - onSelect: select an entity in the app's shared model, exactly as a graph
       click or a search pick does — so Explore shows its detail and the graph can
@@ -122,9 +121,9 @@ import {
   useState,
 } from "react";
 import { ApiError, fetchHierarchy } from "../api";
-import type { CanvasSet, DataSource, Hierarchy, HierarchyForest, HierarchyNode, HierarchyOrigin, Theme } from "../types";
+import type { CanvasSet, DataSource, Hierarchy, HierarchyForest, HierarchyNode, HierarchyOrigin } from "../types";
 import { dataLabel } from "../modeling/dataSentences";
-import { KIND_LABELS, kindColor } from "../types";
+import { KIND_LABELS } from "../types";
 import type { CreatingKind, ProjectKind } from "../types";
 import { otherKindNote, otherKindReason, rowEnds } from "../modeling/sentences";
 import DeleteDialog from "./DeleteDialog";
@@ -135,7 +134,6 @@ import type { ModelCounts } from "./NothingSelected";
 
 interface Props {
   ontologyId: string | null;
-  theme: Theme;
   selected: string | null;
   onSelect: (iri: string) => void;
   imports?: boolean;
@@ -241,6 +239,31 @@ function keepForFilter(forest: HierarchyForest, query: string): Set<string> | nu
   return keep;
 }
 
+/** A row's dot, in the Edit page's kind colours (edit-page-rework 5.8), the
+ *  canvas's own: an OWL or RDFS class, a concept, a scheme, an example, an
+ *  attribute, a relationship. The tokens are index.css's; the canvas's
+ *  values live in canvas/kindColours.ts, which this file must not import
+ *  (App reaches canvas/ only through React.lazy). Explore keeps kindColor
+ *  until the portal-wide review (U-10). */
+function dotKind(kind: string, classType?: string): string {
+  switch (kind) {
+    case "class":
+      return classType === "rdfs" ? "rdfs" : "owl";
+    case "concept":
+      return "concept";
+    case "conceptScheme":
+      return "scheme";
+    case "individual":
+      return "example";
+    case "datatypeProperty":
+      return "attribute";
+    case "objectProperty":
+      return "relationship";
+    default:
+      return "other";
+  }
+}
+
 /** One row in the flattened, expansion-aware sequence the tree renders. */
 interface Row {
   id: string;
@@ -254,6 +277,8 @@ interface Row {
   label: string;
   prefixed: string;
   kind: string;
+  /** A class row's typing (edit-page-rework 5.8), for its dot. */
+  classType?: string;
   /** A relationship's or attribute's ends, read as text (relationships 5.5). */
   ends?: string;
   origin: HierarchyOrigin;
@@ -310,6 +335,7 @@ function flatten(
       label: node.label,
       prefixed: node.prefixed,
       kind: node.kind,
+      classType: node.classType,
       ends: node.ends ? rowEnds(node.ends, node.kind === "datatypeProperty") : undefined,
       origin,
       importedFrom: node.importedFrom,
@@ -525,7 +551,6 @@ export function withoutInferred(data: Hierarchy | null): Hierarchy | null {
 
 export default function HierarchyView({
   ontologyId,
-  theme,
   selected,
   onSelect,
   imports = false,
@@ -879,7 +904,6 @@ export default function HierarchyView({
                 filter={filter}
                 expanded={isExamples ? examplesOpen : expanded}
                 selected={selected}
-                theme={theme}
                 onToggle={isExamples ? toggleExamples : toggle}
                 onSelect={onSelect}
                 editable={editing !== null}
@@ -963,7 +987,6 @@ interface ForestProps {
   filter: string;
   expanded: Set<string>;
   selected: string | null;
-  theme: Theme;
   onToggle: (id: string, next: boolean) => void;
   onSelect: (iri: string) => void;
   /** In a project: rows carry a menu, and one may be renamed in place. */
@@ -1006,7 +1029,6 @@ function Forest({
   filter,
   expanded,
   selected,
-  theme,
   onToggle,
   onSelect,
   editable = false,
@@ -1290,7 +1312,6 @@ function Forest({
                       key={row.key}
                       row={row}
                       index={index}
-                      theme={theme}
                       isSelected={row.id === selected}
                       isFocus={row.key === focusId}
                       onToggle={onToggle}
@@ -1317,7 +1338,6 @@ function Forest({
 interface TreeRowProps {
   row: Row;
   index: number;
-  theme: Theme;
   isSelected: boolean;
   isFocus: boolean;
   onToggle: (id: string, next: boolean) => void;
@@ -1374,7 +1394,6 @@ function RenameField({
 function TreeRow({
   row,
   index,
-  theme,
   isSelected,
   isFocus,
   onToggle,
@@ -1433,11 +1452,7 @@ function TreeRow({
       ) : (
         <span className="hierarchy-twistie spacer" aria-hidden="true" />
       )}
-      <span
-        className="hierarchy-dot"
-        aria-hidden="true"
-        style={{ background: kindColor(row.kind, theme) }}
-      />
+      <span className={`hierarchy-dot kind-${dotKind(row.kind, row.classType)}`} aria-hidden="true" />
       {rename ? (
         <RenameField label={row.label} initial={rename.initial} busy={rename.busy} onDone={rename.onDone} />
       ) : (

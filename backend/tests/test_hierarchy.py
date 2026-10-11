@@ -552,3 +552,64 @@ def test_inferred_kinds_and_memberships_are_edges_with_origin_inferred_on_a_copy
     # A kind already stated is not added twice.
     again = with_inferred(tree, [(U("Employee"), RDFS.subClassOf, U("Person"))], [])
     assert again["classes"]["children"][ex + "Person"] == tree["classes"]["children"][ex + "Person"]
+
+
+# --- edit-page-rework 5.8: which class type, and no store lookup more ----------------
+
+# The four class typings of row E7 (rdf-fixture: inline, one behaviour): owl
+# alone, rdfs alone, both (as FOAF types its classes), and a class only an
+# import defines, reached by a subclass line.
+TYPINGS = """
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix ex: <http://example.org/m#> .
+ex:A a owl:Class ; rdfs:label "A"@en .
+ex:B a rdfs:Class ; rdfs:label "B"@en ; rdfs:subClassOf ex:A .
+ex:C a owl:Class, rdfs:Class ; rdfs:label "C"@en ; rdfs:subClassOf ex:B .
+ex:D a owl:Class ; rdfs:label "D"@en ; rdfs:subClassOf foaf:Agent .
+ex:p a owl:ObjectProperty ; rdfs:label "p"@en ; rdfs:domain ex:A ; rdfs:range ex:B .
+ex:a a owl:DatatypeProperty ; rdfs:domain ex:A ; rdfs:range xsd:string .
+ex:S a skos:ConceptScheme . ex:k a skos:Concept ; skos:topConceptOf ex:S .
+ex:i a ex:A ; rdfs:label "i"@en .
+"""
+M = "http://example.org/m#"
+
+
+class _Counting(Graph):
+    """A graph that counts the triple patterns asked of it: every subjects,
+    objects, value and membership test goes through triples()."""
+
+    patterns = 0
+
+    def triples(self, pattern):
+        _Counting.patterns += 1
+        return super().triples(pattern)
+
+
+def _counting() -> "_Counting":
+    graph = _Counting()
+    graph.parse(data=TYPINGS, format="turtle")
+    _Counting.patterns = 0
+    return graph
+
+
+def test_a_class_row_says_which_typing_it_has():
+    nodes = build_hierarchy(_counting())["classes"]["nodes"]
+    assert nodes[M + "A"]["classType"] == "owl"
+    assert nodes[M + "B"]["classType"] == "rdfs"
+    assert nodes[M + "C"]["classType"] == "owl"
+    # Reached only by a subclass line, typed nowhere here: an OWL class.
+    assert nodes["http://xmlns.com/foaf/0.1/Agent"]["classType"] == "owl"
+    # Concept rows carry none.
+    assert all("classType" not in n for n in build_hierarchy(_counting())["concepts"]["nodes"].values())
+
+
+def test_class_type_adds_no_store_lookup_to_a_hierarchy_build():
+    """Section 10: the triple-pattern count of one build is what it was on
+    main at 4c0bb46, measured with this fixture before classType existed."""
+    graph = _counting()
+    build_hierarchy(graph)
+    assert _Counting.patterns == 29

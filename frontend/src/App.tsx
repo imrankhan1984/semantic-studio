@@ -2062,7 +2062,6 @@ export default function App() {
         >
           <HierarchyView
             ontologyId={activeId}
-            theme={theme}
             selected={selected}
             onSelect={selectFromOutsideGraph}
             imports={includeImports}

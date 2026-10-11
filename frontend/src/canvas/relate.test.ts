@@ -146,10 +146,14 @@ describe("relateChoices", () => {
 
 describe("boxName", () => {
   it("reads a box as the tree reads a row", () => {
-    expect(boxName(view, "Doc")).toBe("Document, class, 2 subclasses");
-    expect(boxName(view, "Inv")).toBe("Invoice, class, kind of Document");
+    expect(boxName(view, "Doc")).toBe("Document, OWL class, 2 subclasses");
+    expect(boxName(view, "Inv")).toBe("Invoice, OWL class, kind of Document");
     expect(boxName(view, "Paid")).toBe("Paid, concept, narrower than Status");
+    // An import's typing is its own: a class, named by where it is from.
     expect(boxName(view, "Agent")).toBe("Agent, class, from FOAF, read-only");
+    expect(boxName({ ...view, nodes: view.nodes.map((n) => (n.iri === "Doc" ? { ...n, classType: "rdfs" as const } : n)) }, "Doc")).toBe(
+      "Document, RDFS class, 2 subclasses",
+    );
   });
 });
 

@@ -22,6 +22,32 @@
   --shadow: rgba(0, 0, 0, 0.45);
   --canvas-concept: #b79bf0;
   --canvas-grid: #232a36;
+  /* Colour by kind (edit-page-rework 5.8); see the light set. */
+  --kind-owl-accent: #8fb3e3;
+  --kind-owl-tint: #22324a;
+  --kind-owl-ink: #b5cdee;
+  --kind-rdfs-accent: #7cc6bb;
+  --kind-rdfs-tint: #1d3936;
+  --kind-rdfs-ink: #a7dbd3;
+  --kind-concept-accent: #b9a0e6;
+  --kind-concept-tint: #30284a;
+  --kind-concept-ink: #d3c4f0;
+  --kind-scheme-accent: #e39abd;
+  --kind-scheme-tint: #45283a;
+  --kind-scheme-ink: #efbfd5;
+  --kind-example-accent: #8fcb94;
+  --kind-example-tint: #22382a;
+  --kind-example-ink: #b6dfb9;
+  --kind-attribute-accent: #d2c06a;
+  --kind-attribute-tint: #3a361c;
+  --kind-attribute-ink: #e4d89d;
+  --line-kindof: #8fb3e3;
+  --line-relationship: #e2ad6e;
+  --line-relationship-tint: #43321c;
+  --line-broader: #b9a0e6;
+  --line-related: #cfa0db;
+  --line-rule: #e08fa3;
+  --canvas-bg: #0f1219;
   color-scheme: dark;
 }
 
@@ -48,6 +74,36 @@
   --shadow: rgba(30, 40, 60, 0.18);
   --canvas-concept: #7d54c4;
   --canvas-grid: #e5e9f0;
+  /* Colour by kind on the Edit page (edit-page-rework 5.8): accent (band,
+     line, dot), tint (header, label fill), ink (kind word, label text).
+     canvas/kindColours.ts holds the same values, and its test measures them. */
+  --kind-owl-accent: #4a72a8;
+  --kind-owl-tint: #e6eef8;
+  --kind-owl-ink: #3d6194;
+  --kind-rdfs-accent: #2f7f78;
+  --kind-rdfs-tint: #e1f1ee;
+  --kind-rdfs-ink: #25665f;
+  --kind-concept-accent: #7e5fb0;
+  --kind-concept-tint: #eee8f7;
+  --kind-concept-ink: #654a91;
+  --kind-scheme-accent: #a65579;
+  --kind-scheme-tint: #f7e7ee;
+  --kind-scheme-ink: #8a4262;
+  --kind-example-accent: #4f8a55;
+  --kind-example-tint: #e5f2e5;
+  --kind-example-ink: #3d6e43;
+  --kind-attribute-accent: #8a7a2e;
+  --kind-attribute-tint: #f4f0dc;
+  --kind-attribute-ink: #6b5e22;
+  --line-kindof: #4a72a8;
+  --line-relationship: #b0763a;
+  --line-relationship-tint: #f8eddf;
+  --line-broader: #7e5fb0;
+  --line-related: #94649f;
+  --line-rule: #a8566b;
+  /* White under the lines: on the page's grey the relationship line
+     measured 3.4:1, under 5.8's 3.7. */
+  --canvas-bg: #ffffff;
   color-scheme: light;
 }
 
@@ -4329,7 +4385,7 @@ kbd {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background: var(--canvas-bg);
 }
 
 .model-canvas.canvas-message {
@@ -4360,9 +4416,33 @@ kbd {
   font-size: 12px;
 }
 
+/* The Add palette's chip (5.5): a grip, a dashed accent border, a hint. */
+.canvas-palette-label {
+  font-weight: 600;
+}
+
 .canvas-palette-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   cursor: grab;
-  border-style: dashed;
+  border: 1.5px dashed var(--accent);
+  font-weight: 600;
+}
+
+.canvas-palette-item.dragging {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 1px 3px var(--shadow);
+}
+
+.canvas-grip {
+  color: var(--text-dim);
+  letter-spacing: -1px;
+}
+
+.canvas-palette-hint {
+  color: var(--text-dim);
+  font-size: 12px;
 }
 
 .canvas-hint {
@@ -4395,7 +4475,7 @@ kbd {
 }
 
 .canvas-surface .react-flow {
-  background: var(--bg);
+  background: var(--canvas-bg);
   background-image: radial-gradient(var(--canvas-grid) 1px, transparent 1px);
   background-size: 20px 20px;
 }
@@ -4411,11 +4491,17 @@ kbd {
   pointer-events: none;
 }
 
+/* A box (edit-page-rework 5.8): a 4 px band and a header tint in its
+   kind's colour, the kind in words at the header's right. The kind-…
+   class picks the three tokens; colour is never the only signal. */
 .canvas-box {
+  --kind-accent: var(--kind-owl-accent);
+  --kind-tint: var(--kind-owl-tint);
+  --kind-ink: var(--kind-owl-ink);
   width: 190px;
   box-sizing: border-box;
-  padding: 8px 10px;
   border: 1.5px solid var(--border);
+  border-top: 4px solid var(--kind-accent);
   border-radius: 4px;
   background: var(--bg-raised);
   color: var(--text);
@@ -4423,21 +4509,71 @@ kbd {
   box-shadow: 0 1px 3px var(--shadow);
 }
 
-/* A concept is rounded and in the concept colour, and says "concept" in text
-   as well (5.4): nothing is told by colour alone. */
+.canvas-box.kind-rdfs {
+  --kind-accent: var(--kind-rdfs-accent);
+  --kind-tint: var(--kind-rdfs-tint);
+  --kind-ink: var(--kind-rdfs-ink);
+}
+
+.canvas-box.kind-concept {
+  --kind-accent: var(--kind-concept-accent);
+  --kind-tint: var(--kind-concept-tint);
+  --kind-ink: var(--kind-concept-ink);
+}
+
+.canvas-box-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--kind-tint);
+  border-radius: 1px 1px 0 0;
+}
+
+.canvas-box-head .canvas-box-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.canvas-box-kind {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--kind-ink);
+}
+
+.canvas-box-body {
+  padding: 2px 10px 8px;
+}
+
+.canvas-box-body:empty {
+  display: none;
+}
+
+/* A concept is rounded as well as coloured and named. */
 .canvas-concept {
-  border-radius: 16px;
-  border-color: var(--canvas-concept);
+  border-radius: 12px;
 }
 
-.canvas-box-marker {
-  display: block;
-  font-size: 11px;
-  color: var(--canvas-concept);
+.canvas-concept .canvas-box-head {
+  border-radius: 8px 8px 0 0;
 }
 
+/* An imported box keeps its kind's band, is dashed, and has a grey body;
+   its word says the import (5.8). */
 .canvas-box.imported {
   border-style: dashed;
+  border-top-style: solid;
+  background: var(--bg-panel);
+}
+
+.canvas-box.imported .canvas-box-head {
   background: var(--bg-panel);
 }
 
@@ -4445,6 +4581,7 @@ kbd {
    an import's dashes, and saying so in text. */
 .canvas-box.other-kind {
   border-style: dotted;
+  border-top-style: solid;
   background: var(--bg-panel);
 }
 
@@ -4532,15 +4669,44 @@ kbd {
   font-weight: 600;
 }
 
+/* Lines by kind (5.8): colour, pattern and ends, and always a label. */
+.canvas-edge.line-kindof { stroke: var(--line-kindof); }
+.canvas-edge.line-relationship { stroke: var(--line-relationship); }
+.canvas-edge.line-broader { stroke: var(--line-broader); }
+.canvas-edge.line-related { stroke: var(--line-related); }
+.canvas-edge.line-rule {
+  stroke: var(--line-rule);
+  stroke-dasharray: 1 4;
+  stroke-linecap: round;
+}
+
+.canvas-edge {
+  fill: none;
+  stroke-width: 1.6;
+}
+
+.canvas-edge.inferred {
+  stroke-dasharray: 5 4;
+  stroke-linecap: butt;
+}
+
 .canvas-hollow {
-  fill: var(--bg);
-  stroke: var(--text-dim);
+  fill: var(--canvas-bg);
   stroke-width: 1.2;
 }
 
+.canvas-hollow.line-kindof { stroke: var(--line-kindof); }
+.canvas-hollow.line-broader { stroke: var(--line-broader); }
+.canvas-arrow.line-relationship { fill: var(--line-relationship); }
+.canvas-arrow.line-rule { fill: var(--line-rule); }
+.canvas-dot.line-related { fill: var(--line-related); }
+
+.canvas-edge-label.line-relationship {
+  background: var(--line-relationship-tint);
+}
+
 .canvas-surface .react-flow__edge-path {
-  stroke: var(--text-dim);
-  stroke-width: 1.4;
+  stroke-width: 1.6;
 }
 
 .canvas-surface .react-flow__edge.selected .react-flow__edge-path,
@@ -4637,11 +4803,8 @@ kbd {
 
 
 
-/* Relationships Stage B (5.6 to 5.8). A related line is dashed with no
-   arrowhead: it reads the same both ways. */
-.canvas-surface .canvas-edge.related {
-  stroke-dasharray: 6 4;
-}
+/* A related line (relationships 5.8) is solid with a dot at each end
+   since edit-page-rework 5.8: it reads the same both ways. */
 
 /* An attribute row in a class box opens the attribute's form (5.7). */
 .canvas-attr {
@@ -5524,7 +5687,7 @@ kbd {
 }
 
 .canvas-surface .canvas-edge.inferred {
-  stroke-dasharray: 3 4;
+  stroke-dasharray: 5 4;
 }
 
 .canvas-box.never-members {
@@ -5603,9 +5766,11 @@ kbd {
   width: 5.5em;
 }
 
-/* A rule's line: dashed, apart from a related line's dash, and labelled. */
-.canvas-surface .canvas-edge.rule {
-  stroke-dasharray: 8 3 2 3;
+/* A rule's line: dotted, 1/4 with round caps (edit-page-rework 5.8), apart
+   from an inferred line's dash, and labelled. */
+.canvas-surface .canvas-edge.line-rule {
+  stroke-dasharray: 1 4;
+  stroke-linecap: round;
 }
 
 .canvas-box-rule {
@@ -5915,3 +6080,127 @@ kbd {
   display: inline-block;
   width: 12px;
 }
+
+/* --- the canvas aids (edit-page-rework 5.5, 5.7) --- */
+
+.model-canvas .canvas-draft {
+  width: 200px;
+  padding: 0 0 6px;
+}
+
+.canvas-draft-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--kind-ink);
+}
+
+.canvas-draft input {
+  margin: 6px 10px 0;
+  width: calc(100% - 20px);
+}
+
+.canvas-draft-hint {
+  margin: 4px 10px 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.canvas-draft .edit-error {
+  margin: 4px 10px 0;
+}
+
+.canvas-toast {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--bg-raised);
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.canvas-box.drop-target {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.canvas-tip,
+.canvas-legend {
+  position: absolute;
+  bottom: 10px;
+  z-index: 4;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: 0 2px 8px var(--shadow);
+  font-size: 12px;
+}
+
+.canvas-tip {
+  left: 10px;
+  max-width: 260px;
+  padding: 8px 12px 10px;
+}
+
+.canvas-tip h3 {
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+
+.canvas-tip ul {
+  margin: 0 0 6px;
+  padding-left: 16px;
+}
+
+.canvas-legend {
+  right: 10px;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.canvas-legend ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 2px 12px;
+}
+
+.canvas-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.canvas-help-button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  font-weight: 700;
+}
+
+.canvas-help-keys {
+  padding-left: 18px;
+}
+
+/* The outline's dots in the same colours (5.8). */
+.hierarchy-dot.kind-owl { background: var(--kind-owl-accent); }
+.hierarchy-dot.kind-rdfs { background: var(--kind-rdfs-accent); }
+.hierarchy-dot.kind-concept { background: var(--kind-concept-accent); }
+.hierarchy-dot.kind-scheme { background: var(--kind-scheme-accent); }
+.hierarchy-dot.kind-example { background: var(--kind-example-accent); }
+.hierarchy-dot.kind-attribute { background: var(--kind-attribute-accent); }
+.hierarchy-dot.kind-relationship { background: var(--line-relationship); }

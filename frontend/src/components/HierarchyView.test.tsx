@@ -121,7 +121,7 @@ function mixed(): Hierarchy {
 function renderView(hierarchy: Hierarchy, onSelect = vi.fn(), selected: string | null = null) {
   fetchHierarchy.mockResolvedValue(hierarchy);
   render(
-    <HierarchyView ontologyId="o1" theme="dark" selected={selected} onSelect={onSelect} />,
+    <HierarchyView ontologyId="o1" selected={selected} onSelect={onSelect} />,
   );
   return { onSelect };
 }
@@ -399,7 +399,7 @@ describe("HierarchyView", () => {
     // Shown while a current reasoning result's marks are on (axioms-and-
     // reasoning 5.7); without them the tree drops inferred edges itself.
     fetchHierarchy.mockResolvedValue(hierarchyOf(classes, EMPTY));
-    render(<HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} inferred />);
+    render(<HierarchyView ontologyId="o1" selected={null} onSelect={vi.fn()} inferred />);
     await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
 
     await act(async () => fireEvent.click(itemByLabel("Alpha")!.querySelector(".hierarchy-twistie")!));
@@ -432,7 +432,7 @@ describe("HierarchyView imports (external-access Stage 2)", () => {
 
   it("fetches the merged forests only when told to", async () => {
     fetchHierarchy.mockResolvedValue(mixed());
-    render(<HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} imports />);
+    render(<HierarchyView ontologyId="o1" selected={null} onSelect={vi.fn()} imports />);
     await screen.findByText("Alpha");
     expect(fetchHierarchy).toHaveBeenCalledWith("o1", true, false);
   });
@@ -474,7 +474,7 @@ describe("HierarchyView in a project (visual-modeling 5.2, AC-5)", () => {
     render(
       <HierarchyView
         ontologyId="o1"
-        theme="dark"
+       
         selected={null}
         onSelect={onSelect}
         editing={{ primaryLanguage: "en" }}
@@ -713,7 +713,7 @@ describe("HierarchyView, Stage 2 follow-ups (visual-modeling 5.8)", () => {
   const view = (props: Partial<React.ComponentProps<typeof HierarchyView>> = {}) => (
     <HierarchyView
       ontologyId="o1"
-      theme="dark"
+     
       selected={null}
       onSelect={vi.fn()}
       editing={{ primaryLanguage: "en" }}
@@ -874,7 +874,7 @@ describe("HierarchyView, relationships Stage A (AC-2, AC-6)", () => {
   function renderKind(kind: "ontology" | "taxonomy" | null, hierarchy: Hierarchy = model()) {
     fetchHierarchy.mockResolvedValue(hierarchy);
     render(
-      <HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en", kind }} />,
+      <HierarchyView ontologyId="o1" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en", kind }} />,
     );
   }
 
@@ -989,7 +989,7 @@ describe("HierarchyView, examples (shacl-authoring 5.8)", () => {
   function renderProject(hierarchy: Hierarchy, onSelect = vi.fn()) {
     fetchHierarchy.mockResolvedValue(hierarchy);
     render(
-      <HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={onSelect} editing={{ primaryLanguage: "en" }} />,
+      <HierarchyView ontologyId="o1" selected={null} onSelect={onSelect} editing={{ primaryLanguage: "en" }} />,
     );
     return { onSelect };
   }
@@ -1040,7 +1040,7 @@ describe("HierarchyView, examples (shacl-authoring 5.8)", () => {
     fetchHierarchy.mockResolvedValue(tree);
     const source = { id: "people-abc123", source: "people.csv", importedAt: "2026-10-02T12:00:00Z", rows: 2000, total: 12480, sample: true };
     render(
-      <HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en" }}
+      <HierarchyView ontologyId="o1" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en" }}
         dataSources={[source]} onImportData={vi.fn()} />,
     );
     await unfold("Examples");
@@ -1055,7 +1055,7 @@ describe("HierarchyView, examples (shacl-authoring 5.8)", () => {
     fetchHierarchy.mockResolvedValue(hierarchyOf(withExamples().classes, EMPTY));
     const onImportData = vi.fn();
     render(
-      <HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en" }}
+      <HierarchyView ontologyId="o1" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en" }}
         onImportData={onImportData} />,
     );
     await unfold("Examples");
@@ -1098,7 +1098,7 @@ describe("HierarchyView inferred edges (axioms-and-reasoning 5.7)", () => {
   const view = (inferred: boolean, editing = false) => (
     <HierarchyView
       ontologyId="o1"
-      theme="dark"
+     
       selected={null}
       onSelect={vi.fn()}
       inferred={inferred}
@@ -1182,7 +1182,7 @@ describe("HierarchyView inferred edges (axioms-and-reasoning 5.7)", () => {
   it("asks again for a new result on the same basis (code review)", async () => {
     fetchHierarchy.mockResolvedValue(concluded());
     const marked = (token: number) => (
-      <HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} inferred inferredToken={token} />
+      <HierarchyView ontologyId="o1" selected={null} onSelect={vi.fn()} inferred inferredToken={token} />
     );
     const { rerender } = render(marked(1));
     await waitFor(() => expect(itemByLabel("Agent")).toBeTruthy());
@@ -1264,5 +1264,23 @@ describe("the outline's height rule (CF-9, edit-page-rework 5.3)", () => {
 
   it("the reasoning panel's 35% share of the column is gone with it", () => {
     expect(RULES).not.toMatch(/max-height\s*:\s*35%/);
+  });
+});
+
+describe("the outline's dots (edit-page-rework 5.8)", () => {
+  it("use the canvas's kind colours: OWL class, RDFS class, scheme, concept", async () => {
+    const tree = mixed();
+    tree.classes.nodes[EX + "Beta"] = { ...node("Beta"), classType: "rdfs" };
+    renderView(tree);
+    await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: /expand all/i })));
+    await unfold("Concepts");
+    const dot = (label: string) => itemByLabel(label)!.querySelector(".hierarchy-dot")!.className;
+    expect(dot("Alpha")).toBe("hierarchy-dot kind-owl");
+    expect(dot("Beta")).toBe("hierarchy-dot kind-rdfs");
+    expect(dot("Scheme")).toBe("hierarchy-dot kind-scheme");
+    expect(dot("Water")).toBe("hierarchy-dot kind-concept");
+    // Never colour alone: the row still says its kind in words.
+    expect(itemByLabel("Beta")!.querySelector(".hierarchy-kind")!.textContent).toBeTruthy();
   });
 });
