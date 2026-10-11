@@ -3317,6 +3317,26 @@ describe("App Edit page (edit-page-rework)", () => {
     expect(within(panel).getByRole("tab", { name: "Reasoning" }).getAttribute("aria-selected")).toBe("true");
   });
 
+  it("a problem never takes the tab from a draft being named: the badge says it (code review)", async () => {
+    localStorage.setItem("semantic-studio-canvas", "off");
+    await renderProject();
+    const panel = screen.getByRole("complementary", { name: "Side panel" });
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("button", { name: "New class" }));
+    });
+    const name = within(panel).getByRole("textbox", { name: "Name (en)" });
+    expect(document.activeElement).toBe(name);
+    reasonProject.mockResolvedValue(
+      reasoned({ problems: [{ kind: "neverMembers", sentence: "Robot can never have members.", subject: X + "Robot", causes: [], reasoner: "" }] }),
+    );
+    await act(async () => {
+      await projectStore.reason(false, false);
+    });
+    expect(within(panel).getByRole("tab", { name: /^Details/ }).getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(name);
+    expect(within(panel).getByRole("tab", { name: "Reasoning, 3 new" })).toBeTruthy();
+  });
+
   it("Section 10: opening the Reasoning tab with a result in the store makes no request", async () => {
     await renderProject();
     reasonProject.mockResolvedValue(reasoned());

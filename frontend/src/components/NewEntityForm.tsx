@@ -33,6 +33,8 @@ INPUTS / INPUT SOURCES (props)
     - focusName: whether the name field takes focus when the form opens;
       not when the canvas's draft box already has it.
     - onNameBlur: the name field lost focus, with where it went.
+    - onMoreChange: More options' identifier and type of value as they
+      change, for a caller that keeps them (the side panel's draft).
 
 EXPECTED OUTPUT
     - The form; one onSubmit per Create.
@@ -63,6 +65,7 @@ interface Props {
   onNameChange?: (name: string) => void;
   focusName?: boolean;
   onNameBlur?: (to: EventTarget | null) => void;
+  onMoreChange?: (more: { iri?: string; datatype?: string }) => void;
 }
 
 export default function NewEntityForm({
@@ -80,6 +83,7 @@ export default function NewEntityForm({
   onNameChange,
   focusName = true,
   onNameBlur,
+  onMoreChange,
 }: Props) {
   const id = useId();
   const [ownName, setOwnName] = useState("");
@@ -160,7 +164,10 @@ export default function NewEntityForm({
           value={iri}
           readOnly={busy}
           placeholder="https://example.org/model#InvoiceItem"
-          onChange={(e) => setIri(e.target.value)}
+          onChange={(e) => {
+            setIri(e.target.value);
+            onMoreChange?.({ iri: e.target.value.trim() || undefined });
+          }}
         />
         {datatypes && (
           <>
@@ -171,7 +178,11 @@ export default function NewEntityForm({
               id={`${id}-datatype`}
               value={datatype}
               aria-disabled={busy}
-              onChange={(e) => !busy && setDatatype(e.target.value)}
+              onChange={(e) => {
+                if (busy) return;
+                setDatatype(e.target.value);
+                onMoreChange?.({ datatype: e.target.value });
+              }}
             >
               {DATATYPES.map((d) => (
                 <option key={d} value={`xsd:${d}`}>

@@ -663,6 +663,8 @@ export default function App() {
   sideTabNow.current = sideTab;
   const [reasonBadge, setReasonBadge] = useState<number | null>(null);
   const [modelCounts, setModelCounts] = useState<ModelCounts | null>(null);
+  // Another ontology's counts are never shown while this one's load.
+  useEffect(() => setModelCounts(null), [activeId]);
   // Reason pressed from the Reasoning tab, so its end shows there.
   const reasonFromTab = useRef(false);
   const chooseSideTab = useCallback((tab: SideTab) => {
@@ -682,15 +684,23 @@ export default function App() {
     if (!result) return;
     // The tab is chosen for the learner only when they were on it, or the
     // run found a problem; otherwise a badge, and the live region says so.
-    if (fromTab || result.problems.length > 0) chooseSideTab("reasoning");
+    // Never while the learner is working in Details -- a draft, or focus in
+    // the panel -- whose form the switch would unmount, dropping focus to
+    // the page (code review): the badge says it instead.
+    const working =
+      projectStore.getSnapshot().creating !== null ||
+      Boolean(document.activeElement?.closest(".side-tabpanel") && sideTabNow.current === "details");
+    if (fromTab || (result.problems.length > 0 && !working)) chooseSideTab("reasoning");
     else if (sideTabNow.current !== "reasoning") {
       setReasonBadge(result.groups.reduce((n, g) => n + g.total, 0));
     }
   }, [reasoningToken, chooseSideTab]);
   // A draft begun anywhere opens its form in Details (5.5); leaving Edit
   // drops it, as an empty draft goes.
-  const creating = useProjectSelector((s) => s.creating);
-  const creatingToken = creating?.token ?? null;
+  // The draft's token and kind only: its name changes on every keystroke,
+  // and the whole object would re-render App with it (code review).
+  const creatingToken = useProjectSelector((s) => s.creating?.token ?? null);
+  const creatingKind = useProjectSelector((s) => s.creating?.kind ?? null);
   // The selection when the draft began: what it made is selected only if
   // nothing else was selected meanwhile (visual-modeling 5.8 item 4).
   const selectedAtDraft = useRef<{ token: number; selected: string | null } | null>(null);
@@ -1707,6 +1717,28 @@ export default function App() {
     }
   };
 
+  // The Edit page's details, built once for its two places: the side
+  // panel's Details tab, and beside a library ontology's outline (5.9).
+  const editDetail =
+    selected === null ? null : (
+      <DetailPanel
+        ontologyId={activeId}
+        iri={selected}
+        onNavigate={selectFromOutsideGraph}
+        onClose={() => setSelected(null)}
+        onExpand={(entity) => void onExpand(entity)}
+        expanding={expandingIri === selected}
+        imports={includeImports}
+        revision={viewRevision}
+        language={displayLanguage}
+        editing={editingModel}
+        readOnlyNote={readOnlyNote}
+        onDeleted={onEntityDeleted}
+        canvas={canvasLent}
+        inferred={detailInferred}
+      />
+    );
+
   // Layout: a header (brand + nav rows), a main area (graph + right panel that
   // depends on the mode), a status bar, and the Load dialog when open.
   return (
@@ -2164,34 +2196,19 @@ export default function App() {
                     onSelect={selectFromReasoning}
                   />
                 </div>
-              ) : creating ? (
+              ) : creatingKind ? (
                 <CreateForm
                   ontologyId={activeId!}
                   primaryLanguage={editingModel.primaryLanguage}
                   // The canvas's draft box has focus when it is drawn (5.5).
-                  focusName={!(showCanvas && (creating.kind === "class" || creating.kind === "concept"))}
+                  focusName={!(showCanvas && (creatingKind === "class" || creatingKind === "concept"))}
                 />
               ) : selected === null && selectedLink && showCanvas ? (
                 <LinkPanel link={selectedLink} onSelect={selectFromOutsideGraph} onClose={() => setSelectedLink(null)} />
               ) : selected === null ? (
                 <NothingSelected counts={modelCounts} taxonomy={editingModel.kind === "taxonomy"} />
               ) : (
-                <DetailPanel
-                  ontologyId={activeId}
-                  iri={selected}
-                  onNavigate={selectFromOutsideGraph}
-                  onClose={() => setSelected(null)}
-                  onExpand={(entity) => void onExpand(entity)}
-                  expanding={expandingIri === selected}
-                  imports={includeImports}
-                  revision={viewRevision}
-                  language={displayLanguage}
-                  editing={editingModel}
-                  readOnlyNote={readOnlyNote}
-                  onDeleted={onEntityDeleted}
-                  canvas={canvasLent}
-                  inferred={detailInferred}
-                />
+                editDetail
               )}
             </SideTabs>
           ) : selected === null ? (
@@ -2202,22 +2219,7 @@ export default function App() {
               </p>
             </aside>
           ) : (
-            <DetailPanel
-              ontologyId={activeId}
-              iri={selected}
-              onNavigate={selectFromOutsideGraph}
-              onClose={() => setSelected(null)}
-              onExpand={(entity) => void onExpand(entity)}
-              expanding={expandingIri === selected}
-              imports={includeImports}
-              revision={viewRevision}
-              language={displayLanguage}
-              editing={editingModel}
-              readOnlyNote={readOnlyNote}
-              onDeleted={onEntityDeleted}
-              canvas={canvasLent}
-              inferred={detailInferred}
-            />
+            editDetail
           )}
         </main>
       ) : (

@@ -179,6 +179,10 @@ export interface Creating {
   parent: { iri: string; label: string } | null;
   name: string;
   token: number;
+  /** What the side panel's form holds besides the name: a definition, the
+   *  ends or class chosen, More options. Here, not in the form, so Enter in
+   *  the canvas's box makes the same thing as Create (code review). */
+  extra: CreatingExtra;
 }
 
 /** What the side panel's form adds to the name for each kind. */
@@ -426,6 +430,7 @@ export const projectStore = {
     if (project) await closeProject(project.id, discard);
     validationRun++;
     reasoningRun++;
+    creatingFrom = null;
     set({ ...EMPTY, announcement: snapshot.announcement });
   },
 
@@ -434,6 +439,7 @@ export const projectStore = {
   reset(): void {
     validationRun++;
     reasoningRun++;
+    creatingFrom = null;
     set({ ...EMPTY, announcement: snapshot.announcement });
   },
 
@@ -627,7 +633,7 @@ export const projectStore = {
     creatingFrom = options.from ?? null;
     const token = ++creatingTokens;
     set({
-      creating: { kind, parent: options.parent ?? null, name: "", token },
+      creating: { kind, parent: options.parent ?? null, name: "", token, extra: {} },
       creatingBusy: false,
       creatingError: null,
     });
@@ -644,14 +650,18 @@ export const projectStore = {
     if (snapshot.creating) set({ creating: { ...snapshot.creating, parent } });
   },
 
+  setCreatingExtra(extra: Partial<CreatingExtra>): void {
+    if (snapshot.creating) set({ creating: { ...snapshot.creating, extra: { ...snapshot.creating.extra, ...extra } } });
+  },
+
   /** Make the draft: one command, whichever field pressed Enter. A refusal
    *  stays on the draft as the server's sentence, nothing changed. */
-  async createDraft(extra: CreatingExtra = {}): Promise<string | null> {
+  async createDraft(): Promise<string | null> {
     const draft = snapshot.creating;
     if (!draft || snapshot.creatingBusy || !draft.name.trim()) return null;
     set({ creatingBusy: true, creatingError: null });
     try {
-      const [name, args] = draftCommand(draft, extra);
+      const [name, args] = draftCommand(draft, draft.extra);
       const result = await projectStore.command(name, args, undefined, "model");
       // Closed, or another draft begun, while it ran: nothing to finish.
       if (snapshot.creating?.token !== draft.token) return result.created ?? null;
@@ -809,6 +819,7 @@ export const projectStore = {
   _reset(): void {
     validationRun++;
     reasoningRun++;
+    creatingFrom = null;
     snapshot = EMPTY;
     setApiLanguage(null);
     for (const listener of listeners) listener();

@@ -134,6 +134,33 @@ describe("CreateForm", () => {
     expect(projectStore.getSnapshot().created).toMatchObject({ iri: X + "New", kind: "objectProperty" });
   });
 
+  it("what the form holds is the store's: Enter in the canvas's box makes it with the definition and identifier (code review)", async () => {
+    act(() => {
+      projectStore.startCreating("class");
+    });
+    form();
+    fireEvent.change(nameField(), { target: { value: "Invoice" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Definition (optional)" }), { target: { value: "A bill." } });
+    fireEvent.click(screen.getByRole("button", { name: "More options" }));
+    fireEvent.change(screen.getByRole("textbox", { name: /Identifier/ }), { target: { value: X + "Bill" } });
+    // What the canvas's Enter does: the store's createDraft, with nothing passed.
+    await act(async () => {
+      await projectStore.createDraft();
+    });
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateClass", { label: "Invoice", definition: "A bill.", iri: X + "Bill" });
+  });
+
+  it("a relationship waits for the class it points to, as the class form's does", async () => {
+    act(() => {
+      projectStore.startCreating("objectProperty");
+    });
+    form();
+    fireEvent.change(nameField(), { target: { value: "has line" } });
+    expect(screen.getByText("Choose the class it points to.")).toBeTruthy();
+    await create();
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
   it("an attribute: its type of value under More options", async () => {
     act(() => {
       projectStore.startCreating("datatypeProperty");

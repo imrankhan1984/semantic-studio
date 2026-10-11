@@ -488,12 +488,14 @@ export function _resetOutline(): void {
   openSections.clear();
 }
 
-/** How many of a section's own kind it holds, or match the filter. */
-function countOf(forest: HierarchyForest, kind: string, query: string): number {
+/** How many of a section's own kind it holds, or match the filter; with
+ *  `ownOnly`, only the model's own: no import's and no snapshot's. */
+function countOf(forest: HierarchyForest, kind: string, query: string, ownOnly = false): number {
   const q = query.trim().toLowerCase();
   let n = 0;
   for (const [id, node] of Object.entries(forest.nodes)) {
     if (node.kind !== kind) continue;
+    if (ownOnly && (node.importedFrom || node.fromData)) continue;
     if (!q || node.label.toLowerCase().includes(q) || localName(id).toLowerCase().includes(q)) n++;
   }
   return n;
@@ -737,7 +739,9 @@ export default function HierarchyView({
   // its own (5.4, Section 10).
   useEffect(() => {
     if (!data || !onCounts) return;
-    const count = (forest: HierarchyForest | undefined, kind: string) => (forest ? countOf(forest, kind, "") : 0);
+    // The model's own: an import's classes and a snapshot's rows are listed
+    // in the outline, but they are not what *This model* holds (code review).
+    const count = (forest: HierarchyForest | undefined, kind: string) => (forest ? countOf(forest, kind, "", true) : 0);
     onCounts({
       classes: count(data.classes, "class"),
       concepts: count(data.concepts, "concept"),

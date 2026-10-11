@@ -17,6 +17,10 @@ BASIC IDEA
     Enter in either makes it. Creating is the store's one command; a refusal
     is the store's sentence, under this name field and the box's alike.
 
+    So does everything else the form holds -- the definition, the ends or
+    class chosen, More options -- so Enter in the canvas's box makes the same
+    thing Create here would (code review).
+
     Focus: the name field takes it when the form opens unless the canvas's
     draft box has it already (`focusName`). Cancel, Esc, or focus leaving
     both empty fields ends the draft, and the store gives focus back to the
@@ -81,10 +85,23 @@ export default function CreateForm(props: Props) {
 function DraftForm({ ontologyId, primaryLanguage, focusName = true, creating }: Props & { creating: Creating }) {
   const busy = useProjectSelector((s) => s.creatingBusy);
   const error = useProjectSelector((s) => s.creatingError);
+  // Shown here; what is made is the store's copy (setCreatingExtra).
   const [definition, setDefinition] = useState("");
-  const [domain, setDomain] = useState<Pick | null>(null);
-  const [range, setRange] = useState<Pick | null>(null);
-  const [cls, setCls] = useState<Pick | null>(null);
+  const [domain, setDomainShown] = useState<Pick | null>(null);
+  const [range, setRangeShown] = useState<Pick | null>(null);
+  const [cls, setClsShown] = useState<Pick | null>(null);
+  const setDomain = (p: Pick | null) => {
+    setDomainShown(p);
+    projectStore.setCreatingExtra({ domain: p?.iri });
+  };
+  const setRange = (p: Pick | null) => {
+    setRangeShown(p);
+    projectStore.setCreatingExtra({ range: p?.iri });
+  };
+  const setCls = (p: Pick | null) => {
+    setClsShown(p);
+    projectStore.setCreatingExtra({ cls: p?.iri });
+  };
   const [picking, setPicking] = useState<null | "parent" | "domain" | "range" | "cls">(null);
   const { kind, parent } = creating;
   const box = kind === "class" || kind === "concept";
@@ -119,7 +136,14 @@ function DraftForm({ ontologyId, primaryLanguage, focusName = true, creating }: 
       </p>
     );
 
-  const missing = kind === "example" && !cls ? "Choose the class it is an example of." : null;
+  // What Create waits for, said beside it: as the class form's relationship
+  // waits for the class it points to (visual-modeling 5.8 item 10).
+  const missing =
+    kind === "example" && !cls
+      ? "Choose the class it is an example of."
+      : kind === "objectProperty" && !range
+        ? "Choose the class it points to."
+        : null;
 
   return (
     <div className="create-form">
@@ -141,16 +165,8 @@ function DraftForm({ ontologyId, primaryLanguage, focusName = true, creating }: 
           }
         }}
         onCancel={() => projectStore.cancelCreating()}
-        onSubmit={({ iri, datatype }) =>
-          void projectStore.createDraft({
-            iri,
-            datatype,
-            definition,
-            domain: domain?.iri,
-            range: range?.iri,
-            cls: cls?.iri,
-          })
-        }
+        onMoreChange={(more) => projectStore.setCreatingExtra(more)}
+        onSubmit={() => void projectStore.createDraft()}
       >
         {box &&
           choice(
@@ -169,13 +185,16 @@ function DraftForm({ ontologyId, primaryLanguage, focusName = true, creating }: 
               rows={2}
               value={definition}
               readOnly={busy}
-              onChange={(e) => setDefinition(e.target.value)}
+              onChange={(e) => {
+                setDefinition(e.target.value);
+                projectStore.setCreatingExtra({ definition: e.target.value });
+              }}
             />
           </>
         )}
         {(kind === "objectProperty" || kind === "datatypeProperty") &&
           choice("domain", kind === "objectProperty" ? "From" : "Belongs to", domain, setDomain)}
-        {kind === "objectProperty" && choice("range", "To", range, setRange)}
+        {kind === "objectProperty" && choice("range", "To", range, setRange, true)}
         {kind === "example" && choice("cls", "Example of", cls, setCls, true)}
       </NewEntityForm>
     </div>

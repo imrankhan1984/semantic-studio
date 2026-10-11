@@ -1284,3 +1284,23 @@ describe("the outline's dots (edit-page-rework 5.8)", () => {
     expect(itemByLabel("Beta")!.querySelector(".hierarchy-kind")!.textContent).toBeTruthy();
   });
 });
+
+describe("the side panel's counts (edit-page-rework 5.4)", () => {
+  it("count the model's own: no import's classes, no snapshot's rows", async () => {
+    const tree = mixed();
+    tree.classes.nodes[EX + "Agent"] = { ...node("Agent"), importedFrom: "FOAF" };
+    tree.classes.roots.push(EX + "Agent");
+    tree.examples = forestOf(
+      { [EX + "Alpha"]: node("Alpha", "class", true), [EX + "a1"]: node("a1", "individual"), [EX + "d1"]: { ...node("d1", "individual"), fromData: "s1" } },
+      { [EX + "Alpha"]: [EX + "a1", EX + "d1"] },
+      [EX + "Alpha"],
+    );
+    fetchHierarchy.mockResolvedValue(tree);
+    const onCounts = vi.fn();
+    render(<HierarchyView ontologyId="o1" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en" }} onCounts={onCounts} />);
+    await waitFor(() => expect(onCounts).toHaveBeenCalled());
+    expect(onCounts).toHaveBeenLastCalledWith({ classes: 2, concepts: 1, relationships: 0, attributes: 0, examples: 1 });
+    // The outline still lists them: the header counts what it shows.
+    expect(screen.getByRole("button", { name: named("Classes") }).getAttribute("aria-label")).toBe("Classes, 3");
+  });
+});
