@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1184 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1271 tests, vitest
+cd backend  && python -m pytest tests    # 1189 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1337 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -206,7 +206,9 @@ frontend/src/
                      (dataSentences.ts, dataChoices.ts)
   links.ts           linkTarget: the one gate an IRI passes to become a link
   canvas/            The modeling canvas (D-086): ModelCanvas on React Flow,
-                     its boxes and relate menu, and the pure layered layout,
+                     its boxes and relate menu, its legend and tip card
+                     (CanvasAids.tsx), the colour tokens by kind
+                     (kindColours.ts, D-107), and the pure layered layout,
                      relate rule and line curves; loaded only through
                      React.lazy in App
 
@@ -382,9 +384,18 @@ leaves one behind.
 - The home layout switches on the whole library, not the filtered count. [card grid]
 - `.onto-menu[hidden] { display: none }` stays. [card grid]
 - `summary()` reads `meta.get("card")`; nothing backfills a sketch. [card grid]
-- Touch one `KIND_LABELS[kind]` or `kindColor` lookup, touch all four (X-6). [card grid]
+- Touch one `KIND_LABELS[kind]` or `kindColor` lookup, touch all three; the outline's dots left `kindColor` for the Edit page's tokens (X-6, D-107). [card grid, Edit page]
 - The About backdrop is the dialog's sibling; its key handler is on `document`. [About panel]
-- The Hierarchy detail panel lives in `App.tsx`; property forests hold only `subPropertyOf` ends. [Hierarchy view]
+- The Edit side panel lives in `App.tsx`, the detail panel inside it; property forests hold only `subPropertyOf` ends. [Hierarchy view, Edit page]
+
+**Edit page**
+- An outline section clips its content; open sections have a 120 px minimum and are capped at their rows. [Edit page]
+- One draft, in the project store: the canvas box and the side panel's form share its name; the store makes it in one command. [Edit page]
+- Cancel gives focus back where a draft began, or to the control now standing there (`data-create-from`), never the page. [Edit page]
+- What a draft made takes focus on its box whether the refetch lands before the result or after. [Edit page]
+- `index.css`'s kind tokens and `canvas/kindColours.ts` say the same values; `kindColours.test.ts` checks both themes. [Edit page]
+- `HierarchyView` never imports from `canvas/`: App reaches `canvas/` only through `React.lazy`. [Edit page]
+- Canvas markers are sized in user space, one per line kind, coloured by CSS. [Edit page]
 
 ## Skills
 
