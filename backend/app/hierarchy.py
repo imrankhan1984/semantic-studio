@@ -53,7 +53,8 @@ EXPECTED OUTPUT
         "truncated": bool,
       }
       where forest = {
-        "nodes":    { id: {label, prefixed, kind, hasChildren, [cyclic], [ends]} },
+        "nodes":    { id: {label, prefixed, kind, hasChildren, [cyclic], [ends],
+                           [classType]} },   # classType: class forest only
         "children": { id: [{id, origin}, ...] },
         "roots":    [id, ...],
       }
@@ -125,11 +126,16 @@ def _forest(
     labels: dict[URIRef, tuple[str, str]],
     kind: str,
     kind_of: Optional[dict[URIRef, str]] = None,
+    rdfs_only: Optional[set[URIRef]] = None,
 ) -> tuple[dict, int]:
     """Assemble one forest from a node set and a child->parents map.
 
     `parents[c]` is the set of named parents of `c`, already stripped of owl:Thing
     and of anything not in `node_ids`. Returns the forest dict and its node count.
+
+    `rdfs_only`, for the class forest: the classes typed rdfs:Class and not
+    owl:Class, whose rows say *RDFS class* (edit-page-rework 5.8); every
+    other class row carries classType "owl".
 
     Roots are nodes with no parent. A parent references each of its children once,
     so a multi-parent node is stored once and appears under each parent when the
@@ -158,6 +164,8 @@ def _forest(
             "kind": kind_of[n] if kind_of else kind,
             "hasChildren": bool(children.get(n)),
         }
+        if rdfs_only is not None:
+            entry["classType"] = "rdfs" if n in rdfs_only else "owl"
         # Only present when true, so the common node carries the fixed shape.
         if n in cyclic:
             entry["cyclic"] = True
@@ -242,6 +250,10 @@ def _build_class_forest(graph: Graph, label: Callable[[URIRef], str]) -> tuple[d
     raw_parents = subclass_parents(graph)  # child -> {named superclasses}
 
     node_ids: set[URIRef] = set()
+    # Each typing kept apart, read in the same one scan (edit-page-rework
+    # 5.8): a class typed both ways is an OWL class.
+    owl_typed: set[URIRef] = set()
+    rdfs_typed: set[URIRef] = set()
     # Declared classes (including owl:Thing when the file states it explicitly).
     for subject, obj in graph.subject_objects(RDF.type):
         if not isinstance(subject, URIRef):
@@ -249,6 +261,7 @@ def _build_class_forest(graph: Graph, label: Callable[[URIRef], str]) -> tuple[d
         if obj in (OWL.Class, RDFS.Class):
             if subject not in META_CLASSES or subject == THING:
                 node_ids.add(subject)
+                (owl_typed if obj == OWL.Class else rdfs_typed).add(subject)
     # Both ends of every subClassOf edge, minus the meta-classes (owl:Thing among
     # them, so it is added above only when independently declared).
     for child, parents in raw_parents.items():
@@ -267,7 +280,7 @@ def _build_class_forest(graph: Graph, label: Callable[[URIRef], str]) -> tuple[d
             parents[child] = effective
 
     labels = {n: (label(n), prefixed(graph, n)) for n in node_ids}
-    return _forest(node_ids, parents, labels, KIND_CLASS)
+    return _forest(node_ids, parents, labels, KIND_CLASS, rdfs_only=rdfs_typed - owl_typed)
 
 
 def _build_concept_forest(graph: Graph, label: Callable[[URIRef], str]) -> tuple[dict, int]:

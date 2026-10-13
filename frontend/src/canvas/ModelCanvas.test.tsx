@@ -29,12 +29,13 @@ EXPECTED OUTPUT
 */
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ComponentType, ReactNode } from "react";
+import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { projectStore } from "../state/projectStore";
 import type { CanvasLayout, CanvasView } from "../types";
 
-const { openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails } = vi.hoisted(() => ({
+const { openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails, reasonProject } = vi.hoisted(() => ({
+  reasonProject: vi.fn(),
   openProject: vi.fn(),
   closeProject: vi.fn(),
   runCommand: vi.fn(),
@@ -45,12 +46,13 @@ const { openProject, closeProject, runCommand, getCanvas, putLayout, previewDele
 }));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails };
+  return { ...actual, openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails, reasonProject };
 });
 
 // The stub: nodes through the canvas's own node types, and every prop kept.
 const flow = vi.hoisted(() => ({
   props: {} as Record<string, any>,
+  measureMs: null as number | null,
   api: {
     setCenter: vi.fn(),
     getZoom: () => 1,
@@ -63,6 +65,28 @@ const flow = vi.hoisted(() => ({
 }));
 vi.mock("@xyflow/react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@xyflow/react")>();
+  // As React Flow does, a node is drawn hidden until it is measured, when a
+  // test asks for that by setting `flow.measureMs`.
+  function StubNode(props: { id: string; ariaLabel?: string; onClick: (e: any) => void; children: ReactNode }) {
+    const [measured, setMeasured] = useState(flow.measureMs === null);
+    useEffect(() => {
+      if (measured) return;
+      const t = setTimeout(() => setMeasured(true), flow.measureMs ?? 0);
+      return () => clearTimeout(t);
+    }, [measured]);
+    return (
+      <div
+        className="react-flow__node"
+        data-id={props.id}
+        tabIndex={0}
+        aria-label={props.ariaLabel}
+        style={measured ? undefined : { visibility: "hidden" }}
+        onClick={props.onClick}
+      >
+        {props.children}
+      </div>
+    );
+  }
   function ReactFlow(props: Record<string, any>) {
     flow.props = props;
     const types = props.nodeTypes as Record<string, ComponentType<any>>;
@@ -71,16 +95,9 @@ vi.mock("@xyflow/react", async (importOriginal) => {
         {(props.nodes as any[]).map((n) => {
           const Box = types[n.type];
           return (
-            <div
-              key={n.id}
-              className="react-flow__node"
-              data-id={n.id}
-              tabIndex={0}
-              aria-label={n.ariaLabel}
-              onClick={(e) => props.onNodeClick?.(e, n)}
-            >
+            <StubNode key={n.id} id={n.id} ariaLabel={n.ariaLabel} onClick={(e) => props.onNodeClick?.(e, n)}>
               <Box id={n.id} data={n.data} selected={n.selected} />
-            </div>
+            </StubNode>
           );
         })}
         {(props.edges as any[]).map((e) => (
@@ -99,6 +116,9 @@ vi.mock("@xyflow/react", async (importOriginal) => {
 });
 
 import ModelCanvas from "./ModelCanvas";
+import { ReasonControls } from "../components/ReasoningPanel";
+import { TIP_KEY } from "./CanvasAids";
+import CSS from "../index.css?raw";
 
 const EX = "http://example.org/shop#";
 const PID = "prj-0123456789ab";
@@ -219,19 +239,21 @@ afterEach(() => {
   cleanup();
   projectStore._reset();
   vi.useRealTimers();
+  flow.measureMs = null;
 });
 
 describe("what the canvas draws (AC-11)", () => {
   it("draws each box named as the tree names a row, attributes inside", async () => {
     await renderCanvas();
-    expect(box("Document").getAttribute("aria-label")).toBe("Document, class, 1 subclass");
-    expect(box("Invoice (en)").getAttribute("aria-label")).toBe("Invoice (en), class, kind of Document");
+    // The kind in words is part of each box's name (edit-page-rework 5.8).
+    expect(box("Document").getAttribute("aria-label")).toBe("Document, OWL class, 1 subclass");
+    expect(box("Invoice (en)").getAttribute("aria-label")).toBe("Invoice (en), OWL class, kind of Document");
     expect(within(box("Invoice (en)")).getByText("total : xsd:decimal")).toBeTruthy();
     // A concept says so in text, not colour alone.
     expect(within(box("Paid")).getByText("concept")).toBeTruthy();
-    // An imported box is dashed and says where it is from.
+    // An imported box is dashed and its word says where it is from.
     expect(box("Agent").querySelector(".canvas-box")!.classList.contains("imported")).toBe(true);
-    expect(within(box("Agent")).getByText("from FOAF")).toBeTruthy();
+    expect(within(box("Agent")).getByText("imported · FOAF")).toBeTruthy();
     expect(within(box("Agent")).queryByRole("button", { name: /Add an attribute/ })).toBeNull();
   });
 
@@ -243,7 +265,7 @@ describe("what the canvas draws (AC-11)", () => {
       "Paid is narrower than Status",
       "Invoice (en) billed to Agent",
     ]);
-    expect(lines[0].getAttribute("data-marker")).toBe('"canvas-hollow"');
+    expect(lines[0].getAttribute("data-marker")).toBe('"canvas-hollow-kindof"');
   });
 
   it("places every box: saved positions kept, the rest laid out and saved", async () => {
@@ -314,6 +336,79 @@ describe("creating (AC-12)", () => {
     expect(saved.positions[EX + "Receipt"]).toBeDefined();
   });
 
+  it("what a draft made takes focus on its box once the refetch draws it (row E4)", async () => {
+    runCommand.mockResolvedValueOnce({ revision: 3, label: "Created class Receipt", state: STATE, created: EX + "Receipt" });
+    const { rerender } = await renderCanvas();
+    fireEvent.click(screen.getByRole("button", { name: "Class" }));
+    const field = screen.getByRole("textbox", { name: "Name of the new class" });
+    fireEvent.change(field, { target: { value: "Receipt" } });
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+    // Not yet drawn: focus waits where the draft began, never the page.
+    expect(document.activeElement).not.toBe(document.body);
+    const next = viewOf();
+    next.nodes = [...next.nodes, { iri: EX + "Receipt", kind: "class", label: "Receipt", fallback: false, attributes: [] }];
+    getCanvas.mockResolvedValue({ ...next, revision: 3 });
+    await act(async () => {
+      rerender(
+        <ModelCanvas projectId={PID} doc="model" revision={3} language="en" primaryLanguage="en" selected={EX + "Receipt"}
+          onSelect={onSelect} onSelectLink={onSelectLink} onDeleted={onDeleted} onCanvasSet={onCanvasSet} />,
+      );
+    });
+    await waitFor(() => expect(document.activeElement).toBe(box("Receipt")));
+  });
+
+  // React Flow draws a box hidden until it has measured it, and a browser
+  // ignores focus() on a hidden element; jsdom focuses anything, so the
+  // stub draws a new box hidden for 40 ms and focus() here refuses a hidden
+  // one. One attempt a tick after the box was drawn lost (PR #57 review).
+  for (const refetch of ["after", "before"] as const) {
+    it(`what a draft made takes focus on its box though it is drawn hidden at first, the refetch landing ${refetch} the result`, async () => {
+      const focus = HTMLElement.prototype.focus;
+      const spy = vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (this: HTMLElement, options?: FocusOptions) {
+        if (this.closest<HTMLElement>("[style*='visibility: hidden']")) return;
+        focus.call(this, options);
+      });
+      try {
+        let answer!: (value: unknown) => void;
+        runCommand.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+        const { rerender } = await renderCanvas();
+        flow.measureMs = 40;
+        fireEvent.click(screen.getByRole("button", { name: "Class" }));
+        const field = screen.getByRole("textbox", { name: "Name of the new class" });
+        fireEvent.change(field, { target: { value: "Receipt" } });
+        fireEvent.keyDown(field, { key: "Enter" });
+        const next = viewOf();
+        next.nodes = [...next.nodes, { iri: EX + "Receipt", kind: "class", label: "Receipt", fallback: false, attributes: [] }];
+        getCanvas.mockResolvedValue({ ...next, revision: 3 });
+        const redraw = () =>
+          act(async () => {
+            rerender(
+              <ModelCanvas projectId={PID} doc="model" revision={3} language="en" primaryLanguage="en" selected={null}
+                onSelect={onSelect} onSelectLink={onSelectLink} onDeleted={onDeleted} onCanvasSet={onCanvasSet} />,
+            );
+          });
+        const result = () =>
+          act(async () => {
+            answer({ revision: 3, label: "Created class Receipt", state: STATE, created: EX + "Receipt" });
+          });
+        if (refetch === "before") {
+          await redraw();
+          await waitFor(() => expect(box("Receipt")).toBeTruthy());
+          await result();
+        } else {
+          await result();
+          await redraw();
+        }
+        await waitFor(() => expect(document.activeElement).toBe(box("Receipt")), { timeout: 1000 });
+        expect(box("Receipt").closest(".react-flow__node")!.getAttribute("style") ?? "").not.toContain("hidden");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  }
+
   it("Escape or an empty name sends nothing", async () => {
     await renderCanvas();
     fireEvent.click(screen.getByRole("button", { name: "Concept" }));
@@ -336,7 +431,7 @@ describe("creating (AC-12)", () => {
     expect(screen.getByText("Drop to make a kind of Document")).toBeTruthy();
     expect(box("Document").querySelector(".canvas-box")!.classList.contains("drop-target")).toBe(true);
     fireEvent.drop(surface, { dataTransfer, clientX: 10, clientY: 10 });
-    const field = screen.getByRole("textbox", { name: "Name of the new subclass of Document" });
+    const field = screen.getByRole("textbox", { name: "Name of the new kind of Document" });
     fireEvent.change(field, { target: { value: "Letter" } });
     await act(async () => {
       fireEvent.keyDown(field, { key: "Enter" });
@@ -350,7 +445,7 @@ describe("creating (AC-12)", () => {
     const surface = document.querySelector(".canvas-surface")!;
     const dataTransfer = { types: ["application/x-semantic-studio-concept"], dropEffect: "" };
     fireEvent.drop(surface, { dataTransfer, clientX: 10, clientY: 10 });
-    const field = screen.getByRole("textbox", { name: "Name of the new narrower concept of Status" });
+    const field = screen.getByRole("textbox", { name: "Name of the new concept narrower than Status" });
     fireEvent.change(field, { target: { value: "Late" } });
     await act(async () => {
       fireEvent.keyDown(field, { key: "Enter" });
@@ -1223,14 +1318,16 @@ describe("relationships Stage B: related lines and the Stage A follow-ups (5.8, 
     });
   };
 
-  it("draws related to dashed, with no arrowhead, named as a sentence (R17)", async () => {
+  it("draws related to solid with a dot at each end, named as a sentence (R17, edit-page-rework 5.8)", async () => {
     await renderCanvas(withRelated());
     const line = edge("related");
-    expect(line.data.dashed).toBe(true);
-    expect(line.markerEnd).toBeUndefined();
+    expect(line.data.line).toBe("related");
+    expect(line.markerStart).toBe("canvas-dot-related");
+    expect(line.markerEnd).toBe("canvas-dot-related");
     expect(line.ariaLabel).toBe("Paid is related to Status");
     expect(line.data.text).toBe("related to");
-    expect(edge("broader").data.dashed).toBe(false);
+    expect(edge("broader").data.line).toBe("broader");
+    expect(edge("broader").markerStart).toBeUndefined();
   });
 
   it("concept to concept offers related to, which runs AddRelated", async () => {
@@ -1398,7 +1495,7 @@ describe("inferred lines and boxes (axioms-and-reasoning 5.7)", () => {
     const line = inferredLine();
     expect(line.ariaLabel).toBe("Invoice (en) is a kind of Agent, inferred");
     // The word, always shown, and the dash: never colour alone.
-    expect(line.data.text).toBe("inferred");
+    expect(line.data.text).toBe("is a kind of · inferred");
     expect(line.data.always).toBe(true);
     expect(within(box("Document")).getByText("can never have members")).toBeTruthy();
     expect(box("Document").querySelector(".canvas-box")!.classList.contains("never-members")).toBe(true);
@@ -1484,7 +1581,7 @@ describe("rule lines and boxes (axioms-and-reasoning 5.9, AC-11)", () => {
     expect(within(box("Invoice (en)")).getByText("never a Document")).toBeTruthy();
     expect(within(box("Invoice (en)")).getByText("1 more rule in the form")).toBeTruthy();
     expect(box("Invoice (en)").getAttribute("aria-label")).toBe(
-      "Invoice (en), class, kind of Document, never a Document, 1 more rule in the form",
+      "Invoice (en), OWL class, kind of Document, never a Document, 1 more rule in the form",
     );
   });
 
@@ -1512,5 +1609,244 @@ describe("rule lines and boxes (axioms-and-reasoning 5.9, AC-11)", () => {
     expect(projectStore.getSnapshot().ruleDraft).toMatchObject({ cls: EX + "Document", filler: EX + "Invoice" });
     expect(screen.queryByRole("menu")).toBeNull();
     expect(runCommand).not.toHaveBeenCalled();
+  });
+});
+
+/* --- edit-page-rework 5.5, 5.7, 5.8 ----------------------------------------- */
+
+describe("the Add palette, the draft box and the drop toast (edit-page-rework 5.5)", () => {
+  it("the chip is labelled, has its hint, drags, and looks pressed while dragged", async () => {
+    await renderCanvas(viewOf({ kind: "ontology" }));
+    const toolbar = screen.getByRole("toolbar", { name: "Canvas" });
+    expect(within(toolbar).getByText("Add")).toBeTruthy();
+    const chip = within(toolbar).getByRole("button", { name: "Class" });
+    expect(chip.getAttribute("draggable")).toBe("true");
+    expect(document.getElementById(chip.getAttribute("aria-describedby")!)!.textContent).toBe("drag onto the canvas, or press");
+    const dataTransfer = { setData: vi.fn(), effectAllowed: "" };
+    fireEvent.dragStart(chip, { dataTransfer });
+    expect(dataTransfer.setData).toHaveBeenCalledWith("application/x-semantic-studio-class", "class");
+    expect(chip.classList.contains("dragging")).toBe(true);
+    fireEvent.dragEnd(chip);
+    expect(chip.classList.contains("dragging")).toBe(false);
+  });
+
+  it("the draft box has a visible label, the hint as its description, and its field focused", async () => {
+    await renderCanvas();
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole("toolbar", { name: "Canvas" })).getByRole("button", { name: "Class" }));
+    });
+    const field = screen.getByRole("textbox", { name: "Name of the new class" });
+    expect(document.activeElement).toBe(field);
+    expect(document.querySelector(`label[for="${field.id}"]`)!.textContent).toBe("New class");
+    expect(document.getElementById(field.getAttribute("aria-describedby")!)!.textContent).toBe("Enter to create · Esc to cancel");
+    // Esc removes it and gives focus back to the chip it began from.
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(screen.queryByRole("textbox", { name: "Name of the new class" })).toBeNull();
+    await waitFor(() => expect(document.activeElement?.textContent).toContain("Class"));
+  });
+
+  it("a draft begun elsewhere is drawn under its parent's box, labelled as a kind of it", async () => {
+    await renderCanvas();
+    await act(async () => {
+      projectStore.startCreating("class", { parent: { iri: EX + "Document", label: "Document" } });
+    });
+    const field = screen.getByRole("textbox", { name: "Name of the new kind of Document" });
+    expect(document.querySelector(`label[for="${field.id}"]`)!.textContent).toBe("New kind of Document");
+    // Typed in the side panel, shown here: one name.
+    act(() => projectStore.setCreatingName("Letter"));
+    expect((field as HTMLInputElement).value).toBe("Letter");
+  });
+
+  it("over a box: a ring on it and a toast; the toast goes on drop and on leaving", async () => {
+    await renderCanvas();
+    const target = box("Document");
+    document.elementFromPoint = vi.fn(() => target.querySelector(".canvas-box"));
+    const surface = document.querySelector(".canvas-surface")!;
+    const dataTransfer = { types: ["application/x-semantic-studio-class"], dropEffect: "" };
+    fireEvent.dragOver(surface, { dataTransfer, clientX: 10, clientY: 10 });
+    const toast = document.querySelector(".canvas-toast")!;
+    expect(toast.textContent).toBe("Drop to make a kind of Document");
+    expect(toast.getAttribute("role")).toBe("status");
+    fireEvent.dragLeave(surface);
+    expect(document.querySelector(".canvas-toast")).toBeNull();
+    fireEvent.dragOver(surface, { dataTransfer, clientX: 10, clientY: 10 });
+    fireEvent.drop(surface, { dataTransfer, clientX: 10, clientY: 10 });
+    expect(document.querySelector(".canvas-toast")).toBeNull();
+  });
+});
+
+describe("the tip card (edit-page-rework 5.5)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    try {
+      localStorage.removeItem(TIP_KEY);
+    } catch {
+      /* the guard is the app's */
+    }
+  });
+
+  it("names the three drags once; dismissed, it stays dismissed after a remount", async () => {
+    localStorage.removeItem(TIP_KEY);
+    await renderCanvas(viewOf({ kind: "ontology" }));
+    const tip = screen.getByRole("region", { name: "Three drags" });
+    expect(within(tip).getAllByRole("listitem")).toHaveLength(3);
+    await act(async () => {
+      fireEvent.click(within(tip).getByRole("button", { name: "Got it" }));
+    });
+    expect(screen.queryByRole("region", { name: "Three drags" })).toBeNull();
+    // Focus to the canvas it sat on, never the page.
+    expect(document.activeElement).toBe(document.querySelector(".model-canvas"));
+    cleanup();
+    await renderCanvas(viewOf({ kind: "ontology" }));
+    expect(screen.queryByRole("region", { name: "Three drags" })).toBeNull();
+  });
+
+  it("survives storage that throws: shown, and dismissed for the visit", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    await renderCanvas(viewOf({ kind: "taxonomy" }));
+    const tip = screen.getByRole("region", { name: "Three drags" });
+    expect(tip.textContent).toContain("Drag Concept onto the canvas");
+    await act(async () => {
+      fireEvent.click(within(tip).getByRole("button", { name: "Got it" }));
+    });
+    expect(screen.queryByRole("region", { name: "Three drags" })).toBeNull();
+  });
+});
+
+describe("the legend and its help (edit-page-rework 5.7)", () => {
+  it("shows one sample per line kind with its word, and ? opens the keyboard help", async () => {
+    await renderCanvas(viewOf({ kind: "ontology" }));
+    const legend = screen.getByRole("list", { name: "What the lines mean" });
+    // An ontology's own lines, and broader because one is drawn.
+    expect(within(legend).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "kind of",
+      "relationship",
+      "broader",
+      "rule",
+    ]);
+    const help = screen.getByRole("button", { name: "Keyboard help" });
+    act(() => help.focus());
+    await act(async () => {
+      fireEvent.click(help);
+    });
+    const dialog = screen.getByRole("dialog", { name: "Keyboard and lines" });
+    expect(dialog.textContent).toContain("Shift+F10");
+    expect(dialog.textContent).toMatch(/dashed line is inferred/);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(help));
+  });
+
+  it("a taxonomy's legend has its own lines, and any other kind drawn", async () => {
+    await renderCanvas(viewOf({ kind: "taxonomy" }));
+    expect(within(screen.getByRole("list", { name: "What the lines mean" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "kind of",
+      "relationship",
+      "broader",
+      "related",
+    ]);
+  });
+});
+
+describe("colour by kind (edit-page-rework 5.8, AC-8)", () => {
+  const RULES = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  it("actually loaded the stylesheet", () => {
+    expect(CSS.length).toBeGreaterThan(1000);
+    expect(CSS).toContain(".canvas-edge");
+  });
+
+  it("each box has its kind's class, band and word, imported dashed and named by its import", async () => {
+    const view = viewOf();
+    view.nodes = [...view.nodes, { iri: EX + "Thing", kind: "class", classType: "rdfs", label: "Thing", fallback: false, attributes: [] }];
+    view.layout!.positions[EX + "Thing"] = [400, 0];
+    await renderCanvas(view);
+    const card = (label: string) => box(label).querySelector(".canvas-box")!;
+    expect(card("Document").className).toContain("kind-owl");
+    expect(within(box("Document")).getByText("OWL class")).toBeTruthy();
+    expect(card("Thing").className).toContain("kind-rdfs");
+    expect(within(box("Thing")).getByText("RDFS class")).toBeTruthy();
+    expect(box("Thing").getAttribute("aria-label")).toBe("Thing, RDFS class");
+    expect(card("Paid").className).toContain("kind-concept");
+    expect(within(box("Paid")).getByText("concept")).toBeTruthy();
+    // The word is in the header, beside the name.
+    expect(card("Document").querySelector(".canvas-box-head .canvas-box-kind")!.textContent).toBe("OWL class");
+    expect(card("Agent").className).toContain("imported");
+    expect(within(box("Agent")).getByText("imported · FOAF")).toBeTruthy();
+  });
+
+  it("each line has its kind, its ends, and its label always shown", async () => {
+    const view = viewOf();
+    view.edges = [
+      ...view.edges,
+      { kind: "related", source: EX + "Paid", target: EX + "Status", pair: 0, pairs: 1 },
+      {
+        kind: "rule", source: EX + "Invoice", target: EX + "Document", pair: 0, pairs: 1, key: { form: "some" },
+        rule: { form: "some", kind: "some", n: null, property: EX + "p", propertyLabel: "has part", fillerLabel: "Document", withLabel: null },
+      } as never,
+    ];
+    await renderCanvas(view);
+    const edges = flow.props.edges as any[];
+    const by = (line: string) => edges.find((e) => e.data.line === line);
+    expect(by("kindof").markerEnd).toBe("canvas-hollow-kindof");
+    expect(by("broader").markerEnd).toBe("canvas-hollow-broader");
+    expect(by("relationship").markerEnd).toBe("canvas-arrow-relationship");
+    expect(by("rule").markerEnd).toBe("canvas-arrow-rule");
+    expect([by("related").markerStart, by("related").markerEnd]).toEqual(["canvas-dot-related", "canvas-dot-related"]);
+    // Colour is never the only signal: every line keeps its label in sight.
+    expect(edges.every((e) => e.data.always && e.data.text)).toBe(true);
+    for (const id of ["kindof", "broader", "relationship", "rule"]) {
+      expect(document.getElementById(`canvas-${id === "kindof" || id === "broader" ? "hollow" : "arrow"}-${id}`)).toBeTruthy();
+    }
+    expect(document.getElementById("canvas-dot-related")).toBeTruthy();
+  });
+
+  it("the patterns: related and relationship solid, rule dotted 1/4 round, inferred dashed 5/4", () => {
+    const rule = (selector: string) => {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return [...RULES.matchAll(new RegExp(`(^|\\})\\s*${escaped}\\s*\\{([^}]*)\\}`, "g"))].map((m) => m[2]).join(";");
+    };
+    expect(rule(".canvas-surface .canvas-edge.line-rule")).toMatch(/stroke-dasharray\s*:\s*1 4/);
+    expect(rule(".canvas-surface .canvas-edge.line-rule")).toMatch(/stroke-linecap\s*:\s*round/);
+    expect(rule(".canvas-surface .canvas-edge.inferred")).toMatch(/stroke-dasharray\s*:\s*5 4/);
+    // No dash left on related, nor Stage B's dash-dot on a rule.
+    expect(RULES).not.toMatch(/\.related\s*\{[^}]*dasharray/);
+    expect(RULES).not.toMatch(/8 3 2 3/);
+    expect(rule(".canvas-edge.line-related")).toMatch(/stroke\s*:\s*var\(--line-related\)/);
+  });
+});
+
+describe("Reason in the canvas toolbar (edit-page-rework 5.6, AC-7)", () => {
+  it("sits before the zoom controls and keeps focus as it becomes Stop", async () => {
+    getCanvas.mockResolvedValue(viewOf({ kind: "ontology" }));
+    reasonProject.mockReturnValue(new Promise(() => {}));
+    render(
+      <ModelCanvas
+        projectId={PID}
+        doc="model"
+        revision={2}
+        language="en"
+        primaryLanguage="en"
+        selected={null}
+        onSelect={onSelect}
+        onDeleted={onDeleted}
+        reason={<ReasonControls kind="ontology" now={{ revision: 2, generation: 0, imports: false }} hasData={false} />}
+      />,
+    );
+    const toolbar = await screen.findByRole("toolbar", { name: "Canvas" });
+    const names = within(toolbar).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent);
+    expect(names.indexOf("Reason")).toBeLessThan(names.indexOf("Zoom in"));
+    const reason = within(toolbar).getByRole("button", { name: "Reason" });
+    act(() => reason.focus());
+    await act(async () => {
+      fireEvent.click(reason);
+    });
+    expect(reason.textContent).toBe("Stop");
+    expect(document.activeElement).toBe(reason);
   });
 });

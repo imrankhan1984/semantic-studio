@@ -8,7 +8,9 @@ SUMMARY
     AC-19): the status in words, Undo and Redo named by what they would do and
     unavailable without dropping focus, Save, the shortcuts anywhere except
     inside a text field, the polite live region, the document switcher, and
-    the language menu with the display switch and missing counts.
+    the language menu with the display switch and missing counts; and the
+    one-row bar of edit-page-rework 5.2: Turtle, the ⋯ menu by keyboard,
+    Show canvas as a checkbox item, Save primary while unsaved.
 
 BASIC IDEA
     api.ts is mocked and the real store is opened on a fixed project, so
@@ -83,7 +85,9 @@ let handlers: {
   onClose: ReturnType<typeof vi.fn<() => void>>;
   onError: ReturnType<typeof vi.fn<(message: string) => void>>;
   onSaveCopy: ReturnType<typeof vi.fn<() => void>>;
+  onTurtle: ReturnType<typeof vi.fn<() => void>>;
 };
+let canvasToggle: ReturnType<typeof vi.fn<() => void>>;
 
 async function renderHeader(changes: Record<string, unknown> = {}) {
   openProject.mockResolvedValue({
@@ -97,11 +101,13 @@ async function renderHeader(changes: Record<string, unknown> = {}) {
     onClose: vi.fn<() => void>(),
     onError: vi.fn<(message: string) => void>(),
     onSaveCopy: vi.fn<() => void>(),
+    onTurtle: vi.fn<() => void>(),
   };
+  canvasToggle = vi.fn<() => void>();
   await act(async () => {
     render(
       <>
-        <ProjectHeader {...handlers} />
+        <ProjectHeader {...handlers} canvas={{ on: true, onToggle: canvasToggle }} />
         <input aria-label="A text field" />
       </>,
     );
@@ -109,6 +115,16 @@ async function renderHeader(changes: Record<string, unknown> = {}) {
 }
 
 const status = () => document.querySelector(".project-status")!.textContent;
+
+/** Open the ⋯ menu and press one of its items. */
+async function fromMenu(name: string | RegExp) {
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "More project actions" }));
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("menuitem", { name }));
+  });
+}
 const live = () => document.querySelector("[role=status]")!.textContent;
 
 beforeEach(() => projectStore._reset());
@@ -210,33 +226,34 @@ describe("ProjectHeader", () => {
     await renderHeader();
     const select = screen.getByLabelText("Document") as HTMLSelectElement;
     expect([...select.options].map((o) => o.textContent)).toEqual(["model.ttl (unsaved)"]);
-    expect(screen.getByRole("button", { name: "Add shapes.ttl" })).toBeTruthy();
+    // Add shapes.ttl is in the ⋯ menu now, so the row stays one row.
+    fireEvent.click(screen.getByRole("button", { name: "More project actions" }));
+    expect(screen.getByRole("menuitem", { name: "Add shapes.ttl" })).toBeTruthy();
   });
 
   it("the language menu switches the display language and says what is missing", async () => {
     getLanguageReport.mockResolvedValue({ entities: 40, languages: ["en", "fr"], missing: { en: 0, fr: 12 } });
     await renderHeader();
-    const button = screen.getByRole("button", { name: "Language: en" });
-    await act(async () => {
-      fireEvent.click(button);
-    });
-    expect(button.getAttribute("aria-expanded")).toBe("true");
+    await fromMenu("Language: en…");
+    expect(screen.getByRole("group", { name: "Show names in" })).toBeTruthy();
     expect(screen.getByText(/12 of 40 entities have no name in fr/)).toBeTruthy();
     await act(async () => {
       fireEvent.click(screen.getByRole("radio", { name: /^fr/ }));
     });
     expect(projectStore.getSnapshot().displayLanguage).toBe("fr");
-    expect(screen.getByRole("button", { name: "Language: fr" })).toBeTruthy();
     expect(live()).toBe("Showing names in fr.");
+    // Escape in the panel gives focus back to ⋯, which names the language next time.
+    fireEvent.keyDown(screen.getByRole("group", { name: "Show names in" }), { key: "Escape" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "More project actions" }));
+    fireEvent.click(screen.getByRole("button", { name: "More project actions" }));
+    expect(screen.getByRole("menuitem", { name: "Language: fr…" })).toBeTruthy();
   });
 
   it("adding a language checks the tag before asking the server", async () => {
     updateProject.mockResolvedValue({ ...PROJECT, languages: ["fr", "es"] });
     getLanguageReport.mockResolvedValue({ entities: 1, languages: ["en", "fr"], missing: { en: 0, fr: 0 } });
     await renderHeader();
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Language: en" }));
-    });
+    await fromMenu("Language: en…");
     const input = screen.getByLabelText("Add a language");
     fireEvent.change(input, { target: { value: "not a tag" } });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
@@ -301,5 +318,92 @@ describe("ProjectHeader, found in code review", () => {
     await projectStore.save(true);
     expect(saveDocument).toHaveBeenLastCalledWith(PROJECT.id, "shapes", true);
     expect(projectStore.getSnapshot().activeDoc).toBe("model");
+  });
+
+  it("one row: the name, the document, the status, Undo, Redo, Save, then Turtle and ⋯ (5.2)", async () => {
+    await renderHeader();
+    const row = document.querySelector(".project-header")!;
+    const names = [...row.querySelectorAll(":scope > button, :scope > div > button")].map(
+      (b) => b.getAttribute("aria-label") ?? b.textContent,
+    );
+    expect(names).toEqual(["Undo: Created class Invoice", "Redo", "Save", "Turtle", "More project actions"]);
+    // Save a copy and Close project are no longer in the row: they are in ⋯.
+    expect(screen.queryByRole("button", { name: "Save a copy" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close project" })).toBeNull();
+    // The status is a dot beside its word, never the dot alone.
+    expect(document.querySelector(".project-status-dot")!.getAttribute("aria-hidden")).toBe("true");
+    expect(status()).toBe("Unsaved changes");
+  });
+
+  it("Save is the primary button while there are unsaved changes, and only then", async () => {
+    await renderHeader();
+    expect(screen.getByRole("button", { name: "Save" }).className).toBe("primary");
+    cleanup();
+    projectStore._reset();
+    await renderHeader({ dirty: false });
+    expect(screen.getByRole("button", { name: "Save" }).className).toBe("ghost");
+  });
+
+  it("Turtle opens the current document in View's editor, through App", async () => {
+    await renderHeader();
+    fireEvent.click(screen.getByRole("button", { name: "Turtle" }));
+    expect(handlers.onTurtle).toHaveBeenCalledTimes(1);
+  });
+
+  it("the ⋯ menu: Language, Add shapes.ttl, Save a copy, Show canvas and Close project, by keyboard", async () => {
+    await renderHeader();
+    const more = screen.getByRole("button", { name: "More project actions" });
+    expect(more.getAttribute("aria-haspopup")).toBe("menu");
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => {
+      fireEvent.click(more);
+    });
+    expect(more.getAttribute("aria-expanded")).toBe("true");
+    const menu = screen.getByRole("menu", { name: "More project actions" });
+    const items = [...menu.querySelectorAll("[role^='menuitem']")].map((m) => m.textContent);
+    expect(items).toEqual(["Language: en…", "Add shapes.ttl", "Save a copy", "✓Show canvas", "Close project"]);
+    // Focus is on the first item; arrows, End and Home move it.
+    expect(document.activeElement?.textContent).toBe("Language: en…");
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement?.textContent).toBe("Add shapes.ttl");
+    fireEvent.keyDown(menu, { key: "End" });
+    expect(document.activeElement?.textContent).toBe("Close project");
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement?.textContent).toBe("Language: en…");
+    // Show canvas is a checkbox item: its state is aria-checked, not colour.
+    const canvas = screen.getByRole("menuitemcheckbox", { name: "Show canvas" });
+    expect(canvas.getAttribute("aria-checked")).toBe("true");
+    // Escape closes and gives focus back to ⋯.
+    fireEvent.keyDown(menu, { key: "Escape" });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(more);
+  });
+
+  it("each ⋯ item does its one thing and leaves focus on ⋯", async () => {
+    await renderHeader();
+    await fromMenu("Save a copy");
+    expect(handlers.onSaveCopy).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "More project actions" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "More project actions" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Show canvas" }));
+    });
+    expect(canvasToggle).toHaveBeenCalledTimes(1);
+    await fromMenu("Close project");
+    expect(handlers.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("a press outside closes the menu", async () => {
+    await renderHeader();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "More project actions" }));
+    });
+    expect(screen.getByRole("menu", { name: "More project actions" })).toBeTruthy();
+    await act(async () => {
+      fireEvent.mouseDown(screen.getByLabelText("A text field"));
+    });
+    expect(screen.queryByRole("menu", { name: "More project actions" })).toBeNull();
   });
 });

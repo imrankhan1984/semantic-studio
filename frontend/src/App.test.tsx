@@ -106,6 +106,8 @@ const {
   updateProject,
   getShapes,
   validateProject,
+  runCommand,
+  reasonProject,
 } = vi.hoisted(() => ({
   listOntologies: vi.fn(),
   getGraph: vi.fn(),
@@ -150,6 +152,9 @@ const {
   // shacl-authoring Stage A: the Shapes view's list and validation.
   getShapes: vi.fn(),
   validateProject: vi.fn(),
+  // edit-page-rework: a draft made from the side panel, and a run of Reason.
+  runCommand: vi.fn(),
+  reasonProject: vi.fn(),
 }));
 
 // importOriginal rather than a bare factory, so ApiError stays the real class.
@@ -191,6 +196,8 @@ vi.mock("./api", async (importOriginal) => ({
   updateProject,
   getShapes,
   validateProject,
+  runCommand,
+  reasonProject,
 }));
 
 /** Every mocked client function, so a test can count what mount actually did. */
@@ -2213,9 +2220,9 @@ describe("App Hierarchy mode", () => {
   async function openHierarchy() {
     await renderAppOpened();
     await act(async () => {
-      fireEvent.click(screen.getByRole("tab", { name: "Hierarchy" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Edit" }));
     });
-    await screen.findByRole("heading", { name: "Class hierarchy" });
+    await screen.findByRole("button", { name: /^Classes, \d/ });
   }
 
   it("the Hierarchy tab renders the tree in place of the graph", async () => {
@@ -2258,9 +2265,9 @@ describe("App Hierarchy mode", () => {
     expect(fetchHierarchy).not.toHaveBeenCalled();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("tab", { name: "Hierarchy" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Edit" }));
     });
-    await screen.findByRole("heading", { name: "Class hierarchy" });
+    await screen.findByRole("button", { name: /^Classes, \d/ });
     // The third argument: a reasoning result's inferred edges, none here.
     expect(fetchHierarchy).toHaveBeenCalledWith("o1", false, false);
   });
@@ -2394,9 +2401,9 @@ describe("App Hierarchy mode", () => {
 
     await renderAppOpened();
     await act(async () => {
-      fireEvent.click(screen.getByRole("tab", { name: "Hierarchy" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Edit" }));
     });
-    await screen.findByRole("heading", { name: "Object properties" });
+    await screen.findByRole("button", { name: /^Object properties, \d/ });
 
     const row = screen
       .getAllByRole("treeitem")
@@ -2559,9 +2566,9 @@ describe("App imports (external-access Stage 2)", () => {
   it("the switch in the imports panel turns every view over to the merged view (AC-20)", async () => {
     await renderAppOpened();
     await act(async () => {
-      fireEvent.click(screen.getByRole("tab", { name: "Hierarchy" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Edit" }));
     });
-    await screen.findByRole("heading", { name: "Class hierarchy" });
+    await screen.findByRole("button", { name: /^Classes, \d/ });
     expect(listImports).toHaveBeenCalledWith("o1");
     fireEvent.click(await screen.findByRole("button", { name: /Imports/ }));
     const toggle = screen.getByRole("switch", { name: "Include imports" });
@@ -2682,7 +2689,7 @@ describe("App projects (authoring-foundations)", () => {
     expect(getQuerySchema.mock.calls[0][0]).toBe(OID);
 
     await act(async () => {
-      fireEvent.click(tab("Hierarchy"));
+      fireEvent.click(tab("Edit"));
     });
     expect(fetchHierarchy.mock.calls[0][0]).toBe(OID);
   });
@@ -2690,7 +2697,7 @@ describe("App projects (authoring-foundations)", () => {
   it("a change moves the revision and every view refetches (AC-16)", async () => {
     await renderProject({ canUndo: true, undoLabel: "Created class Invoice", dirty: true });
     await act(async () => {
-      fireEvent.click(tab("Hierarchy"));
+      fireEvent.click(tab("Edit"));
     });
     const graphs = getGraph.mock.calls.length;
     const trees = fetchHierarchy.mock.calls.length;
@@ -2768,21 +2775,24 @@ describe("App projects (authoring-foundations)", () => {
       target: { value: "changed" },
     });
     await act(async () => {
-      fireEvent.click(tab("Hierarchy"));
+      fireEvent.click(tab("Edit"));
     });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     });
     expect(applyDocumentSource).not.toHaveBeenCalled();
     expect(projectStore.getSnapshot().editorDraft).toBeNull();
-    expect(tab("Hierarchy").getAttribute("aria-selected")).toBe("true");
+    expect(tab("Edit").getAttribute("aria-selected")).toBe("true");
   });
 
   it("closing with unsaved changes asks Save, discard, or stay", async () => {
     closeProject.mockResolvedValue({ closed: PROJECT.id });
     await renderProject({ dirty: true });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Close project" }));
+      fireEvent.click(screen.getByRole("button", { name: "More project actions" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Close project" }));
     });
     expect(screen.getByRole("dialog", { name: "Save your changes?" })).toBeTruthy();
     expect(closeProject).not.toHaveBeenCalled();
@@ -2896,11 +2906,11 @@ describe("App and the modeling canvas (visual-modeling Stage 2)", () => {
 
   it("opens a project on its model: tree, canvas, then the form (AC-10)", async () => {
     await renderProject();
-    expect(tab("Hierarchy").getAttribute("aria-selected")).toBe("true");
+    expect(tab("Edit").getAttribute("aria-selected")).toBe("true");
     const canvas = await screen.findByTestId("canvas");
     const tree = document.querySelector(".hierarchy-view")!;
-    const panel = document.querySelector(".detail-panel")!;
-    // Document order is reading order: tree, canvas, form.
+    const panel = screen.getByRole("complementary", { name: "Side panel" });
+    // Document order is reading order: outline, canvas, side panel.
     expect(tree.compareDocumentPosition(canvas) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(canvas.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(canvasProps.last).toMatchObject({ projectId: PROJECT.id, doc: "model", revision: 0 });
@@ -2909,18 +2919,28 @@ describe("App and the modeling canvas (visual-modeling Stage 2)", () => {
   it("the Canvas switch collapses it, and the choice is remembered", async () => {
     await renderProject();
     await screen.findByTestId("canvas");
-    const toggle = screen.getByRole("button", { name: "Canvas" });
-    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    // Show canvas is a checkbox item in the project bar's ⋯ menu (Q1).
+    const more = screen.getByRole("button", { name: "More project actions" });
+    await act(async () => {
+      fireEvent.click(more);
+    });
+    const toggle = screen.getByRole("menuitemcheckbox", { name: "Show canvas" });
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
     await act(async () => {
       fireEvent.click(toggle);
     });
     expect(screen.queryByTestId("canvas")).toBeNull();
     expect(localStorage.getItem("semantic-studio-canvas")).toBe("off");
+    // The side panel widens to fill the centre (5.10).
+    expect(document.querySelector(".side-panel")!.classList.contains("wide")).toBe(true);
     cleanup();
     projectStore._reset();
     await renderProject();
     expect(screen.queryByTestId("canvas")).toBeNull();
-    expect(screen.getByRole("button", { name: "Canvas" }).getAttribute("aria-pressed")).toBe("false");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "More project actions" }));
+    });
+    expect(screen.getByRole("menuitemcheckbox", { name: "Show canvas" }).getAttribute("aria-checked")).toBe("false");
   });
 
   it("a library ontology's Hierarchy has no canvas and no switch", async () => {
@@ -2929,10 +2949,12 @@ describe("App and the modeling canvas (visual-modeling Stage 2)", () => {
       fireEvent.click(screen.getAllByRole("button", { name: /^Explore/ })[0]);
     });
     await act(async () => {
-      fireEvent.click(tab("Hierarchy"));
+      fireEvent.click(tab("Edit"));
     });
     expect(screen.queryByTestId("canvas")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Canvas" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "More project actions" })).toBeNull();
+    // No side panel either: the details sit beside the outline (5.9).
+    expect(screen.queryByRole("complementary", { name: "Side panel" })).toBeNull();
   });
 
   it("selection is shared: the canvas selects through App, and is handed App's selection (AC-14)", async () => {
@@ -3021,7 +3043,7 @@ describe("App Shapes view (shacl-authoring Stage A)", () => {
     });
     expect(undoChange).toHaveBeenCalledWith(PROJECT.id, "shapes");
     await act(async () => {
-      fireEvent.click(tab("Hierarchy"));
+      fireEvent.click(tab("Edit"));
     });
     expect(projectStore.getSnapshot().activeDoc).toBe("model");
   });
@@ -3053,5 +3075,337 @@ describe("App Shapes view (shacl-authoring Stage A)", () => {
     const last = getNodeDetails.mock.calls[getNodeDetails.mock.calls.length - 1];
     expect(last[0]).toBe(OID);
     expect(last[1]).toBe("http://example.org/invoices#bob");
+  });
+});
+
+/* --- edit-page-rework: the Edit tab, the side panel, the one draft -------- */
+
+describe("App Edit page (edit-page-rework)", () => {
+  const X = "http://x/";
+  const reasoned = (changes: Record<string, unknown> = {}) => ({
+    status: "done",
+    key: "0+0|model|no-data",
+    includeData: false,
+    imports: false,
+    basis: { revision: 0, generation: 0, imports: false },
+    durationMs: 900,
+    statements: 12,
+    sentence: null,
+    problems: [],
+    groups: [
+      {
+        kind: "kinds",
+        total: 3,
+        offset: 0,
+        items: [{ s: X + "Instrument", p: "sub", o: X + "Asset", sLabel: "Instrument", pLabel: "kind of", oLabel: "Asset", sentence: "Instrument is a kind of Asset" }],
+      },
+      { kind: "same", total: 0, offset: 0, items: [] },
+      { kind: "memberships", total: 0, offset: 0, items: [] },
+      { kind: "links", total: 0, offset: 0, items: [] },
+    ],
+    importedFacts: { kind: "imported", total: 0, offset: 0, items: [] },
+    stale: false,
+    ...changes,
+  });
+
+  beforeEach(() => {
+    try {
+      localStorage.removeItem("semantic-studio-canvas");
+    } catch {
+      /* the app's guard */
+    }
+    runCommand.mockReset();
+    reasonProject.mockReset();
+  });
+
+  /** Every api.ts mock's call count, summed: the requests a step made. */
+  const requests = () =>
+    [listOntologies, getGraph, searchNodes, getNeighborhood, fetchHierarchy, getNodeDetails, listImports, listProjects,
+      openProject, runCommand, reasonProject, getShapes, validateProject, getDocumentSource]
+      .reduce((n, mock) => n + mock.mock.calls.length, 0);
+
+  it("AC-1: the tab is Edit, between Explore and Query; About and Network sit at the right end", async () => {
+    await renderApp();
+    const tabs = screen.getAllByRole("tab").map((t) => t.textContent);
+    expect(tabs).toEqual(["Home", "View", "Explore", "Edit", "Query"]);
+    const row = document.querySelector(".nav-row")!;
+    const last = [...row.children].slice(-4).map((el) => el.getAttribute("aria-label") ?? el.textContent);
+    // A spacer, then About, Network and the theme switch at the right end.
+    expect(last).toEqual(["", "About", "Network", "Toggle colour theme"]);
+    expect(row.children[row.children.length - 4].className).toBe("spacer");
+  });
+
+  it("AC-1: the tab's title says what it is for a project and for a library ontology", async () => {
+    await renderAppOpened();
+    expect(tab("Edit").getAttribute("title")).toBe("Browse the class tree (read-only)");
+    cleanup();
+    projectStore._reset();
+    await renderProject();
+    expect(tab("Edit").getAttribute("title")).toBe("Edit the model: outline, canvas and details");
+  });
+
+  it("AC-5: the side panel has Details and Reasoning tabs; nothing selected shows the model and New class", async () => {
+    await renderProject();
+    const panel = screen.getByRole("complementary", { name: "Side panel" });
+    const tabs = within(panel).getAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(["Details", "Reasoning"]);
+    expect(tabs[0].getAttribute("aria-selected")).toBe("true");
+    expect(within(panel).getByRole("tabpanel")).toBeTruthy();
+    expect(within(panel).getByRole("heading", { name: "Nothing selected" })).toBeTruthy();
+    // The counts come from the outline's own fetch.
+    await waitFor(() => expect(within(panel).getByText("1 class")).toBeTruthy());
+    expect(within(panel).getByText("0 relationships")).toBeTruthy();
+    expect(within(panel).getByRole("button", { name: "New class" })).toBeTruthy();
+    // Arrow keys move between the tabs, choosing as they go.
+    act(() => tabs[0].focus());
+    fireEvent.keyDown(tabs[0], { key: "ArrowRight" });
+    expect(within(panel).getByRole("tab", { name: "Reasoning" }).getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(within(panel).getByRole("tab", { name: "Reasoning" }));
+    expect(within(panel).getByRole("heading", { name: "Reasoning" })).toBeTruthy();
+  });
+
+  it("AC-3: no reasoning text, Results box or RDF note in the outline", async () => {
+    await renderProject();
+    await screen.findByRole("button", { name: /^Classes, \d/ });
+    const outline = document.querySelector(".hierarchy-view")!;
+    expect(outline.textContent).not.toMatch(/Showing asserted|draws conclusions|Results|Reason/);
+    expect(within(outline as HTMLElement).queryByRole("button", { name: "Canvas" })).toBeNull();
+  });
+
+  it("AC-6: the outline's + and the side panel's button open one form; Cancel gives focus back", async () => {
+    localStorage.setItem("semantic-studio-canvas", "off");
+    await renderProject();
+    const panel = screen.getByRole("complementary", { name: "Side panel" });
+    // The outline's + comes first in the page, then the panel's button.
+    for (const which of [0, 1]) {
+      const button = screen.getAllByRole("button", { name: "New class" })[which];
+      expect(panel.contains(button)).toBe(which === 1);
+      act(() => button.focus());
+      await act(async () => {
+        fireEvent.click(button);
+      });
+      // The New class form, in the side panel, its name field focused.
+      expect(within(panel).getByText("New class")).toBeTruthy();
+      const name = within(panel).getByRole("textbox", { name: "Name (en)" });
+      expect(document.activeElement).toBe(name);
+      await act(async () => {
+        fireEvent.click(within(panel).getByRole("button", { name: "Cancel" }));
+      });
+      // The panel's button was replaced by the form and is back: focus is on
+      // the control standing where the creation began.
+      await waitFor(() => expect(document.activeElement).toBe(screen.getAllByRole("button", { name: "New class" })[which]));
+      expect(within(panel).queryByRole("textbox", { name: "Name (en)" })).toBeNull();
+    }
+  });
+
+  it("AC-6: a draft begun on the canvas is the same form, named in either place, and made in one command", async () => {
+    runCommand.mockResolvedValue({ revision: 1, label: "Created class Bond", state: docState({ revision: 1, dirty: true }), created: X + "Bond" });
+    getNodeDetails.mockResolvedValue({ iri: X + "Bond", label: "Bond", kind: "class", prefixed: "x:Bond", types: [], incoming: [], outgoing: [] });
+    await renderProject();
+    await screen.findByTestId("canvas");
+    const panel = screen.getByRole("complementary", { name: "Side panel" });
+    // What the canvas does on a drop onto a box (ModelCanvas).
+    await act(async () => {
+      projectStore.startCreating("class", { parent: { iri: X + "Instrument", label: "Instrument" } });
+    });
+    expect(within(panel).getByText("New kind of Instrument")).toBeTruthy();
+    // The canvas's box has focus when drawn, so the form does not take it.
+    const name = within(panel).getByRole("textbox", { name: "Name (en)" }) as HTMLInputElement;
+    expect(document.activeElement).not.toBe(name);
+    // Typed on the canvas, shown here.
+    act(() => projectStore.setCreatingName("Bond"));
+    expect(name.value).toBe("Bond");
+    expect(within(panel).getByText(/Kind of: Instrument/)).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("button", { name: "Create" }));
+    });
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    expect(runCommand).toHaveBeenCalledWith(PROJECT.id, "model", "CreateClass", { label: "Bond", parent: X + "Instrument" });
+    expect(projectStore.getSnapshot().creating).toBeNull();
+  });
+
+  it("AC-6: with the canvas hidden, what the form made is selected, and its details open", async () => {
+    localStorage.setItem("semantic-studio-canvas", "off");
+    runCommand.mockResolvedValue({ revision: 1, label: "Created class Bond", state: docState({ revision: 1, dirty: true }), created: X + "Bond" });
+    await renderProject();
+    const panel = screen.getByRole("complementary", { name: "Side panel" });
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("button", { name: "New class" }));
+    });
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Name (en)" }), { target: { value: "Bond" } });
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Definition (optional)" }), { target: { value: "A debt." } });
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("button", { name: "Create" }));
+    });
+    expect(runCommand).toHaveBeenCalledWith(PROJECT.id, "model", "CreateClass", { label: "Bond", definition: "A debt." });
+    await waitFor(() => expect(getNodeDetails).toHaveBeenCalledWith(OID, X + "Bond", false));
+    // Nothing dropped to the page meanwhile.
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it("a draft's new entity is not selected once the selection moved while it was made (5.8 item 4)", async () => {
+    localStorage.setItem("semantic-studio-canvas", "off");
+    let finish: (value: unknown) => void = () => {};
+    runCommand.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    await renderProject();
+    const panel = screen.getByRole("complementary", { name: "Side panel" });
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("button", { name: "New class" }));
+    });
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Name (en)" }), { target: { value: "Late" } });
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("button", { name: "Create" }));
+    });
+    await act(async () => {
+      (canvasProps.last?.onSelect as ((iri: string) => void) | undefined)?.(X + "Instrument");
+    });
+    // The canvas is hidden here: select through the outline row instead.
+    const row = await screen.findByText("Instrument");
+    await act(async () => {
+      fireEvent.click(row);
+    });
+    getNodeDetails.mockClear();
+    await act(async () => finish({ revision: 1, label: "Created", state: docState({ revision: 1 }), created: X + "Late" }));
+    expect(getNodeDetails).not.toHaveBeenCalledWith(OID, X + "Late", false);
+  });
+
+  it("AC-7: Reason pressed from the Reasoning tab keeps it; a problem chooses it; otherwise a badge", async () => {
+    await renderProject();
+    const panel = screen.getByRole("complementary", { name: "Side panel" });
+    // From the tab: its Reason, one button that keeps focus as it becomes Stop.
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("tab", { name: "Reasoning" }));
+    });
+    let answer: (r: unknown) => void = () => {};
+    reasonProject.mockReturnValue(new Promise((r) => (answer = r)));
+    const reason = within(panel).getByRole("button", { name: "Reason" });
+    act(() => reason.focus());
+    await act(async () => {
+      fireEvent.click(reason);
+    });
+    expect(reason.textContent).toBe("Stop");
+    expect(document.activeElement).toBe(reason);
+    await act(async () => answer(reasoned()));
+    expect(within(panel).getByRole("tab", { name: "Reasoning" }).getAttribute("aria-selected")).toBe("true");
+
+    // From the toolbar (not the tab), with Details showing: a badge.
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("tab", { name: "Details" }));
+    });
+    reasonProject.mockResolvedValue(reasoned());
+    await act(async () => {
+      await projectStore.reason(false, false);
+    });
+    expect(within(panel).getByRole("tab", { name: "Reasoning, 3 new" }).textContent).toBe("Reasoning · 3");
+    expect(within(panel).getByRole("tab", { name: "Reasoning, 3 new" }).getAttribute("aria-selected")).toBe("false");
+    // Opening the tab clears the badge.
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("tab", { name: "Reasoning, 3 new" }));
+    });
+    expect(within(panel).getByRole("tab", { name: "Reasoning" }).textContent).toBe("Reasoning");
+
+    // A problem chooses the tab whatever was showing.
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("tab", { name: "Details" }));
+    });
+    reasonProject.mockResolvedValue(
+      reasoned({ problems: [{ kind: "neverMembers", sentence: "Robot can never have members.", subject: X + "Robot", causes: [], reasoner: "" }] }),
+    );
+    await act(async () => {
+      await projectStore.reason(false, false);
+    });
+    expect(within(panel).getByRole("tab", { name: "Reasoning" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("a problem never takes the tab from a draft being named: the badge says it (code review)", async () => {
+    localStorage.setItem("semantic-studio-canvas", "off");
+    await renderProject();
+    const panel = screen.getByRole("complementary", { name: "Side panel" });
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("button", { name: "New class" }));
+    });
+    const name = within(panel).getByRole("textbox", { name: "Name (en)" });
+    expect(document.activeElement).toBe(name);
+    reasonProject.mockResolvedValue(
+      reasoned({ problems: [{ kind: "neverMembers", sentence: "Robot can never have members.", subject: X + "Robot", causes: [], reasoner: "" }] }),
+    );
+    await act(async () => {
+      await projectStore.reason(false, false);
+    });
+    expect(within(panel).getByRole("tab", { name: /^Details/ }).getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(name);
+    expect(within(panel).getByRole("tab", { name: "Reasoning, 3 new" })).toBeTruthy();
+  });
+
+  it("Section 10: opening the Reasoning tab with a result in the store makes no request", async () => {
+    await renderProject();
+    reasonProject.mockResolvedValue(reasoned());
+    await act(async () => {
+      await projectStore.reason(false, false);
+    });
+    const panel = screen.getByRole("complementary", { name: "Side panel" });
+    const before = requests();
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("tab", { name: /^Reasoning/ }));
+    });
+    expect(within(panel).getByText("Instrument is a kind of Asset")).toBeTruthy();
+    expect(requests()).toBe(before);
+  });
+
+  it("a subject chosen from a reasoning sentence is shown in Details", async () => {
+    getNodeDetails.mockResolvedValue({ iri: X + "Instrument", label: "Instrument", kind: "class", prefixed: "x:Instrument", types: [], incoming: [], outgoing: [] });
+    await renderProject();
+    reasonProject.mockResolvedValue(reasoned());
+    const panel = screen.getByRole("complementary", { name: "Side panel" });
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("tab", { name: "Reasoning" }));
+    });
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("button", { name: "Reason" }));
+    });
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("button", { name: "Instrument is a kind of Asset" }));
+    });
+    expect(within(panel).getByRole("tab", { name: "Details" }).getAttribute("aria-selected")).toBe("true");
+    await waitFor(() => expect(getNodeDetails).toHaveBeenCalledWith(OID, X + "Instrument", false));
+  });
+
+  it("Turtle in the project bar opens the document in View's editor", async () => {
+    getDocumentSource.mockResolvedValue({ text: "", revision: 0 });
+    await renderProject();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Turtle" }));
+    });
+    expect(tab("View").getAttribute("aria-selected")).toBe("true");
+  });
+});
+
+describe("App Edit page, a library ontology (edit-page-rework 5.9, AC-9)", () => {
+  it("says it is read-only, and Save as a project opens New project with it as the source", async () => {
+    await renderAppOpened();
+    await act(async () => {
+      fireEvent.click(tab("Edit"));
+    });
+    await screen.findByRole("button", { name: /^Classes, \d/ });
+    const notice = screen.getByRole("note");
+    expect(notice.textContent).toContain("is a library ontology, so it is read-only here. To change it, save a copy as your own project.");
+    // No + in the outline, no canvas, no side panel.
+    expect(screen.queryByRole("button", { name: "New class" })).toBeNull();
+    expect(screen.queryByTestId("canvas")).toBeNull();
+    expect(screen.queryByRole("complementary", { name: "Side panel" })).toBeNull();
+    await act(async () => {
+      fireEvent.click(within(notice).getByRole("button", { name: "Save as a project" }));
+    });
+    const dialog = screen.getByRole("dialog", { name: "New project" });
+    expect((within(dialog).getByLabelText("Start from") as HTMLSelectElement).value).toBe("library:o1");
+  });
+
+  it("is not shown for a project, nor outside Edit", async () => {
+    await renderAppOpened();
+    expect(screen.queryByRole("note")).toBeNull();
+    cleanup();
+    projectStore._reset();
+    await renderProject();
+    expect(screen.queryByRole("note")).toBeNull();
   });
 });

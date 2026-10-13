@@ -44,6 +44,14 @@ BASIC IDEA
     relate menu selects the class and leaves the draft, and the class's
     Rules block opens its sentence builder on it once.
 
+    So does a new class, concept, relationship, attribute or example being
+    named (edit-page-rework 5.5): one draft, begun from the canvas's palette,
+    an outline section's +, a row's *Add subclass* or the side panel, whose
+    name is typed in the canvas's draft box or the side panel's form -- one
+    value, so either shows what the other holds. Creating it is one command
+    whichever place pressed Enter, and Cancel gives focus back to the control
+    the creation started from.
+
     Data snapshots are not documents: changing one moves no revision and no
     undo step (5.7). The server counts their changes in a generation of its
     own, which every view's fetch key carries beside the revision, so
@@ -91,6 +99,7 @@ import { validationSummary } from "../modeling/shapeSentences";
 import { finishedLine, isStale, staleLine, type ReasoningNow } from "../reasoning/reasonSentences";
 import type {
   ChangeResult,
+  CreatingKind,
   ProjectDocName,
   ProjectDocumentState,
   ProjectSummary,
@@ -153,6 +162,38 @@ export interface ProjectSnapshot {
    *  menu's *a rule* entry opens the class's sentence builder with both
    *  classes filled. The form takes it once, by its token. */
   ruleDraft: { cls: string; filler: string; property?: string; token: number } | null;
+  /** A thing being named before it is made (edit-page-rework 5.5): the
+   *  canvas's draft box and the side panel's form both show it. */
+  creating: Creating | null;
+  creatingBusy: boolean;
+  /** The server's refusal, shown under both name fields. */
+  creatingError: string | null;
+  /** The last thing a draft made, for the canvas to place it and App to
+   *  select it; its token is the draft's. */
+  created: { iri: string; kind: CreatingKind; token: number; parent: string | null } | null;
+}
+
+export interface Creating {
+  kind: CreatingKind;
+  /** The class it is a kind of, or the concept it is narrower than. */
+  parent: { iri: string; label: string } | null;
+  name: string;
+  token: number;
+  /** What the side panel's form holds besides the name: a definition, the
+   *  ends or class chosen, More options. Here, not in the form, so Enter in
+   *  the canvas's box makes the same thing as Create (code review). */
+  extra: CreatingExtra;
+}
+
+/** What the side panel's form adds to the name for each kind. */
+export interface CreatingExtra {
+  /** An identifier the expert chose under More options. */
+  iri?: string;
+  definition?: string;
+  domain?: string;
+  range?: string;
+  datatype?: string;
+  cls?: string;
 }
 
 const EMPTY: ProjectSnapshot = {
@@ -177,6 +218,10 @@ const EMPTY: ProjectSnapshot = {
   reasoningData: false,
   reasoningToken: 0,
   ruleDraft: null,
+  creating: null,
+  creatingBusy: false,
+  creatingError: null,
+  created: null,
 };
 
 let snapshot: ProjectSnapshot = EMPTY;
@@ -189,6 +234,51 @@ let reasoningRun = 0;
 const listeners = new Set<() => void>();
 // Pending writes to wait for before the project closes (the canvas layout).
 const flushes = new Set<() => Promise<void>>();
+// The control a creation began from, for Cancel to give focus back to. Not
+// in the snapshot: an element is not state anything renders from.
+let creatingFrom: HTMLElement | null = null;
+
+/** Where focus goes back to: the control the creation began from, or --
+ *  when that control was replaced while the draft was open, as the side
+ *  panel's own New class button is by the form -- the control now standing
+ *  in its place, found by its `data-create-from` name; else the outline's
+ *  heading, never the page. */
+function creationStart(): HTMLElement | null {
+  const from = creatingFrom;
+  if (from && from.isConnected) return from;
+  const key = from?.dataset.createFrom;
+  const twin = key ? document.querySelector<HTMLElement>(`[data-create-from="${key}"]`) : null;
+  return twin ?? document.getElementById("hierarchy-view-heading");
+}
+let creatingTokens = 0;
+
+/** The command a draft makes, with its arguments (edit-page-rework 5.5). */
+function draftCommand(draft: Creating, extra: CreatingExtra): [string, Record<string, unknown>] {
+  const name = draft.name.trim();
+  // What every box kind takes besides its name.
+  const extras = {
+    ...(extra.definition?.trim() ? { definition: extra.definition.trim() } : {}),
+    ...(extra.iri ? { iri: extra.iri } : {}),
+  };
+  switch (draft.kind) {
+    case "class":
+      return ["CreateClass", { label: name, ...(draft.parent ? { parent: draft.parent.iri } : {}), ...extras }];
+    case "concept":
+      return ["CreateConcept", { prefLabel: name, ...(draft.parent ? { broader: draft.parent.iri } : {}), ...extras }];
+    case "objectProperty":
+      return [
+        "CreateObjectProperty",
+        { label: name, ...(extra.domain ? { domain: extra.domain } : {}), ...(extra.range ? { range: extra.range } : {}), ...(extra.iri ? { iri: extra.iri } : {}) },
+      ];
+    case "datatypeProperty":
+      return [
+        "CreateDatatypeProperty",
+        { label: name, ...(extra.domain ? { domain: extra.domain } : {}), datatype: extra.datatype ?? "xsd:string", ...(extra.iri ? { iri: extra.iri } : {}) },
+      ];
+    case "example":
+      return ["CreateExample", { class: extra.cls, label: name, ...(extra.iri ? { iri: extra.iri } : {}) }];
+  }
+}
 
 /** Wait for every registered flush; one failing does not stop the others,
  *  nor the close: its own status line has already said so. */
@@ -340,6 +430,7 @@ export const projectStore = {
     if (project) await closeProject(project.id, discard);
     validationRun++;
     reasoningRun++;
+    creatingFrom = null;
     set({ ...EMPTY, announcement: snapshot.announcement });
   },
 
@@ -348,6 +439,7 @@ export const projectStore = {
   reset(): void {
     validationRun++;
     reasoningRun++;
+    creatingFrom = null;
     set({ ...EMPTY, announcement: snapshot.announcement });
   },
 
@@ -531,6 +623,86 @@ export const projectStore = {
     set({ ruleDraft: { cls, filler, ...(property ? { property } : {}), token: (snapshot.ruleDraft?.token ?? 0) + 1 } });
   },
 
+  /** Begin naming a new thing (edit-page-rework 5.5). `from` is the
+   *  control pressed, which Cancel gives focus back to. A draft already open
+   *  is replaced: one thing is named at a time. */
+  startCreating(
+    kind: CreatingKind,
+    options: { parent?: { iri: string; label: string } | null; from?: HTMLElement | null } = {},
+  ): number {
+    creatingFrom = options.from ?? null;
+    const token = ++creatingTokens;
+    set({
+      creating: { kind, parent: options.parent ?? null, name: "", token, extra: {} },
+      creatingBusy: false,
+      creatingError: null,
+    });
+    return token;
+  },
+
+  setCreatingName(name: string): void {
+    if (snapshot.creating && snapshot.creating.name !== name) {
+      set({ creating: { ...snapshot.creating, name } });
+    }
+  },
+
+  setCreatingParent(parent: { iri: string; label: string } | null): void {
+    if (snapshot.creating) set({ creating: { ...snapshot.creating, parent } });
+  },
+
+  setCreatingExtra(extra: Partial<CreatingExtra>): void {
+    if (snapshot.creating) set({ creating: { ...snapshot.creating, extra: { ...snapshot.creating.extra, ...extra } } });
+  },
+
+  /** Make the draft: one command, whichever field pressed Enter. A refusal
+   *  stays on the draft as the server's sentence, nothing changed. */
+  async createDraft(): Promise<string | null> {
+    const draft = snapshot.creating;
+    if (!draft || snapshot.creatingBusy || !draft.name.trim()) return null;
+    set({ creatingBusy: true, creatingError: null });
+    try {
+      const [name, args] = draftCommand(draft, draft.extra);
+      const result = await projectStore.command(name, args, undefined, "model");
+      // Closed, or another draft begun, while it ran: nothing to finish.
+      if (snapshot.creating?.token !== draft.token) return result.created ?? null;
+      // The field pressed is about to go: focus waits where the creation
+      // began until the new box or row takes it, never on the page.
+      const active = document.activeElement;
+      if (active instanceof Element && active.closest(".canvas-draft, .create-form")) creationStart()?.focus();
+      set({
+        creating: null,
+        creatingBusy: false,
+        created: result.created
+          ? { iri: result.created, kind: draft.kind, token: draft.token, parent: draft.parent?.iri ?? null }
+          : null,
+      });
+      creatingFrom = null;
+      return result.created ?? null;
+    } catch (e: unknown) {
+      if (snapshot.creating?.token === draft.token) {
+        set({ creatingBusy: false, creatingError: e instanceof Error ? e.message : String(e) });
+      }
+      return null;
+    }
+  },
+
+  /** Esc, Cancel, or focus leaving both fields empty. With `restore`, focus
+   *  goes back where the creation began -- or, if that control is gone, to
+   *  the outline's heading -- never to the page. */
+  cancelCreating(restore = true): void {
+    if (!snapshot.creating) return;
+    set({ creating: null, creatingBusy: false, creatingError: null });
+    if (!restore) {
+      creatingFrom = null;
+      return;
+    }
+    // After the render that removed the form, so a replaced control is back.
+    window.setTimeout(() => {
+      creationStart()?.focus();
+      creatingFrom = null;
+    }, 0);
+  },
+
   /** The form has opened the builder for the draft: it is spent. */
   ruleDraftTaken(): void {
     if (snapshot.ruleDraft !== null) set({ ruleDraft: null });
@@ -647,6 +819,7 @@ export const projectStore = {
   _reset(): void {
     validationRun++;
     reasoningRun++;
+    creatingFrom = null;
     snapshot = EMPTY;
     setApiLanguage(null);
     for (const listener of listeners) listener();

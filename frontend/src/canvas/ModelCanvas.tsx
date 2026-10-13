@@ -5,11 +5,11 @@ FILE: frontend/src/canvas/ModelCanvas.tsx
 
 SUMMARY
     The modeling canvas (visual-modeling 5.4 to 5.6, D-086): a project's
-    model.ttl drawn as boxes and lines on React Flow, between the tree and the
-    form in the Hierarchy view. Drag a Class or a Concept from the palette to
-    make one; drop it on a box to make a kind of it; draw a line between two
-    boxes to relate them; double-click or press Enter to rename; press Delete
-    to delete. Every change is one E-6 command, through the same runner as
+    model.ttl drawn as boxes and lines on React Flow, between the outline and
+    the side panel on the Edit page. Drag a Class or a Concept from the Add
+    palette to make one; drop it on a box to make a kind of it; draw a line
+    between two boxes to relate them; double-click or press Enter to rename;
+    press Delete to delete. Every change is one E-6 command, through the same runner as
     the form. App loads this file with React.lazy, so React Flow is fetched
     from the local server the first time a canvas opens, and never before.
 
@@ -47,7 +47,23 @@ BASIC IDEA
     a loop (curves.ts). Completing an existing relationship is one command,
     SetEnds, so one undo step (it was two).
 
-    Rules (axioms-and-reasoning 5.9) are dashed lines from a class to the
+    Colour by kind (edit-page-rework 5.8): each box has its kind's band,
+    header tint and word (ClassNode), and each line its kind's colour and
+    pattern -- kind of and broader solid with a hollow triangle, a
+    relationship solid with a filled arrow, related solid with a dot at each
+    end, a rule dotted, anything inferred dashed and labelled *… · inferred*
+    -- and its label, always shown: colour is never the only signal. The
+    markers are ours, one per kind, styled by CSS.
+
+    The palette is labelled *Add*; its chip has a grip, a dashed accent
+    border and the hint *drag onto the canvas, or press*. The draft box has
+    a visible label (*New class*, *New kind of Person*) and the hint *Enter
+    to create · Esc to cancel* as its description. While a chip is over a
+    box, the box shows a ring and a toast says *Drop to make a kind of
+    Person*. The legend, the **?** help and the first-use tip card are
+    CanvasAids.tsx's.
+
+    Rules (axioms-and-reasoning 5.9) are dotted lines from a class to the
     class at the other end, always labelled with their short form (*at least
     1 · has line*, *only · has line*, *defines*) and read aloud as their
     sentence. A click selects the class, whose form lists the rule; Delete
@@ -72,6 +88,10 @@ INPUTS / INPUT SOURCES (props)
     - onDeleted: an entity deleted from the canvas.
     - onCanvasSet: tells App the shown set past 300 boxes, for the tree's and
       the form's Show on canvas and Hide from canvas (5.6).
+    - reason: Reason / Stop and Show inferred, drawn in the toolbar before
+      the zoom controls (edit-page-rework 5.6).
+    Plus the project store's draft (edit-page-rework 5.5): the box being
+    named here is the side panel form's too, one name in the store.
 
 EXPECTED OUTPUT
     - The canvas, its palette, toolbar, menus and dialogs; commands through
@@ -79,14 +99,13 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   applyNodeChanges,
   ConnectionMode,
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
-  MarkerType,
   ReactFlow,
   ReactFlowProvider,
   useInternalNode,
@@ -108,11 +127,14 @@ import { getNodeDetails } from "../api";
 import { useRunner } from "../components/EditParts";
 import { restrictionSentence, shortLabel } from "../modeling/ruleSentences";
 import { createdAnnouncement, linkSentence, otherKindNote } from "../modeling/sentences";
-import { projectStore } from "../state/projectStore";
+import { projectStore, useProjectSelector } from "../state/projectStore";
+import { intoDraft } from "../components/CreateForm";
 import type { CanvasLink, CanvasNode, CanvasSet, CanvasView, ProjectDocName } from "../types";
 import ClassNode, { type BoxData, type BoxNode } from "./ClassNode";
 import ConceptNode from "./ConceptNode";
 import { loopCurve, pairCurve } from "./curves";
+import { Legend, TipCard, type LegendLine } from "./CanvasAids";
+import type { LineKind } from "./kindColours";
 import { BOX_HEIGHT, freeSpot } from "./layered";
 import RelateMenu from "./RelateMenu";
 import { boxName, otherKindRefusal, relateChoices, type RelateChoice } from "./relate";
@@ -132,6 +154,7 @@ export interface ModelCanvasProps {
   /** A current reasoning result's lines and marks (axioms-and-reasoning
    *  5.7), with the imports switch it was computed on; null for none. */
   inferred?: { imports: boolean; token?: number } | null;
+  reason?: ReactNode;
 }
 
 /** The palette's drag data, one type per kind: dragover cannot read the
@@ -143,22 +166,38 @@ const nodeTypes = { class: ClassNode, concept: ConceptNode };
 interface LineData extends Record<string, unknown> {
   text: string;
   always: boolean;
-  hover: boolean;
   pair: number;
   pairs: number;
   forward: boolean;
-  // skos:related: dashed, no arrowhead (relationships 5.8).
-  dashed: boolean;
-  // A reasoning conclusion: dashed and labelled *inferred* (5.7).
+  // Its kind, which picks its colour, pattern and ends (edit-page-rework 5.8).
+  line: LineKind;
+  // A reasoning conclusion: dashed, labelled *… · inferred* (5.7).
   inferred: boolean;
-  // A rule (axioms 5.9): dashed, always labelled with its short form.
+  // A rule (axioms 5.9): dotted, labelled with its short form.
   rule: boolean;
   // A click on the label is a click on its line (5.10 item 7).
   onLabel: (id: string) => void;
 }
 
-/** A line: *is a kind of* and *narrower than* show their words on hover and
- *  focus (5.4); a relationship always shows its name. One line between two
+const LINE_OF: Record<CanvasView["edges"][number]["kind"], LineKind> = {
+  subClassOf: "kindof",
+  relationship: "relationship",
+  broader: "broader",
+  related: "related",
+  rule: "rule",
+};
+/** Each kind's ends, our own markers: React Flow's draw neither a hollow
+ *  triangle nor a dot, and take no colour from CSS. */
+const ENDS: Record<LineKind, { start?: string; end: string }> = {
+  kindof: { end: "canvas-hollow-kindof" },
+  broader: { end: "canvas-hollow-broader" },
+  relationship: { end: "canvas-arrow-relationship" },
+  rule: { end: "canvas-arrow-rule" },
+  related: { start: "canvas-dot-related", end: "canvas-dot-related" },
+};
+
+/** A line, always labelled (edit-page-rework 5.8: every line carries its
+ *  label, which says what its colour and pattern say). One line between two
  *  boxes is React Flow's curve; several are spread apart, and a line from a
  *  box to itself is a loop on its right side (curves.ts). */
 function LabelledEdge(props: EdgeProps<Edge<LineData>>) {
@@ -181,14 +220,15 @@ function LabelledEdge(props: EdgeProps<Edge<LineData>>) {
   } else {
     [path, x, y] = getBezierPath(props);
   }
-  const show = data.always || data.hover || props.selected;
+  const show = data.always || props.selected;
   return (
     <>
       <BaseEdge
         id={props.id}
         path={path}
+        markerStart={props.markerStart}
         markerEnd={props.markerEnd}
-        className={`canvas-edge${data.always ? " relationship" : ""}${data.dashed ? " related" : ""}${data.inferred ? " inferred" : ""}${data.rule ? " rule" : ""}${props.selected ? " selected" : ""}`}
+        className={`canvas-edge line-${data.line}${data.inferred ? " inferred" : ""}${props.selected ? " selected" : ""}`}
       />
       {show && (
         <EdgeLabelRenderer>
@@ -196,7 +236,7 @@ function LabelledEdge(props: EdgeProps<Edge<LineData>>) {
               own click it let the click through to the pane, which cleared
               the selection (5.10 item 7). */}
           <span
-            className={`canvas-edge-label nodrag nopan${props.selected ? " selected" : ""}`}
+            className={`canvas-edge-label line-${data.line} nodrag nopan${props.selected ? " selected" : ""}`}
             style={{ transform: `translate(-50%, -50%) translate(${x}px, ${y}px)`, pointerEvents: "all" }}
             onClick={(e) => {
               e.stopPropagation();
@@ -213,10 +253,11 @@ function LabelledEdge(props: EdgeProps<Edge<LineData>>) {
 
 const edgeTypes = { labelled: LabelledEdge };
 
-interface Draft {
-  kind: "class" | "concept";
+/** Where the store's draft is drawn: placed by a drop, or found once in
+ *  the free space for a draft begun anywhere else. */
+interface DraftPlace {
+  token: number;
   at: [number, number];
-  parent?: string;
 }
 
 function Canvas(props: ModelCanvasProps) {
@@ -249,12 +290,23 @@ function Canvas(props: ModelCanvasProps) {
   );
 
   const [nodes, setNodes] = useState<BoxNode[]>([]);
-  const [hover, setHover] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [draftName, setDraftName] = useState("");
+  // The one draft (edit-page-rework 5.5), a class or a concept: named here
+  // or in the side panel, made by the store whichever pressed Enter.
+  const creating = useProjectSelector((s) => s.creating);
+  const draftBusy = useProjectSelector((s) => s.creatingBusy);
+  const draftError = useProjectSelector((s) => s.creatingError);
+  const created = useProjectSelector((s) => s.created);
+  const draft = creating && (creating.kind === "class" || creating.kind === "concept") ? creating : null;
+  const [place, setPlace] = useState<DraftPlace | null>(null);
+  // The palette items, where a drag or a press began: Cancel's way back.
+  const chips = useRef<Record<string, HTMLButtonElement | null>>({});
   const [hint, setHint] = useState("");
+  // The palette chip being dragged: its pressed look (Section 6).
+  const [dragging, setDragging] = useState<"class" | "concept" | null>(null);
+  // While a chip is over a box: *Drop to make a kind of Person* (5.5).
+  const [toast, setToast] = useState("");
   const [relate, setRelate] = useState<{
     from: string;
     to: string;
@@ -288,10 +340,26 @@ function Canvas(props: ModelCanvasProps) {
   const selectedNow = useRef(selected);
   selectedNow.current = selected;
 
+  // React Flow draws a new node `visibility: hidden` until it has measured
+  // it, and a browser ignores focus() on a hidden element: one attempt a
+  // tick after the box was drawn lost the race on every Create route in
+  // Chromium (PR #57 review; jsdom focuses anything). So it tries again
+  // until the box holds focus, for at most a second, and stops if focus has
+  // moved elsewhere meanwhile: whatever moved it was someone's choice. A
+  // control that went (the page holds focus) moved nothing.
   const focusBox = useCallback((iri: string) => {
-    window.setTimeout(() => {
-      wrapper.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(iri)}"]`)?.focus();
-    }, 0);
+    let tries = 0;
+    let before: Element | null = null;
+    const attempt = () => {
+      const box = wrapper.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(iri)}"]`);
+      const now = document.activeElement;
+      if (tries === 0) before = now;
+      else if (now !== before && now !== document.body) return;
+      box?.focus();
+      if (box && document.activeElement === box) return;
+      if (++tries < 60) window.setTimeout(attempt, 16);
+    };
+    window.setTimeout(attempt, 0);
   }, []);
 
   // --- commands ----------------------------------------------------------------
@@ -320,31 +388,31 @@ function Canvas(props: ModelCanvasProps) {
     [run],
   );
 
-  const createDraft = async () => {
-    if (!draft || busy) return;
-    const name = draftName.trim();
-    if (!name) {
-      setDraft(null);
-      return;
+  // What a draft made: placed where its box stood, selected and focused
+  // (Section 6) -- only if nothing else was selected while it was made (5.8
+  // item 4), and only a draft this canvas drew.
+  const madeFrom = useRef<{ token: number; selected: string | null } | null>(null);
+  useEffect(() => {
+    if (!created || !place || created.token !== place.token) return;
+    data.place(created.iri, place.at);
+    setPlace(null);
+    if (madeFrom.current?.token === created.token && selectedNow.current !== madeFrom.current.selected) return;
+    selectHere(created.iri);
+    // Its box is drawn once the refetch for the new revision lands, which
+    // may be before this or after: focus it now if it is there, or when it
+    // is (rows E4 and E6; focusing at once found no box, and focus stayed
+    // on the control the draft began from).
+    if (nodes.some((n) => n.id === created.iri)) focusBox(created.iri);
+    else focusWhenDrawn.current = created.iri;
+  }, [created, place, data, selectHere, nodes, focusBox]);
+  const focusWhenDrawn = useRef<string | null>(null);
+  useEffect(() => {
+    const iri = focusWhenDrawn.current;
+    if (iri && nodes.some((n) => n.id === iri)) {
+      focusWhenDrawn.current = null;
+      focusBox(iri);
     }
-    const before = selectedNow.current;
-    const args =
-      draft.kind === "class"
-        ? { label: name, ...(draft.parent ? { parent: draft.parent } : {}) }
-        : { prefLabel: name, ...(draft.parent ? { broader: draft.parent } : {}) };
-    const result = await run("draft", draft.kind === "class" ? "CreateClass" : "CreateConcept", args);
-    if (!result) return;
-    if (result.created) {
-      data.place(result.created, draft.at);
-      // Only if nothing else was selected while it ran (5.8 item 4).
-      if (alive() && selectedNow.current === before) {
-        selectHere(result.created);
-        focusBox(result.created);
-      }
-    }
-    setDraft(null);
-    setDraftName("");
-  };
+  }, [nodes, focusBox]);
 
   const choose = async (choice: RelateChoice, name?: string) => {
     if (!relate) return;
@@ -579,16 +647,11 @@ function Canvas(props: ModelCanvasProps) {
             : e.kind === "rule"
               ? `${ruleWords(view, e)}, a rule`
               : `${linkSentence(e.kind, label(view, e.source), label(view, e.target))}${e.inferred ? ", inferred" : ""}`,
-        // A hollow triangle at the parent for a subclass (5.4); an arrow for
-        // broader and relationships; none for related, which reads the same
-        // both ways (5.8). The hollow one is ours: React Flow draws only
-        // filled and open arrows.
-        markerEnd:
-          e.kind === "subClassOf"
-            ? "canvas-hollow"
-            : e.kind === "related"
-              ? undefined
-              : { type: relationship ? MarkerType.ArrowClosed : MarkerType.Arrow },
+        // A hollow triangle at the parent for a kind of or broader line, a
+        // filled arrow for a relationship or a rule, and a dot at both ends
+        // of related, which reads the same both ways (5.8).
+        markerStart: ENDS[LINE_OF[e.kind]].start,
+        markerEnd: ENDS[LINE_OF[e.kind]].end,
         data: {
           // An inferred line always says so, in words: never by its dash alone.
           text:
@@ -599,21 +662,20 @@ function Canvas(props: ModelCanvasProps) {
                   ? shortLabel(e.rule)
                   : "rule"
                 : e.inferred
-                  ? "inferred"
+                  ? `${LINE_WORDS[e.kind]} · inferred`
                   : LINE_WORDS[e.kind],
-          always: relationship || Boolean(e.inferred) || e.kind === "rule",
-          hover: hover === id,
+          always: true,
           pair: e.pair ?? 0,
           pairs: e.pairs ?? 1,
           forward: e.source < e.target,
-          dashed: e.kind === "related",
+          line: LINE_OF[e.kind],
           inferred: Boolean(e.inferred),
           rule: e.kind === "rule",
           onLabel: clickLabel,
         },
       };
     });
-  }, [view, hover, selectedEdge, positions, selected, clickLabel]);
+  }, [view, selectedEdge, positions, selected, clickLabel]);
 
   // --- selection made elsewhere pans here (D-047) ------------------------------------
 
@@ -725,7 +787,7 @@ function Canvas(props: ModelCanvasProps) {
     e.dataTransfer.dropEffect = "copy";
     const target = targetUnder(e, kind);
     setDropTarget(target?.iri ?? null);
-    setHint(
+    setToast(
       target
         ? kind === "class"
           ? `Drop to make a kind of ${target.label}`
@@ -740,28 +802,48 @@ function Canvas(props: ModelCanvasProps) {
     e.preventDefault();
     const target = targetUnder(e, kind);
     setDropTarget(null);
-    setHint("");
+    setToast("");
+    setDragging(null);
     const at = flow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
-    const place: [number, number] = target && positions[target.iri]
+    const spot: [number, number] = target && positions[target.iri]
       ? [positions[target.iri][0], positions[target.iri][1] + 170]
       : [at.x, at.y];
-    setDraft({ kind, at: place, parent: target?.iri });
-    setDraftName("");
+    const token = projectStore.startCreating(kind, {
+      parent: target ? { iri: target.iri, label: target.label } : null,
+      from: chips.current[kind] ?? null,
+    });
+    madeFrom.current = { token, selected: selectedNow.current };
+    setPlace({ token, at: spot });
   };
 
-  /** The palette by keyboard or click: a new box in the free space nearest
-   *  the middle of the view, never on top of another (5.10 item 3). */
+  /** The palette by keyboard or click: the one draft, begun here. */
   const startDraft = (kind: "class" | "concept") => {
-    const box = wrapper.current?.getBoundingClientRect();
-    const at = flow.screenToFlowPosition({ x: (box?.left ?? 0) + (box?.width ?? 0) / 2, y: (box?.top ?? 0) + (box?.height ?? 0) / 2 });
-    const taken = nodes.map((n) => ({
-      at: [n.position.x, n.position.y] as [number, number],
-      width: n.measured?.width,
-      height: n.measured?.height,
-    }));
-    setDraft({ kind, at: freeSpot([at.x, at.y], taken) });
-    setDraftName("");
+    const token = projectStore.startCreating(kind, { from: chips.current[kind] ?? null });
+    madeFrom.current = { token, selected: selectedNow.current };
   };
+
+  // A draft with no place yet -- the palette pressed, an outline +, a row's
+  // Add subclass, the side panel's button -- is drawn under its parent's box
+  // when the parent is drawn, or else in the free space nearest the middle
+  // of the view, never on top of another box (5.10 item 3).
+  useEffect(() => {
+    if (!draft || place?.token === draft.token) return;
+    const parent = draft.parent ? positions[draft.parent.iri] : undefined;
+    let spot: [number, number];
+    if (parent) spot = [parent[0], parent[1] + 170];
+    else {
+      const box = wrapper.current?.getBoundingClientRect();
+      const at = flow.screenToFlowPosition({ x: (box?.left ?? 0) + (box?.width ?? 0) / 2, y: (box?.top ?? 0) + (box?.height ?? 0) / 2 });
+      const taken = nodes.map((n) => ({
+        at: [n.position.x, n.position.y] as [number, number],
+        width: n.measured?.width,
+        height: n.measured?.height,
+      }));
+      spot = freeSpot([at.x, at.y], taken);
+    }
+    if (madeFrom.current?.token !== draft.token) madeFrom.current = { token: draft.token, selected: selectedNow.current };
+    setPlace({ token: draft.token, at: spot });
+  }, [draft, place, positions, nodes, flow]);
 
   const onKeyDownCapture = (e: React.KeyboardEvent) => {
     const target = e.target as HTMLElement;
@@ -827,38 +909,67 @@ function Canvas(props: ModelCanvasProps) {
   const palette: ("class" | "concept")[] =
     view.kind === "ontology" ? ["class"] : view.kind === "taxonomy" ? ["concept"] : ["class", "concept"];
   const otherNote = otherKindLine(view);
-  const draftNode = draft ? flow.flowToScreenPosition({ x: draft.at[0], y: draft.at[1] }) : null;
+  const drawnPlace = draft && place?.token === draft.token ? place.at : null;
+  const draftNode = drawnPlace ? flow.flowToScreenPosition({ x: drawnPlace[0], y: drawnPlace[1] }) : null;
   const origin = wrapper.current?.getBoundingClientRect();
-  const refused = errors.draft || errors.rename || errors.attribute || errors.edge || data.saveError || "";
+  const refused = errors.rename || errors.attribute || errors.edge || data.saveError || "";
 
   return (
     <section className="model-canvas" aria-label="Modeling canvas" aria-busy={busy} ref={section} tabIndex={-1}>
       <svg className="canvas-defs" aria-hidden="true" width="0" height="0">
         <defs>
-          <marker id="canvas-hollow" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="14" markerHeight="14" orient="auto-start-reverse">
-            <path d="M1,1 L11,6 L1,11 z" className="canvas-hollow" />
+          {/* One marker per kind, coloured by CSS (5.8), and sized in the
+              canvas's own units rather than by the line's width, so the
+              legend's samples draw them at the canvas's size. */}
+          {(["kindof", "broader"] as const).map((kind) => (
+            <marker key={kind} id={`canvas-hollow-${kind}`} viewBox="0 0 12 12" refX="11" refY="6" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="13" orient="auto-start-reverse">
+              <path d="M1,1 L11,6 L1,11 z" className={`canvas-hollow line-${kind}`} />
+            </marker>
+          ))}
+          {(["relationship", "rule"] as const).map((kind) => (
+            <marker key={kind} id={`canvas-arrow-${kind}`} viewBox="0 0 12 12" refX="11" refY="6" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto-start-reverse">
+              <path d="M1,1 L11,6 L1,11 z" className={`canvas-arrow line-${kind}`} />
+            </marker>
+          ))}
+          <marker id="canvas-dot-related" viewBox="0 0 10 10" refX="5" refY="5" markerUnits="userSpaceOnUse" markerWidth="7" markerHeight="7">
+            <circle cx="5" cy="5" r="4" className="canvas-dot line-related" />
           </marker>
         </defs>
       </svg>
       <div className="canvas-toolbar" role="toolbar" aria-label="Canvas">
-        <span className="canvas-palette-label">Drag onto the canvas:</span>
+        <span className="canvas-palette-label" id="canvas-add-label">
+          Add
+        </span>
         {palette.map((kind) => (
           <button
             key={kind}
+            ref={(el) => {
+              chips.current[kind] = el;
+            }}
             type="button"
-            className="canvas-palette-item"
+            className={`canvas-palette-item${dragging === kind ? " dragging" : ""}`}
             draggable
+            aria-describedby="canvas-palette-hint"
             onDragStart={(e) => {
               e.dataTransfer.setData(DRAG_TYPE[kind], kind);
               e.dataTransfer.effectAllowed = "copy";
+              setDragging(kind);
             }}
+            onDragEnd={() => setDragging(null)}
             onClick={() => startDraft(kind)}
             title={`Drag onto the canvas, or press to add a ${kind} in the middle`}
           >
+            <span className="canvas-grip" aria-hidden="true">
+              ⠿
+            </span>
             {kind === "class" ? "Class" : "Concept"}
           </button>
         ))}
+        <span className="canvas-palette-hint" id="canvas-palette-hint">
+          drag onto the canvas, or press
+        </span>
         <span className="canvas-toolbar-gap" />
+        {props.reason}
         <button type="button" className="ghost" onClick={() => void flow.zoomIn({ duration: reduced ? 0 : 150 })} aria-label="Zoom in">
           +
         </button>
@@ -911,7 +1022,10 @@ function Canvas(props: ModelCanvasProps) {
         // Script-focusable only, for a selected line's Delete key.
         tabIndex={-1}
         onDragOver={onDragOver}
-        onDragLeave={() => setDropTarget(null)}
+        onDragLeave={() => {
+          setDropTarget(null);
+          setToast("");
+        }}
         onDrop={onDrop}
         onKeyDownCapture={onKeyDownCapture}
         onFocusCapture={(e) => {
@@ -945,8 +1059,6 @@ function Canvas(props: ModelCanvasProps) {
           }}
           onNodeClick={(_, node) => selectHere(node.id)}
           onEdgeClick={(_, edge) => clickLine(edge.id)}
-          onEdgeMouseEnter={(_, edge) => setHover(edge.id)}
-          onEdgeMouseLeave={() => setHover(null)}
           onPaneClick={() => {
             setSelectedEdge(null);
             setRelate(null);
@@ -971,35 +1083,63 @@ function Canvas(props: ModelCanvasProps) {
         )}
         {draft && draftNode && origin && (
           <div
-            className={`canvas-box canvas-draft canvas-${draft.kind}`}
+            className={`canvas-box canvas-draft canvas-${draft.kind} kind-${draft.kind === "class" ? "owl" : "concept"}`}
             style={{ left: draftNode.x - origin.left, top: draftNode.y - origin.top }}
           >
+            {/* A visible label and the hint as the field's description (5.5,
+                Section 6); the field's name says the same, longer. */}
+            <label className="canvas-box-head canvas-draft-label" htmlFor="canvas-draft-name">
+              {draft.parent
+                ? draft.kind === "class"
+                  ? `New kind of ${draft.parent.label}`
+                  : `New concept narrower than ${draft.parent.label}`
+                : draft.kind === "class"
+                  ? "New class"
+                  : "New concept"}
+            </label>
             <input
+              id="canvas-draft-name"
               className="nodrag"
+              aria-describedby="canvas-draft-hint"
               autoFocus
               aria-label={
                 draft.parent
-                  ? `Name of the new ${draft.kind === "class" ? "subclass" : "narrower concept"} of ${label(view, draft.parent)}`
+                  ? draft.kind === "class"
+                    ? `Name of the new kind of ${draft.parent.label}`
+                    : `Name of the new concept narrower than ${draft.parent.label}`
                   : `Name of the new ${draft.kind}`
               }
-              value={draftName}
-              readOnly={busy}
-              onChange={(e) => setDraftName(e.target.value)}
+              value={draft.name}
+              readOnly={draftBusy}
+              onChange={(e) => projectStore.setCreatingName(e.target.value)}
               onKeyDown={(e) => {
                 e.stopPropagation();
                 if (e.key === "Enter") {
                   e.preventDefault();
-                  void createDraft();
+                  if (!draft.name.trim()) projectStore.cancelCreating();
+                  else void projectStore.createDraft();
                 } else if (e.key === "Escape") {
                   e.preventDefault();
-                  setDraft(null);
+                  projectStore.cancelCreating();
                 }
               }}
-              onBlur={() => !busy && !draftName.trim() && setDraft(null)}
+              // Focus leaving both fields empty ends the draft (5.5); the
+              // side panel's name field is the other one.
+              onBlur={(e) => !draftBusy && !draft.name.trim() && !intoDraft(e.relatedTarget) && projectStore.cancelCreating(false)}
             />
-            {errors.draft && <p className="edit-error">{errors.draft}</p>}
+            <p className="canvas-draft-hint" id="canvas-draft-hint">
+              Enter to create · Esc to cancel
+            </p>
+            {draftError && <p className="edit-error">{draftError}</p>}
           </div>
         )}
+        {toast && (
+          <p className="canvas-toast" role="status">
+            {toast}
+          </p>
+        )}
+        <TipCard word={view.kind === "taxonomy" ? "Concept" : "Class"} />
+        <Legend lines={legendLines(view)} />
         {relate && anchor && (
           <RelateMenu
             from={label(view, relate.from)}
@@ -1068,7 +1208,25 @@ function sides(from?: [number, number], to?: [number, number]): ["t" | "r" | "b"
   return dy > 0 ? ["b", "t"] : ["t", "b"];
 }
 
-/** What a hierarchy or related line says, on hover and when selected. */
+/** The legend's lines (5.7): the project's own kinds, and any other kind
+ *  drawn; inferred once a result is on the canvas, rule for an ontology. */
+function legendLines(view: CanvasView): LegendLine[] {
+  const drawn = new Set(view.edges.map((e) => LINE_OF[e.kind]));
+  const taxonomy = view.kind === "taxonomy";
+  const lines: LegendLine[] = [];
+  const add = (line: LegendLine, own: boolean) => {
+    if (own || drawn.has(line as LineKind)) lines.push(line);
+  };
+  add("kindof", !taxonomy);
+  add("relationship", !taxonomy);
+  add("broader", view.kind !== "ontology");
+  add("related", view.kind !== "ontology");
+  if (view.edges.some((e) => e.inferred)) lines.push("inferred");
+  add("rule", !taxonomy);
+  return lines;
+}
+
+/** What a hierarchy or related line says beside it. */
 const LINE_WORDS: Record<Exclude<CanvasView["edges"][number]["kind"], "relationship" | "rule">, string> = {
   subClassOf: "is a kind of",
   broader: "narrower than",

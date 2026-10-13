@@ -62,7 +62,9 @@ INPUTS / INPUT SOURCES
 EXPECTED OUTPUT
     - build_canvas(...) -> {nodes, edges, undrawn, total}; each edge with
       `pair` and `pairs`; a `rule` edge with `rule` and `key`; a class box
-      with `disjoint` and `moreRules` when it has them.
+      with `disjoint` and `moreRules` when it has them, and its `classType`,
+      "owl" for owl:Class (or both) and "rdfs" for rdfs:Class alone
+      (edit-page-rework 5.8). An imported box has none: absent means owl.
     - restrict(view, shown) -> the same shape, cut to the shown set.
     - with_inferred(view, kinds, never) -> the view with inferred lines and
       never-members flags added, the cached view untouched.
@@ -82,9 +84,6 @@ from .graph_builder import labeler, lang_matches, pick_label_in, prefixed
 # Past this many classes and concepts the canvas draws only a chosen set
 # (5.6). Measured in the browser pass: see the constant's test and known-state.
 CANVAS_MAX_BOXES = 300
-
-_CLASS_TYPES = (OWL.Class, RDFS.Class)
-
 
 def _typed(graph: Graph, types) -> set[URIRef]:
     found: set[URIRef] = set()
@@ -106,7 +105,11 @@ def build_canvas(
     # Imported boxes are named from the merged view, where their labels are.
     outside_label = labeler(imported, langs) if imported is not None else label
 
-    classes = _typed(graph, _CLASS_TYPES)
+    # The two typings apart (edit-page-rework 5.8): a box says OWL CLASS or
+    # RDFS CLASS. The same two subject scans the union took, no lookup more.
+    owl_classes = _typed(graph, (OWL.Class,))
+    rdfs_only = _typed(graph, (RDFS.Class,)) - owl_classes
+    classes = owl_classes | rdfs_only
     concepts = _typed(graph, (SKOS.Concept,)) - classes
 
     def fallback(node: URIRef) -> bool:
@@ -291,6 +294,7 @@ def build_canvas(
         {
             "iri": str(iri),
             "kind": "class" if iri in classes else "concept",
+            **({"classType": "rdfs" if iri in rdfs_only else "owl"} if iri in classes else {}),
             "label": label(iri),
             "fallback": fallback(iri),
             "attributes": attributes.get(iri, []),

@@ -28,6 +28,13 @@ INPUTS / INPUT SOURCES (props)
     - missing: what else Create waits for, said beside it (a relationship's
       range, 5.8 item 10); null when nothing.
     - onSubmit({name, iri?, datatype?}), onCancel.
+    - name, onNameChange: the name held outside, for the side panel's form,
+      whose name is the canvas draft box's too (edit-page-rework 5.5).
+    - focusName: whether the name field takes focus when the form opens;
+      not when the canvas's draft box already has it.
+    - onNameBlur: the name field lost focus, with where it went.
+    - onMoreChange: More options' identifier and type of value as they
+      change, for a caller that keeps them (the side panel's draft).
 
 EXPECTED OUTPUT
     - The form; one onSubmit per Create.
@@ -54,6 +61,11 @@ interface Props {
   children?: ReactNode;
   onSubmit: (entity: NewEntity) => void;
   onCancel: () => void;
+  name?: string;
+  onNameChange?: (name: string) => void;
+  focusName?: boolean;
+  onNameBlur?: (to: EventTarget | null) => void;
+  onMoreChange?: (more: { iri?: string; datatype?: string }) => void;
 }
 
 export default function NewEntityForm({
@@ -67,16 +79,25 @@ export default function NewEntityForm({
   children,
   onSubmit,
   onCancel,
+  name: heldName,
+  onNameChange,
+  focusName = true,
+  onNameBlur,
+  onMoreChange,
 }: Props) {
   const id = useId();
-  const [name, setName] = useState("");
+  const [ownName, setOwnName] = useState("");
+  // Held outside when the caller shares it (the side panel and the canvas).
+  const name = heldName ?? ownName;
+  const setName = onNameChange ?? setOwnName;
   const [more, setMore] = useState(false);
   const [iri, setIri] = useState("");
   const [datatype, setDatatype] = useState("xsd:string");
   const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    nameRef.current?.focus();
+    if (focusName) nameRef.current?.focus();
+    // Once, as the form opens.
   }, []);
 
   const blocked = busy || !name.trim() || missing !== null;
@@ -117,6 +138,7 @@ export default function NewEntityForm({
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? `${id}-error` : undefined}
         onChange={(e) => setName(e.target.value)}
+        onBlur={onNameBlur ? (e) => onNameBlur(e.relatedTarget) : undefined}
       />
       {error && (
         <p id={`${id}-error`} className="edit-error">
@@ -142,7 +164,10 @@ export default function NewEntityForm({
           value={iri}
           readOnly={busy}
           placeholder="https://example.org/model#InvoiceItem"
-          onChange={(e) => setIri(e.target.value)}
+          onChange={(e) => {
+            setIri(e.target.value);
+            onMoreChange?.({ iri: e.target.value.trim() || undefined });
+          }}
         />
         {datatypes && (
           <>
@@ -153,7 +178,11 @@ export default function NewEntityForm({
               id={`${id}-datatype`}
               value={datatype}
               aria-disabled={busy}
-              onChange={(e) => !busy && setDatatype(e.target.value)}
+              onChange={(e) => {
+                if (busy) return;
+                setDatatype(e.target.value);
+                onMoreChange?.({ datatype: e.target.value });
+              }}
             >
               {DATATYPES.map((d) => (
                 <option key={d} value={`xsd:${d}`}>

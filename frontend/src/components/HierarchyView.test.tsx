@@ -5,11 +5,14 @@ FILE: frontend/src/components/HierarchyView.test.tsx
 ================================================================================
 
 SUMMARY
-    The test for HierarchyView: the labelled sections (class, concept and the
-    three v0.3 property forests), collapsed-to-roots default, expand/collapse,
-    the filter that keeps ancestors, the virtualization that bounds the DOM
-    regardless of tree size, the keyboard tree operation and its ARIA, and the
-    reserved "inferred" rendering channel proven by a synthetic derived edge.
+    The test for HierarchyView, the Edit page's outline: the labelled
+    sections (class, concept and the three v0.3 property forests), each a
+    folding header with its count and, in a project, a + that starts the one
+    draft (edit-page-rework 5.3, 5.5); collapsed-to-roots default,
+    expand/collapse, the filter that keeps ancestors, the virtualization that
+    bounds the DOM regardless of tree size, the keyboard tree operation and
+    its ARIA, and the reserved "inferred" rendering channel proven by a
+    synthetic derived edge.
 
 BASIC IDEA
     HierarchyView fetches its forests from api.ts, so the module is mocked and
@@ -33,10 +36,14 @@ EXPECTED OUTPUT
 */
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import HierarchyView from "./HierarchyView";
+import HierarchyView, { _resetOutline } from "./HierarchyView";
 import { projectStore } from "../state/projectStore";
 import type { Hierarchy, HierarchyForest } from "../types";
+// The stylesheet as text: jsdom has no layout, so the CF-9 height rule is
+// asserted as written, and proved in Chrome (rows E1 to E3).
+import CSS from "../index.css?raw";
 
 const { fetchHierarchy, openProject, runCommand, previewDelete } = vi.hoisted(() => ({
   fetchHierarchy: vi.fn(),
@@ -114,7 +121,7 @@ function mixed(): Hierarchy {
 function renderView(hierarchy: Hierarchy, onSelect = vi.fn(), selected: string | null = null) {
   fetchHierarchy.mockResolvedValue(hierarchy);
   render(
-    <HierarchyView ontologyId="o1" theme="dark" selected={selected} onSelect={onSelect} />,
+    <HierarchyView ontologyId="o1" selected={selected} onSelect={onSelect} />,
   );
   return { onSelect };
 }
@@ -134,19 +141,34 @@ beforeEach(() => {
 
 afterEach(() => {
   document.body.innerHTML = "";
+  _resetOutline();
 });
+
+/** A section's name: its title and its count, "Classes, 3" (Section 6). */
+const named = (title: string) => new RegExp(`^${title}, \\d`);
+
+/** Unfold a section folded by default (5.3: only the kind's own section
+ *  and Relationships start open). */
+async function unfold(title: string) {
+  const header = await screen.findByRole("button", { name: named(title) });
+  if (header.getAttribute("aria-expanded") === "false") await act(async () => fireEvent.click(header));
+}
 
 describe("HierarchyView", () => {
   it("renders class and concept sections when both are present", async () => {
     // AC-6. A mixed ontology shows both labelled trees.
     renderView(mixed());
 
-    await screen.findByRole("heading", { name: "Class hierarchy" });
-    expect(screen.getByRole("heading", { name: "Concept hierarchy" })).toBeTruthy();
-    // Each section is its own WAI-ARIA tree.
+    await screen.findByRole("button", { name: named("Classes") });
+    expect(screen.getByRole("button", { name: named("Concepts") })).toBeTruthy();
+    // Classes open, Concepts folded to its header (5.3); unfolded, each
+    // section is its own WAI-ARIA tree.
+    expect(screen.getAllByRole("tree")).toHaveLength(1);
+    await unfold("Concepts");
     expect(screen.getAllByRole("tree")).toHaveLength(2);
-    // The asserted-not-inferred note is present and says so.
-    expect(document.querySelector(".hierarchy-note")?.textContent).toMatch(/asserted/i);
+    // The RDF note is gone from the column (AC-3): the canvas legend says it.
+    expect(document.querySelector(".hierarchy-note")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/Showing asserted/);
   });
 
   it("shows only one section for a single-forest ontology", async () => {
@@ -154,8 +176,8 @@ describe("HierarchyView", () => {
     // section; a pure-SKOS one the reverse.
     renderView(hierarchyOf(mixed().classes, EMPTY));
 
-    await screen.findByRole("heading", { name: "Class hierarchy" });
-    expect(screen.queryByRole("heading", { name: "Concept hierarchy" })).toBeNull();
+    await screen.findByRole("button", { name: named("Classes") });
+    expect(screen.queryByRole("button", { name: named("Concepts") })).toBeNull();
     expect(screen.getAllByRole("tree")).toHaveLength(1);
   });
 
@@ -177,6 +199,7 @@ describe("HierarchyView", () => {
     renderView(mixed());
 
     await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
+    await unfold("Concepts");
     // Alpha and Scheme (the two roots); their children are not rendered.
     expect(itemByLabel("Alpha")).toBeTruthy();
     expect(itemByLabel("Scheme")).toBeTruthy();
@@ -206,8 +229,9 @@ describe("HierarchyView", () => {
     // section with no match says so — with the tree unchanged when it clears.
     renderView(mixed());
     await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
+    await unfold("Concepts");
 
-    const filter = screen.getByRole("searchbox", { name: /filter the hierarchy/i });
+    const filter = screen.getByRole("searchbox", { name: /filter the outline/i });
     await act(async () => fireEvent.change(filter, { target: { value: "Beta" } }));
 
     // Beta matches; Alpha is kept as its ancestor and auto-expanded.
@@ -215,8 +239,10 @@ describe("HierarchyView", () => {
     expect(itemByLabel("Alpha")).toBeTruthy();
     // The concept section has no match.
     expect(itemByLabel("Scheme")).toBeUndefined();
-    const conceptTree = screen.getByRole("heading", { name: "Concept hierarchy" }).parentElement!;
-    expect(conceptTree.textContent).toMatch(/no matches/i);
+    const conceptSection = screen.getByRole("button", { name: named("Concepts") }).closest("section")!;
+    expect(conceptSection.textContent).toMatch(/no matches/i);
+    // The headers count the matches (Section 6).
+    expect(screen.getByRole("button", { name: named("Classes") }).textContent).toMatch(/1 shown/);
 
     // Clearing restores the collapsed tree unchanged.
     await act(async () => fireEvent.change(filter, { target: { value: "" } }));
@@ -285,6 +311,7 @@ describe("HierarchyView", () => {
   it("selecting a row calls the shared selection handler", async () => {
     // AC-13 at the component. A click is the ordinary route.
     const { onSelect } = renderView(mixed());
+    await unfold("Concepts");
     await waitFor(() => expect(itemByLabel("Scheme")).toBeTruthy());
 
     await act(async () => fireEvent.click(itemByLabel("Scheme")!));
@@ -346,11 +373,11 @@ describe("HierarchyView", () => {
     };
     renderView(hierarchy);
 
-    await screen.findByRole("heading", { name: "Class hierarchy" });
-    expect(screen.getByRole("heading", { name: "Object properties" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Annotation properties" })).toBeTruthy();
+    await screen.findByRole("button", { name: named("Classes") });
+    expect(screen.getByRole("button", { name: named("Object properties") })).toBeTruthy();
+    expect(screen.getByRole("button", { name: named("Annotation properties") })).toBeTruthy();
     // No datatype forest in the payload, so no datatype section.
-    expect(screen.queryByRole("heading", { name: "Datatype properties" })).toBeNull();
+    expect(screen.queryByRole("button", { name: named("Datatype properties") })).toBeNull();
     // The object-property root is a branch and expand-all opens it.
     await act(async () => fireEvent.click(screen.getByRole("button", { name: /expand all/i })));
     expect(itemByLabel("hasParent")).toBeTruthy();
@@ -372,7 +399,7 @@ describe("HierarchyView", () => {
     // Shown while a current reasoning result's marks are on (axioms-and-
     // reasoning 5.7); without them the tree drops inferred edges itself.
     fetchHierarchy.mockResolvedValue(hierarchyOf(classes, EMPTY));
-    render(<HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} inferred />);
+    render(<HierarchyView ontologyId="o1" selected={null} onSelect={vi.fn()} inferred />);
     await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
 
     await act(async () => fireEvent.click(itemByLabel("Alpha")!.querySelector(".hierarchy-twistie")!));
@@ -405,7 +432,7 @@ describe("HierarchyView imports (external-access Stage 2)", () => {
 
   it("fetches the merged forests only when told to", async () => {
     fetchHierarchy.mockResolvedValue(mixed());
-    render(<HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} imports />);
+    render(<HierarchyView ontologyId="o1" selected={null} onSelect={vi.fn()} imports />);
     await screen.findByText("Alpha");
     expect(fetchHierarchy).toHaveBeenCalledWith("o1", true, false);
   });
@@ -447,7 +474,7 @@ describe("HierarchyView in a project (visual-modeling 5.2, AC-5)", () => {
     render(
       <HierarchyView
         ontologyId="o1"
-        theme="dark"
+       
         selected={null}
         onSelect={onSelect}
         editing={{ primaryLanguage: "en" }}
@@ -475,7 +502,7 @@ describe("HierarchyView in a project (visual-modeling 5.2, AC-5)", () => {
   it("shows New class even on an empty model, and New concept beside the concepts", async () => {
     renderProject(hierarchyOf(EMPTY, EMPTY));
     expect(await screen.findByRole("button", { name: "New class" })).toBeTruthy();
-    expect(screen.getByText("No classes yet. New class makes the first.")).toBeTruthy();
+    expect(screen.getByText("No classes yet. Drag Class onto the canvas, or press +.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "New concept" })).toBeNull();
     document.body.innerHTML = "";
 
@@ -483,29 +510,39 @@ describe("HierarchyView in a project (visual-modeling 5.2, AC-5)", () => {
     expect(await screen.findByRole("button", { name: "New concept" })).toBeTruthy();
   });
 
-  it("creates a class by name and selects it", async () => {
-    runCommand.mockResolvedValueOnce({ revision: 3, label: "Created class Invoice", state: STATE, created: EX + "Invoice" });
-    const { onSelect } = renderProject(mixed());
-    fireEvent.click(await screen.findByRole("button", { name: "New class" }));
-    const name = screen.getByRole("textbox", { name: "Name (en)" });
-    expect(document.activeElement).toBe(name);
-    fireEvent.change(name, { target: { value: "Invoice" } });
-    await act(async () => {
-      fireEvent.submit(name.closest("form")!);
-    });
-    expect(runCommand).toHaveBeenCalledTimes(1);
-    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateClass", { label: "Invoice", iri: undefined, parent: undefined });
-    expect(onSelect).toHaveBeenCalledWith(EX + "Invoice");
+  it("a section's + starts the one draft, shown in italics in the outline, and never a form in the tree", async () => {
+    renderProject(mixed());
+    const plus = await screen.findByRole("button", { name: "New class" });
+    act(() => plus.focus());
+    act(() => fireEvent.click(plus));
+    // The draft is the store's (5.5): the canvas and the side panel show it.
+    expect(projectStore.getSnapshot().creating).toMatchObject({ kind: "class", parent: null, name: "" });
+    // No form inside the tree (AC-3): the side panel is where it opens.
+    expect(document.querySelector(".hierarchy-view form")).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Name (en)" })).toBeNull();
+    const pending = () => items().find((el) => el.classList.contains("pending"));
+    expect(pending()!.querySelector(".hierarchy-label")!.textContent).toBe("New class");
+    expect(pending()!.textContent).toContain("being created");
+    act(() => projectStore.setCreatingName("Invoice"));
+    expect(pending()!.querySelector(".hierarchy-label")!.textContent).toBe("Invoice");
+    // Cancel gives focus back to the + it began from.
+    act(() => projectStore.cancelCreating());
+    await waitFor(() => expect(document.activeElement).toBe(plus));
+    expect(pending()).toBeUndefined();
   });
 
-  it("creates a concept in the scheme there is", async () => {
+  it("a section's + makes its own kind: relationship, attribute, and New concept beside the concepts", async () => {
     renderProject(mixed());
-    fireEvent.click(await screen.findByRole("button", { name: "New concept" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Name (en)" }), { target: { value: "Ice" } });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Create" }));
-    });
-    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateConcept", { prefLabel: "Ice", iri: undefined, scheme: EX + "Scheme" });
+    fireEvent.click(await screen.findByRole("button", { name: "New relationship" }));
+    expect(projectStore.getSnapshot().creating?.kind).toBe("objectProperty");
+    fireEvent.click(screen.getByRole("button", { name: "New attribute" }));
+    expect(projectStore.getSnapshot().creating?.kind).toBe("datatypeProperty");
+    fireEvent.click(screen.getByRole("button", { name: "New concept" }));
+    expect(projectStore.getSnapshot().creating?.kind).toBe("concept");
+    // Each + is named by what it makes, and each header names its count.
+    expect(screen.getByRole("button", { name: "Relationships, 0" }).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("button", { name: "Attributes, 0" }).getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getByRole("button", { name: "Classes, 2" }).getAttribute("aria-expanded")).toBe("true");
   });
 
   it("opens the row menu from the keyboard, moves through it, and Escape returns to the row", async () => {
@@ -532,6 +569,7 @@ describe("HierarchyView in a project (visual-modeling 5.2, AC-5)", () => {
 
   it("offers Add narrower concept on a concept, and the row's button opens the same menu", async () => {
     renderProject(mixed());
+    await unfold("Concepts");
     await waitFor(() => expect(itemByLabel("Scheme")).toBeTruthy());
     fireEvent.click(itemByLabel("Scheme")!.querySelector(".hierarchy-twistie")!);
     await waitFor(() => expect(itemByLabel("Water")).toBeTruthy());
@@ -544,25 +582,28 @@ describe("HierarchyView in a project (visual-modeling 5.2, AC-5)", () => {
       "Rename",
       "Delete…",
     ]);
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Add narrower concept" }));
-    expect(screen.getByText("New narrower concept of Water")).toBeTruthy();
-    fireEvent.change(screen.getByRole("textbox", { name: "Name (en)" }), { target: { value: "Ice" } });
+    act(() => fireEvent.click(within(menu).getByRole("menuitem", { name: "Add narrower concept" })));
+    expect(projectStore.getSnapshot().creating).toMatchObject({ kind: "concept", parent: { iri: EX + "Water", label: "Water" } });
+    // The pending row stands under Water, one level down.
+    const pending = items().find((el) => el.classList.contains("pending"))!;
+    expect(pending.getAttribute("aria-level")).toBe("3");
+    act(() => projectStore.setCreatingName("Ice"));
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+      await projectStore.createDraft();
     });
-    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateConcept", { prefLabel: "Ice", iri: undefined, broader: EX + "Water" });
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateConcept", { prefLabel: "Ice", broader: EX + "Water" });
   });
 
   it("adds a subclass from the menu under that class", async () => {
     renderProject(mixed());
     await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
     fireEvent.click(menuOf("Alpha"));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Add subclass" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Name (en)" }), { target: { value: "Delta" } });
+    act(() => fireEvent.click(screen.getByRole("menuitem", { name: "Add subclass" })));
+    act(() => projectStore.setCreatingName("Delta"));
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+      await projectStore.createDraft();
     });
-    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateClass", { label: "Delta", iri: undefined, parent: EX + "Alpha" });
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateClass", { label: "Delta", parent: EX + "Alpha" });
   });
 
   it("renames in place in the primary language; Escape cancels and sends nothing", async () => {
@@ -639,6 +680,7 @@ describe("HierarchyView in a project (visual-modeling 5.2, AC-5)", () => {
     };
     renderProject(hierarchyOf(classes, concepts));
     await waitFor(() => expect(itemByLabel("Agent")).toBeTruthy());
+    await unfold("Concepts");
     expect(itemByLabel("Topic")!.querySelector(".hierarchy-menu-btn")).toBeNull();
     fireEvent.click(menuOf("Agent"));
     expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Add subclass"]);
@@ -671,7 +713,7 @@ describe("HierarchyView, Stage 2 follow-ups (visual-modeling 5.8)", () => {
   const view = (props: Partial<React.ComponentProps<typeof HierarchyView>> = {}) => (
     <HierarchyView
       ontologyId="o1"
-      theme="dark"
+     
       selected={null}
       onSelect={vi.fn()}
       editing={{ primaryLanguage: "en" }}
@@ -679,49 +721,111 @@ describe("HierarchyView, Stage 2 follow-ups (visual-modeling 5.8)", () => {
     />
   );
 
-  it("item 1: a create in flight shows the view busy", async () => {
+  it("item 1: a rename in flight shows the view busy", async () => {
     let finish: (value: unknown) => void = () => {};
     runCommand.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
     fetchHierarchy.mockResolvedValue(mixed());
     render(view());
-    fireEvent.click(await screen.findByRole("button", { name: "New class" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Name (en)" }), { target: { value: "Late" } });
+    await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
+    fireEvent.click(itemByLabel("Alpha")!.querySelector(".hierarchy-menu-btn")!);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+    const field = screen.getByRole("textbox", { name: "New name for Alpha" });
+    fireEvent.change(field, { target: { value: "Late" } });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+      fireEvent.keyDown(field, { key: "Enter" });
     });
     expect(document.querySelector(".hierarchy-view .edit-status")!.textContent).toBe("Saving change…");
     // And to assistive technology (PR #47 review, item 8).
     expect(document.querySelector(".hierarchy-view")!.getAttribute("aria-busy")).toBe("true");
-    await act(async () => finish({ revision: 3, label: "Created", state: STATE }));
+    await act(async () => finish({ revision: 3, label: "Renamed", state: STATE }));
     expect(document.querySelector(".hierarchy-view .edit-status")!.textContent).toBe("");
     expect(document.querySelector(".hierarchy-view")!.getAttribute("aria-busy")).toBe("false");
   });
 
-  it("item 4: a create does not select the new entity once the selection moved", async () => {
-    let finish: (value: unknown) => void = () => {};
-    runCommand.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
-    fetchHierarchy.mockResolvedValue(mixed());
-    const onSelect = vi.fn();
-    const { rerender } = render(view({ onSelect }));
-    fireEvent.click(await screen.findByRole("button", { name: "New class" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Name (en)" }), { target: { value: "Late" } });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Create" }));
-    });
-    rerender(view({ onSelect, selected: EX + "Alpha" }));
-    await act(async () => finish({ revision: 3, label: "Created", state: STATE, created: EX + "Late" }));
-    expect(onSelect).not.toHaveBeenCalled();
-  });
-
-  it("item 6: the tree's forms and menu close when the document changes", async () => {
+  it("item 6: a draft and the menu end when the document changes", async () => {
     fetchHierarchy.mockResolvedValue(mixed());
     const { rerender } = render(view());
-    fireEvent.click(await screen.findByRole("button", { name: "New class" }));
-    expect(screen.getByRole("textbox", { name: "Name (en)" })).toBeTruthy();
+    const plus = await screen.findByRole("button", { name: "New class" });
+    act(() => fireEvent.click(plus));
+    expect(projectStore.getSnapshot().creating).not.toBeNull();
     await act(async () => {
       rerender(view({ ontologyId: "o2" }));
     });
-    expect(screen.queryByRole("textbox", { name: "Name (en)" })).toBeNull();
+    expect(projectStore.getSnapshot().creating).toBeNull();
+  });
+
+  it("a draft begun before the outline mounts is kept (only a change of document ends it)", async () => {
+    fetchHierarchy.mockResolvedValue(mixed());
+    act(() => {
+      projectStore.startCreating("class");
+    });
+    render(view());
+    await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
+    expect(projectStore.getSnapshot().creating).not.toBeNull();
+  });
+
+  it("what a draft made opens its section and parent, and takes focus on its row when no box does", async () => {
+    const tree = mixed();
+    fetchHierarchy.mockResolvedValue(tree);
+    const { rerender } = render(view({ canvasShown: false }));
+    await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
+    runCommand.mockResolvedValueOnce({ revision: 3, label: "Created", state: STATE, created: EX + "Gamma" });
+    act(() => {
+      projectStore.startCreating("class", { parent: { iri: EX + "Alpha", label: "Alpha" } });
+      projectStore.setCreatingName("Gamma");
+    });
+    await act(async () => {
+      await projectStore.createDraft();
+    });
+    // The refetch on the new revision holds Gamma under Alpha.
+    const withGamma = mixed();
+    withGamma.classes.nodes[EX + "Gamma"] = node("Gamma");
+    withGamma.classes.children[EX + "Alpha"].push({ id: EX + "Gamma", origin: "asserted" });
+    fetchHierarchy.mockResolvedValue(withGamma);
+    await act(async () => {
+      rerender(view({ canvasShown: false, revision: 3 }));
+    });
+    await waitFor(() => expect(document.activeElement).toBe(itemByLabel("Gamma")));
+    expect(itemByLabel("Alpha")!.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("folding a section re-renders the outline only: ten toggles, no canvas render (Section 10)", async () => {
+    fetchHierarchy.mockResolvedValue(mixed());
+    let canvasRenders = 0;
+    function StubCanvas() {
+      canvasRenders++;
+      return null;
+    }
+    // As App holds them: the outline's counts in the parent's state, the
+    // canvas beside the outline. A fold that told the parent anything would
+    // re-render the canvas with it.
+    function Page() {
+      const [, setCounts] = useState<unknown>(null);
+      return (
+        <>
+          {view({ onCounts: setCounts })}
+          <StubCanvas />
+        </>
+      );
+    }
+    render(<Page />);
+    await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
+    const before = canvasRenders;
+    for (let i = 0; i < 10; i++) {
+      await act(async () => fireEvent.click(screen.getByRole("button", { name: named("Concepts") })));
+    }
+    expect(canvasRenders - before).toBe(0);
+    expect(screen.getByRole("button", { name: named("Concepts") }).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("remembers which sections are open, per ontology, for the session", async () => {
+    fetchHierarchy.mockResolvedValue(mixed());
+    const { unmount } = render(view());
+    await unfold("Concepts");
+    unmount();
+    render(view());
+    await waitFor(() => expect(itemByLabel("Scheme")).toBeTruthy());
+    expect(screen.getByRole("button", { name: named("Concepts") }).getAttribute("aria-expanded")).toBe("true");
   });
 
   it("5.6: past 300 boxes the row menu offers Show on canvas and Hide from canvas", async () => {
@@ -737,15 +841,6 @@ describe("HierarchyView, Stage 2 follow-ups (visual-modeling 5.8)", () => {
     expect(show).toHaveBeenCalledWith(EX + "Alpha");
   });
 
-  it("5.4: the Canvas switch is a pressed-state button in the toolbar", async () => {
-    fetchHierarchy.mockResolvedValue(mixed());
-    const onToggle = vi.fn();
-    render(view({ canvasSwitch: { on: true, onToggle } }));
-    const toggle = await screen.findByRole("button", { name: "Canvas" });
-    expect(toggle.getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(toggle);
-    expect(onToggle).toHaveBeenCalled();
-  });
 });
 
 
@@ -779,16 +874,17 @@ describe("HierarchyView, relationships Stage A (AC-2, AC-6)", () => {
   function renderKind(kind: "ontology" | "taxonomy" | null, hierarchy: Hierarchy = model()) {
     fetchHierarchy.mockResolvedValue(hierarchy);
     render(
-      <HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en", kind }} />,
+      <HierarchyView ontologyId="o1" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en", kind }} />,
     );
   }
 
-  const headings = () => [...document.querySelectorAll("h3")].map((h) => h.textContent);
+  const headings = () => [...document.querySelectorAll(".hierarchy-section-title")].map((h) => h.textContent);
 
   it("lists every relationship and attribute with its ends, nested under a parent", async () => {
     renderKind("ontology");
     await screen.findByText("likes");
-    expect(headings()).toEqual(["Class hierarchy", "Relationships", "Attributes", "Concept hierarchy"]);
+    expect(headings()).toEqual(["Classes", "Relationships", "Attributes", "Concepts"]);
+    await unfold("Attributes");
     expect(itemByLabel("likes")!.querySelector(".hierarchy-ends")!.textContent).toBe("(no start yet → no end yet)");
     expect(itemByLabel("member of")!.querySelector(".hierarchy-ends")!.textContent).toBe("(Alpha → Beta)");
     expect(itemByLabel("name")!.querySelector(".hierarchy-ends")!.textContent).toBe("(Alpha, text)");
@@ -807,6 +903,7 @@ describe("HierarchyView, relationships Stage A (AC-2, AC-6)", () => {
     expect(
       screen.getByText("This ontology also contains 1 SKOS concept. Edit it in Turtle, or change the project to a taxonomy."),
     ).toBeTruthy();
+    await unfold("Concepts");
     fireEvent.click(itemByLabel("Scheme")!.querySelector(".hierarchy-twistie")!);
     expect(itemByLabel("Water")).toBeTruthy();
     expect(itemByLabel("Water")!.querySelector(".hierarchy-menu-btn")).toBeNull();
@@ -817,7 +914,8 @@ describe("HierarchyView, relationships Stage A (AC-2, AC-6)", () => {
     renderKind("taxonomy", mixed());
     expect(await screen.findByRole("button", { name: "New concept" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "New class" })).toBeNull();
-    expect(headings()).toEqual(["Concept hierarchy", "Class hierarchy"]);
+    expect(headings()).toEqual(["Concepts", "Classes"]);
+    await unfold("Classes");
     expect(itemByLabel("Alpha")!.querySelector(".hierarchy-menu-btn")).toBeNull();
     expect(screen.getByText(/This taxonomy also contains 2 classes\./)).toBeTruthy();
   });
@@ -825,6 +923,9 @@ describe("HierarchyView, relationships Stage A (AC-2, AC-6)", () => {
   it("a taxonomy lists its relationships and attributes without actions (5.10 item 2)", async () => {
     renderKind("taxonomy");
     await screen.findByText("likes");
+    // No + where the taxonomy cannot change anything (5.10 item 2).
+    expect(screen.queryByRole("button", { name: "New relationship" })).toBeNull();
+    await unfold("Attributes");
     for (const label of ["member of", "likes", "name"]) {
       expect(itemByLabel(label)!.querySelector(".hierarchy-menu-btn")).toBeNull();
       expect(itemByLabel(label)!.getAttribute("aria-keyshortcuts")).toBeNull();
@@ -834,8 +935,8 @@ describe("HierarchyView, relationships Stage A (AC-2, AC-6)", () => {
   it("an empty taxonomy keeps its concept section, where New concept lives", async () => {
     renderKind("taxonomy", hierarchyOf(EMPTY, EMPTY));
     expect(await screen.findByRole("button", { name: "New concept" })).toBeTruthy();
-    expect(headings()).toEqual(["Concept hierarchy"]);
-    expect(screen.getByText("No concepts yet. New concept makes the first.")).toBeTruthy();
+    expect(headings()).toEqual(["Concepts"]);
+    expect(screen.getByText("No concepts yet. Drag Concept onto the canvas, or press +.")).toBeTruthy();
     expect(document.querySelector(".hierarchy-other-kind")).toBeNull();
   });
 
@@ -888,16 +989,16 @@ describe("HierarchyView, examples (shacl-authoring 5.8)", () => {
   function renderProject(hierarchy: Hierarchy, onSelect = vi.fn()) {
     fetchHierarchy.mockResolvedValue(hierarchy);
     render(
-      <HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={onSelect} editing={{ primaryLanguage: "en" }} />,
+      <HierarchyView ontologyId="o1" selected={null} onSelect={onSelect} editing={{ primaryLanguage: "en" }} />,
     );
     return { onSelect };
   }
 
-  const examplesTree = () => screen.getByRole("tree", { name: "Examples" });
+  const examplesTree = () => screen.getByRole("tree", { name: named("Examples") });
 
   it("lists a project's examples under their class, open from the start", async () => {
     const { onSelect } = renderProject(withExamples());
-    await screen.findByRole("heading", { name: "Examples" });
+    await unfold("Examples");
     const rows = within(examplesTree()).getAllByRole("treeitem");
     expect(rows.map((r) => r.querySelector(".hierarchy-label")?.textContent)).toEqual(["Person", "Bob"]);
     fireEvent.click(rows[1]);
@@ -906,8 +1007,8 @@ describe("HierarchyView, examples (shacl-authoring 5.8)", () => {
 
   it("keeps its own expansion: closing Person here leaves the class tree alone", async () => {
     renderProject(withExamples());
-    await screen.findByRole("heading", { name: "Examples" });
-    const classTree = screen.getByRole("tree", { name: "Class hierarchy" });
+    await unfold("Examples");
+    const classTree = screen.getByRole("tree", { name: named("Classes") });
     const classPerson = within(classTree).getAllByRole("treeitem")[0];
     fireEvent.click(classPerson.querySelector<HTMLElement>(".hierarchy-twistie")!);
     expect(within(classTree).getAllByRole("treeitem")).toHaveLength(2);
@@ -920,7 +1021,7 @@ describe("HierarchyView, examples (shacl-authoring 5.8)", () => {
 
   it("gives an example row Rename and Delete, and a class heading row nothing", async () => {
     renderProject(withExamples());
-    await screen.findByRole("heading", { name: "Examples" });
+    await unfold("Examples");
     const [personRow, bobRow] = within(examplesTree()).getAllByRole("treeitem");
     expect(personRow.querySelector(".hierarchy-menu-btn")).toBeNull();
     fireEvent.click(bobRow.querySelector<HTMLElement>(".hierarchy-menu-btn")!);
@@ -929,8 +1030,8 @@ describe("HierarchyView, examples (shacl-authoring 5.8)", () => {
 
   it("has no Examples section when the project has no examples", async () => {
     renderProject(hierarchyOf(withExamples().classes, EMPTY));
-    await screen.findByRole("heading", { name: "Class hierarchy" });
-    expect(screen.queryByRole("heading", { name: "Examples" })).toBeNull();
+    await screen.findByRole("button", { name: named("Classes") });
+    expect(screen.queryByRole("button", { name: named("Examples") })).toBeNull();
   });
   it("labels a data snapshot's rows, a sample's words included, and gives them no actions (csv-data-import 5.6)", async () => {
     const tree = withExamples();
@@ -939,10 +1040,10 @@ describe("HierarchyView, examples (shacl-authoring 5.8)", () => {
     fetchHierarchy.mockResolvedValue(tree);
     const source = { id: "people-abc123", source: "people.csv", importedAt: "2026-10-02T12:00:00Z", rows: 2000, total: 12480, sample: true };
     render(
-      <HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en" }}
+      <HierarchyView ontologyId="o1" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en" }}
         dataSources={[source]} onImportData={vi.fn()} />,
     );
-    await screen.findByRole("heading", { name: "Examples" });
+    await unfold("Examples");
     const row = within(examplesTree()).getAllByRole("treeitem").find((r) => r.textContent?.includes("Person 7"))!;
     expect(row.querySelector(".hierarchy-data")?.textContent).toBe(
       "from people.csv, imported 2 October 2026; sample: first 2,000 of 12,480 rows",
@@ -954,13 +1055,25 @@ describe("HierarchyView, examples (shacl-authoring 5.8)", () => {
     fetchHierarchy.mockResolvedValue(hierarchyOf(withExamples().classes, EMPTY));
     const onImportData = vi.fn();
     render(
-      <HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en" }}
+      <HierarchyView ontologyId="o1" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en" }}
         onImportData={onImportData} />,
     );
-    await screen.findByRole("heading", { name: "Examples" });
+    await unfold("Examples");
     expect(screen.getByText("No examples or imported data yet.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Import data from CSV or Excel…" }));
+    // Its + is a small menu: a new example, or an import (5.3).
+    const plus = screen.getByRole("button", { name: "New example or import" });
+    expect(plus.getAttribute("aria-haspopup")).toBe("menu");
+    fireEvent.click(plus);
+    const menu = screen.getByRole("menu", { name: "New example or import" });
+    expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "New example",
+      "Import data from CSV or Excel…",
+    ]);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Import data from CSV or Excel…" }));
     expect(onImportData).toHaveBeenCalledTimes(1);
+    fireEvent.click(plus);
+    act(() => fireEvent.click(screen.getByRole("menuitem", { name: "New example" })));
+    expect(projectStore.getSnapshot().creating?.kind).toBe("example");
   });
 });
 
@@ -985,7 +1098,7 @@ describe("HierarchyView inferred edges (axioms-and-reasoning 5.7)", () => {
   const view = (inferred: boolean, editing = false) => (
     <HierarchyView
       ontologyId="o1"
-      theme="dark"
+     
       selected={null}
       onSelect={vi.fn()}
       inferred={inferred}
@@ -1001,7 +1114,6 @@ describe("HierarchyView inferred edges (axioms-and-reasoning 5.7)", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: /expand all/i })));
     const inferredRows = () => items().filter((el) => el.querySelector('[aria-label="inferred, derived"]'));
     expect(inferredRows().map((el) => el.querySelector(".hierarchy-label")!.textContent)).toEqual(["Employee"]);
-    expect(screen.getByText(/what reasoning concluded, each marked inferred/)).toBeTruthy();
     // Stale, or Show inferred off: the refetch has not answered yet, and the
     // inferred row is gone already (found in Chrome, R5).
     fetchHierarchy.mockReturnValue(new Promise(() => {}));
@@ -1010,7 +1122,6 @@ describe("HierarchyView inferred edges (axioms-and-reasoning 5.7)", () => {
     expect(inferredRows()).toEqual([]);
     // Employee is still under Person, as stated.
     expect(items().filter((el) => el.querySelector(".hierarchy-label")!.textContent === "Employee")).toHaveLength(1);
-    expect(screen.getByText(/not inferred relationships/)).toBeTruthy();
   });
 
   it("leaves no row behind when a node under two parents loses one (rows keyed by path)", async () => {
@@ -1034,6 +1145,7 @@ describe("HierarchyView inferred edges (axioms-and-reasoning 5.7)", () => {
     );
     fetchHierarchy.mockResolvedValue({ ...hierarchyOf(EMPTY, EMPTY), examples });
     const { rerender } = render(view(true, true));
+    await unfold("Examples");
     await waitFor(() => expect(itemByLabel("Individual")).toBeTruthy());
     const beas = () => items().filter((el) => el.querySelector(".hierarchy-label")!.textContent === "Bea");
     expect(beas()).toHaveLength(3);
@@ -1070,7 +1182,7 @@ describe("HierarchyView inferred edges (axioms-and-reasoning 5.7)", () => {
   it("asks again for a new result on the same basis (code review)", async () => {
     fetchHierarchy.mockResolvedValue(concluded());
     const marked = (token: number) => (
-      <HierarchyView ontologyId="o1" theme="dark" selected={null} onSelect={vi.fn()} inferred inferredToken={token} />
+      <HierarchyView ontologyId="o1" selected={null} onSelect={vi.fn()} inferred inferredToken={token} />
     );
     const { rerender } = render(marked(1));
     await waitFor(() => expect(itemByLabel("Agent")).toBeTruthy());
@@ -1100,5 +1212,95 @@ describe("HierarchyView inferred edges (axioms-and-reasoning 5.7)", () => {
     const shown = items().map((el) => el.querySelector(".hierarchy-label")!.textContent);
     expect(new Set(shown).size).toBe(shown.length);
     expect(shown.length).toBeLessThan(60);
+  });
+});
+
+describe("the outline's height rule (CF-9, edit-page-rework 5.3)", () => {
+  const RULES = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+  /** The declarations of the one rule written for exactly this selector. */
+  const rule = (selector: string) => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const found = RULES.match(new RegExp(`(^|\\})\\s*${escaped}\\s*\\{([^}]*)\\}`));
+    expect(found, `no rule for ${selector}`).not.toBeNull();
+    return found![2];
+  };
+
+  it("actually loaded the stylesheet", () => {
+    expect(CSS.length).toBeGreaterThan(1000);
+    expect(CSS).toContain(".hierarchy-section");
+  });
+
+  it("a section clips its content, so nothing draws over the next one", () => {
+    expect(rule(".hierarchy-section")).toMatch(/overflow\s*:\s*hidden/);
+    expect(rule(".hierarchy-section-body")).toMatch(/overflow\s*:\s*hidden/);
+    // Its tree scrolls inside it.
+    expect(rule(".hierarchy-tree")).toMatch(/overflow-y\s*:\s*auto/);
+  });
+
+  it("open sections share the height with a 120 px minimum; folded ones are their header", () => {
+    const open = rule(".hierarchy-section.open");
+    expect(open).toMatch(/flex\s*:\s*1 1 0/);
+    expect(open).toMatch(/min-height\s*:\s*120px/);
+    expect(rule(".hierarchy-section")).toMatch(/flex\s*:\s*none/);
+    expect(rule(".hierarchy-section-head")).toMatch(/height\s*:\s*32px/);
+    // When the minimums do not fit, the column scrolls as a whole.
+    expect(rule(".hierarchy-forests")).toMatch(/overflow-y\s*:\s*auto/);
+  });
+
+  it("an open section is capped at its rows, so the height it does not need goes to the others (E1)", async () => {
+    const nodes: Record<string, ReturnType<typeof node>> = {};
+    for (let i = 0; i < 12; i++) nodes[EX + "c" + i] = node("c" + i);
+    renderView(hierarchyOf(forestOf(nodes, {}, Object.keys(nodes)), mixed().concepts));
+    await waitFor(() => expect(itemByLabel("c0")).toBeTruthy());
+    const section = (title: string) => screen.getByRole("button", { name: named(title) }).closest("section")!;
+    // Twelve rows: room for all twelve, header and padding included.
+    expect(section("Classes").style.maxHeight).toBe(`${32 + 12 * 28 + 8}px`);
+    // A folded section is its header alone, with no cap of its own.
+    expect(section("Concepts").style.maxHeight).toBe("");
+    await unfold("Concepts");
+    // One root row: capped at two rows' room, under the 120 px minimum.
+    expect(section("Concepts").style.maxHeight).toBe(`${32 + 2 * 28 + 8}px`);
+  });
+
+  it("the reasoning panel's 35% share of the column is gone with it", () => {
+    expect(RULES).not.toMatch(/max-height\s*:\s*35%/);
+  });
+});
+
+describe("the outline's dots (edit-page-rework 5.8)", () => {
+  it("use the canvas's kind colours: OWL class, RDFS class, scheme, concept", async () => {
+    const tree = mixed();
+    tree.classes.nodes[EX + "Beta"] = { ...node("Beta"), classType: "rdfs" };
+    renderView(tree);
+    await waitFor(() => expect(itemByLabel("Alpha")).toBeTruthy());
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: /expand all/i })));
+    await unfold("Concepts");
+    const dot = (label: string) => itemByLabel(label)!.querySelector(".hierarchy-dot")!.className;
+    expect(dot("Alpha")).toBe("hierarchy-dot kind-owl");
+    expect(dot("Beta")).toBe("hierarchy-dot kind-rdfs");
+    expect(dot("Scheme")).toBe("hierarchy-dot kind-scheme");
+    expect(dot("Water")).toBe("hierarchy-dot kind-concept");
+    // Never colour alone: the row still says its kind in words.
+    expect(itemByLabel("Beta")!.querySelector(".hierarchy-kind")!.textContent).toBeTruthy();
+  });
+});
+
+describe("the side panel's counts (edit-page-rework 5.4)", () => {
+  it("count the model's own: no import's classes, no snapshot's rows", async () => {
+    const tree = mixed();
+    tree.classes.nodes[EX + "Agent"] = { ...node("Agent"), importedFrom: "FOAF" };
+    tree.classes.roots.push(EX + "Agent");
+    tree.examples = forestOf(
+      { [EX + "Alpha"]: node("Alpha", "class", true), [EX + "a1"]: node("a1", "individual"), [EX + "d1"]: { ...node("d1", "individual"), fromData: "s1" } },
+      { [EX + "Alpha"]: [EX + "a1", EX + "d1"] },
+      [EX + "Alpha"],
+    );
+    fetchHierarchy.mockResolvedValue(tree);
+    const onCounts = vi.fn();
+    render(<HierarchyView ontologyId="o1" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en" }} onCounts={onCounts} />);
+    await waitFor(() => expect(onCounts).toHaveBeenCalled());
+    expect(onCounts).toHaveBeenLastCalledWith({ classes: 2, concepts: 1, relationships: 0, attributes: 0, examples: 1 });
+    // The outline still lists them: the header counts what it shows.
+    expect(screen.getByRole("button", { name: named("Classes") }).getAttribute("aria-label")).toBe("Classes, 3");
   });
 });

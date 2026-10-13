@@ -6,7 +6,9 @@ FILE: frontend/src/components/HierarchyActions.tsx
 SUMMARY
     The Hierarchy tree's row menu in a project (visual-modeling 5.2): "More
     actions for Invoice", with Add subclass or Add narrower concept, Rename,
-    and Delete…. Also the rule for which of those a row offers.
+    and Delete…. Also the rule for which of those a row offers. The same
+    menu serves the outline's Examples + (edit-page-rework 5.3): *New
+    example* and *Import data from CSV or Excel…*.
 
 BASIC IDEA
     A menu by the WAI-ARIA menu-button pattern. It opens from the row's "⋯"
@@ -45,8 +47,8 @@ import { useEffect, useRef } from "react";
 
 export type RowAction = "addChild" | "rename" | "delete" | "show" | "hide";
 
-export interface MenuItem {
-  action: RowAction;
+export interface MenuItem<A extends string = RowAction> {
+  action: A;
   label: string;
 }
 
@@ -76,15 +78,17 @@ function ownActions(kind: string, imported: boolean): MenuItem[] {
   return rest;
 }
 
-interface Props {
+interface Props<A extends string> {
   label: string;
-  items: MenuItem[];
+  items: MenuItem<A>[];
   anchor: { top: number; left: number };
-  onChoose: (action: RowAction) => void;
+  onChoose: (action: A) => void;
   onClose: () => void;
+  /** The menu's own name, when it is not a row's (an outline section's +). */
+  name?: string;
 }
 
-export function RowMenu({ label, items, anchor, onChoose, onClose }: Props) {
+export function RowMenu<A extends string = RowAction>({ label, items, anchor, onChoose, onClose, name }: Props<A>) {
   const ref = useRef<HTMLUListElement>(null);
   useEffect(() => {
     ref.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
@@ -108,7 +112,7 @@ export function RowMenu({ label, items, anchor, onChoose, onClose }: Props) {
     <ul
       ref={ref}
       role="menu"
-      aria-label={`More actions for ${label}`}
+      aria-label={name ?? `More actions for ${label}`}
       className="row-menu"
       style={{ top: anchor.top, left: anchor.left }}
       onKeyDown={(e) => {

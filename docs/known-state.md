@@ -1591,3 +1591,75 @@ EXPECTED OUTPUT
   `RemoveDisjointWith` never touches it. `owl:AllDisjointProperties` is not
   in scope: no Stage B check is about disjoint properties, so nothing reads
   it, and it is neither shown nor checked.
+
+- **Edit page** (2026-10-11, E-9, `edit-page-rework.md`, D-107; fixes CF-9).
+
+  **The outline's height rule.** At 1280x720 the old tree sections were
+  `flex: 1; min-height: 0` with no clipping and got 39 px each against 59 of
+  content, so they drew over each other and the *Relationships* header took
+  the click meant for **New class**. A section now clips its content
+  (`overflow: hidden`, its tree scrolling inside it), a folded one is its
+  32 px header, and open ones share what is left with a 120 px minimum each;
+  past that the column scrolls. Sharing equally was not enough: two open
+  sections at 1280x720 got 190 px of tree each, 6.8 rows against row E1's 8.
+  So an open section is also capped at its own rows (an inline `maxHeight`),
+  and the height a short section does not need goes to a long one: 20
+  classes beside 2 relationships showed 10 rows. Two long sections still
+  share equally, 6.8 rows each at that size.
+
+  **One draft.** A new class can be begun from the canvas palette, a drop on
+  a box, an outline +, a row's *Add subclass* or the side panel; it was three
+  forms, each with its own name. Now the draft is the project store's
+  (`creating`): the canvas draws its box, the side panel its form, and both
+  show one name, so typing in either shows in the other. The store makes it
+  in one command, which is why CreateClass and CreateConcept take an
+  optional `definition`: the form's definition and the class are one undo
+  step. The side panel's own **New class** button is replaced by the form
+  while the draft is open, so Cancel finds the control standing in its place
+  by its `data-create-from` name; without that, focus fell to the outline's
+  heading.
+
+  **Focus on what was made.** After Create, the new box is drawn only when
+  the canvas's refetch for the new revision lands, which can come before the
+  store's result or after it. Focusing at once found no box (row E6 in
+  Chrome: focus stayed on the + the draft began from); waiting for the box
+  to appear missed the case where it was already there (row E4, the drag
+  route). The canvas focuses it now if drawn, else when it is.
+
+  That was still not enough in a browser (PR #57 review: every route, both
+  test models, focus back on the control the draft began from). React Flow
+  draws a new node `visibility: hidden` until it has measured it, and
+  Chromium ignores `focus()` on a hidden element; a focus a tick after the
+  box appeared won or lost that race (4 of 6 routes lost on the unfixed
+  build). jsdom focuses anything, so the tests passed. `focusBox` now tries
+  again every 16 ms until the box holds focus, for at most a second, and
+  stops if focus moved elsewhere meanwhile. The test stub draws a new box
+  hidden for 40 ms and refuses `focus()` on a hidden element, as a browser
+  does; both orders of refetch and result go red without the retry.
+
+  **Colour by kind, checked twice.** The tokens are custom properties in
+  `index.css` (both themes) and the same values in `canvas/kindColours.ts`,
+  whose test measures every pair against 5.8's floors and reads the
+  stylesheet to catch drift. Measured: the relationship line `#b0763a` is
+  3.4:1 on the page's grey `#eef1f6`, under 5.8's 3.7, and 3.8:1 on white,
+  so the canvas surface is white in the light theme (`--canvas-bg`). The
+  lightest word on its tint is 5.175:1, which 5.8 rounds to 5.2; the test's
+  floor is 5.1. React Flow's markers take no colour from CSS and scale with
+  the stroke, so the canvas defines its own, one per line kind, in user
+  space; the legend draws its samples with them.
+
+  **The outline does not import from `canvas/`.** App reaches `canvas/` only
+  through `React.lazy` (D-086), so the outline's dots map their kinds to the
+  same tokens in `HierarchyView.tsx` itself. That took `kindColor` out of the
+  outline: three users remain (X-6), and Explore keeps its palette until
+  U-10.
+
+  **classType costs no lookup.** It is read in the scans that already found
+  classes: two subject scans in `canvas.py`, the one `rdf:type` scan in
+  `hierarchy.py`. A counting graph pins the triple-pattern count of a build
+  on a fixture: 55 for the canvas and 29 for the hierarchy, the same as on
+  `main` at `4c0bb46`.
+
+  **Not changed.** The spec asked for the reasoning panel's 35% line to be
+  removed from `CLAUDE.md`'s rules; there was no such line, only the CSS
+  (`.reasoning { max-height: 35% }`), which is gone, and a test asserts it.

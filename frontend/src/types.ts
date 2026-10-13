@@ -377,7 +377,13 @@ export interface HierarchyNode {
   // An individual from a data snapshot: the snapshot's id, which names its
   // source in the row (csv-data-import 5.6).
   fromData?: string;
+  // A class's typing (edit-page-rework 5.8): "rdfs" only for a class typed
+  // rdfs:Class and not owl:Class. Absent means "owl".
+  classType?: ClassType;
 }
+
+/** owl:Class (or both), or rdfs:Class alone (edit-page-rework 5.8). */
+export type ClassType = "owl" | "rdfs";
 
 // A reference from a parent to one child. `origin` is "asserted" in this
 // version; it is the seam that lets an inferred hierarchy be added later as data
@@ -803,6 +809,10 @@ export type ProjectDocName = "model" | "shapes";
 
 export type ProjectKind = "ontology" | "taxonomy";
 
+/** What a draft makes (edit-page-rework 5.5): a box on the canvas for the
+ *  first two, a form in the side panel for every one. */
+export type CreatingKind = "class" | "concept" | "objectProperty" | "datatypeProperty" | "example";
+
 // "vocabulary" is the E-6 name for a small SKOS scheme, still accepted.
 export type ProjectTemplate = "empty" | "small" | "taxonomy-empty" | "taxonomy-small" | "vocabulary";
 
@@ -925,6 +935,8 @@ export interface CanvasNode {
   disjoint?: RuleRef[];
   // Rules on this class the canvas does not draw: *1 more rule in the form*.
   moreRules?: number;
+  // A class box's typing (edit-page-rework 5.8); absent means "owl".
+  classType?: ClassType;
 }
 
 export interface CanvasEdge {

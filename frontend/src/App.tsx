@@ -64,6 +64,16 @@ BASIC IDEA
     contributed. Replacing the graph response instead would rebuild the canvas
     and lose every settled position.
 
+    Edit (edit-page-rework, D-107; the mode keeps its id, "hierarchy") is the
+    page a project is changed on: the outline on the left, the modeling
+    canvas in the middle, and one side panel on the right with two tabs --
+    Details, where the reused DetailPanel and every New … form open, and
+    Reasoning, where a run's results are. A run ending chooses the Reasoning
+    tab only when Reason was pressed there or it found a problem; otherwise
+    the tab carries a count. A library ontology in Edit has no canvas and no
+    side panel, and a notice under the header says why, with Save as a
+    project.
+
     Every route that names an entity from outside the canvas — the search box
     and the results table — goes through one function, so a result row can draw
     an entity the budget left out exactly as a search hit does. A result also
@@ -177,6 +187,9 @@ import ExploreStart from "./components/ExploreStart";
 import GraphNotice from "./components/GraphNotice";
 import GraphView from "./components/GraphView";
 import HierarchyView from "./components/HierarchyView";
+import CreateForm from "./components/CreateForm";
+import NothingSelected, { type ModelCounts } from "./components/NothingSelected";
+import SideTabs, { type SideTab } from "./components/SideTabs";
 import ShapesView from "./components/ShapesView";
 import HomeScreen from "./components/HomeScreen";
 import ImportsPanel from "./components/ImportsPanel";
@@ -193,7 +206,7 @@ import {
   IconAbout,
   IconClose,
   IconExplore,
-  IconHierarchy,
+  IconEdit,
   IconShapes,
   IconHome,
   IconLoad,
@@ -404,6 +417,9 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(null);          // selected ontology
   const [graphData, setGraphData] = useState<VizGraph | null>(null);      // its graph
   const [selected, setSelected] = useState<string | null>(null);          // clicked node (Explore)
+  // The selection as it is now, for effects that must not follow it.
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
   const [focusTick, setFocusTick] = useState(0);                          // bump to re-centre camera
   const [focusPanel, setFocusPanel] = useState(false);                    // panel takes focus?
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set()); // legend filters
@@ -640,6 +656,67 @@ export default function App() {
     });
   }, []);
   const showCanvas = editingModel !== null && canvasOn;
+  // The side panel (edit-page-rework 5.4): Details or Reasoning, and the
+  // Reasoning tab's badge when a run ends while Details is showing.
+  const [sideTab, setSideTab] = useState<SideTab>("details");
+  const sideTabNow = useRef(sideTab);
+  sideTabNow.current = sideTab;
+  const [reasonBadge, setReasonBadge] = useState<number | null>(null);
+  const [modelCounts, setModelCounts] = useState<ModelCounts | null>(null);
+  // Another ontology's counts are never shown while this one's load.
+  useEffect(() => setModelCounts(null), [activeId]);
+  // Reason pressed from the Reasoning tab, so its end shows there.
+  const reasonFromTab = useRef(false);
+  const chooseSideTab = useCallback((tab: SideTab) => {
+    setSideTab(tab);
+    if (tab === "reasoning") setReasonBadge(null);
+  }, []);
+  // A run's end: each kept result moves the store's token. Watched by the
+  // token rather than by Reason's running flag, which can start and end
+  // within one render.
+  const lastReasoned = useRef(reasoningToken);
+  useEffect(() => {
+    if (reasoningToken === lastReasoned.current) return;
+    lastReasoned.current = reasoningToken;
+    const fromTab = reasonFromTab.current;
+    reasonFromTab.current = false;
+    const result = projectStore.getSnapshot().reasoning;
+    if (!result) return;
+    // The tab is chosen for the learner only when they were on it, or the
+    // run found a problem; otherwise a badge, and the live region says so.
+    // Never while the learner is working in Details -- a draft, or focus in
+    // the panel -- whose form the switch would unmount, dropping focus to
+    // the page (code review): the badge says it instead.
+    const working =
+      projectStore.getSnapshot().creating !== null ||
+      Boolean(document.activeElement?.closest(".side-tabpanel") && sideTabNow.current === "details");
+    if (fromTab || (result.problems.length > 0 && !working)) chooseSideTab("reasoning");
+    else if (sideTabNow.current !== "reasoning") {
+      setReasonBadge(result.groups.reduce((n, g) => n + g.total, 0));
+    }
+  }, [reasoningToken, chooseSideTab]);
+  // A draft begun anywhere opens its form in Details (5.5); leaving Edit
+  // drops it, as an empty draft goes.
+  // The draft's token and kind only: its name changes on every keystroke,
+  // and the whole object would re-render App with it (code review).
+  const creatingToken = useProjectSelector((s) => s.creating?.token ?? null);
+  const creatingKind = useProjectSelector((s) => s.creating?.kind ?? null);
+  // The selection when the draft began: what it made is selected only if
+  // nothing else was selected meanwhile (visual-modeling 5.8 item 4).
+  const selectedAtDraft = useRef<{ token: number; selected: string | null } | null>(null);
+  useEffect(() => {
+    if (creatingToken === null) return;
+    setSideTab("details");
+    selectedAtDraft.current = { token: creatingToken, selected: selectedRef.current };
+  }, [creatingToken]);
+  useEffect(() => {
+    if (mode !== "hierarchy") projectStore.cancelCreating(false);
+  }, [mode]);
+  // Something a draft made is selected, so its form opens. A class or a
+  // concept made with the canvas showing is selected by the canvas, with
+  // its box (ModelCanvas).
+  const created = useProjectSelector((s) => s.created);
+  const lastCreated = useRef(created?.token ?? 0);
   const canvasLent = showCanvas ? canvasSet : null;
   // Why there is no Edit section, when the document is the reason (AC-4).
   const readOnlyNote = !activeId
@@ -1302,6 +1379,22 @@ export default function App() {
     [activeId, guardEditor],
   );
 
+  useEffect(() => {
+    if (!created || created.token === lastCreated.current) return;
+    lastCreated.current = created.token;
+    const before = selectedAtDraft.current;
+    if (before?.token === created.token && before.selected !== selectedRef.current) return;
+    if (!(showCanvas && (created.kind === "class" || created.kind === "concept"))) selectFromOutsideGraph(created.iri);
+  }, [created, showCanvas, selectFromOutsideGraph]);
+  // A subject chosen from a reasoning sentence is shown in Details (5.4).
+  const selectFromReasoning = useCallback(
+    (iri: string) => {
+      chooseSideTab("details");
+      selectFromOutsideGraph(iri);
+    },
+    [chooseSideTab, selectFromOutsideGraph],
+  );
+
   // A validation problem's link (shacl-authoring 5.7): the individual is
   // selected in the model and focus goes to its form, in Explore, whose
   // panel takes focus on a selection (Section 6).
@@ -1624,6 +1717,28 @@ export default function App() {
     }
   };
 
+  // The Edit page's details, built once for its two places: the side
+  // panel's Details tab, and beside a library ontology's outline (5.9).
+  const editDetail =
+    selected === null ? null : (
+      <DetailPanel
+        ontologyId={activeId}
+        iri={selected}
+        onNavigate={selectFromOutsideGraph}
+        onClose={() => setSelected(null)}
+        onExpand={(entity) => void onExpand(entity)}
+        expanding={expandingIri === selected}
+        imports={includeImports}
+        revision={viewRevision}
+        language={displayLanguage}
+        editing={editingModel}
+        readOnlyNote={readOnlyNote}
+        onDeleted={onEntityDeleted}
+        canvas={canvasLent}
+        inferred={detailInferred}
+      />
+    );
+
   // Layout: a header (brand + nav rows), a main area (graph + right panel that
   // depends on the mode), a status bar, and the Load dialog when open.
   return (
@@ -1681,6 +1796,25 @@ export default function App() {
               <IconExplore />
               <span>Explore</span>
             </button>
+            {/* Edit (edit-page-rework 5.1): the job, between looking at the
+                model and asking it questions. The mode keeps its id,
+                "hierarchy", so saved state and the code need not churn. */}
+            <button
+              role="tab"
+              aria-selected={tabSelected("hierarchy")}
+              className={tabSelected("hierarchy") ? "nav-item active" : "nav-item"}
+              onClick={() => onPickMode("hierarchy")}
+              title={
+                !activeId
+                  ? NO_ONTOLOGY_TITLE
+                  : editingProjectDoc
+                    ? "Edit the model: outline, canvas and details"
+                    : "Browse the class tree (read-only)"
+              }
+            >
+              <IconEdit />
+              <span>Edit</span>
+            </button>
             <button
               role="tab"
               aria-selected={tabSelected("query")}
@@ -1690,20 +1824,6 @@ export default function App() {
             >
               <IconQuery />
               <span>Query</span>
-            </button>
-            <button
-              role="tab"
-              aria-selected={tabSelected("hierarchy")}
-              className={tabSelected("hierarchy") ? "nav-item active" : "nav-item"}
-              onClick={() => onPickMode("hierarchy")}
-              title={
-                activeId
-                  ? "See the class and concept hierarchy as an indented tree"
-                  : NO_ONTOLOGY_TITLE
-              }
-            >
-              <IconHierarchy />
-              <span>Hierarchy</span>
             </button>
             {/* Shapes is for projects only (shacl-authoring 5.1): a library
                 ontology has no shapes.ttl and nothing to validate. */}
@@ -1720,6 +1840,7 @@ export default function App() {
               </button>
             )}
           </nav>
+          <div className="spacer" />
           {/* Outside the tablist on purpose. View, Explore and Query select
               between views of an ontology; About opens a dialog, and joining
               them would tell a screen reader user there are four views, one of
@@ -1747,7 +1868,6 @@ export default function App() {
             <IconNetwork />
             <span>Network</span>
           </button>
-          <div className="spacer" />
           <button
             className="header-icon-btn"
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -1769,6 +1889,8 @@ export default function App() {
               onClose={onCloseProject}
               onError={(message) => setError(message)}
               onSaveCopy={onSaveCopy}
+              onTurtle={() => onPickMode("view")}
+              canvas={editingModel ? { on: canvasOn, onToggle: toggleCanvas } : null}
             />
           ) : active ? (
             <>
@@ -1842,6 +1964,21 @@ export default function App() {
             />
           )}
         </div>
+        {/* A library ontology in Edit (edit-page-rework 5.9): why nothing
+            can be changed, and the way to change a copy -- where a project's
+            bar would stand, under the ontology's own row, which keeps its
+            picker, Close and Remove. */}
+        {!showHome && mode === "hierarchy" && active && !editingProjectDoc && (
+          <div className="readonly-notice" role="note">
+            <p>
+              {active.name} is a library ontology, so it is read-only here. To change it, save a copy as your own
+              project.
+            </p>
+            <button type="button" className="primary" onClick={() => setNewProject({ source: active.id })}>
+              Save as a project
+            </button>
+          </div>
+        )}
       </header>
 
       {error && (
@@ -1959,25 +2096,29 @@ export default function App() {
           />
         </main>
       ) : mode === "hierarchy" ? (
-        // Hierarchy replaces the graph rather than overlaying it: it is a tree,
-        // not a view of the canvas, so it fills the main area on its own. A row
-        // selects through the same handler search and the results table use, so
+        // The Edit page (edit-page-rework, D-107): the outline on the left,
+        // the canvas in the middle, one side panel on the right for every
+        // form and for reasoning's results. It replaces the graph rather
+        // than overlaying it, so leaving it re-runs the graph layout, the
+        // honest cost of a second, separate view. An outline row selects
+        // through the same handler search and the results table use, so
         // picking an entity the node budget left out draws it when the user
-        // switches back to the graph (AC-13). Leaving Hierarchy unmounts it and
-        // re-runs the graph layout, the honest cost of a second, separate view.
+        // switches back to the graph (AC-13).
         //
-        // The tree navigates; the panel beside it explains. It is the SAME
-        // reused Explore DetailPanel, driven by the same shared selection, the
-        // same `selected === null ? empty : DetailPanel` shape Explore uses
-        // (D-047) — the fix for v0.2, where the tree could select an entity but
-        // nothing in the view said anything about it. A panel link reselects
-        // through selectFromOutsideGraph too, so following a connection behaves
-        // exactly like clicking a tree row (AC-16), and the tree highlights the
-        // new selection wherever it is drawn.
-        <main className={showCanvas ? "main with-canvas" : "main"}>
+        // The outline navigates; the side panel explains. Its Details tab
+        // holds the SAME reused DetailPanel Explore shows, driven by the
+        // same shared selection (D-047), rendered here in App (a load-bearing
+        // rule). A panel link reselects through selectFromOutsideGraph too,
+        // so following a connection behaves exactly like clicking a row
+        // (AC-16). A library ontology has no canvas and no side panel: its
+        // details fill the space beside the outline (5.9).
+        <main
+          className={
+            !editingModel ? "main edit-page library" : showCanvas ? "main edit-page with-canvas" : "main edit-page no-canvas"
+          }
+        >
           <HierarchyView
             ontologyId={activeId}
-            theme={theme}
             selected={selected}
             onSelect={selectFromOutsideGraph}
             imports={includeImports}
@@ -1986,27 +2127,12 @@ export default function App() {
             editing={editingModel}
             onDeleted={onEntityDeleted}
             canvas={canvasLent}
-            canvasSwitch={editingModel ? { on: canvasOn, onToggle: toggleCanvas } : null}
             dataSources={projectData?.snapshots}
             onImportData={editingModel ? openDataImport : undefined}
             inferred={inferredMarks}
             inferredToken={reasoningToken}
-            reasoning={
-              editingModel && openProjectSummary
-                ? {
-                    controls: <ReasonControls kind={editingModel.kind} now={reasoningNow} hasData={hasSnapshotOn} />,
-                    panel: (
-                      <ReasoningPanel
-                        projectId={openProjectSummary.id}
-                        kind={editingModel.kind}
-                        hasData={hasSnapshotOn}
-                        now={reasoningNow}
-                        onSelect={selectFromOutsideGraph}
-                      />
-                    ),
-                  }
-                : null
-            }
+            canvasShown={showCanvas}
+            onCounts={editingModel ? setModelCounts : undefined}
           />
           {showCanvas && openProjectSummary && editingModel && (
             <CanvasBoundary onRetry={() => setModelCanvas(loadCanvas)}>
@@ -2029,12 +2155,62 @@ export default function App() {
                   onDeleted={onEntityDeleted}
                   onCanvasSet={setCanvasSet}
                   inferred={canvasInferred}
+                  reason={
+                    <ReasonControls
+                      kind={editingModel.kind}
+                      now={reasoningNow}
+                      hasData={hasSnapshotOn}
+                      onPress={() => {
+                        reasonFromTab.current = false;
+                      }}
+                    />
+                  }
                 />
               </Suspense>
             </CanvasBoundary>
           )}
-          {selected === null && selectedLink && showCanvas ? (
-            <LinkPanel link={selectedLink} onSelect={selectFromOutsideGraph} onClose={() => setSelectedLink(null)} />
+          {editingModel && openProjectSummary ? (
+            <SideTabs tab={sideTab} onTab={chooseSideTab} badge={reasonBadge} wide={!showCanvas}>
+              {sideTab === "reasoning" ? (
+                <div className="side-reasoning">
+                  <h2 className="side-heading">Reasoning</h2>
+                  {/* Reason is in the canvas toolbar; here as well before
+                      any run, and whenever the canvas is hidden (5.4, 5.6). */}
+                  {(!showCanvas || reasoningResult === null) && (
+                    <div className="side-reason-controls">
+                      <ReasonControls
+                        kind={editingModel.kind}
+                        now={reasoningNow}
+                        hasData={hasSnapshotOn}
+                        onPress={() => {
+                          reasonFromTab.current = true;
+                        }}
+                      />
+                    </div>
+                  )}
+                  <ReasoningPanel
+                    projectId={openProjectSummary.id}
+                    kind={editingModel.kind}
+                    hasData={hasSnapshotOn}
+                    now={reasoningNow}
+                    onSelect={selectFromReasoning}
+                  />
+                </div>
+              ) : creatingKind ? (
+                <CreateForm
+                  ontologyId={activeId!}
+                  primaryLanguage={editingModel.primaryLanguage}
+                  // The canvas's draft box has focus when it is drawn (5.5).
+                  focusName={!(showCanvas && (creatingKind === "class" || creatingKind === "concept"))}
+                />
+              ) : selected === null && selectedLink && showCanvas ? (
+                <LinkPanel link={selectedLink} onSelect={selectFromOutsideGraph} onClose={() => setSelectedLink(null)} />
+              ) : selected === null ? (
+                <NothingSelected counts={modelCounts} taxonomy={editingModel.kind === "taxonomy"} />
+              ) : (
+                editDetail
+              )}
+            </SideTabs>
           ) : selected === null ? (
             <aside className="detail-panel detail-empty" aria-label="Entity details">
               <p className="detail-note">
@@ -2043,22 +2219,7 @@ export default function App() {
               </p>
             </aside>
           ) : (
-            <DetailPanel
-              ontologyId={activeId}
-              iri={selected}
-              onNavigate={selectFromOutsideGraph}
-              onClose={() => setSelected(null)}
-              onExpand={(entity) => void onExpand(entity)}
-              expanding={expandingIri === selected}
-              imports={includeImports}
-              revision={viewRevision}
-              language={displayLanguage}
-              editing={editingModel}
-              readOnlyNote={readOnlyNote}
-              onDeleted={onEntityDeleted}
-              canvas={canvasLent}
-              inferred={detailInferred}
-            />
+            editDetail
           )}
         </main>
       ) : (

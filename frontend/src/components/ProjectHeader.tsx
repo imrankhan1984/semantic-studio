@@ -5,9 +5,12 @@ FILE: frontend/src/components/ProjectHeader.tsx
 
 SUMMARY
     The header's context row while a project is open (authoring-foundations
-    5.2, 5.4.2): the project's name, a document switcher, the save status in
-    words, Undo, Redo and Save, the language menu with the display-language
-    switch and the missing-translation counts, Save a copy, and Close.
+    5.2, 5.4.2; edit-page-rework 5.2): one row, never wrapped -- the
+    project's name, a document switcher, the save status as a dot and a
+    word, Undo, Redo and Save; then **Turtle**, which opens the document in
+    View's Turtle editor, and a ⋯ menu holding Language (the display-language
+    switch and the missing-translation counts), Add shapes.ttl while there is
+    none, Save a copy, Show canvas and Close project.
 
 BASIC IDEA
     Reads the project store and calls its actions; App is told only about what
@@ -17,9 +20,16 @@ BASIC IDEA
 
     Status is text ("Saved", "Unsaved changes", "Saving…"), never a coloured
     dot alone. Undo and Redo carry what they would undo in their accessible
-    names and titles. Unavailable controls are aria-disabled rather than
+    names and titles, so where the row is narrow and they shrink to icons
+    nothing is lost. Unavailable controls are aria-disabled rather than
     disabled: pressing Undo until nothing is left would otherwise disable the
     button holding focus, and a disabled button drops it.
+
+    The ⋯ menu is the WAI-ARIA menu button: arrow keys, Home and End move
+    through it, Escape closes it and gives focus back to ⋯, and a press
+    outside closes it. *Language…* opens the language panel beside it,
+    whose Escape gives focus back to ⋯ too. *Show canvas* is a checkbox
+    item: its state is aria-checked and a tick, never colour.
 
     Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z) and Ctrl+S work anywhere in the page
     except inside a text field, where the field's own undo wins (Section 6).
@@ -33,6 +43,8 @@ BASIC IDEA
 INPUTS / INPUT SOURCES (props)
     - onSwitchDocument, onClose, onError: what App arbitrates.
     - onSaveCopy: download the current document as Turtle.
+    - onTurtle: open the current document in the Turtle editor (View).
+    - canvas: the Show canvas switch, on the Edit page only.
     Plus the project store.
 
 EXPECTED OUTPUT
@@ -61,7 +73,11 @@ interface Props {
   onClose: () => void;
   onError: (message: string) => void;
   onSaveCopy: () => void;
+  onTurtle?: () => void;
+  canvas?: { on: boolean; onToggle: () => void } | null;
 }
+
+type MenuAction = "language" | "shapes" | "copy" | "canvas" | "close";
 
 /** A text field owns its own undo (Section 6). */
 function inTextField(target: EventTarget | null): boolean {
@@ -84,6 +100,8 @@ export default function ProjectHeader({
   onClose,
   onError,
   onSaveCopy,
+  onTurtle,
+  canvas = null,
 }: Props) {
   const state = useProjectStore();
   const project = state.project!;
@@ -94,8 +112,12 @@ export default function ProjectHeader({
   const [newLang, setNewLang] = useState("");
   const [langError, setLangError] = useState<string | null>(null);
   const langPanelId = useId();
+  const menuId = useId();
+  // The ⋯ button: the menu's and the language panel's way back.
   const langButton = useRef<HTMLButtonElement>(null);
   const langPanel = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const run = (action: () => Promise<unknown>) => {
     action().catch((e: unknown) => onError(e instanceof Error ? e.message : String(e)));
@@ -151,6 +173,48 @@ export default function ProjectHeader({
     langButton.current?.focus();
   };
 
+  // The menu: focus to its first item as it opens; a press outside closes.
+  useEffect(() => {
+    if (!menuOpen) return;
+    menuRef.current?.querySelector<HTMLElement>("[role^='menuitem']")?.focus();
+    const outside = (e: MouseEvent) => {
+      const wrap = langButton.current?.parentElement;
+      if (wrap && !wrap.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", outside);
+    return () => document.removeEventListener("mousedown", outside);
+  }, [menuOpen]);
+
+  const closeMenu = () => {
+    setMenuOpen(false);
+    langButton.current?.focus();
+  };
+
+  const moveInMenu = (step: number | "first" | "last") => {
+    const all = Array.from(menuRef.current?.querySelectorAll<HTMLElement>("[role^='menuitem']") ?? []);
+    const at = all.indexOf(document.activeElement as HTMLElement);
+    const next = step === "first" ? 0 : step === "last" ? all.length - 1 : (at + step + all.length) % all.length;
+    all[next]?.focus();
+  };
+
+  const chooseMenu = (action: MenuAction) => {
+    setMenuOpen(false);
+    if (action === "language") {
+      setLangOpen(true);
+      return;
+    }
+    // Every other item leaves the menu for a control that is still there.
+    langButton.current?.focus();
+    if (action === "shapes") {
+      run(async () => {
+        await addShapesDocument(project.id);
+        await projectStore.reload();
+      });
+    } else if (action === "copy") onSaveCopy();
+    else if (action === "canvas") canvas?.onToggle();
+    else onClose();
+  };
+
   const languages = [project.primaryLanguage, ...project.languages];
   const display = state.displayLanguage ?? project.primaryLanguage;
 
@@ -190,22 +254,10 @@ export default function ProjectHeader({
           </option>
         ))}
       </select>
-      {!hasShapes && (
-        <button
-          className="ghost"
-          onClick={() =>
-            run(async () => {
-              await addShapesDocument(project.id);
-              await projectStore.reload();
-            })
-          }
-          title="Add an empty shapes.ttl for SHACL shapes"
-        >
-          Add shapes.ttl
-        </button>
-      )}
-
-      <span className={`project-status project-status-${status}`}>{STATUS_WORDS[status]}</span>
+      <span className={`project-status project-status-${status}`}>
+        <span className="project-status-dot" aria-hidden="true" />
+        {STATUS_WORDS[status]}
+      </span>
 
       <button
         className="ghost"
@@ -214,7 +266,10 @@ export default function ProjectHeader({
         title={canUndo ? `Undo: ${current?.undoLabel} (Ctrl+Z)` : "Nothing to undo"}
         onClick={undo}
       >
-        Undo
+        {/* The word, or an icon where the row is narrow (5.2); the name is
+            the aria-label either way. */}
+        <span className="ph-icon" aria-hidden="true">↶</span>
+        <span className="ph-word">Undo</span>
       </button>
       <button
         className="ghost"
@@ -223,7 +278,8 @@ export default function ProjectHeader({
         title={canRedo ? `Redo: ${current?.redoLabel} (Ctrl+Y)` : "Nothing to redo"}
         onClick={redo}
       >
-        Redo
+        <span className="ph-icon" aria-hidden="true">↷</span>
+        <span className="ph-word">Redo</span>
       </button>
       <button
         className={status === "unsaved" ? "primary" : "ghost"}
@@ -234,17 +290,88 @@ export default function ProjectHeader({
         Save
       </button>
 
+      <span className="spacer" />
+      {onTurtle && (
+        <button className="ghost" onClick={onTurtle} title="Edit this document as Turtle, in View">
+          Turtle
+        </button>
+      )}
       <div className="onto-menu-wrap project-lang-wrap">
         <button
           ref={langButton}
-          className="ghost"
-          aria-expanded={langOpen}
-          aria-controls={langPanelId}
-          onClick={() => (langOpen ? closeLang() : setLangOpen(true))}
-          title="Which language names are shown in, and which languages this project has"
+          className="ghost project-more"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-controls={menuId}
+          aria-label="More project actions"
+          title="Language, Save a copy, Show canvas, Close project"
+          onClick={() => {
+            setLangOpen(false);
+            setMenuOpen((open) => !open);
+          }}
         >
-          Language: {display}
+          ⋯
         </button>
+        <ul
+          ref={menuRef}
+          id={menuId}
+          role="menu"
+          aria-label="More project actions"
+          className="onto-menu project-menu"
+          hidden={!menuOpen}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") moveInMenu(1);
+            else if (e.key === "ArrowUp") moveInMenu(-1);
+            else if (e.key === "Home") moveInMenu("first");
+            else if (e.key === "End") moveInMenu("last");
+            else if (e.key === "Escape") closeMenu();
+            else if (e.key === "Tab") {
+              setMenuOpen(false);
+              return;
+            } else return;
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          <li role="none">
+            <button type="button" role="menuitem" tabIndex={-1} onClick={() => chooseMenu("language")}>
+              Language: {display}…
+            </button>
+          </li>
+          {!hasShapes && (
+            <li role="none">
+              <button type="button" role="menuitem" tabIndex={-1} onClick={() => chooseMenu("shapes")}>
+                Add shapes.ttl
+              </button>
+            </li>
+          )}
+          <li role="none">
+            <button type="button" role="menuitem" tabIndex={-1} onClick={() => chooseMenu("copy")}>
+              Save a copy
+            </button>
+          </li>
+          {canvas && (
+            <li role="none">
+              <button
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={canvas.on}
+                tabIndex={-1}
+                onClick={() => chooseMenu("canvas")}
+              >
+                <span className="project-menu-check" aria-hidden="true">
+                  {canvas.on ? "✓" : ""}
+                </span>
+                Show canvas
+              </button>
+            </li>
+          )}
+          <li role="none">
+            <button type="button" role="menuitem" tabIndex={-1} onClick={() => chooseMenu("close")}>
+              Close project
+            </button>
+          </li>
+        </ul>
         <div
           className="onto-menu project-lang-menu"
           id={langPanelId}
@@ -327,13 +454,6 @@ export default function ProjectHeader({
           )}
         </div>
       </div>
-
-      <button className="ghost" onClick={onSaveCopy} title="Download this document as Turtle">
-        Save a copy
-      </button>
-      <button className="ghost" onClick={onClose} title="Close the project and return home">
-        Close project
-      </button>
 
       <div className="visually-hidden" role="status" aria-live="polite">
         {/* Keyed on the counter, so "Undid: … " said twice is heard twice. */}

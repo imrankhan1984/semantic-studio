@@ -37,6 +37,7 @@ import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
+from rdflib import Graph
 
 from app import canvas as canvas_mod
 from app.editing import editing_service, project_store
@@ -487,3 +488,66 @@ def test_inferred_lines_are_laid_on_a_copy_of_the_cached_view():
     assert view["edges"] == [{"kind": "subClassOf", "source": "a", "target": "b"}]
     assert [n.get("neverMembers") for n in out["nodes"]] == [None, None, True]
     assert view["nodes"][2] == {"iri": "c"}
+
+
+# --- edit-page-rework 5.8: which class type, and no store lookup more ----------------
+
+# The four class typings of row E7 (rdf-fixture: inline, one behaviour): owl
+# alone, rdfs alone, both (as FOAF types its classes), and a class only an
+# import defines, reached by a subclass line.
+TYPINGS = """
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix ex: <http://example.org/m#> .
+ex:A a owl:Class ; rdfs:label "A"@en .
+ex:B a rdfs:Class ; rdfs:label "B"@en ; rdfs:subClassOf ex:A .
+ex:C a owl:Class, rdfs:Class ; rdfs:label "C"@en ; rdfs:subClassOf ex:B .
+ex:D a owl:Class ; rdfs:label "D"@en ; rdfs:subClassOf foaf:Agent .
+ex:p a owl:ObjectProperty ; rdfs:label "p"@en ; rdfs:domain ex:A ; rdfs:range ex:B .
+ex:a a owl:DatatypeProperty ; rdfs:domain ex:A ; rdfs:range xsd:string .
+ex:S a skos:ConceptScheme . ex:k a skos:Concept ; skos:topConceptOf ex:S .
+ex:i a ex:A ; rdfs:label "i"@en .
+"""
+M = "http://example.org/m#"
+
+
+class _Counting(Graph):
+    """A graph that counts the triple patterns asked of it: every subjects,
+    objects, value and membership test goes through triples()."""
+
+    patterns = 0
+
+    def triples(self, pattern):
+        _Counting.patterns += 1
+        return super().triples(pattern)
+
+
+def _counting() -> "_Counting":
+    graph = _Counting()
+    graph.parse(data=TYPINGS, format="turtle")
+    _Counting.patterns = 0
+    return graph
+
+
+def test_a_class_box_says_which_typing_it_has():
+    view = canvas_mod.build_canvas(_counting(), ["en"])
+    by = {n["iri"]: n for n in view["nodes"]}
+    assert by[M + "A"]["classType"] == "owl"
+    assert by[M + "B"]["classType"] == "rdfs"
+    # Typed both ways, as FOAF's classes are: an OWL class.
+    assert by[M + "C"]["classType"] == "owl"
+    # A box outside the document carries none (absent means owl), and a
+    # concept never does.
+    assert "classType" not in by["http://xmlns.com/foaf/0.1/Agent"]
+    assert "classType" not in by[M + "k"]
+
+
+def test_class_type_adds_no_store_lookup_to_a_canvas_build():
+    """Section 10: the triple-pattern count of one build is what it was on
+    main at 4c0bb46, measured with this fixture before classType existed."""
+    graph = _counting()
+    canvas_mod.build_canvas(graph, ["en"])
+    assert _Counting.patterns == 55
