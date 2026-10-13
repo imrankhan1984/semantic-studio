@@ -24,11 +24,15 @@ BASIC IDEA
     3 with the missing columns marked, which App arranges through onWizard.
     A workbook's snapshot reads the new workbook the same way, the sheet
     of the same name from the same header row (5.8), in step 1's checks
-    as on the server.
+    as on the server. A workbook whose sheet is gone, or a file of the
+    other kind than the snapshot's, opens the wizard at step 1 instead, so
+    the sheet and header row are chosen rather than taken.
 
     Remove says how many statements will leave before it asks, and moves
     the folder to the project's own trash. A mapping edited outside what
     the app runs shows its reason in the row, with the last good data kept.
+    A list that could not be read says why, with Try again; the store has
+    already said it in the live region.
 
 INPUTS / INPUT SOURCES (props)
     - projectId: the open project. onWizard: open the wizard on a start.
@@ -41,11 +45,11 @@ EXPECTED OUTPUT
 */
 
 import { useEffect, useId, useRef, useState } from "react";
-import { inspectData, refreshData, removeData, updateData } from "../api";
+import { ApiError, inspectData, refreshData, removeData, updateData } from "../api";
 import { dataLabel, reportWord } from "../modeling/dataSentences";
 import { plural } from "../modeling/shapeSentences";
 import { projectStore, useProjectSelector } from "../state/projectStore";
-import type { DataInspection, SnapshotSummary } from "../types";
+import type { DataInspection, SnapshotSummary, WorkbookInspection } from "../types";
 import { DATA_FILE_ACCEPT, type WizardStart } from "./DataWizard";
 import ImportReport from "./ImportReport";
 import RmlEditor from "./RmlEditor";
@@ -64,14 +68,51 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** The sheets of a workbook refused with no sheet read: the one named is
+ *  not in it. Told by the shape of the refusal, never by its words. */
+function goneSheet(e: unknown): WorkbookInspection | null {
+  if (!(e instanceof ApiError) || typeof e.detail !== "object" || e.detail === null) return null;
+  const listed = (e.detail as { workbook?: WorkbookInspection }).workbook;
+  return listed && listed.sheet === "" && Array.isArray(listed.sheets) && Array.isArray(listed.top) ? listed : null;
+}
+
 export default function SnapshotList({ projectId, onWizard, onValidate, onShowData, focusOnMount = false }: Props) {
   const data = useProjectSelector((s) => s.data);
+  const dataError = useProjectSelector((s) => s.dataError);
+  const [retrying, setRetrying] = useState(false);
   const headingId = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const loaded = data !== null;
+  // Try again leaves with its button when the list arrives: the heading
+  // takes focus, rather than the page.
+  const retried = useRef(false);
   useEffect(() => {
-    if (focusOnMount && loaded) headingRef.current?.focus();
+    if ((focusOnMount || retried.current) && loaded) headingRef.current?.focus();
+    if (loaded) retried.current = false;
   }, [focusOnMount, loaded]);
+  if (data === null && dataError !== null) {
+    // Said once in the live region by the store; shown here so the tab
+    // offers a way on instead of reading for ever (PR #53 review).
+    const retry = () => {
+      if (retrying) return;
+      setRetrying(true);
+      retried.current = true;
+      projectStore
+        .loadData()
+        .catch(() => undefined)
+        .finally(() => setRetrying(false));
+    };
+    return (
+      <div className="snapshot-section">
+        <p className="detail-error">{dataError}</p>
+        <p>
+          <button type="button" aria-disabled={retrying} onClick={retry}>
+            {retrying ? "Trying again…" : "Try again"}
+          </button>
+        </p>
+      </div>
+    );
+  }
   if (data === null) {
     return (
       <p className="detail-note" role="status">
@@ -181,10 +222,37 @@ function SnapshotRow({
       await projectStore.dataChanged(`Refreshed ${snapshot.source} from ${result.snapshot.source}.`);
     });
 
+  // Refresh through the wizard's step 1, saying why: the sheet and header
+  // row are chosen there, never taken (PR #54 review).
+  const throughStep1 = (file: File, atFile: string, inspection: DataInspection | null, workbook: WorkbookInspection | null) =>
+    onWizard({ kind: "refresh", snapshot, file, options: {}, inspection, workbook, missing: [], choices: null, atFile });
+
   const chooseRefresh = (file: File) =>
     run("refresh", async () => {
       // Step 1's checks first, the 2,000-row limit and its two choices included.
-      const inspection = await inspectData(projectId, { file }, readAs);
+      let inspection: DataInspection;
+      try {
+        inspection = await inspectData(projectId, { file }, readAs);
+      } catch (e: unknown) {
+        const gone = snapshot.workbook ? goneSheet(e) : null;
+        if (gone === null || !snapshot.workbook) throw e;
+        const sentence = `This workbook has no sheet named ${snapshot.workbook.sheet}. Choose the sheet to refresh from.`;
+        throughStep1(file, sentence, null, gone);
+        return;
+      }
+      // A file of the other kind: a CSV file's snapshot has no sheet to read
+      // a workbook by, and a workbook's dialect says nothing of a CSV file.
+      if ((inspection.format === "xlsx") !== Boolean(snapshot.workbook)) {
+        throughStep1(
+          file,
+          inspection.format === "xlsx"
+            ? "This snapshot was read from a CSV file. Choose the sheet of this workbook to refresh from."
+            : "This snapshot was read from a workbook. Check how this CSV file is read.",
+          inspection,
+          inspection.workbook ?? null,
+        );
+        return;
+      }
       if (inspection.sample) setPending({ file, inspection });
       else await refresh(file, false);
     });

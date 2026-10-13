@@ -874,7 +874,7 @@ def test_x1_the_row_limit_and_the_sample_apply_per_sheet(pid):
     found = client.post(f"/api/projects/{pid}/data/inspect", files={"file": ("big.xlsx", data, XLSX)},
                         data={"options": json.dumps({"sheet": "Big"})}).json()
     assert found["total"] == 5000 and found["sample"] is True
-    assert found["limitSentence"].startswith("This file has 5,000 rows. Semantic Studio imports at most 2,000 rows")
+    assert found["limitSentence"].startswith("This sheet has 5,000 rows. Semantic Studio imports at most 2,000 rows")
     chosen = {"classIri": ORGANIZATION, "idColumn": "id", "columns": {"name": {"as": "name"}}}
     send = lambda options, status: client.post(  # noqa: E731
         f"/api/projects/{pid}/data", files={"file": ("big.xlsx", data, XLSX)},
@@ -918,6 +918,62 @@ def test_x1_refresh_reads_the_new_workbook_the_same_way_and_a_csv_drops_the_orig
     assert again["status"] == "imported" and again["snapshot"]["workbook"] is None
     assert not (folder(pid, sid) / "source.xlsx").exists()
     assert (folder(pid, sid) / "source.csv").is_file()
+
+
+def test_refresh_of_a_workbook_whose_sheet_was_renamed_names_the_sheets(pid):
+    # PR #54 review: the refusal said there was no sheet of the old name and
+    # gave nothing to choose from instead.
+    with_org_attributes(pid)
+    made = import_orgs(pid)["snapshot"]
+    sid = made["id"]
+    before = (folder(pid, sid) / "data.ttl").read_bytes()
+
+    def renamed(book):
+        book.active.title = "Notes"
+        book.active.append(["Read me first"])
+        sheet = book.create_sheet("Organisations")
+        sheet.append(["id", "name", "founded", "staff"])
+        sheet.append(["zeta", "Zeta", datetime.date(2000, 1, 1), 1])
+
+    response = client.post(f"/api/projects/{pid}/data/{sid}/refresh",
+                           files={"file": ("orgs (3).xlsx", xlsx(renamed), XLSX)})
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["message"] == "This workbook has no sheet named Orgs."
+    assert detail["workbook"]["sheets"] == [{"name": "Notes", "rows": 0}, {"name": "Organisations", "rows": 1}]
+    assert detail["workbook"]["sheet"] == "" and detail["workbook"]["top"] == []
+    # Nothing was written.
+    assert (folder(pid, sid) / "data.ttl").read_bytes() == before
+    # The sheet chosen in its place refreshes.
+    chosen = client.post(f"/api/projects/{pid}/data/{sid}/refresh",
+                         files={"file": ("orgs (3).xlsx", xlsx(renamed), XLSX)},
+                         data={"options": json.dumps({"sheet": "Organisations"})}).json()
+    assert chosen["status"] == "imported", chosen
+    assert chosen["snapshot"]["workbook"] == {"sheet": "Organisations", "headerRow": 1}
+
+
+def test_a_csv_snapshot_refreshed_with_a_workbook_is_not_read_from_its_first_sheet(pid):
+    with_org_attributes(pid)
+    made = import_csv(pid, "id,name,founded,staff\nacme,Acme,1991-01-01,10\n",
+                      org_choices(), name="orgs.csv")["snapshot"]
+    sid = made["id"]
+    before = (folder(pid, sid) / "data.ttl").read_bytes()
+    response = client.post(f"/api/projects/{pid}/data/{sid}/refresh",
+                           files={"file": ("orgs.xlsx", orgs_workbook(), XLSX)})
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["message"] == (
+        "This snapshot was read from a CSV file. Choose the sheet of this workbook to refresh from."
+    )
+    assert [sheet["name"] for sheet in detail["workbook"]["sheets"]] == ["Notes", "Orgs"]
+    assert (folder(pid, sid) / "data.ttl").read_bytes() == before
+    assert not (folder(pid, sid) / "source.xlsx").exists()
+    # With the sheet and header row chosen, it refreshes.
+    chosen = client.post(f"/api/projects/{pid}/data/{sid}/refresh",
+                         files={"file": ("orgs.xlsx", orgs_workbook(), XLSX)},
+                         data={"options": json.dumps({"sheet": "Orgs", "headerRow": 3})}).json()
+    assert chosen["status"] == "imported", chosen
+    assert chosen["snapshot"]["workbook"] == {"sheet": "Orgs", "headerRow": 3}
 
 
 # --- Stage B: links between snapshots (5.9, row X3) ---------------------------------------

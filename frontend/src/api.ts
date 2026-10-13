@@ -139,6 +139,16 @@ export class ApiError extends Error {
 }
 
 /**
+ * Why a call failed, in the app's words, to follow a colon: the server's own
+ * sentence when it sent one, else that it did not answer. A fetch that never
+ * reached the server rejects with the browser's own text (*Failed to fetch*,
+ * *NetworkError when attempting to fetch resource.*), which is never shown.
+ */
+export function failureReason(e: unknown): string {
+  return e instanceof ApiError ? e.message : "the server did not answer.";
+}
+
+/**
  * What the approval dialog answers: the just-once grant ids to present on the
  * retry (empty when the grant was remembered and the server needs no id), or
  * null when the user said Don't allow.

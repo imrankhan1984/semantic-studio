@@ -374,7 +374,11 @@ def test_the_row_limit_holds_per_sheet():
     table = tabular.read_workbook(data, sheet="Big")
     assert table.total == 5000 and len(table.rows) == tabular.MAX_ROWS and table.sample
     assert table.rows[-1] == ["r2000", "2000"]
-    assert tabular.inspect(table)["limitSentence"] == tabular.rows_sentence(5000)
+    # The limit is the sheet's, and the sentence says sheet; a CSV file's says file.
+    assert tabular.inspect(table)["limitSentence"] == (
+        "This sheet has 5,000 rows. Semantic Studio imports at most 2,000 rows: it is for "
+        "learning how data is mapped to a model, not for loading whole datasets."
+    )
     small = tabular.read_workbook(data, sheet="Small")
     assert small.total == 1 and not small.sample
 

@@ -82,6 +82,7 @@ import { useSyncExternalStore } from "react";
 import {
   applyDocumentSource,
   closeProject,
+  failureReason,
   listData,
   openProject,
   recoverProject,
@@ -138,6 +139,9 @@ export interface ProjectSnapshot {
   /** The project's data snapshots and the server's generation for them
    *  (csv-data-import 5.6); null until fetched. */
   data: SnapshotListing | null;
+  /** Why the snapshot list could not be read, until a read succeeds: the
+   *  Data tab says it with Try again rather than reading for ever. */
+  dataError: string | null;
   /** The last reasoning run (axioms-and-reasoning 5.2): kept for the session
    *  only, never saved, and stale once the model moves (5.3). */
   reasoning: ReasoningResult | null;
@@ -210,6 +214,7 @@ const EMPTY: ProjectSnapshot = {
   validating: false,
   editorTarget: null,
   data: null,
+  dataError: null,
   reasoning: null,
   reasoningSince: null,
   reasoningError: null,
@@ -409,9 +414,20 @@ export const projectStore = {
    *  asked about is still the open one. */
   async loadData(): Promise<SnapshotListing | null> {
     const project = requireProject();
-    const listing = await listData(project.id);
+    let listing: SnapshotListing;
+    try {
+      listing = await listData(project.id);
+    } catch (e) {
+      if (snapshot.project?.id !== project.id) return null;
+      // Said in the live region and kept for the Data tab, which otherwise
+      // read "Reading the project's data…" for ever (PR #53 review).
+      const text = `The data snapshots could not be read: ${failureReason(e)}`;
+      set({ dataError: text });
+      announce(text);
+      throw e;
+    }
     if (snapshot.project?.id !== project.id) return null;
-    set({ data: listing });
+    set({ data: listing, dataError: null });
     return listing;
   },
 
