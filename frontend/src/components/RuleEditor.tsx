@@ -48,7 +48,8 @@ EXPECTED OUTPUT
 */
 
 import { useId, useMemo, useRef, useState } from "react";
-import { OFFERED_TYPES, article, dateTimeBound, languageName, ruleProblem, ruleSentence } from "../modeling/shapeSentences";
+import { a } from "../modeling/sentences";
+import { OFFERED_TYPES, dateTimeBound, languageName, ruleProblem, ruleSentence } from "../modeling/shapeSentences";
 import type { ShapeBound, ShapePath, ShapeRule, ShapeValue } from "../types";
 import EntityPicker from "./EntityPicker";
 
@@ -366,7 +367,7 @@ export default function RuleEditor({ modelOntologyId, paths, initial, languages,
                 <div className="edit-value">
                   <span>
                     {pointsTo
-                      ? `Each value must be ${article(pointsTo.label)} ${pointsTo.label}`
+                      ? `Each value must be ${a(pointsTo.label)}`
                       : path.range
                         ? "Not checked"
                         : "Not checked: this relationship has no end class, so choose one here if you want it checked."}

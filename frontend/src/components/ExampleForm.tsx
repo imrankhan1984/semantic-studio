@@ -38,6 +38,7 @@ EXPECTED OUTPUT
 
 import { useEffect, useId, useRef, useState } from "react";
 import { fieldCommand, fieldProblem, fieldStart, fieldType, fieldValue, typeWords } from "../modeling/examples";
+import { a } from "../modeling/sentences";
 import type { ExampleField, ExampleInfo } from "../types";
 import { ValueInput } from "./AnnotationAdder";
 import { Block, type Runner } from "./EditParts";
@@ -212,7 +213,7 @@ function FieldEditor({ iri, name, field, primaryLanguage, languages, runner, onS
                 {verb === "Change" ? `Change ${field.label}` : `Link to`}
               </label>
               <select id={`${id}-choice`} value={raw} aria-disabled={busy} onChange={(e) => !busy && setRaw(e.target.value)}>
-                <option value="">Choose {field.rangeLabel ? `${/^[aeiou]/i.test(field.rangeLabel) ? "an" : "a"} ${field.rangeLabel}` : "an example"}…</option>
+                <option value="">Choose {field.rangeLabel ? a(field.rangeLabel) : "an example"}…</option>
                 {options.map((o) => (
                   <option key={o.iri} value={o.iri}>
                     {o.label}

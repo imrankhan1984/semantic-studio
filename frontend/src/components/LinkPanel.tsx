@@ -7,7 +7,8 @@ SUMMARY
     The small panel a click on an *is a kind of*, *narrower than* or
     *related to* line opens beside the canvas (relationships 5.2, 5.8): the
     link read as a sentence, *Employee is a kind of Person*, **Remove this
-    link**, and a link to each of its two ends. Removing a related link
+    link**, and a link to each of its two ends, joined by an arrow, or by
+    *and* for a related link, which works both ways. Removing a related link
     removes it both ways, as it was made.
 
 BASIC IDEA
@@ -96,8 +97,16 @@ export default function LinkPanel({ link, onSelect, onClose }: Props) {
         <button type="button" className="term-link" onClick={() => onSelect(link.source)}>
           {link.sourceLabel}
         </button>
-        <span aria-hidden="true"> → </span>
-        <span className="visually-hidden"> {KIND_WORDS[link.kind]} </span>
+        {link.kind === "related" ? (
+          // Works both ways, so no arrow: *Apple and Orchard*, as the canvas
+          // line has read since E-9 (PR #49 review).
+          <span> and </span>
+        ) : (
+          <>
+            <span aria-hidden="true"> → </span>
+            <span className="visually-hidden"> {KIND_WORDS[link.kind]} </span>
+          </>
+        )}
         <button type="button" className="term-link" onClick={() => onSelect(link.target)}>
           {link.targetLabel}
         </button>

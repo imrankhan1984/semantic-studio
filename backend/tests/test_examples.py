@@ -250,11 +250,27 @@ shop:carol a shop:Employee ; rdfs:label "Carol"@en ; shop:salary "100.5"^^xsd:de
     assert "example" not in node(pid, EX + "Person")
 
 
-def test_a_relationship_without_an_end_class_offers_every_example(pid):
+def test_a_relationship_without_an_end_class_offers_every_other_example(pid):
     with_turtle(pid, 'shop:knows a owl:ObjectProperty ; rdfs:label "knows"@en ; rdfs:domain shop:Person .\n')
     fields = {f["label"]: f for f in node(pid, EX + "alice")["example"]["fields"]}
     assert fields["knows"]["range"] is None
-    assert [o["label"] for o in fields["knows"]["options"]] == ["Acme", "Alice"]
+    # Never Alice herself (PR #51 review).
+    assert [o["label"] for o in fields["knows"]["options"]] == ["Acme"]
+
+
+@pytest.mark.parametrize("characteristic, offered", [
+    (None, False), ("owl:SymmetricProperty", True), ("owl:ReflexiveProperty", True), ("owl:TransitiveProperty", False),
+])
+def test_an_example_is_its_own_choice_only_where_the_relationship_may_link_it_to_itself(pid, characteristic, offered):
+    typed = f" , {characteristic}" if characteristic else ""
+    with_turtle(pid, f"""shop:knows a owl:ObjectProperty{typed} ; rdfs:label "knows"@en ;
+    rdfs:domain shop:Person ; rdfs:range shop:Person .
+shop:bob a shop:Person ; rdfs:label "Bob"@en .
+""")
+    fields = {f["label"]: f for f in node(pid, EX + "alice")["example"]["fields"]}
+    labels = [o["label"] for o in fields["knows"]["options"]]
+    assert labels == (["Alice", "Bob"] if offered else ["Bob"])
+    assert fields["knows"]["optionsTotal"] == len(labels)
 
 
 def test_the_choices_are_capped_with_the_true_total(pid, monkeypatch):

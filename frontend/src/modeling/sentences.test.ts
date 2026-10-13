@@ -5,11 +5,16 @@ FILE: frontend/src/modeling/sentences.test.ts
 
 SUMMARY
     The sentences a relationship is read as (relationships 5.2, 5.3, 5.5):
-    articles by the first letter, the sentence while naming, the link
-    sentences, the announcement, and a tree row's ends.
+    the sentence while naming, the link sentences, the announcement, and a
+    tree row's ends. And the two shared rules (X-12, T-18 to T-20): a or an,
+    and a label read as a verb, against sentences.table.json -- the table
+    backend/tests/test_sentences.py reads too -- with a scan that fails if
+    any other module defines its own; and an attribute's type after *as*.
 
 BASIC IDEA
-    Pure strings, so every case is one line.
+    Pure strings, so every case is one line. The scan reads every
+    production source as text, asserting first that they loaded: a scan
+    over nothing finds nothing and passes.
 
 INPUTS / INPUT SOURCES
     - modeling/sentences.ts.
@@ -20,6 +25,7 @@ EXPECTED OUTPUT
 */
 
 import { describe, expect, it } from "vitest";
+import TABLE from "./sentences.table.json";
 import * as S from "./sentences";
 import {
   article,
@@ -32,13 +38,24 @@ import {
 } from "./sentences";
 
 describe("sentences", () => {
-  it("chooses a or an by the first letter, and nothing more", () => {
-    expect(article("Person")).toBe("a");
-    expect(article("Organization")).toBe("an");
-    expect(article("invoice")).toBe("an");
-    // No grammar beyond the letter, as the spec says.
-    expect(article("University")).toBe("an");
-    expect(article("Hour")).toBe("a");
+  it.each(TABLE.article)("chooses the article of %j by its sound: %s (T-18)", (word, expected) => {
+    expect(article(word)).toBe(expected);
+    expect(S.a(word)).toBe(`${expected} ${word}`);
+  });
+
+  it.each(TABLE.verb)("reads %j as a verb: %j after a subject, %j after must (T-19)", (label, after, must) => {
+    expect(S.verb(label)).toBe(after);
+    expect(S.mustVerb(label)).toBe(must);
+  });
+
+  it("reads an attribute's type after as with its article, text and yes or no without (T-20)", () => {
+    expect(S.attributeSentence("Person", "birth date", "xsd:date")).toBe("A Person has a birth date, as a date.");
+    expect(S.attributeSentence("Person", "name", "xsd:string")).toBe("A Person has a name, as text.");
+    expect(S.attributeSentence("Person", "age", "xsd:integer")).toBe("A Person has an age, as a whole number.");
+    expect(S.attributeSentence("Person", "active", "xsd:boolean")).toBe("A Person has an active, as yes or no.");
+    expect(S.attributeSentence("Person", "home page", "xsd:anyURI")).toBe("A Person has a home page, as a web address.");
+    // A type without a word is its name, with no article guessed.
+    expect(S.attributeSentence("Person", "year", "xsd:gYear")).toBe("A Person has a year, as xsd:gYear.");
   });
 
   it("reads a relationship as it is named, with the gap before the first key", () => {
@@ -130,5 +147,40 @@ describe("Stage B sentences (relationships 5.6 to 5.8)", () => {
     expect(S.otherKindReason("taxonomy", "datatypeProperty")).toMatch(/^An attribute, read-only in a taxonomy/);
     expect(S.otherKindReason("ontology", "objectProperty")).toBeNull();
     expect(S.otherKindReason(null, "objectProperty")).toBeNull();
+  });
+});
+
+describe("one a/an rule and one verb rule (X-12)", () => {
+  // From the root, so every key reads /src/...: relative to this folder,
+  // its own files would be ./sentences.ts.
+  const SOURCES = import.meta.glob("/src/**/*.{ts,tsx}", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }) as Record<string, string>;
+  const PRODUCTION = Object.entries(SOURCES).filter(
+    ([path]) => !/\.test\.(ts|tsx)$/.test(path) && !/\.d\.ts$/.test(path),
+  );
+  // What a module of its own would write: an article or verb function, the
+  // first-letter ternary, or the verb rule's word lists.
+  const OWN = [
+    /\bfunction\s+(article|a|an|withArticle|verb|mustVerb|mustPhrase)\s*\(/,
+    /\b(const|let)\s+(article|a|an|withArticle|verb|mustVerb|mustPhrase)\s*=\s*(\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/,
+    /\?\s*["']an["']\s*:/,
+    /["']an["']\s*:\s*["']a["']/,
+    /["']a["']\s*:\s*["']an["']/,
+    /\b(AUXILIARIES|PREPOSITIONS)\b/,
+  ];
+
+  it("no module but sentences.ts defines its own", () => {
+    const own = PRODUCTION.find(([path]) => path === "/src/modeling/sentences.ts");
+    // The scan read the sources, the rule's own module among them.
+    expect(PRODUCTION.length).toBeGreaterThan(50);
+    expect(own?.[1]).toContain("export function article(");
+    expect(own?.[1]).toContain("export function mustVerb(");
+    const offenders = PRODUCTION.filter(([path]) => path !== own?.[0]).flatMap(([path, text]) =>
+      OWN.filter((pattern) => pattern.test(text)).map((pattern) => `${path}: ${pattern}`),
+    );
+    expect(offenders).toEqual([]);
   });
 });

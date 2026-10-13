@@ -150,6 +150,10 @@ describe("LinkPanel", () => {
       />,
     );
     expect(screen.getByRole("heading", { name: "Apple is related to Orchard" })).toBeTruthy();
+    // Both ways: the ends are joined by *and*, never an arrow (PR #49 review).
+    const ends = document.querySelector(".link-panel-ends")!;
+    expect(ends.textContent).toBe("Apple and Orchard");
+    expect(ends.textContent).not.toContain("→");
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Remove this link" }));
     });

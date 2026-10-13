@@ -5,7 +5,8 @@ FILE: frontend/src/networkWords.ts
 
 SUMMARY
     The plain-language words for the network broker's capabilities and log
-    outcomes, shared by the approval dialog and the Network panel.
+    outcomes, shared by the approval dialog and the Network panel; and why
+    a call to the app's own server failed, in the app's words (X-12).
 
 BASIC IDEA
     Capability names such as `jsonld:context` are the server's vocabulary and
@@ -22,12 +23,24 @@ BASIC IDEA
     instead of returning an inherited function (backlog X-6).
 
 INPUTS / INPUT SOURCES
-    - Capability and outcome strings from the API.
+    - Capability and outcome strings from the API; a failed call's error.
 
 EXPECTED OUTPUT
     - Strings for the interface.
 ================================================================================
 */
+
+import { ApiError } from "./api";
+
+/**
+ * Why a call failed, to follow a colon: the server's own sentence when it
+ * sent one, else that it did not answer. A fetch that never reached the
+ * server rejects with the browser's own text (*Failed to fetch*,
+ * *NetworkError when attempting to fetch resource.*), which is never shown.
+ */
+export function failureReason(e: unknown): string {
+  return e instanceof ApiError ? e.message : "the server did not answer.";
+}
 
 const PHRASES: Record<string, { always: string; purpose: string }> = {
   "ontology:fetch": { always: "downloading ontologies", purpose: "Downloads" },

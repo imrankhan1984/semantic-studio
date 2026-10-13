@@ -24,7 +24,6 @@ import { describe, expect, it } from "vitest";
 import type { ShapeRule, ValidationPanel, ValidationResult } from "../types";
 import {
   dateTimeBound,
-  mustPhrase,
   panelHeader,
   panelName,
   pathWords,
@@ -195,14 +194,22 @@ describe("Stage A follow-ups fixed in Stage B (5.9)", () => {
     expect(ruleSentence({ ...name, minCount: 2 })).toBe("must have at least 2 names (label)");
   });
 
-  it("reads a relationship after must as a verb, or with be (item 5)", () => {
-    expect(mustPhrase("works for an Organization")).toBe("work for an Organization");
-    expect(mustPhrase("member of an Organization")).toBe("be member of an Organization");
-    expect(mustPhrase("has part a Wheel")).toBe("have part a Wheel");
-    expect(mustPhrase("is part of a Car")).toBe("be part of a Car");
-    expect(mustPhrase("teaches a Course")).toBe("teach a Course");
-    expect(mustPhrase("carries a Bag")).toBe("carry a Bag");
-    expect(mustPhrase("located in a City")).toBe("be located in a City");
+  it("reads a relationship after must as a verb, or with be (item 5), by the one verb rule (T-19)", () => {
+    const sentence = (label: string, classLabel: string) =>
+      shapeSentence({
+        target: { iri: "http://x#Person", label: "Person", every: null },
+        rules: [{ path: ["http://x#p"], pathLabel: label, pathKind: "relationship" as const, class: "http://x#C", classLabel }],
+      });
+    expect(sentence("works for", "Organization")).toBe("Every Person must work for an Organization.");
+    expect(sentence("member of", "Organization")).toBe("Every Person must be member of an Organization.");
+    expect(sentence("has part", "Wheel")).toBe("Every Person must have part a Wheel.");
+    expect(sentence("is part of", "Car")).toBe("Every Person must be part of a Car.");
+    expect(sentence("teaches", "Course")).toBe("Every Person must teach a Course.");
+    expect(sentence("carries", "Bag")).toBe("Every Person must carry a Bag.");
+    expect(sentence("located in", "City")).toBe("Every Person must be located in a City.");
+    // A single word was *must be uses* (X-12).
+    expect(sentence("uses", "Car")).toBe("Every Person must use a Car.");
+    expect(sentence("uses", "University")).toBe("Every Person must use a University.");
   });
 
   it("reads 5.9's example as the follow-up asks: must be member of (item 5)", () => {

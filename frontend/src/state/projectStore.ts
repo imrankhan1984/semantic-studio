@@ -84,7 +84,6 @@ import {
   ApiError,
   applyDocumentSource,
   closeProject,
-  failureReason,
   listData,
   openProject,
   recoverProject,
@@ -99,6 +98,7 @@ import {
   validateProject,
 } from "../api";
 import { validationSummary } from "../modeling/shapeSentences";
+import { failureReason } from "../networkWords";
 import { finishedLine, isStale, staleLine, type ReasoningNow } from "../reasoning/reasonSentences";
 import type {
   ChangeResult,

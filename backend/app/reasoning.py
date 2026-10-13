@@ -84,7 +84,7 @@ from rdflib.util import from_n3
 
 from . import reasoning_worker
 from .graph_builder import pick_label_in
-from .modeling_checks import article
+from .sentences import a, verb
 
 # Fixed, never settings (5.10, as D-098's row limit is). A test lowers the
 # limit through the module attribute, which is all it reads.
@@ -500,42 +500,9 @@ def triple_json(t: tuple, names: Callable) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Sentences (5.4 to 5.6), in the learner's words and E-8's
+# Sentences (5.4 to 5.6), in the learner's words and E-8's; the article and
+# the verb are sentences.py's, shared with every other sentence (X-12).
 # ---------------------------------------------------------------------------
-
-
-def a(name: str) -> str:
-    return f"{article(name)} {name}"
-
-
-# First words that already read as a verb, and last words that mark a label
-# needing *is*: "unit A part of Acme" was the sentence (PR #55 review).
-_AUXILIARIES = frozenset({
-    "is", "are", "was", "were", "be", "been", "has", "have", "had", "can", "could",
-    "may", "might", "must", "shall", "should", "will", "would", "does", "do", "did",
-})
-_PREPOSITIONS = frozenset({
-    "of", "to", "in", "at", "by", "for", "with", "from", "on", "into", "onto", "about",
-    "above", "below", "under", "over", "inside", "near", "before", "after", "within", "than",
-})
-
-
-def verb(name: str) -> str:
-    """A relationship's label as the verb of a sentence. *employs*,
-    *worksFor* and *has part* stay as they are; *part of*, *above* and
-    *located in* read after *is*. A bare noun (*holder*) is left alone:
-    *passport 1 is holder Ann* would say the passport holds."""
-    words = [w.lower() for w in re.findall(r"[A-Za-z][a-z]*", name)]
-    if not words:
-        return name
-    first = words[0]
-    # A first word ending in a single s is a verb's third person, as E-8
-    # names relationships.
-    if first in _AUXILIARIES or (first.endswith("s") and not first.endswith(("ss", "us"))):
-        return name
-    if words[-1] in _PREPOSITIONS or first.endswith("ed"):
-        return f"is {name}"
-    return name
 
 
 def fact_sentence(t: tuple, names: Callable) -> str:

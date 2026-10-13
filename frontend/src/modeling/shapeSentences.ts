@@ -33,15 +33,16 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - ruleSentence, shapeSentence, rowSentence, panelHeader, panelName,
-      validationSummary, ruleProblem, languageName, plural; and article,
-      pathWords, mustPhrase and dateTimeBound, Stage B's follow-ups 1 and 5:
-      a relationship read after *must* (*must work for*, *must be member
-      of*), a minimum of 0 left unsaid, a type and its length one phrase,
-      a rule without a label named by its path.
+      validationSummary, ruleProblem, languageName, plural; and pathWords
+      and dateTimeBound, Stage B's follow-ups 1 and 5: a relationship read
+      after *must* (*must work for*, *must be member of*, by sentences.ts's
+      verb rule since X-12), a minimum of 0 left unsaid, a type and its
+      length one phrase, a rule without a label named by its path.
 ================================================================================
 */
 
 import type { PanelState, ShapeForm, ShapeRule, ValidationPanel, ValidationResult } from "../types";
+import { a, mustVerb } from "./sentences";
 
 const DATATYPE_WORDS: Record<string, string> = {
   "xsd:string": "text",
@@ -104,10 +105,6 @@ export function plural(phrase: string): string {
   return head + out;
 }
 
-export function article(word: string): string {
-  return /^[aeiou]/i.test(word) ? "an" : "a";
-}
-
 /** What a rule is about, in words: its label, or the path's last name when
  *  it has none -- never "undefined" (Stage A follow-up 5). */
 export function pathWords(rule: Pick<ShapeRule, "path" | "pathLabel">): string {
@@ -120,22 +117,6 @@ export function pathWords(rule: Pick<ShapeRule, "path" | "pathLabel">): string {
  *  when they are zero gives "2020-01-01T10:00", which needs ":00". */
 export function dateTimeBound(value: string): string {
   return /T\d{2}:\d{2}$/.test(value) ? `${value}:00` : value;
-}
-
-/** A relationship's name after *must*, so a shape reads as a sentence
- *  (follow-up 5): *works for* -> *work for*, *has part* -> *have part*,
- *  *is part of* -> *be part of*, and a name that is not a verb, *member
- *  of*, -> *be member of*. */
-export function mustPhrase(label: string): string {
-  const [first, ...rest] = label.split(" ");
-  const tail = rest.length ? ` ${rest.join(" ")}` : "";
-  const lower = first.toLowerCase();
-  if (lower === "is" || lower === "are") return `be${tail}`;
-  if (lower === "has") return `have${tail}`;
-  if (rest.length && /^[a-z]+ies$/.test(lower)) return `${first.slice(0, -3)}y${tail}`;
-  if (rest.length && /^[a-z]+(ch|sh|ss|x)es$/.test(lower)) return `${first.slice(0, -2)}${tail}`;
-  if (rest.length && /^[a-z]{3,}[^su]s$/.test(lower)) return `${first.slice(0, -1)}${tail}`;
-  return `be ${label}`;
 }
 
 function listWords(items: string[], last = "and"): string {
@@ -159,7 +140,7 @@ function valueWord(v: { value: string; label?: string; kind: string }): string {
 function qualifiers(rule: ShapeRule, relationship: boolean): string[] {
   const out: string[] = [];
   if (rule.datatype) out.push(`as ${typeWord(rule.datatype)}`);
-  if (rule.class && !relationship) out.push(`pointing to ${article(rule.classLabel ?? rule.class)} ${rule.classLabel ?? rule.class}`);
+  if (rule.class && !relationship) out.push(`pointing to ${a(rule.classLabel ?? rule.class)}`);
   const { minLength: lo, maxLength: hi } = rule;
   if (lo !== undefined && hi !== undefined) out.push(`of ${lo} to ${hi} characters`);
   else if (lo !== undefined) out.push(`of at least ${lo} ${lo === 1 ? "character" : "characters"}`);
@@ -186,7 +167,7 @@ export function ruleSentence(rule: ShapeRule): string {
   const max = rule.maxCount;
   const required = rule.requiredLanguages ?? [];
   if (rule.pathKind === "relationship") {
-    const to = rule.class ? ` ${article(rule.classLabel ?? rule.class)} ${rule.classLabel ?? rule.class}` : "";
+    const to = rule.class ? ` ${a(rule.classLabel ?? rule.class)}` : "";
     let count = "";
     if (min !== undefined && max !== undefined && min === max) count = `exactly ${times(min)}`;
     else if (min !== undefined && max !== undefined) count = `between ${min} and ${max} times`;
@@ -199,10 +180,10 @@ export function ruleSentence(rule: ShapeRule): string {
   if (min === 1 && max === 1) head = `must have exactly one ${label}`;
   else if (min !== undefined && max !== undefined && min === max) head = `must have exactly ${min} ${plural(label)}`;
   else if (min !== undefined && max !== undefined) head = `must have between ${min} and ${max} ${plural(label)}`;
-  else if (min !== undefined && min > 0) head = min === 1 ? `must have ${article(label)} ${label}` : `must have at least ${min} ${plural(label)}`;
+  else if (min !== undefined && min > 0) head = min === 1 ? `must have ${a(label)}` : `must have at least ${min} ${plural(label)}`;
   else if (max === 1) head = `may have at most one ${label}`;
   else if (max !== undefined) head = `may have at most ${max} ${plural(label)}`;
-  else if (required.length) head = `must have ${article(label)} ${label}`;
+  else if (required.length) head = `must have ${a(label)}`;
   else head = `may have ${plural(label)}`;
   if (required.length) {
     head += ` in ${listWords(required.map(languageName))}`;
@@ -231,9 +212,14 @@ export function everyWord(shape: Pick<ShapeForm, "target">): string {
 export function shapeSentence(shape: Pick<ShapeForm, "target" | "rules">): string {
   const who = everyWord(shape);
   if (!shape.rules.length) return `${who}: no rules yet.`;
-  const parts = shape.rules.map((rule) =>
-    rule.pathKind === "relationship" ? `must ${mustPhrase(ruleSentence(rule))}` : ruleSentence(rule),
-  );
+  // A relationship's rule starts with its label, read after *must* by the
+  // verb rule (sentences.ts): *must use a Car*, never *must be uses* (T-19).
+  const parts = shape.rules.map((rule) => {
+    const sentence = ruleSentence(rule);
+    if (rule.pathKind !== "relationship") return sentence;
+    const label = pathWords(rule);
+    return `must ${mustVerb(label)}${sentence.slice(label.length)}`;
+  });
   // Rules carry their own commas, so the last one is joined by ", and":
   // *…exactly one name, as text, and must work for an Organization*
   const joined = parts.length > 1 ? `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}` : parts[0];

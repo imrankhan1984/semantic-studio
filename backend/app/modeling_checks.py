@@ -65,6 +65,7 @@ from rdflib import BNode, Graph, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS
 
 from .axioms import disjoint_pairs, disjoint_with, named_pairs
+from .sentences import article
 
 Name = Callable[[URIRef], str]
 
@@ -97,11 +98,6 @@ CONFLICTS = [
     ("symmetric", "asymmetric", '"Works both ways" and "never both ways" contradict each other.'),
     ("reflexive", "irreflexive", '"Always to itself" and "never to itself" contradict each other.'),
 ]
-
-
-def article(name: str) -> str:
-    """*a* or *an* by the first letter, as the frontend's sentences.ts does."""
-    return "an" if name.strip()[:1].lower() in "aeiou" and name.strip() else "a"
 
 
 def characteristics(graph: Graph, prop: URIRef) -> set[str]:

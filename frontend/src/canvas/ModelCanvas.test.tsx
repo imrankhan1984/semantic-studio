@@ -1569,7 +1569,7 @@ describe("rule lines and boxes (axioms-and-reasoning 5.9, AC-11)", () => {
     const [every, defines] = rules();
     expect(every.data.text).toBe("at least 1 · has line");
     expect(every.data.always).toBe(true);
-    expect(every.ariaLabel).toBe("Every Invoice (en) has at least one has line that is a Document, a rule");
+    expect(every.ariaLabel).toBe("Every Invoice (en) has at least one line that is a Document, a rule");
     expect(defines.data.text).toBe("defines");
     expect(defines.ariaLabel).toBe("An Invoice (en) is exactly an Agent that has line at least one Document, a rule");
     // Two rules on the same two boxes are two lines.
@@ -1589,7 +1589,7 @@ describe("rule lines and boxes (axioms-and-reasoning 5.9, AC-11)", () => {
     await renderCanvas(ruled());
     await act(async () => flow.props.onEdgeClick({}, rules()[0]));
     expect(onSelect).toHaveBeenCalledWith(EX + "Invoice");
-    expect(screen.getByText("Every Invoice (en) has at least one has line that is a Document selected. Delete removes it.")).toBeTruthy();
+    expect(screen.getByText("Every Invoice (en) has at least one line that is a Document selected. Delete removes it.")).toBeTruthy();
     await act(async () => {
       fireEvent.keyDown(document.activeElement!, { key: "Delete" });
     });
