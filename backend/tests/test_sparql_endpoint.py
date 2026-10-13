@@ -8,7 +8,9 @@ SUMMARY
     and unbound OPTIONAL variables serialize correctly, UPDATE/CONSTRUCT/ASK
     and malformed queries are rejected, a SERVICE clause naming a non-public
     address is refused at any nesting depth without a request being made, the
-    row cap truncates, and the schema/query-node/saved-query endpoints behave.
+    row cap truncates, a timed-out query stops at its next row and holds off
+    a new query on its ontology alone until it ends (D-108), and the
+    schema/query-node/saved-query endpoints behave.
     SERVICE to a public endpoint (D-069) is test_sparql_service.py's.
 
 BASIC IDEA
@@ -34,6 +36,7 @@ EXPECTED OUTPUT
 
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -503,3 +506,98 @@ def test_hand_written_service_to_a_private_address_is_refused(ontology_id, sparq
     assert sparql_recorder.requests == []
     assert response.status_code == 400
     assert response.json()["detail"] == NOT_PUBLIC_DETAIL.format(endpoint=endpoint)
+
+
+# ---------------------------------------------------------------------------
+# A timed-out query (CF-2, D-108): it stops at its next row, and while one is
+# still computing its first row, a new query on the same ontology is refused.
+# ---------------------------------------------------------------------------
+
+
+class _PacedGraph(Graph):
+    """A graph whose statements come out one at a time, each after ``delay``
+    seconds, and only once ``gate`` is open. Each one handed out is stamped,
+    so a test can count what the worker read after the timeout."""
+
+    def __init__(self, source: Graph, delay: float = 0.0, gate: threading.Event | None = None):
+        super().__init__()
+        for triple in source:
+            self.add(triple)
+        self.delay = delay
+        self.gate = gate
+        self.stamps: list[float] = []
+
+    def triples(self, pattern, *args, **kwargs):
+        for triple in super().triples(pattern, *args, **kwargs):
+            if self.gate is not None:
+                self.gate.wait(10)
+            time.sleep(self.delay)
+            self.stamps.append(time.perf_counter())
+            yield triple
+
+
+EVERYTHING = "SELECT ?s ?p ?o WHERE { ?s ?p ?o }"
+OTHER_ONTOLOGY = b"""@prefix ex: <http://example.org/other#> .
+ex:a ex:b ex:c .
+"""
+
+
+def test_a_timed_out_query_stops_at_its_next_row(graph):
+    paced = _PacedGraph(graph, delay=0.02)
+    with pytest.raises(sparql_exec.QueryTimeout) as excinfo:
+        execute_select(paced, EVERYTHING, timeout=0.3, key="paced-rows")
+    timed_out = time.perf_counter()
+    # The sentence and the cap are unchanged by the stop.
+    assert "exceeded the 0s time limit" in str(excinfo.value)
+    time.sleep(0.5)
+    # Many more rows were there to read; at most the one in hand when the
+    # timeout fired was read after it.
+    assert len(paced) > 100
+    assert len([t for t in paced.stamps if t > timed_out]) <= 1
+
+
+def test_a_query_while_an_abandoned_one_runs_is_refused(ontology_id, monkeypatch):
+    from app.routers import ontologies as router
+
+    other = client.post(
+        "/api/ontologies/upload",
+        files={"file": ("other-for-busy.ttl", OTHER_ONTOLOGY, "text/turtle")},
+    ).json()["id"]
+    gate = threading.Event()
+    source = Graph()
+    source.parse(EXAMPLE, format="turtle")
+    stuck = _PacedGraph(source, gate=gate)
+    real_graph = router._graph
+    # Only the first ontology's queries meet the closed gate: an abandoned
+    # query there computes its first row until the test opens it.
+    monkeypatch.setattr(
+        router, "_graph", lambda o, imports: stuck if o.id == ontology_id else real_graph(o, imports)
+    )
+    monkeypatch.setattr(sparql_exec, "DEFAULT_TIMEOUT_SECONDS", 0.2)
+    try:
+        first = client.post(f"/api/ontologies/{ontology_id}/sparql", json={"query": EVERYTHING})
+        assert first.status_code == 504
+        assert first.json()["detail"].startswith("The query exceeded the")
+
+        second = client.post(f"/api/ontologies/{ontology_id}/sparql", json={"query": PLANETS})
+        assert second.status_code == 409
+        assert second.json()["detail"] == (
+            "The last query is still finishing. Try again in a moment."
+        )
+        # Another ontology is not held up by this one's abandoned query.
+        elsewhere = client.post(f"/api/ontologies/{other}/sparql", json={"query": EVERYTHING})
+        assert elsewhere.status_code == 200
+        assert elsewhere.json()["rowCount"] == 1
+    finally:
+        gate.set()
+    # Once the abandoned query has ended, the ontology answers again.
+    monkeypatch.setattr(sparql_exec, "DEFAULT_TIMEOUT_SECONDS", 30.0)
+    monkeypatch.setattr(router, "_graph", real_graph)
+    deadline = time.perf_counter() + 10
+    while time.perf_counter() < deadline:
+        third = client.post(f"/api/ontologies/{ontology_id}/sparql", json={"query": PLANETS})
+        if third.status_code != 409:
+            break
+        time.sleep(0.05)
+    assert third.status_code == 200
+    assert third.json()["rowCount"] > 0

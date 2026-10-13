@@ -9,7 +9,8 @@ SUMMARY
     outside the budgeted part of the graph, and the combobox the result list
     became in 2026-07-31's keyboard work — its roles and references, the arrow
     keys that move the active option without moving focus, Enter, Escape, and
-    the polite count.
+    the polite count; and that only the latest search's answer is shown, the
+    older request aborted (CF-4).
 
 BASIC IDEA
     The component calls the /search endpoint through api.ts, so api.ts is
@@ -278,7 +279,13 @@ describe("SearchBox imports (external-access Stage 2)", () => {
     await act(async () => {
       vi.advanceTimersByTime(250);
     });
-    expect(searchNodes).toHaveBeenCalledWith("o1", "thing", true);
+    expect(searchNodes).toHaveBeenCalledWith(
+      "o1",
+      "thing",
+      true,
+      undefined,
+      expect.any(AbortSignal),
+    );
     const rows = options();
     expect(rows.find((r) => r.textContent?.includes("Hidden Thing"))!.textContent).toContain(
       "from FOAF",
@@ -286,5 +293,37 @@ describe("SearchBox imports (external-access Stage 2)", () => {
     expect(rows.find((r) => r.textContent?.includes("Drawn Thing"))!.textContent).not.toContain(
       "from",
     );
+  });
+});
+
+describe("SearchBox, answers out of order", () => {
+  it("only the latest search's answer is shown, and the older request is aborted", async () => {
+    // CF-4: the answer for the first query arrives after the second's.
+    const OLD: VizNode = { id: "http://ex.org/Old", label: "Old Answer", kind: "class", degree: 1 };
+    const NEW: VizNode = { id: "http://ex.org/New", label: "New Answer", kind: "class", degree: 1 };
+    let answerFirst: (r: VizNode[]) => void = () => {};
+    searchNodes
+      .mockImplementationOnce(() => new Promise<VizNode[]>((resolve) => (answerFirst = resolve)))
+      .mockImplementationOnce(() => Promise.resolve([NEW]));
+    render(<SearchBox ontologyId="o1" theme="dark" onPick={vi.fn()} />);
+
+    fireEvent.change(input(), { target: { value: "pla" } });
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+    });
+    fireEvent.change(input(), { target: { value: "planet" } });
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+    });
+    await act(async () => {
+      answerFirst([OLD]);
+    });
+
+    const rows = options();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toContain("New Answer");
+    const firstSignal = searchNodes.mock.calls[0][4] as AbortSignal;
+    expect(firstSignal.aborted).toBe(true);
+    expect((searchNodes.mock.calls[1][4] as AbortSignal).aborted).toBe(false);
   });
 });

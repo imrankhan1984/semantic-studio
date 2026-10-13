@@ -24,7 +24,10 @@ BASIC IDEA
       * evaluation runs in a worker thread with a wall-clock timeout, because
         rdflib itself offers no way to interrupt a running query. The worker
         runs in a copy of the request's context, which is how the just-once
-        grant and the SERVICE run's one-call memo reach it.
+        grant and the SERVICE run's one-call memo reach it;
+      * a timed-out query stops at its next row, and while one is still
+        computing its first row, a new query on the same ontology is refused,
+        so at most one abandoned query per ontology exists (D-108).
 
 INPUTS / INPUT SOURCES
     - A raw SPARQL query string (from the frontend via the /sparql endpoint).
@@ -36,8 +39,9 @@ EXPECTED OUTPUT
       where each cell is a serialized term (uri/literal/bnode) or None for an
       unbound OPTIONAL variable, plus "services" -- one entry per endpoint
       called -- when the query has SERVICE blocks.
-    - Raises QueryError (bad/forbidden query) or QueryTimeout (too slow), which
-      the router maps to HTTP 400 / 504, and lets the broker's ApprovalRequired,
+    - Raises QueryError (bad/forbidden query), QueryTimeout (too slow) or
+      QueryBusy (the last query is still finishing), which the router maps to
+      HTTP 400 / 504 / 409, and lets the broker's ApprovalRequired,
       HostBlocked and Offline through for main.py to map to 409 / 403 / 503.
 ================================================================================
 """
@@ -48,6 +52,7 @@ from __future__ import annotations
 # ThreadPoolExecutor / TimeoutError - run the query off the request thread so a
 #                slow query can be timed out (rdflib cannot self-interrupt).
 import contextvars
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
@@ -77,6 +82,22 @@ class QueryError(Exception):
 
 class QueryTimeout(Exception):
     """The query took longer than the allowed wall-clock time (maps to HTTP 504)."""
+
+
+class QueryBusy(Exception):
+    """A timed-out query of the same ontology is still running (maps to HTTP 409)."""
+
+
+BUSY_DETAIL = "The last query is still finishing. Try again in a moment."
+
+# A Python thread cannot be killed. A timed-out query is told to stop and does
+# so between rows, but one still computing its first row (a big join, a sort)
+# cannot be reached, so its key stays here, holding the event its worker sets
+# when it ends, and a new query on the key is refused until then. Without
+# this, repeated slow queries piled up abandoned workers with nothing bounding
+# them (CF-2, D-108).
+_abandoned: dict[str, threading.Event] = {}
+_abandoned_lock = threading.Lock()
 
 
 # The algebra node rdflib 7.6.0 produces for a SERVICE clause. Verified to be
@@ -229,14 +250,24 @@ def execute_select(
     query: str,
     *,
     max_rows: int = MAX_ROWS,
-    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    timeout: Optional[float] = None,
+    key: Optional[str] = None,
 ) -> dict:
     """Run a SELECT query and return JSON-serializable results.
 
     Validates the query, asks about any SERVICE hosts, evaluates it on a
     worker thread under a timeout, truncates at max_rows, and serializes each
-    cell.
+    cell. ``key`` names the ontology for the one-abandoned-query rule; the
+    timeout is read when called, so a test can lower the module's default.
     """
+    if timeout is None:
+        timeout = DEFAULT_TIMEOUT_SECONDS
+    if key is not None:
+        with _abandoned_lock:
+            done = _abandoned.get(key)
+            if done is not None and not done.is_set():
+                raise QueryBusy(BUSY_DETAIL)
+            _abandoned.pop(key, None)
     # Validate/parse first so a bad query fails before we spin up a thread.
     prepared, plan = _prepare(query)
     # Every SERVICE host is asked about now, all in one 409, before a row is
@@ -247,6 +278,10 @@ def execute_select(
         sparql_service.ServiceRun(plan) if plan is not None else None
     )
     started = time.perf_counter()
+    # Set by the request thread when the timeout fires; done by the worker
+    # when it ends, however it ends.
+    stop = threading.Event()
+    done = threading.Event()
 
     # The actual evaluation. Defined as a closure so it can run on the worker
     # thread and return everything the caller needs in one tuple.
@@ -257,7 +292,11 @@ def execute_select(
             variables = [str(var) for var in (result.vars or [])]
             rows = []
             hit_cap = False
+            # rdflib yields a SELECT's rows lazily, so checking between rows
+            # ends a timed-out query within one row of the timeout.
             for row in result:
+                if stop.is_set():
+                    break
                 # Stop collecting once we reach the server cap; flag truncation.
                 if len(rows) >= max_rows:
                     hit_cap = True
@@ -266,6 +305,7 @@ def execute_select(
             return variables, rows, hit_cap
         finally:
             sparql_service.end_run(token)
+            done.set()
 
     # A single-worker pool lets us apply a wall-clock timeout to run().
     executor = ThreadPoolExecutor(max_workers=1)
@@ -278,6 +318,11 @@ def execute_select(
         try:
             variables, rows, truncated = future.result(timeout=timeout)
         except FuturesTimeout as exc:
+            stop.set()
+            if key is not None:
+                with _abandoned_lock:
+                    if not done.is_set():
+                        _abandoned[key] = done
             # Query ran too long; surface actionable advice to the user.
             raise QueryTimeout(
                 f"The query exceeded the {timeout:.0f}s time limit. "
@@ -294,8 +339,8 @@ def execute_select(
             # Any other evaluation error becomes a QueryError (HTTP 400).
             raise QueryError(f"The query could not be evaluated: {exc}") from exc
     finally:
-        # Never block on a timed-out query; the thread is abandoned to finish
-        # (or not) on its own.
+        # Never block on a timed-out query: it stops at its next row, and
+        # until it does, _abandoned refuses another on its ontology.
         executor.shutdown(wait=False)
 
     # Serialize every cell; the cache dedupes label lookups across rows.

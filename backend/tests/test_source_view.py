@@ -7,7 +7,9 @@ SUMMARY
     Tests the /source endpoint that powers the View tab: the original file is
     returned verbatim, the "pretty" form re-serializes to valid Turtle with the
     same triple count, large files truncate on a line boundary while reporting
-    the true size, and an absurd size request is rejected.
+    the true size, and an absurd size request is rejected. Above 20,000
+    statements only the part the cap shows is serialised, with the true count
+    (CF-3), while the documentation export still writes the whole.
 
 BASIC IDEA
     Uploads the demo ontology, then requests its source in both modes and with
@@ -95,3 +97,104 @@ def test_rejects_an_absurd_request_size(ontology_id):
 
 def test_unknown_ontology():
     assert client.get("/api/ontologies/ont-nope/source").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# A large ontology (CF-3): above BOUNDED_SOURCE_FROM statements the formatted
+# view serialises only the part its cap can show. Proved by a count of the
+# statements handed to serialize, never by a timing.
+# ---------------------------------------------------------------------------
+
+BIG_CLASSES = 4_000
+
+
+def _big_turtle() -> bytes:
+    # Six statements a class, one with a restriction's blank node, so the part
+    # has to bring a blank node's own statements with its subject.
+    lines = [
+        "@prefix ex: <http://example.org/big#> .",
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .",
+        "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .",
+    ]
+    for i in range(BIG_CLASSES):
+        lines.append(
+            f'ex:C{i:05d} a owl:Class ; rdfs:label "Class {i}"@en ; '
+            f'rdfs:comment "Generated class number {i}." ; '
+            f"rdfs:subClassOf ex:C{i // 3:05d} , "
+            f"[ a owl:Restriction ; owl:onProperty ex:p ; owl:someValuesFrom ex:C{i // 2:05d} ] ."
+        )
+    return "\n".join(lines).encode("utf-8")
+
+
+@pytest.fixture(scope="module")
+def big_id() -> str:
+    response = client.post(
+        "/api/ontologies/upload",
+        files={"file": ("big-for-source.ttl", _big_turtle(), "text/turtle")},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["id"]
+
+
+@pytest.fixture
+def serialised(monkeypatch) -> list[int]:
+    """The size of every graph handed to Graph.serialize while the test runs."""
+    from rdflib import Graph
+
+    sizes: list[int] = []
+    real = Graph.serialize
+
+    def spy(self, *args, **kwargs):
+        sizes.append(len(self))
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Graph, "serialize", spy)
+    return sizes
+
+
+def _total(oid: str) -> int:
+    from app.store import store
+
+    return len(store.get(oid).ensure_loaded())
+
+
+def test_a_large_ontology_serialises_only_the_part_shown(big_id, serialised):
+    from rdflib import Graph
+
+    from app.store import BOUNDED_SOURCE_FROM
+
+    total = _total(big_id)
+    assert total > BOUNDED_SOURCE_FROM
+    body = client.get(
+        f"/api/ontologies/{big_id}/source", params={"pretty": True, "max_bytes": 200_000}
+    ).json()
+    # Never the whole graph: only the part, a fraction of it.
+    assert serialised and max(serialised) < total // 4
+    assert body["truncated"] is True
+    assert body["statements"]["total"] == total
+    assert 0 < body["statements"]["shown"] <= max(serialised)
+    assert len(body["text"]) <= 200_000
+    # The part is whole subjects, so it is Turtle on its own, blank nodes and all.
+    part = Graph().parse(data=body["text"], format="turtle")
+    assert len(part) == body["statements"]["shown"]
+    assert "ex:C00000" in body["text"]
+
+
+def test_under_the_threshold_the_view_is_unchanged(ontology_id, serialised):
+    from app.store import store
+
+    # An earlier test may have cached the whole; this one watches it written.
+    store.get(ontology_id).pretty_cache = None
+    body = client.get(f"/api/ontologies/{ontology_id}/source", params={"pretty": True}).json()
+    assert serialised == [_total(ontology_id)]
+    assert "statements" not in body
+    assert body["truncated"] is False
+
+
+def test_the_documentation_export_still_serialises_everything(big_id, serialised):
+    from app.store import store
+
+    store.get(big_id).pretty_cache = None
+    response = client.get(f"/api/ontologies/{big_id}/documentation")
+    assert response.status_code == 200, response.text[:300]
+    assert _total(big_id) in serialised

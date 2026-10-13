@@ -41,6 +41,8 @@ INPUTS / INPUT SOURCES (props)
 EXPECTED OUTPUT
     - The rendered search box and dropdown; onPick on selection.
     - A polite announcement of how many results a completed search found.
+    - Only the latest search's answer is applied; an older request still on
+      its way is aborted (CF-4).
 ================================================================================
 */
 
@@ -88,9 +90,20 @@ export default function SearchBox({
   const [announcement, setAnnouncement] = useState("");
   const timer = useRef<number | undefined>(undefined);
   const wrapRef = useRef<HTMLDivElement>(null);
+  // Searches are numbered and only the latest one's answer is applied, the
+  // data wizard's rule for its reads: cancelling the debounce timer did not
+  // stop a request already sent, so a slow answer for "Pla" could land after
+  // the one for "Planet" and replace it (CF-4). The request it replaces is
+  // aborted as well, which saves the server the work; the number is what
+  // makes it correct, since an answer can already be on its way.
+  const searchCount = useRef(0);
+  const inFlight = useRef<AbortController | null>(null);
 
   useEffect(() => {
     window.clearTimeout(timer.current);
+    const ticket = ++searchCount.current;
+    inFlight.current?.abort();
+    inFlight.current = null;
     if (!ontologyId || query.trim().length < 2) {
       setResults([]);
       setActive(-1);
@@ -98,8 +111,12 @@ export default function SearchBox({
       return;
     }
     timer.current = window.setTimeout(() => {
-      searchNodes(ontologyId, query, imports)
+      const controller = new AbortController();
+      inFlight.current = controller;
+      const latest = () => ticket === searchCount.current;
+      searchNodes(ontologyId, query, imports, undefined, controller.signal)
         .then((r) => {
+          if (!latest()) return;
           setResults(r);
           setActive(-1);
           setOpen(true);
@@ -107,9 +124,14 @@ export default function SearchBox({
             r.length === 0 ? "No results" : r.length === 1 ? "1 result" : `${r.length} results`,
           );
         })
-        .catch(() => setResults([]));
+        .catch(() => {
+          if (latest()) setResults([]);
+        });
     }, 200);
   }, [query, ontologyId, imports]);
+
+  // A search still on its way when the box goes is not wanted either.
+  useEffect(() => () => inFlight.current?.abort(), []);
 
   useEffect(() => {
     const close = (e: MouseEvent) => {

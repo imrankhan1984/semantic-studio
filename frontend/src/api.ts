@@ -367,17 +367,20 @@ export function getNodeDetails(id: string, iri: string, imports = false): Promis
 
 // Label/IRI search for the search box. `kind` keeps one kind of entity,
 // applied by the server before its limit (the editing form's pickers).
+// `signal` lets the search box abort a request a newer one has replaced.
 export function searchNodes(
   id: string,
   q: string,
   imports = false,
   kind?: SearchKind,
+  signal?: AbortSignal,
 ): Promise<VizNode[]> {
   const extra = kind ? `&kind=${kind}` : "";
   return send(
     withLang(
       withImports(`/api/ontologies/${id}/search?q=${encodeURIComponent(q)}${extra}`, imports),
     ),
+    signal ? { signal } : undefined,
   ).then((r) => handle<VizNode[]>(r));
 }
 

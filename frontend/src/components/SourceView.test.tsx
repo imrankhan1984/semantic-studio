@@ -24,6 +24,9 @@ BASIC IDEA
     lookup run against it would announce that the entity is absent from a file
     nobody has read.
 
+    And the sentence above a part: the formatted view of a large ontology
+    counts the statements it holds rather than the bytes (CF-3).
+
 INPUTS / INPUT SOURCES
     - A mocked ../api whose getSource returns a fixed document.
     - Synthetic line arrays built in this file for the pure-function cases.
@@ -362,5 +365,32 @@ describe("SourceView target", () => {
     expect(document.querySelector(".source-view")!.getAttribute("aria-labelledby")).toBe(
       "source-view-heading",
     );
+  });
+});
+
+describe("SourceView, a part of a large ontology", () => {
+  it("says how many of the ontology's statements the part holds", async () => {
+    // CF-3: past 20,000 statements the server writes only a part, so there is
+    // no true size in bytes to quote; the sentence counts statements instead.
+    getSource.mockResolvedValue({
+      ...sourceOf(PRETTY, true),
+      statements: { shown: 48_211, total: 200_000 },
+    });
+    render(<SourceView ontologyId="o1" />);
+    await settle();
+
+    const hint = document.querySelector(".query-hint")!;
+    expect(hint.textContent).toContain("you are reading its first 48,211 of 200,000 statements");
+    expect(hint.textContent).not.toContain("KB of");
+  });
+
+  it("a cut file still says how much of it is shown in KB", async () => {
+    getSource.mockResolvedValue({ ...sourceOf(PRETTY, true), bytes: 4 * 1024 * 1024 });
+    render(<SourceView ontologyId="o1" />);
+    await settle();
+
+    const hint = document.querySelector(".query-hint")!;
+    expect(hint.textContent).toContain("This file is too large to show in full");
+    expect(hint.textContent).not.toContain("statements");
   });
 });

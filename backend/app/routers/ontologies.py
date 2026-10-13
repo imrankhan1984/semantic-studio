@@ -101,8 +101,15 @@ from ..editing import editing_service
 from ..hierarchy import with_inferred
 from ..projects import split_document_id
 from ..query_schema import describe_query_node
-from ..sparql_exec import QueryError, QueryTimeout, execute_select
-from ..store import ParseError, ParseTimeout, detect_format, saved_queries, store
+from ..sparql_exec import QueryBusy, QueryError, QueryTimeout, execute_select
+from ..store import (
+    BOUNDED_SOURCE_FROM,
+    ParseError,
+    ParseTimeout,
+    detect_format,
+    saved_queries,
+    store,
+)
 
 PROPERTY_KINDS = (KIND_OBJECT_PROPERTY, KIND_DATATYPE_PROPERTY)
 
@@ -679,9 +686,17 @@ def get_source(
     asked to render tens of megabytes at once.
     """
     ontology = _get_or_404(oid)
+    statements = None
     if pretty:
         # "Formatted" view: the graph re-serialized as tidy prefixed Turtle.
-        text = ontology.pretty_turtle()
+        # Past BOUNDED_SOURCE_FROM statements only the part the cap can show
+        # is serialised, and the true count goes back with it (CF-3).
+        total = len(ontology.ensure_loaded())
+        if total > BOUNDED_SOURCE_FROM:
+            text, shown = ontology.bounded_turtle(max_bytes)
+            statements = {"shown": shown, "total": total}
+        else:
+            text = ontology.pretty_turtle()
         fmt = "turtle"
     else:
         # "Original" view: the exact bytes as loaded, or for a project
@@ -705,7 +720,7 @@ def get_source(
         # Cut on the last newline before the cap so no half-line is shown.
         cut = text.rfind("\n", 0, max_bytes)
         text = text[: cut if cut > 0 else max_bytes]
-    return {
+    body = {
         "text": text,
         "format": fmt,
         "pretty": pretty,
@@ -714,6 +729,12 @@ def get_source(
         "lines": text.count("\n") + 1,
         "name": ontology.name,
     }
+    if statements is not None:
+        # A part: the whole was never written, so its size in bytes is not
+        # known, and the interface says what it shows in statements instead.
+        body["truncated"] = truncated or statements["shown"] < statements["total"]
+        body["statements"] = statements
+    return body
 
 
 # Trailing RDF extensions stripped from a name before it becomes a zip filename,
@@ -860,7 +881,8 @@ def run_sparql(oid: str, request: SparqlRequest, imports: bool = IMPORTS_PARAM) 
     """POST /{oid}/sparql -> run a SELECT query and return the result rows.
 
     Maps the executor's exceptions to HTTP: timeout -> 504, bad/forbidden
-    query -> 400. With imports on it runs over the merged view, which is
+    query -> 400, a timed-out query of this ontology still finishing -> 409
+    (D-108). With imports on it runs over the merged view, which is
     read-only by construction, and says how many imported documents it
     covered, so the results can state what was queried.
     """
@@ -868,7 +890,7 @@ def run_sparql(oid: str, request: SparqlRequest, imports: bool = IMPORTS_PARAM) 
     graph = _graph(ontology, imports)
     try:
         with ontology.reading():
-            result = execute_select(graph, request.query)
+            result = execute_select(graph, request.query, key=oid)
         if imports:
             result["importDocuments"] = imports_service.merged(ontology)["documents"]
         # What the results covered: the switched-on data snapshots, which
@@ -879,6 +901,8 @@ def run_sparql(oid: str, request: SparqlRequest, imports: bool = IMPORTS_PARAM) 
         return result
     except QueryTimeout as exc:
         raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except QueryBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except QueryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
