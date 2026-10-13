@@ -563,7 +563,8 @@ def test_a_run_past_the_time_limit_is_killed_with_its_sentence(shop, monkeypatch
     result = reason(shop)
     assert time.monotonic() - started < 10
     assert result["status"] == "timedOut"
-    assert result["sentence"] == "Stopped after 30 seconds. Try without the data snapshots, or with fewer imports."
+    # The limit that applied, never the one the module started with.
+    assert result["sentence"] == "Stopped after 1.5 seconds. Try without the data snapshots, or with fewer imports."
     assert not reasoning.service.running(shop)
 
 

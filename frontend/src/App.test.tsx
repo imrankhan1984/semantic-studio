@@ -13,7 +13,9 @@ SUMMARY
     drawing the entity first if the node budget left it out, or into the raw
     source text — and the About control: where it sits, that it is not a mode
     tab, that the panel exists only while open, and that closing it hands focus
-    back to the control that opened it.
+    back to the control that opened it. And, for X-12, App's wiring of Reason:
+    the imports switch and the data checkbox it sends, and a run made stale
+    by an edit while it ran.
 
 BASIC IDEA
     App is mocked down to the parts these assert on. GraphView is replaced with
@@ -108,6 +110,7 @@ const {
   validateProject,
   runCommand,
   reasonProject,
+  listData,
 } = vi.hoisted(() => ({
   listOntologies: vi.fn(),
   getGraph: vi.fn(),
@@ -155,6 +158,8 @@ const {
   // edit-page-rework: a draft made from the side panel, and a run of Reason.
   runCommand: vi.fn(),
   reasonProject: vi.fn(),
+  // X-12: an open project's snapshot list, which a failed read now says.
+  listData: vi.fn(),
 }));
 
 // importOriginal rather than a bare factory, so ApiError stays the real class.
@@ -198,10 +203,12 @@ vi.mock("./api", async (importOriginal) => ({
   validateProject,
   runCommand,
   reasonProject,
+  listData,
 }));
 
 /** Every mocked client function, so a test can count what mount actually did. */
 const ALL_API = {
+  listData,
   listImports,
   listOntologies,
   getGraph,
@@ -390,6 +397,7 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   listOntologies.mockResolvedValue([SUMMARY]);
   listProjects.mockResolvedValue([]);
+  listData.mockResolvedValue({ generation: 0, snapshots: [] });
   projectStore._reset();
   getGraph.mockResolvedValue(TRUNCATED);
   listImports.mockResolvedValue({ imports: [], limit: null, resolving: null, offline: false });
@@ -3315,6 +3323,55 @@ describe("App Edit page (edit-page-rework)", () => {
       await projectStore.reason(false, false);
     });
     expect(within(panel).getByRole("tab", { name: "Reasoning" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("T-17: Reason is sent the imports switch and the data checkbox, through App (PR #55 review)", async () => {
+    localStorage.setItem("semantic-studio-include-imports", JSON.stringify({ [OID]: true }));
+    listData.mockResolvedValue({ generation: 1, snapshots: [{ id: "people-abc123", source: "people.csv", enabled: true }] });
+    try {
+      await renderProject();
+      const panel = screen.getByRole("complementary", { name: "Side panel" });
+      await act(async () => {
+        fireEvent.click(within(panel).getByRole("tab", { name: "Reasoning" }));
+      });
+      reasonProject.mockResolvedValue(reasoned({ includeData: true, imports: true, basis: { revision: 0, generation: 1, imports: true } }));
+      await act(async () => {
+        fireEvent.click(within(panel).getByRole("checkbox", { name: "Include data snapshots" }));
+      });
+      await act(async () => {
+        fireEvent.click(within(panel).getByRole("button", { name: "Reason" }));
+      });
+      expect(reasonProject).toHaveBeenCalledWith(PROJECT.id, true, true);
+    } finally {
+      localStorage.removeItem("semantic-studio-include-imports");
+    }
+  });
+
+  it("T-17: an edit made while a run goes leaves its result stale on arrival, through App (PR #55 review)", async () => {
+    await renderProject();
+    const panel = screen.getByRole("complementary", { name: "Side panel" });
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("tab", { name: "Reasoning" }));
+    });
+    let answer: (r: unknown) => void = () => {};
+    reasonProject.mockReturnValue(new Promise((r) => (answer = r)));
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("button", { name: "Reason" }));
+    });
+    expect(reasonProject).toHaveBeenCalledWith(PROJECT.id, false, false);
+    // An edit while it runs: the model moves to revision 1.
+    await act(async () => {
+      projectStore.applied({ state: docState({ revision: 1, dirty: true }), label: "Renamed Instrument" } as Parameters<
+        typeof projectStore.applied
+      >[0]);
+    });
+    await act(async () => answer(reasoned()));
+    expect(projectStore.getSnapshot().announcement.text).toBe(
+      "Reasoned in 0.9 s, but the model changed meanwhile: Reason again.",
+    );
+    expect(within(panel).getByText("The model changed after this run.")).toBeTruthy();
+    expect(within(panel).getByRole("button", { name: "Reason again" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Show inferred/ })).toBeNull();
   });
 
   it("a problem never takes the tab from a draft being named: the badge says it (code review)", async () => {

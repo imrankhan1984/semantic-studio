@@ -119,9 +119,15 @@ _PROPERTY_TYPES = (
 )
 
 ENDINGS = {
-    "timedOut": f"Stopped after {TIME_LIMIT_SECONDS:g} seconds. Try without the data snapshots, or with fewer imports.",
     "stopped": "Stopped. Nothing was concluded.",
 }
+
+
+def timed_out_sentence(limit: float) -> str:
+    """Said of a run killed at ``limit`` seconds. Built when the run times
+    out, from the limit that applied: written once at import, it said 30
+    of a run a test had stopped at 1.5 (PR #55 review)."""
+    return f"Stopped after {limit:g} seconds. Try without the data snapshots, or with fewer imports."
 RUNNING = "A run is already going."
 NO_REASON = (
     "Concluded by the reasoner (OWL 2 RL); Semantic Studio has no plain-words reason for this one."
@@ -147,7 +153,7 @@ class RawResult:
     added: list = field(default_factory=list)
     errors: list = field(default_factory=list)
     probe_errors: list = field(default_factory=list)
-    message: Optional[str] = None   # a failure's first line
+    message: Optional[str] = None   # a failure's first line, or the timed-out sentence
     duration_ms: float = 0.0
     probe_ms: float = 0.0           # the probe run's share, measured in the worker
 
@@ -201,7 +207,7 @@ def reason(
             if handle.stop_requested.is_set():
                 return RawResult("stopped", duration_ms=elapsed())
             if time.perf_counter() >= deadline:
-                return RawResult("timedOut", duration_ms=elapsed())
+                return RawResult("timedOut", message=timed_out_sentence(limit), duration_ms=elapsed())
             if receiver.poll(_POLL_SECONDS):
                 try:
                     answer = receiver.recv()
@@ -387,6 +393,8 @@ class Outcome:
                 f"reasons over at most {MAX_STATEMENTS:,}: try without the data snapshots, or "
                 "with fewer imports."
             )
+        if self.status == "timedOut":
+            return self.message or timed_out_sentence(TIME_LIMIT_SECONDS)
         return ENDINGS.get(self.status)
 
     def summary(self, current: Optional[Key] = None) -> dict:

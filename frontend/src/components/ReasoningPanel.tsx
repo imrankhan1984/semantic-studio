@@ -238,7 +238,11 @@ export default function ReasoningPanel({ projectId, kind, hasData, now, onSelect
             }}
           />
         )}
-        {result && <Results projectId={projectId} result={result} token={token} imports={now.imports} onSelect={onSelect} />}
+        {/* A page belongs to the run it continues: its imports switch, not
+            the one the toolbar shows now (PR #55 review). */}
+        {result && (
+          <Results projectId={projectId} result={result} token={token} imports={result.basis.imports} onSelect={onSelect} />
+        )}
         {/* What reasoning is, said once, under the results (5.4): the page
             starts with the model, not with this. */}
         <p className="detail-note reasoning-footer">

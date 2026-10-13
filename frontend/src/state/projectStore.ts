@@ -10,7 +10,8 @@ SUMMARY
     display language, the editor's unapplied text, the sentence the live
     region last announced, the last SHACL validation (shacl-authoring
     5.6), which lives for the session and is never saved, the project's
-    data snapshots with their generation (csv-data-import 5.6), and the last
+    data snapshots with their generation (csv-data-import 5.6) or why they
+    could not be read, and the last
     reasoning run with Show inferred (axioms-and-reasoning 5.2 to 5.7).
 
 BASIC IDEA
@@ -80,6 +81,7 @@ EXPECTED OUTPUT
 
 import { useSyncExternalStore } from "react";
 import {
+  ApiError,
   applyDocumentSource,
   closeProject,
   failureReason,
@@ -572,9 +574,10 @@ export const projectStore = {
         result = await reasonProject(project.id, includeData, imports);
       } catch (e) {
         if (stale()) return null;
-        const text = e instanceof Error ? e.message : String(e);
+        // Said once: the Reasoning panel's alert reads it, and a live-region
+        // announcement as well said it twice (PR #55 review).
+        const text = e instanceof ApiError ? e.message : `The run could not be started: ${failureReason(e)}`;
         set({ reasoningError: text });
-        announce(text);
         return null;
       }
       if (stale()) return null;
@@ -603,7 +606,7 @@ export const projectStore = {
 
   /** Stop the run: its process is killed, and its own answer says so. Once
    *  pressed, presses are ignored until that answer; a refused Stop is
-   *  said, and Stop can be pressed again. */
+   *  said, once, in the panel's alert, and Stop can be pressed again. */
   async stopReasoning(): Promise<void> {
     const project = requireProject();
     if (snapshot.reasoningSince === null || snapshot.reasoningStopping) return;
@@ -613,9 +616,10 @@ export const projectStore = {
       await stopReasoning(project.id);
     } catch (e) {
       if (run !== reasoningRun || snapshot.reasoningSince === null) return;
-      const text = `The run could not be stopped: ${e instanceof Error ? e.message : String(e)}`;
+      // In the app's words, never the browser's ("Failed to fetch"), and
+      // said once, by the panel's alert (PR #55 review).
+      const text = `The run could not be stopped: ${failureReason(e)} Press Stop again.`;
       set({ reasoningStopping: false, reasoningError: text });
-      announce(text);
     }
   },
 
