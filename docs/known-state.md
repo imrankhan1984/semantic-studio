@@ -1626,6 +1626,17 @@ EXPECTED OUTPUT
   to appear missed the case where it was already there (row E4, the drag
   route). The canvas focuses it now if drawn, else when it is.
 
+  That was still not enough in a browser (PR #57 review: every route, both
+  test models, focus back on the control the draft began from). React Flow
+  draws a new node `visibility: hidden` until it has measured it, and
+  Chromium ignores `focus()` on a hidden element; a focus a tick after the
+  box appeared won or lost that race (4 of 6 routes lost on the unfixed
+  build). jsdom focuses anything, so the tests passed. `focusBox` now tries
+  again every 16 ms until the box holds focus, for at most a second, and
+  stops if focus moved elsewhere meanwhile. The test stub draws a new box
+  hidden for 40 ms and refuses `focus()` on a hidden element, as a browser
+  does; both orders of refetch and result go red without the retry.
+
   **Colour by kind, checked twice.** The tokens are custom properties in
   `index.css` (both themes) and the same values in `canvas/kindColours.ts`,
   whose test measures every pair against 5.8's floors and reads the

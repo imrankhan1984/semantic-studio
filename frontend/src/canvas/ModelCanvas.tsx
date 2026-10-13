@@ -340,10 +340,26 @@ function Canvas(props: ModelCanvasProps) {
   const selectedNow = useRef(selected);
   selectedNow.current = selected;
 
+  // React Flow draws a new node `visibility: hidden` until it has measured
+  // it, and a browser ignores focus() on a hidden element: one attempt a
+  // tick after the box was drawn lost the race on every Create route in
+  // Chromium (PR #57 review; jsdom focuses anything). So it tries again
+  // until the box holds focus, for at most a second, and stops if focus has
+  // moved elsewhere meanwhile: whatever moved it was someone's choice. A
+  // control that went (the page holds focus) moved nothing.
   const focusBox = useCallback((iri: string) => {
-    window.setTimeout(() => {
-      wrapper.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(iri)}"]`)?.focus();
-    }, 0);
+    let tries = 0;
+    let before: Element | null = null;
+    const attempt = () => {
+      const box = wrapper.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(iri)}"]`);
+      const now = document.activeElement;
+      if (tries === 0) before = now;
+      else if (now !== before && now !== document.body) return;
+      box?.focus();
+      if (box && document.activeElement === box) return;
+      if (++tries < 60) window.setTimeout(attempt, 16);
+    };
+    window.setTimeout(attempt, 0);
   }, []);
 
   // --- commands ----------------------------------------------------------------

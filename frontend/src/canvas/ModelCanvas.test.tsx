@@ -29,7 +29,7 @@ EXPECTED OUTPUT
 */
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ComponentType, ReactNode } from "react";
+import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { projectStore } from "../state/projectStore";
 import type { CanvasLayout, CanvasView } from "../types";
@@ -52,6 +52,7 @@ vi.mock("../api", async (importOriginal) => {
 // The stub: nodes through the canvas's own node types, and every prop kept.
 const flow = vi.hoisted(() => ({
   props: {} as Record<string, any>,
+  measureMs: null as number | null,
   api: {
     setCenter: vi.fn(),
     getZoom: () => 1,
@@ -64,6 +65,28 @@ const flow = vi.hoisted(() => ({
 }));
 vi.mock("@xyflow/react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@xyflow/react")>();
+  // As React Flow does, a node is drawn hidden until it is measured, when a
+  // test asks for that by setting `flow.measureMs`.
+  function StubNode(props: { id: string; ariaLabel?: string; onClick: (e: any) => void; children: ReactNode }) {
+    const [measured, setMeasured] = useState(flow.measureMs === null);
+    useEffect(() => {
+      if (measured) return;
+      const t = setTimeout(() => setMeasured(true), flow.measureMs ?? 0);
+      return () => clearTimeout(t);
+    }, [measured]);
+    return (
+      <div
+        className="react-flow__node"
+        data-id={props.id}
+        tabIndex={0}
+        aria-label={props.ariaLabel}
+        style={measured ? undefined : { visibility: "hidden" }}
+        onClick={props.onClick}
+      >
+        {props.children}
+      </div>
+    );
+  }
   function ReactFlow(props: Record<string, any>) {
     flow.props = props;
     const types = props.nodeTypes as Record<string, ComponentType<any>>;
@@ -72,16 +95,9 @@ vi.mock("@xyflow/react", async (importOriginal) => {
         {(props.nodes as any[]).map((n) => {
           const Box = types[n.type];
           return (
-            <div
-              key={n.id}
-              className="react-flow__node"
-              data-id={n.id}
-              tabIndex={0}
-              aria-label={n.ariaLabel}
-              onClick={(e) => props.onNodeClick?.(e, n)}
-            >
+            <StubNode key={n.id} id={n.id} ariaLabel={n.ariaLabel} onClick={(e) => props.onNodeClick?.(e, n)}>
               <Box id={n.id} data={n.data} selected={n.selected} />
-            </div>
+            </StubNode>
           );
         })}
         {(props.edges as any[]).map((e) => (
@@ -223,6 +239,7 @@ afterEach(() => {
   cleanup();
   projectStore._reset();
   vi.useRealTimers();
+  flow.measureMs = null;
 });
 
 describe("what the canvas draws (AC-11)", () => {
@@ -341,6 +358,56 @@ describe("creating (AC-12)", () => {
     });
     await waitFor(() => expect(document.activeElement).toBe(box("Receipt")));
   });
+
+  // React Flow draws a box hidden until it has measured it, and a browser
+  // ignores focus() on a hidden element; jsdom focuses anything, so the
+  // stub draws a new box hidden for 40 ms and focus() here refuses a hidden
+  // one. One attempt a tick after the box was drawn lost (PR #57 review).
+  for (const refetch of ["after", "before"] as const) {
+    it(`what a draft made takes focus on its box though it is drawn hidden at first, the refetch landing ${refetch} the result`, async () => {
+      const focus = HTMLElement.prototype.focus;
+      const spy = vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (this: HTMLElement, options?: FocusOptions) {
+        if (this.closest<HTMLElement>("[style*='visibility: hidden']")) return;
+        focus.call(this, options);
+      });
+      try {
+        let answer!: (value: unknown) => void;
+        runCommand.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+        const { rerender } = await renderCanvas();
+        flow.measureMs = 40;
+        fireEvent.click(screen.getByRole("button", { name: "Class" }));
+        const field = screen.getByRole("textbox", { name: "Name of the new class" });
+        fireEvent.change(field, { target: { value: "Receipt" } });
+        fireEvent.keyDown(field, { key: "Enter" });
+        const next = viewOf();
+        next.nodes = [...next.nodes, { iri: EX + "Receipt", kind: "class", label: "Receipt", fallback: false, attributes: [] }];
+        getCanvas.mockResolvedValue({ ...next, revision: 3 });
+        const redraw = () =>
+          act(async () => {
+            rerender(
+              <ModelCanvas projectId={PID} doc="model" revision={3} language="en" primaryLanguage="en" selected={null}
+                onSelect={onSelect} onSelectLink={onSelectLink} onDeleted={onDeleted} onCanvasSet={onCanvasSet} />,
+            );
+          });
+        const result = () =>
+          act(async () => {
+            answer({ revision: 3, label: "Created class Receipt", state: STATE, created: EX + "Receipt" });
+          });
+        if (refetch === "before") {
+          await redraw();
+          await waitFor(() => expect(box("Receipt")).toBeTruthy());
+          await result();
+        } else {
+          await result();
+          await redraw();
+        }
+        await waitFor(() => expect(document.activeElement).toBe(box("Receipt")), { timeout: 1000 });
+        expect(box("Receipt").closest(".react-flow__node")!.getAttribute("style") ?? "").not.toContain("hidden");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  }
 
   it("Escape or an empty name sends nothing", async () => {
     await renderCanvas();
