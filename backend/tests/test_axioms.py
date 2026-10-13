@@ -13,7 +13,9 @@ SUMMARY
     kept; the Turtle round trip of every 5.8 row both ways (AC-9), with a
     union read-only and never rewritten; owl:AllDisjointClasses shown as
     read-only Turtle and counted by every disjointness check and the
-    canvas's *never* lines (PR #56 review); the canvas's rule lines; and Check
+    canvas's *never* lines (PR #56 review), a disjointness a group states
+    refused when added again and its removal told truly (X-12, T-25,
+    T-26); the canvas's rule lines; and Check
     it in data too, one undo step in shapes.ttl, read-only in the shapes
     form and never rewritten by it (AC-12, row R13 as the server sees it).
 
@@ -551,6 +553,28 @@ def test_no_command_rewrites_an_all_disjoint_group(pid):
     ok(pid, "AddRestriction", **{"class": EX + "Person"}, property=EX + "birthDate", kind="atMost", n=1)
     assert [i["type"] for i in rules(pid, EX + "Person")["items"]] == ["restriction", "turtle"]
     assert isomorphic(_group(graph(pid)), _group(before))
+
+
+def test_removing_a_disjointness_only_a_group_states_says_so_truly(pid):
+    # X-12, T-25: it said "not disjoint in this document", which was untrue.
+    apply(pid, GROUP)
+    _refused(pid, "RemoveDisjointWith",
+             "Person and Organization are disjoint through a group of classes written in Turtle. Edit it in Turtle.",
+             a=EX + "Person", b=EX + "Organization")
+    # Two classes no statement makes disjoint keep their sentence.
+    _refused(pid, "RemoveDisjointWith", "Person and Order are not disjoint in this document.",
+             a=EX + "Person", b=EX + "Order")
+
+
+def test_adding_a_disjointness_a_group_already_states_is_refused(pid):
+    # X-12, T-26 (Q2): refused as a duplicate rule is, nothing written.
+    apply(pid, GROUP)
+    _refused(pid, "AddDisjointWith", "Person and Organization are already disjoint.",
+             a=EX + "Person", b=EX + "Organization")
+    _refused(pid, "AddDisjointWith", "Robot and Person are already disjoint.", a=EX + "Robot", b=EX + "Person")
+    assert not list(graph(pid).triples((None, OWL.disjointWith, None)))
+    # A class outside the group is made disjoint as before.
+    ok(pid, "AddDisjointWith", a=EX + "Person", b=EX + "Order")
 
 
 def test_equivalent_to_a_class_in_its_all_disjoint_group_is_refused(pid):

@@ -1942,7 +1942,9 @@ def cmd_add_disjoint_with(ctx: Context, a: dict) -> Change:
     """*No Person is an Organization* (5.8). Disjoint with one of its own
     kinds is kept, and warned on the form (modeling_checks.never_members)."""
     first, second = _class_pair(ctx, a, OWL.disjointWith)
-    if _pair_statements(ctx, first, second, OWL.disjointWith):
+    # Already disjoint by a group (owl:AllDisjointClasses) as well: a second
+    # statement of it would say nothing new (X-12, T-26, Q2).
+    if _pair_statements(ctx, first, second, OWL.disjointWith) or second in axioms.disjoint_with(ctx.graph, first):
         raise CommandError(f"{ctx.name(first)} and {_rule_name(ctx, second)} are already disjoint.")
     return _change(
         ctx.graph, f"Made {ctx.name(first)} and {_rule_name(ctx, second)} disjoint",
@@ -1956,6 +1958,13 @@ def cmd_remove_disjoint_with(ctx: Context, a: dict) -> Change:
     second = ctx.iri(a.get("b"), "class")
     removes = _pair_statements(ctx, first, second, OWL.disjointWith)
     if not removes:
+        # Disjoint through a group the form reads only as Turtle: saying they
+        # were not disjoint was untrue (X-12, T-25).
+        if second in axioms.disjoint_with(ctx.graph, first):
+            raise CommandError(
+                f"{ctx.name(first)} and {_rule_name(ctx, second)} are disjoint through a group of "
+                "classes written in Turtle. Edit it in Turtle."
+            )
         raise CommandError(f"{ctx.name(first)} and {_rule_name(ctx, second)} are not disjoint in this document.")
     return _change(
         ctx.graph, f"Removed the disjointness of {ctx.name(first)} and {_rule_name(ctx, second)}", removes=removes
