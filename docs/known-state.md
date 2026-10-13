@@ -1663,3 +1663,57 @@ EXPECTED OUTPUT
   **Not changed.** The spec asked for the reasoning panel's 35% line to be
   removed from `CLAUDE.md`'s rules; there was no such line, only the CSS
   (`.reasoning { max-height: 35% }`), which is gone, and a test asserts it.
+
+- **Tidy-up, October 2026** (2026-10-13, X-12, `tidy-up-2026-10.md`, D-108;
+  fixes CF-2, CF-3, CF-4). Twenty-six small items from five reviews, in one
+  pull request, one commit per group.
+
+  **A timed-out query stops at its next row; one abandoned query per
+  ontology.** A Python thread cannot be killed, and `executor.shutdown(wait=
+  False)` left a timed-out query running with nothing bounding it (CF-2).
+  `execute_select` now sets a stop flag when the 30 s pass; the row loop
+  checks it between rows, and rdflib yields a SELECT's rows lazily, so a
+  query that is producing rows ends within one. A query still computing its
+  first row (a sort, a big join) cannot be reached: its ontology's id is
+  kept in `_abandoned` with the event its worker sets when it ends, and a new
+  query on that ontology is refused meanwhile with 409 *The last query is
+  still finishing. Try again in a moment.* (D-108). The client reads a 409 as
+  an approval request only when its body has the approval shape, so this
+  one shows as its sentence. The test proves the stop by the statements a
+  paced graph handed out after the timeout (0 or 1), not by a timing.
+
+  **The source view writes a part of a large ontology, not all of it.**
+  Above `BOUNDED_SOURCE_FROM` (20,000 statements; the bundled vocabularies run
+  37 to 120 bytes a statement in Turtle, so the wordiest pass 2 MB there) the
+  formatted view serialises whole subjects in IRI order, each with its blank
+  nodes, until an estimate of the Turtle passes the cap, and answers
+  `statements: {shown, total}` (CF-3). Measured on 200,000 generated
+  statements: about 3.5 s for the part against 6 s for the whole, and the
+  part's cost no longer grows with the ontology. The test counts the
+  statements handed to `Graph.serialize`; the documentation export keeps
+  `pretty_turtle()`, whole, and a test says so.
+
+  **A search answer is applied only if it is the latest.** Cancelling the
+  debounce timer did not stop a request already sent, so a slow answer for
+  *Pla* could replace the one for *Planet* (CF-4). Searches are numbered, as
+  the data wizard's reads are, and only the latest one's answer is applied;
+  the one it replaces is aborted through `searchNodes`' signal. The number is
+  what makes it correct: an answer can already be on its way when the abort
+  comes.
+
+  **One a/an rule and one verb rule per side.** Four copies chose the
+  article by the first letter (*an University*, *a XML file*) and two verb
+  rules disagreed (*must be uses*). `backend/app/sentences.py` and
+  `frontend/src/modeling/sentences.ts` now hold one of each, and both suites
+  test them with one table, `frontend/src/modeling/sentences.table.json`, so
+  they cannot drift apart. `test_sentences.py` and `sentences.test.ts` scan
+  every module for a function named for either rule, the first-letter
+  ternary or the verb rule's word lists, after asserting they read the
+  files. The scan found two copies nobody had listed, in `editing.py`. No
+  article is guessed before a label: *Ann is member of Team A* stays.
+
+  **Where the spec and the build differ.** T-25's refusal is 422, as every
+  command refusal is, not the 409 the spec wrote. T-22's test is in
+  `test_examples.py`, not `ExampleForm.test.tsx`: the example's choices are
+  the server's, and the form is not told a relationship's characteristics.
+  T-21 writes *has exactly one line*, as 5.8 writes one, not *exactly 1*.
