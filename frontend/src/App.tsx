@@ -760,8 +760,14 @@ export default function App() {
   // stays the model's, so a problem's link can select an individual without
   // a document switch. Leaving for View shows shapes.ttl in the editor;
   // leaving for anything else goes back to the model.
+  //
+  // View is a waypoint, not a destination (CF-10): the switch Shapes → View
+  // made is undone on the next move to any tab but Shapes, or Explore drew
+  // shapes.ttl's 0 nodes. `shapesInView` marks that switch alone; the
+  // project bar's picker clears it, so a document picked there is kept.
   const hasShapesDoc = projectDocuments.some((d) => d.doc === "shapes");
   const previousMode = useRef(mode);
+  const shapesInView = useRef(false);
   useEffect(() => {
     const was = previousMode.current;
     previousMode.current = mode;
@@ -770,11 +776,18 @@ export default function App() {
     const model = snap.documents.find((d) => d.doc === "model");
     const shapes = snap.documents.find((d) => d.doc === "shapes");
     if (mode === "shapes") {
+      shapesInView.current = false;
       if (model && activeId !== model.ontologyId) setActiveId(model.ontologyId);
       if (shapes && snap.activeDoc !== "shapes") projectStore.switchDocument("shapes");
     } else if (was === "shapes") {
-      if (mode === "view" && shapes) setActiveId(shapes.ontologyId);
-      else if (snap.activeDoc !== "model") projectStore.switchDocument("model");
+      if (mode === "view" && shapes) {
+        setActiveId(shapes.ontologyId);
+        shapesInView.current = true;
+      } else if (snap.activeDoc !== "model") projectStore.switchDocument("model");
+    } else if (was === "view" && mode !== "view" && shapesInView.current) {
+      shapesInView.current = false;
+      if (model && activeId !== model.ontologyId) setActiveId(model.ontologyId);
+      if (snap.activeDoc !== "model") projectStore.switchDocument("model");
     }
     // activeId is read, not followed: only entering, leaving, or the first
     // shape making shapes.ttl moves the document.
@@ -1646,6 +1659,7 @@ export default function App() {
     guardEditor(() => {
       const target = projectStore.getSnapshot().documents.find((d) => d.doc === doc);
       if (!target) return;
+      shapesInView.current = false;
       projectStore.switchDocument(doc);
       setActiveId(target.ontologyId);
     });

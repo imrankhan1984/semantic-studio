@@ -3084,6 +3084,71 @@ describe("App Shapes view (shacl-authoring Stage A)", () => {
     expect(last[0]).toBe(OID);
     expect(last[1]).toBe("http://example.org/invoices#bob");
   });
+
+  // CF-10 (portal-foundations 5.1): Shapes → View shows shapes.ttl, and the
+  // next tab used to keep it, so Explore drew 0 nodes.
+  const docSelect = () => document.getElementById("project-doc-select") as HTMLSelectElement;
+  const lastGraphId = () => getGraph.mock.calls[getGraph.mock.calls.length - 1]?.[0];
+
+  async function shapesThenView() {
+    getDocumentSource.mockResolvedValue({ text: "@prefix : <x#> .\n", revision: 0, fromEditor: true });
+    await openShapes();
+    await act(async () => {
+      fireEvent.click(tab("View"));
+    });
+    expect(docSelect().value).toBe("shapes");
+  }
+
+  it("CF-10: Shapes → View → Explore lands on the model, not shapes.ttl", async () => {
+    await shapesThenView();
+    getGraph.mockClear();
+    await act(async () => {
+      fireEvent.click(tab("Explore"));
+    });
+    expect(projectStore.getSnapshot().activeDoc).toBe("model");
+    expect(docSelect().value).toBe("model");
+    expect(lastGraphId()).toBe(OID);
+  });
+
+  it("CF-10: the same through Query and through Edit", async () => {
+    await shapesThenView();
+    getQuerySchema.mockClear();
+    await act(async () => {
+      fireEvent.click(tab("Query"));
+    });
+    expect(projectStore.getSnapshot().activeDoc).toBe("model");
+    expect(getQuerySchema.mock.calls[getQuerySchema.mock.calls.length - 1]?.[0]).toBe(OID);
+    cleanup();
+    projectStore._reset();
+    await shapesThenView();
+    getGraph.mockClear();
+    await act(async () => {
+      fireEvent.click(tab("Edit"));
+    });
+    expect(projectStore.getSnapshot().activeDoc).toBe("model");
+    await act(async () => {
+      fireEvent.click(tab("Explore"));
+    });
+    expect(lastGraphId()).toBe(OID);
+  });
+
+  it("CF-10: shapes.ttl picked in the project bar while in View is kept on → Explore", async () => {
+    await shapesThenView();
+    // The person's own choice: back to the model, then shapes.ttl again.
+    await act(async () => {
+      fireEvent.change(docSelect(), { target: { value: "model" } });
+    });
+    await act(async () => {
+      fireEvent.change(docSelect(), { target: { value: "shapes" } });
+    });
+    getGraph.mockClear();
+    await act(async () => {
+      fireEvent.click(tab("Explore"));
+    });
+    expect(projectStore.getSnapshot().activeDoc).toBe("shapes");
+    expect(docSelect().value).toBe("shapes");
+    expect(getGraph.mock.calls.some((c) => c[0] === OID)).toBe(false);
+  });
 });
 
 /* --- edit-page-rework: the Edit tab, the side panel, the one draft -------- */
