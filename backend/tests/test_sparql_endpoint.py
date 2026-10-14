@@ -771,3 +771,34 @@ def test_a_stop_asked_for_during_a_service_call_waits_for_the_call():
     thread.join(5)
     assert seen == ["call ended", "stopped"]
 
+
+
+class _SwallowingGraph(Graph):
+    """A graph that never gives its first statement and swallows the first
+    stop it is sent, as a finaliser the collector runs on the worker does (a
+    WeakSet's remove callback, seen on Linux CI): the stop is lost."""
+
+    def __init__(self):
+        super().__init__()
+        self.swallowed = 0
+
+    def triples(self, pattern, *args, **kwargs):
+        deadline = time.perf_counter() + 10
+        while time.perf_counter() < deadline:
+            try:
+                time.sleep(0.001)
+            except sparql_exec.QueryStopped:
+                if self.swallowed:
+                    raise
+                self.swallowed += 1
+        return iter(())
+
+
+def test_a_stop_lost_in_a_finaliser_is_sent_again(graph, monkeypatch):
+    monkeypatch.setattr(sparql_exec, "STOP_GRACE_SECONDS", 1.0)
+    swallowing = _SwallowingGraph()
+    with pytest.raises(sparql_exec.QueryTimeout):
+        execute_select(swallowing, PLANETS, timeout=0.2, key="swallowed")
+    assert swallowing.swallowed == 1
+    # Stopped by a later stop, it does not keep its key.
+    assert execute_select(graph, PLANETS, key="swallowed")["rowCount"] > 0

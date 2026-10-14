@@ -1695,7 +1695,14 @@ EXPECTED OUTPUT
   interrupted between a lock and its bookkeeping, and the call's 20 s limit
   bounds the wait; a stop asked for meanwhile is raised as the hold ends.
   Disarming is in a `finally`, so a query ending in an ordinary error is
-  disarmed too. A stop lands only at a
+  disarmed too. A stop can be lost: on Linux CI one landed in a `WeakSet`
+  remove callback the collector ran on the worker, was reported as
+  unraisable, and the join ran on (409, and its CPU failed an unrelated
+  timing test). So the stop is sent again every 50 ms of the grace while the
+  worker is armed and alive. A resent stop can land as the worker disarms
+  and reach its cleanup; that is made harmless rather than prevented: the
+  worker's end is its thread's end (`is_alive`), never a flag it must set,
+  and the read lock is a `with` the exception unwinds. A stop lands only at a
   Python instruction: a worker inside a C call or a network wait still
   alive `STOP_GRACE_SECONDS` (2 s) later keeps its ontology's id in
   `_abandoned`, and a new query there is 409 *The last query is still
@@ -1708,7 +1715,8 @@ EXPECTED OUTPUT
   on a gate in C still gets the 409; a worker in its cleanup when the
   timeout fires finishes it whole, and so does one ending in an error; a
   query behind a held lock answers; one hold of the lock per query; a stop
-  asked for during a SERVICE call waits for the call. Each goes red with its
+  asked for during a SERVICE call waits for the call; a stop lost in a
+  finaliser is sent again. Each goes red with its
   part of the fix removed. Accepted: a worker stuck in a C call keeps the
   project's edit lock until the call returns, as the spec gives the lock to
   the worker.

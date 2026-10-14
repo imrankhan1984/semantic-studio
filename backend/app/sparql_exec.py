@@ -105,14 +105,16 @@ BUSY_DETAIL = "The last query is still stopping. Try again in a few seconds."
 # rdflib query is within milliseconds (0.04 s measured on a three-way join
 # under ORDER BY); only a C call or a network wait outlasts it.
 STOP_GRACE_SECONDS = 2.0
+# How often, within the grace, a stop the worker has not acted on is sent again.
+STOP_RESEND_SECONDS = 0.05
 
 # A worker still alive STOP_GRACE_SECONDS after its stop keeps its ontology's
-# key here, holding the event the worker sets when it ends, and a new query on
-# the key is refused until then. Without this, repeated slow queries piled up
+# key here, holding the worker's thread, and a new query on the key is refused
+# while that thread lives. Without this, repeated slow queries piled up
 # abandoned workers with nothing bounding them (CF-2, D-108). Before the stop
 # from outside, a query computing its first row kept the key for as long as it
 # ran, hours for a big join, refusing every query on its ontology meanwhile.
-_abandoned: dict[str, threading.Event] = {}
+_abandoned: dict[str, threading.Thread] = {}
 _abandoned_lock = threading.Lock()
 
 
@@ -128,15 +130,18 @@ class _Stopper:
     """The one stop a worker can be sent, and only while it is in its query.
 
     A thread id is reused once its thread ends, and a stop raised after the
-    query would land in the worker's own cleanup (end_run, the read lock), so
-    it is sent only while the worker is armed, under the lock the worker takes
-    to disarm. Disarming also clears a stop sent but not yet delivered: after
-    it, nothing can reach the thread.
+    query would land in the worker's own cleanup, so it is sent only while the
+    worker is armed and alive, under the lock the worker takes to disarm.
+    Disarming also clears a stop sent but not yet delivered. A resent stop
+    that lands as the worker disarms can still reach its cleanup; that is
+    harmless by design: the worker's end is its thread's end, not a flag it
+    must set, and the read lock is a ``with`` the exception unwinds.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._ident: Optional[int] = None
+        self._thread: Optional[threading.Thread] = None
         self._armed = False
         self._sent = False
         self._wanted = False
@@ -144,6 +149,7 @@ class _Stopper:
     def arm(self) -> None:
         with self._lock:
             self._ident = threading.get_ident()
+            self._thread = threading.current_thread()
             self._armed = True
 
     def disarm(self) -> None:
@@ -153,13 +159,17 @@ class _Stopper:
                 _set_async_exc(self._ident, None)
 
     def stop(self) -> bool:
-        """Send the stop if the worker is in its query and not held; once at
-        most. Declined while held, it is raised when the hold ends."""
+        """Send the stop if the worker is in its query and not held. Declined
+        while held, it is raised when the hold ends.
+
+        The worker stays armed, so the stop can be sent again: one that lands
+        in a finaliser the collector runs on the worker (a WeakSet's remove
+        callback, seen on Linux) is reported as unraisable and lost, and the
+        query runs on."""
         with self._lock:
             self._wanted = True
-            if not self._armed:
+            if not self._armed or not self._thread.is_alive():
                 return False
-            self._armed = False
             # The C API: more than one thread changed must be undone, and
             # none means the thread is gone.
             if _set_async_exc(self._ident, QueryStopped) != 1:
@@ -175,8 +185,11 @@ class _Stopper:
         Its 20 s limit bounds the wait; a stop asked for meanwhile is raised
         here, synchronously, as the hold ends."""
         with self._lock:
-            if self._sent:
-                _set_async_exc(self._ident, None)
+            if self._wanted:
+                # Asked for already: end now, and clear any copy still on
+                # its way so it cannot land inside the call.
+                if self._sent:
+                    _set_async_exc(self._ident, None)
                 raise QueryStopped
             was = self._armed
             self._armed = False
@@ -357,8 +370,8 @@ def execute_select(
         timeout = DEFAULT_TIMEOUT_SECONDS
     if key is not None:
         with _abandoned_lock:
-            done = _abandoned.get(key)
-            if done is not None and not done.is_set():
+            stuck = _abandoned.get(key)
+            if stuck is not None and stuck.is_alive():
                 raise QueryBusy(BUSY_DETAIL)
             _abandoned.pop(key, None)
     # Validate/parse first so a bad query fails before we spin up a thread.
@@ -370,14 +383,15 @@ def execute_select(
     run_state: Optional[sparql_service.ServiceRun] = (
         sparql_service.ServiceRun(plan) if plan is not None else None
     )
-    # Set by the request thread when the timeout fires; done by the worker
-    # when it ends, however it ends; entered once it holds the read lock.
+    # Set by the request thread when the timeout fires; entered by the worker
+    # once it holds the read lock. The worker has ended when its thread has:
+    # no flag it must remember to set, which a stray stop could skip.
     stop = threading.Event()
-    done = threading.Event()
     entered = threading.Event()
     stopper = _Stopper()
     # The worker's one answer: its response parts, None when stopped, or the
-    # exception it ended with.
+    # exception it ended with (QueryStopped, too, if a resent stop landed as
+    # it disarmed).
     outcome: list = []
 
     def evaluate():
@@ -431,7 +445,6 @@ def execute_select(
             sparql_service.hold_stop.reset(held)
             sparql_service.end_run(token)
             entered.set()
-            done.set()
 
     # A thread of its own, never a pool's: the stop is raised in it by id, and
     # a reused worker could carry it into the next query. Run in a copy of the
@@ -445,19 +458,32 @@ def execute_select(
     # The wait for the read lock is not the query's time, as it was not when
     # the request took the lock itself: a query queued behind an edit is not
     # timed out unrun, nor called "still stopping".
-    entered.wait()
+    while not entered.wait(STOP_RESEND_SECONDS) and worker.is_alive():
+        pass
     started = time.perf_counter()
-    if not done.wait(timeout):
+    worker.join(timeout)
+    if worker.is_alive():
         stop.set()
+        # Sent again until the worker ends: one can land in a finaliser the
+        # collector runs on the worker and be lost. Only ever sent while the
+        # worker is armed in its query.
+        given_up = time.perf_counter() + STOP_GRACE_SECONDS
         stopper.stop()
-        if not done.wait(STOP_GRACE_SECONDS) and key is not None:
-            # Inside a C call or a network wait: the stop lands when it
-            # returns, and until then its ontology takes no new query.
-            with _abandoned_lock:
-                if not done.is_set():
-                    _abandoned[key] = done
-    answer = outcome[0] if done.is_set() and outcome else None
-    if answer is None:
+        while True:
+            worker.join(STOP_RESEND_SECONDS)
+            if not worker.is_alive():
+                break
+            if time.perf_counter() >= given_up:
+                if key is not None:
+                    # Inside a C call or a network wait: the stop lands when
+                    # it returns, and until then its ontology takes no new
+                    # query.
+                    with _abandoned_lock:
+                        _abandoned[key] = worker
+                break
+            stopper.stop()
+    answer = outcome[0] if not worker.is_alive() and outcome else None
+    if answer is None or isinstance(answer, QueryStopped):
         # Stopped, or still stopping. A query that finished just as the
         # timeout fired was never sent the stop and keeps its rows.
         raise QueryTimeout(
