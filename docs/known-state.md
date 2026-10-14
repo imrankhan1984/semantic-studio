@@ -1686,7 +1686,16 @@ EXPECTED OUTPUT
   an `except Exception` in rdflib cannot swallow it. The worker takes the
   ontology's read lock itself (the router no longer holds it around the
   call), so a stopped query lets go of it in its own cleanup instead of
-  reading on unlocked after the request has gone. A stop lands only at a
+  reading on unlocked after the request has gone; it serialises the rows
+  under the same hold, so their labels are of the revision they came from,
+  and the timeout starts only once it holds the lock, so a query queued
+  behind an edit is neither timed out unrun nor called "still stopping".
+  The stop is held off round a SERVICE call (`sparql_service.hold_stop`,
+  `_Stopper.held`): the broker's and the socket's code is not written to be
+  interrupted between a lock and its bookkeeping, and the call's 20 s limit
+  bounds the wait; a stop asked for meanwhile is raised as the hold ends.
+  Disarming is in a `finally`, so a query ending in an ordinary error is
+  disarmed too. A stop lands only at a
   Python instruction: a worker inside a C call or a network wait still
   alive `STOP_GRACE_SECONDS` (2 s) later keeps its ontology's id in
   `_abandoned`, and a new query there is 409 *The last query is still
@@ -1697,8 +1706,12 @@ EXPECTED OUTPUT
   shape, so this one shows as its sentence. The tests: the stuck join frees
   its ontology inside 3 s (a simple query then answers 200); a worker waiting
   on a gate in C still gets the 409; a worker in its cleanup when the
-  timeout fires finishes it whole. Each goes red with its part of the fix
-  removed.
+  timeout fires finishes it whole, and so does one ending in an error; a
+  query behind a held lock answers; one hold of the lock per query; a stop
+  asked for during a SERVICE call waits for the call. Each goes red with its
+  part of the fix removed. Accepted: a worker stuck in a C call keeps the
+  project's edit lock until the call returns, as the spec gives the lock to
+  the worker.
 
   **The source view writes a part of a large ontology, not all of it.**
   Above `BOUNDED_SOURCE_FROM` (20,000 statements; the bundled vocabularies run

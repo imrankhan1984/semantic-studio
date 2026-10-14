@@ -48,6 +48,7 @@ from rdflib import Graph
 from rdflib.plugins.sparql import prepareQuery
 
 from app import sparql_exec
+from budget import limit_ms
 from app.main import app
 from app.sparql_service import NOT_PUBLIC_DETAIL
 from app.sparql_exec import (
@@ -626,15 +627,20 @@ def test_a_query_stuck_before_its_first_row_frees_its_ontology(monkeypatch):
         },
     ).json()["id"]
     monkeypatch.setattr(sparql_exec, "DEFAULT_TIMEOUT_SECONDS", 0.5)
-    first = client.post(f"/api/ontologies/{big}/sparql", json={"query": STUCK})
-    timed_out = time.perf_counter()
-    assert first.status_code == 504
-    # Stopped from outside, it lets go of the ontology at once: the next
-    # query answers, with no 409 between, well inside 3 s of the timeout.
-    simple = client.post(f"/api/ontologies/{big}/sparql", json={"query": EVERYTHING + " LIMIT 5"})
-    assert simple.status_code == 200
-    assert simple.json()["rowCount"] == 5
-    assert time.perf_counter() - timed_out < 3
+    try:
+        first = client.post(f"/api/ontologies/{big}/sparql", json={"query": STUCK})
+        timed_out = time.perf_counter()
+        assert first.status_code == 504
+        # Stopped from outside, it lets go of the ontology at once: the next
+        # query answers, with no 409 between, inside 3 s of the timeout.
+        simple = client.post(
+            f"/api/ontologies/{big}/sparql", json={"query": EVERYTHING + " LIMIT 5"}
+        )
+        assert simple.status_code == 200
+        assert simple.json()["rowCount"] == 5
+        assert time.perf_counter() - timed_out < limit_ms(3000) / 1000
+    finally:
+        client.delete(f"/api/ontologies/{big}")
 
 
 def test_a_query_finishing_as_the_timeout_fires_is_not_stopped(graph, monkeypatch):
@@ -662,3 +668,106 @@ def test_a_query_finishing_as_the_timeout_fires_is_not_stopped(graph, monkeypatc
     # Nothing is left pending for a later query on the same thread or key.
     time.sleep(0.1)
     assert execute_select(graph, PLANETS, key="finishing")["rowCount"] == result["rowCount"]
+
+
+class _FailingGraph(Graph):
+    """A graph whose every lookup fails: the query passes the gate and then
+    ends in an ordinary exception, not a stop."""
+
+    def triples(self, pattern, *args, **kwargs):
+        raise RuntimeError("the store failed")
+
+
+def test_a_query_ending_in_an_error_as_the_timeout_fires_is_not_stopped(graph, monkeypatch):
+    from app import sparql_service
+
+    # The evaluation has failed; its worker is still in its cleanup when the
+    # timeout fires. A stopper left armed by the error would land a stop there.
+    real_end_run = sparql_service.end_run
+    released = threading.Event()
+    cleaned = []
+
+    def slow_end_run(token):
+        released.wait(5)
+        for _ in range(20):
+            time.sleep(0.01)
+        real_end_run(token)
+        cleaned.append(True)
+
+    monkeypatch.setattr(sparql_service, "end_run", slow_end_run)
+    threading.Timer(0.3, released.set).start()
+    with pytest.raises(QueryError) as excinfo:
+        execute_select(_FailingGraph(), PLANETS, timeout=0.2, key="failing")
+    assert "the store failed" in str(excinfo.value)
+    assert cleaned == [True]
+
+
+def test_the_wait_for_the_read_lock_is_not_the_query_s_time(graph):
+    # An edit holds the project's lock longer than the timeout; the query
+    # waits for it untimed, as when the request took the lock itself, then
+    # runs and answers rather than timing out unrun.
+    lock = threading.RLock()
+    taken = threading.Event()
+
+    def edit():
+        with lock:
+            taken.set()
+            time.sleep(0.6)
+
+    threading.Thread(target=edit).start()
+    taken.wait(5)
+    result = execute_select(graph, PLANETS, timeout=0.3, key="queued", reading=lambda: lock)
+    assert result["rowCount"] > 0
+
+
+def test_a_query_and_its_labels_are_read_under_one_hold_of_the_lock(graph):
+    # Labels read under a second hold could come from a later revision than
+    # the rows they label.
+    holds = []
+    lock = threading.RLock()
+
+    class Counted:
+        def __enter__(self):
+            lock.acquire()
+            holds.append(threading.get_ident())
+
+        def __exit__(self, *exc):
+            lock.release()
+
+    result = execute_select(graph, PLANETS, reading=Counted)
+    assert result["rowCount"] > 0
+    assert result["rows"][0][0]["label"]
+    assert len(holds) == 1
+
+
+def test_a_stop_asked_for_during_a_service_call_waits_for_the_call():
+    # A stop must not land in the broker's or the socket's code: asked for
+    # while held, it is declined, and raised when the hold ends.
+    stopper = sparql_exec._Stopper()
+    inside = threading.Event()
+    asked = threading.Event()
+    seen = []
+
+    def worker():
+        stopper.arm()
+        try:
+            with stopper.held():
+                inside.set()
+                asked.wait(5)
+                # Python under the hold, where a stop sent would land.
+                for _ in range(20):
+                    time.sleep(0.01)
+                seen.append("call ended")
+        except sparql_exec.QueryStopped:
+            seen.append("stopped")
+        finally:
+            stopper.disarm()
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    inside.wait(5)
+    assert stopper.stop() is False
+    asked.set()
+    thread.join(5)
+    assert seen == ["call ended", "stopped"]
+

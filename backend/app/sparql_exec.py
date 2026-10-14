@@ -138,6 +138,8 @@ class _Stopper:
         self._lock = threading.Lock()
         self._ident: Optional[int] = None
         self._armed = False
+        self._sent = False
+        self._wanted = False
 
     def arm(self) -> None:
         with self._lock:
@@ -147,17 +149,45 @@ class _Stopper:
     def disarm(self) -> None:
         with self._lock:
             self._armed = False
-            if self._ident is not None:
+            if self._sent:
                 _set_async_exc(self._ident, None)
 
     def stop(self) -> bool:
-        """Send the stop if the worker is still in its query; once at most."""
+        """Send the stop if the worker is in its query and not held; once at
+        most. Declined while held, it is raised when the hold ends."""
         with self._lock:
+            self._wanted = True
             if not self._armed:
                 return False
             self._armed = False
-            _set_async_exc(self._ident, QueryStopped)
+            # The C API: more than one thread changed must be undone, and
+            # none means the thread is gone.
+            if _set_async_exc(self._ident, QueryStopped) != 1:
+                _set_async_exc(self._ident, None)
+                return False
+            self._sent = True
             return True
+
+    @contextlib.contextmanager
+    def held(self):
+        """No stop lands inside: a SERVICE call's socket and broker code is
+        not written to be interrupted between its own lock and bookkeeping.
+        Its 20 s limit bounds the wait; a stop asked for meanwhile is raised
+        here, synchronously, as the hold ends."""
+        with self._lock:
+            if self._sent:
+                _set_async_exc(self._ident, None)
+                raise QueryStopped
+            was = self._armed
+            self._armed = False
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._armed = was
+                stop_now = was and self._wanted
+            if stop_now:
+                raise QueryStopped
 
 
 # The algebra node rdflib 7.6.0 produces for a SERVICE clause. Verified to be
@@ -340,13 +370,14 @@ def execute_select(
     run_state: Optional[sparql_service.ServiceRun] = (
         sparql_service.ServiceRun(plan) if plan is not None else None
     )
-    started = time.perf_counter()
     # Set by the request thread when the timeout fires; done by the worker
-    # when it ends, however it ends.
+    # when it ends, however it ends; entered once it holds the read lock.
     stop = threading.Event()
     done = threading.Event()
+    entered = threading.Event()
     stopper = _Stopper()
-    # The worker's one answer: its rows, None when stopped, or the exception.
+    # The worker's one answer: its response parts, None when stopped, or the
+    # exception it ended with.
     outcome: list = []
 
     def evaluate():
@@ -357,8 +388,8 @@ def execute_select(
         rows = []
         hit_cap = False
         # rdflib yields a SELECT's rows lazily, so the flag ends a query the
-        # stop could not reach (it was in C) within one row; part of the rows
-        # is no answer.
+        # stop could not reach (in C, or held round a SERVICE call) within
+        # one row; part of the rows is no answer.
         for row in result:
             if stop.is_set():
                 return None
@@ -367,27 +398,39 @@ def execute_select(
                 hit_cap = True
                 break
             rows.append(tuple(row))
-        return variables, rows, hit_cap
+        # Serialized under the same hold of the read lock as the query, so a
+        # row's labels are of the revision it was computed on. The cache
+        # dedupes label lookups across rows.
+        cache: dict[str, dict] = {}
+        serialized = [[_term_json(graph, term, cache) for term in row] for row in rows]
+        return variables, serialized, hit_cap
 
     # The worker holds the read lock itself, so a stopped query lets go of it
     # in its own cleanup rather than reading on after the request let go.
     def run():
         token = sparql_service.begin_run(run_state)
+        held = sparql_service.hold_stop.set(stopper.held)
         try:
             with reading():
+                entered.set()
                 try:
                     stopper.arm()
-                    answer = evaluate()
-                    # Inside the try: a stop sent before this lands in it or
-                    # is cleared by it, never in the cleanup below.
-                    stopper.disarm()
+                    try:
+                        answer = evaluate()
+                    finally:
+                        # However evaluate ended: a stop sent before this
+                        # lands here or is cleared by it, never in the
+                        # cleanup below or in a later thread with this id.
+                        stopper.disarm()
                 except QueryStopped:
                     answer = None
             outcome.append(answer)
         except BaseException as exc:  # handed to the request thread
             outcome.append(exc)
         finally:
+            sparql_service.hold_stop.reset(held)
             sparql_service.end_run(token)
+            entered.set()
             done.set()
 
     # A thread of its own, never a pool's: the stop is raised in it by id, and
@@ -399,6 +442,11 @@ def execute_select(
         target=contextvars.copy_context().run, args=(run,), name="sparql-query", daemon=True
     )
     worker.start()
+    # The wait for the read lock is not the query's time, as it was not when
+    # the request took the lock itself: a query queued behind an edit is not
+    # timed out unrun, nor called "still stopping".
+    entered.wait()
+    started = time.perf_counter()
     if not done.wait(timeout):
         stop.set()
         stopper.stop()
@@ -426,12 +474,7 @@ def execute_select(
     if isinstance(answer, BaseException):
         # Any other evaluation error becomes a QueryError (HTTP 400).
         raise QueryError(f"The query could not be evaluated: {answer}") from answer
-    variables, rows, truncated = answer
-
-    # Serialize every cell; the cache dedupes label lookups across rows.
-    cache: dict[str, dict] = {}
-    with reading():
-        serialized = [[_term_json(graph, term, cache) for term in row] for row in rows]
+    variables, serialized, truncated = answer
     response = {
         "vars": variables,
         "rows": serialized,

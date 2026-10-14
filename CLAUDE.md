@@ -49,7 +49,7 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1239 tests (+2 marked `network`, deselected)
+cd backend  && python -m pytest tests    # 1243 tests (+2 marked `network`, deselected)
 cd frontend && npm run test              # 1393 tests, vitest
 ```
 
@@ -263,7 +263,7 @@ leaves one behind.
 - `selectFromOutsideGraph` serves search and results; no `builder.addNode` in it. [leads somewhere]
 - `.query-pinned` keeps `flex: none` and a background; `.next-steps-panel` is bounded in `vh`. [keeps the query]
 - A search answer is applied only if it is the latest; the request it replaces is aborted (CF-4). [latest search]
-- A timed-out query is stopped from outside, on a thread of its own, and only while armed in its query; the worker holds the read lock (D-108). [stopped from outside]
+- A timed-out query is stopped from outside, on a thread of its own, and only while armed in its query, never inside a SERVICE call; the worker holds the read lock, and the timeout starts once it has it (D-108). [stopped from outside]
 
 **Sentences**
 - One a/an rule and one verb rule per side, `sentences.py` and `modeling/sentences.ts`, tested with one table; no module defines its own (`test_sentences.py`, `sentences.test.ts` scan). [one a/an rule]
