@@ -218,6 +218,7 @@ import {
   IconView,
 } from "./components/icons";
 import { removalConfirmation, removalPrompt } from "./removalPrompt";
+import { formatName, homeStatus } from "./statusWords";
 import type { SourceTarget } from "./sourceTarget";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type {
@@ -2358,6 +2359,9 @@ export default function App() {
       )}
 
       <footer className="status-bar">
+        {/* The open ontology while there is one, Home included (it is still
+            open there); with none, what is there to open (portal-foundations
+            5.6). */}
         {active ? (
           <>
             <span>{active.name}</span>
@@ -2367,13 +2371,13 @@ export default function App() {
                 the view is partial is never fully hidden. */}
             <span>{countOf(graphData, "node", expanded)} nodes</span>
             <span>{countOf(graphData, "edge", expanded)} edges</span>
-            <span className="dim">{active.format}</span>
+            <span className="dim">{formatName(active.format)}</span>
             {active.source !== "upload" && active.source !== "project" && (
               <span className="dim src">{active.source}</span>
             )}
           </>
         ) : (
-          <span className="dim">Load an ontology to begin — RDF, RDFS, OWL & SKOS supported.</span>
+          <span className="dim">{homeStatus(projects.length, ontologies.length)}</span>
         )}
       </footer>
 

@@ -3531,3 +3531,33 @@ describe("App Edit page, a library ontology (edit-page-rework 5.9, AC-9)", () =>
     expect(screen.queryByRole("note")).toBeNull();
   });
 });
+
+/* --- portal-foundations 5.6: the status bar's words ---------------------- */
+
+describe("App status bar (portal-foundations 5.6, AC-9)", () => {
+  it("on Home counts the projects and the library", async () => {
+    listProjects.mockResolvedValue([PROJECT, { ...PROJECT, id: "prj-111111111111", name: "Second" }]);
+    await renderApp();
+    expect(statusBar()).toBe("2 projects · 1 ontology in the library");
+  });
+
+  it("says 1 project, and leaves out a library of none", async () => {
+    listProjects.mockResolvedValue([PROJECT]);
+    listOntologies.mockResolvedValue([]);
+    await renderApp();
+    expect(statusBar()).toBe("1 project");
+  });
+
+  it("with nothing at all, says how to begin", async () => {
+    listOntologies.mockResolvedValue([]);
+    await renderApp();
+    expect(statusBar()).toBe("Load an ontology or start a project to begin.");
+  });
+
+  it("names the format as people write it: Turtle, not turtle", async () => {
+    await renderAppOpened();
+    const parts = [...document.querySelectorAll(".status-bar span")].map((s) => s.textContent);
+    expect(parts).toContain("Turtle");
+    expect(parts).not.toContain("turtle");
+  });
+});
