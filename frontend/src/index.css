@@ -60,7 +60,9 @@
   --border: #d8dee9;
   --border-soft: #e5e9f0;
   --text: #1f2430;
-  --text-dim: #667085;
+  /* Darker than #667085, which measured 4.39:1 on --bg (portal-foundations
+     5.2); 5.10:1 now, and above 4.5:1 on every light surface. */
+  --text-dim: #5d6678;
   --accent: #2472e8;
   --accent-soft: #bcd3f7;
   --accent-2: #7c3aed;
