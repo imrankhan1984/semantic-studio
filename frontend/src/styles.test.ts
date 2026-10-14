@@ -90,3 +90,64 @@ describe("six font sizes (portal-foundations 5.4, AC-7)", () => {
     expect(block("body")).toMatch(/line-height:\s*1\.45;/);
   });
 });
+
+describe("one button set (portal-foundations 5.5, AC-8)", () => {
+  const HEIGHTS = new Set(["var(--btn-sm)", "var(--btn-md)", "var(--btn-lg)", "28px", "32px", "40px"]);
+
+  /** Every rule as [selector, body], comments gone. */
+  const rules = [...RULES.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => [m[1].trim(), m[2]] as const);
+  /** A rule that sizes a button: its selector names one, by element or class. */
+  const forButtons = rules.filter(([sel]) => /\bbutton\b|-btn\b|-button\b/.test(sel));
+
+  it("the three heights are 28, 32 and 40 px", () => {
+    expect(RULES).toMatch(/--btn-sm:\s*28px;/);
+    expect(RULES).toMatch(/--btn-md:\s*32px;/);
+    expect(RULES).toMatch(/--btn-lg:\s*40px;/);
+  });
+
+  it("every button height set in the file is 28, 32 or 40 px", () => {
+    expect(forButtons.length).toBeGreaterThan(30);
+    const odd: string[] = [];
+    for (const [sel, body] of forButtons) {
+      for (const m of body.matchAll(/(?<![-\w])(height|min-height|max-height):\s*([^;]+);/g)) {
+        if (!HEIGHTS.has(m[2].trim())) odd.push(`${sel.replace(/\s+/g, " ")} { ${m[1]}: ${m[2]} }`);
+      }
+    }
+    expect(odd).toEqual([]);
+  });
+
+  it("the set's default is 32 px with a 6 px radius, .small 28 and .large 40", () => {
+    const set = rules.find(([sel]) => sel.startsWith(":where(button:not("));
+    expect(set, "the set's rule").toBeDefined();
+    expect(set![1]).toMatch(/height:\s*var\(--btn-md\);/);
+    expect(set![1]).toMatch(/border-radius:\s*6px;/);
+    expect(rules.find(([sel]) => /button\.small/.test(sel))![1]).toMatch(/height:\s*var\(--btn-sm\);/);
+    expect(rules.find(([sel]) => /button\.large/.test(sel))![1]).toMatch(/height:\s*var\(--btn-lg\);/);
+  });
+
+  it("the bespoke button classes take their size from the set", () => {
+    const BESPOKE = [
+      ".header-icon-btn", ".tool-btn", ".zoom-btn", ".pager-btn", ".link-btn", ".edit-btn",
+      ".expand-btn", ".onto-menu-btn", ".hierarchy-menu-btn", ".canvas-help-button", "button.icon-btn",
+    ];
+    for (const cls of BESPOKE) {
+      // A class's own rules; the set's :where() rules are what size it.
+      const own = rules.filter(([sel]) => !sel.startsWith(":where(") && sel.split(",").some((s) => s.trim() === cls));
+      for (const [, body] of own) {
+        // Placement may stay (width: 100%, margins); a size may not.
+        expect(body, cls).not.toMatch(/(?<![-\w])(height|padding|font-size):/);
+        expect(body, cls).not.toMatch(/(?<![-\w])(min-)?width:\s*\d+px/);
+        // 0 only for the zoom stack, three buttons joined into one control.
+        for (const m of body.matchAll(/border-radius:\s*([^;]+);/g)) expect(["0", "6px"], cls).toContain(m[1].trim());
+      }
+    }
+  });
+
+  it("the turned-off look is on aria-disabled", () => {
+    const off = rules.find(([sel]) => sel.split(",").some((s) => s.trim() === 'button[aria-disabled="true"]'));
+    expect(off, 'a button[aria-disabled="true"] rule').toBeDefined();
+    expect(off![1]).toMatch(/opacity:\s*0\.5;/);
+    // The old look, on the attribute authoring controls must not carry.
+    expect(rules.some(([sel]) => sel === "button.primary:disabled")).toBe(false);
+  });
+});

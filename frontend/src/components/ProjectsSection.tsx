@@ -264,7 +264,7 @@ export default function ProjectsSection({
       <div className="home-library-head">
         <h2 id="home-projects-heading">My projects</h2>
         <div className="home-controls">
-          <button className="primary" onClick={onNew} disabled={busyId !== null}>
+          <button className="primary large" onClick={onNew} disabled={busyId !== null}>
             New project
           </button>
         </div>

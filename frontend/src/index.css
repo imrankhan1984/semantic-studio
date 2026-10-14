@@ -3,6 +3,10 @@
    section labels included; where a larger size did not fit, the layout
    was changed, never the size. */
 :root {
+  /* The three button heights (5.5). */
+  --btn-sm: 28px;
+  --btn-md: 32px;
+  --btn-lg: 40px;
   --fs-xs: 12px;
   --fs-sm: 13px;
   --fs-md: 14px;
@@ -162,11 +166,6 @@ button.primary {
   font-weight: 600;
 }
 
-button.primary:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
 button.ghost {
   background: transparent;
 }
@@ -174,8 +173,93 @@ button.ghost {
 button.icon-btn {
   border: none;
   background: transparent;
-  padding: 2px 6px;
   color: var(--text-dim);
+}
+
+/* --- one button set (portal-foundations 5.5) ------------------------------
+   Three heights and three kinds, one radius. A plain button is secondary,
+   .primary is primary, .ghost is quiet; .small is 28 px (toolbars), the
+   default 32 px (panels), .large 40 px (page actions). The bespoke classes
+   below keep their names for placement and their colours, and take their
+   height, padding, radius and font size from here.
+
+   :where() keeps every rule here at no specificity, so a class's own rule
+   still places it. The tabs, rows, cards, chips, links and menu items in
+   the :not() list are buttons for the keyboard, not action buttons, and
+   keep their own shapes. */
+:where(button:not(
+  .nav-item, .mode-tab, .tab, .legend-row, .legend-header, .legend-toggle,
+  .starter, .catalogue-entry, .shapes-row, .saved-name, .result-panel-header,
+  .result-source, .result-chip, .chip, .chip-remove, .next-chip,
+  .next-steps-toggle, .hierarchy-fold, .hierarchy-twistie, .canvas-attr,
+  .canvas-add-attr, .term-link, .skip-link, .network-switch, .menu-toggle,
+  .embedded-toggle, .imports-toggle, .onto-menu button, .row-menu button,
+  .relate-menu [role="menuitem"], .shapes-chooser button
+)) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: var(--btn-md);
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: var(--fs-md);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+/* 28 px: toolbars and the controls on a row. */
+:where(
+  button.small, .tool-btn, .pager-btn, .edit-btn, .link-btn, .results-export,
+  .results-clear, .relate-swap, .toggle-pill, .icon-btn, .hierarchy-menu-btn,
+  .canvas-help-button, .hierarchy-add, .hierarchy-expand, .project-more,
+  .validate-btn, .project-header button, .canvas-toolbar button,
+  .graph-toolbar button, .source-toolbar button:not(.mode-tab)
+) {
+  height: var(--btn-sm);
+  padding: 0 10px;
+  font-size: var(--fs-sm);
+}
+
+/* 40 px: the actions that start something on a page. */
+:where(button.large) {
+  height: var(--btn-lg);
+  padding: 0 16px;
+}
+
+/* A button with only an icon is square at its height, and always has a
+   name (aria-label). */
+:where(
+  .icon-btn, .tool-btn.icon-only, .hierarchy-menu-btn, .canvas-help-button,
+  .hierarchy-add, .project-more, .canvas-toolbar button[aria-label^="Zoom"]
+) {
+  width: var(--btn-sm);
+  padding: 0;
+}
+
+:where(.header-icon-btn, .zoom-btn, .shapes-add) {
+  width: var(--btn-md);
+  padding: 0;
+}
+
+/* Turned off: the look is on aria-disabled, the state the authoring
+   controls use so focus is never dropped (the load-bearing rule); the few
+   controls that are still natively disabled share it. */
+button[aria-disabled="true"],
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button[aria-disabled="true"]:hover,
+button:disabled:hover {
+  border-color: var(--border);
+}
+
+button.primary[aria-disabled="true"]:hover,
+button.primary:disabled:hover {
+  border-color: var(--accent);
 }
 
 button.icon-btn:hover {
@@ -455,10 +539,7 @@ select:focus {
   align-items: center;
   justify-content: center;
   align-self: center;
-  width: 34px;
-  height: 34px;
   border: none;
-  border-radius: 8px;
   background: transparent;
   color: var(--text-dim);
 }
@@ -605,7 +686,6 @@ select:focus {
 
 .show-more {
   margin: 12px;
-  font-size: var(--fs-xs);
 }
 
 .graph-area {
@@ -885,8 +965,6 @@ select:focus {
 
 .onto-verb {
   flex: 1;
-  padding: 5px 4px;
-  font-size: var(--fs-xs);
 }
 
 .onto-loading {
@@ -1180,8 +1258,6 @@ select:focus {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: var(--fs-xs);
-  padding: 4px 9px;
   border-color: transparent;
   background: transparent;
   color: var(--text-dim);
@@ -1199,8 +1275,6 @@ select:focus {
 }
 
 .tool-btn.icon-only {
-  padding: 4px 8px;
-  min-width: 30px;
   justify-content: center;
 }
 
@@ -1246,17 +1320,13 @@ select:focus {
    smaller is a version row. A 1px divider between the three, from the second
    button down, and one rounded container around the set. */
 .zoom-btn {
-  width: 36px;
-  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0;
   border: none;
   border-radius: 0;
   background: var(--bg-panel);
   color: var(--text-dim);
-  font-size: var(--fs-lg);
   line-height: 1;
   cursor: pointer;
 }
@@ -2610,9 +2680,6 @@ button.legend-row:hover {
 }
 
 .toggle-pill {
-  border-radius: 12px;
-  font-size: var(--fs-xs);
-  padding: 3px 10px;
   color: var(--text-dim);
 }
 
@@ -2837,22 +2904,15 @@ button.legend-row:hover {
 }
 
 .results-clear {
-  font-size: var(--fs-xs);
-  padding: 2px 8px;
+  /* Sized by the button set (5.5). */
 }
 
 /* Q-2 export controls, sized to sit beside Clear results. Disabled by aria (not
    the native attribute) so they stay focusable and announce their state; the
    dimming is the visible half of the same state, never the only signal. */
 .results-export {
-  font-size: var(--fs-xs);
-  padding: 2px 8px;
+  /* Sized by the button set (5.5). */
 }
-.results-export[aria-disabled="true"] {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 .results-pager {
   display: flex;
   align-items: center;
@@ -2864,9 +2924,6 @@ button.legend-row:hover {
 .pager-btn {
   border: 1px solid var(--border);
   background: var(--bg-raised);
-  border-radius: 6px;
-  padding: 2px 8px;
-  font-size: var(--fs-xs);
   color: var(--text);
   cursor: pointer;
 }
@@ -3313,8 +3370,6 @@ button.legend-row:hover {
   border: none;
   background: transparent;
   color: var(--accent);
-  font-size: var(--fs-xs);
-  padding: 4px 0;
 }
 
 .link-btn:hover {
@@ -3742,16 +3797,8 @@ button.legend-row:hover {
 /* --- projects and editing (authoring-foundations) ----------------------- */
 
 /* aria-disabled rather than disabled on the authoring controls, so they keep
-   focus and announce why; this is the visible half of that state. */
-.project-header button[aria-disabled="true"],
-.turtle-editor button[aria-disabled="true"],
-.confirm-dialog button[aria-disabled="true"],
-.project-card button[aria-disabled="true"],
-.edit-section button[aria-disabled="true"],
-.hierarchy-view button[aria-disabled="true"] {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+   focus and announce why; the visible half of that state is the button
+   set's one rule (portal-foundations 5.5). */
 
 /* One row, never wrapped (edit-page-rework 5.2): the name gives way first,
    then Undo and Redo shrink to icons. */
@@ -4202,8 +4249,7 @@ button.legend-row:hover {
 }
 
 .edit-btn {
-  padding: 1px 8px;
-  font-size: var(--fs-xs);
+  /* Sized by the button set (5.5). */
 }
 
 .edit-actions {
@@ -4351,7 +4397,6 @@ button.legend-row:hover {
   border: none;
   background: transparent;
   color: var(--text-dim);
-  padding: 0 6px;
 }
 
 .hierarchy-menu-btn:hover {
@@ -4802,8 +4847,7 @@ kbd {
 }
 
 .relate-swap {
-  padding: 2px 8px;
-  font-size: var(--fs-xs);
+  /* Sized by the button set (5.5). */
 }
 
 /* The sentence the new relationship will make, as it is typed. */
@@ -4816,12 +4860,6 @@ kbd {
 
 .relate-refusal {
   margin: 4px 0;
-}
-
-.model-canvas button[aria-disabled="true"],
-.relate-menu button[aria-disabled="true"] {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 
@@ -4951,9 +4989,7 @@ kbd {
 }
 
 .shapes-add {
-  font-size: var(--fs-xl);
   line-height: 1;
-  padding: 4px 12px;
 }
 
 .shapes-chooser {
@@ -5493,9 +5529,6 @@ kbd {
   margin-top: 12px;
 }
 
-.data-wizard button[aria-disabled="true"],
-.snapshot-section button[aria-disabled="true"],
-.rml-editor button[aria-disabled="true"],
 .snapshot-switch input[aria-disabled="true"] {
   opacity: 0.55;
   cursor: not-allowed;
@@ -5903,14 +5936,9 @@ kbd {
 
 .hierarchy-add {
   flex: none;
-  width: 26px;
-  height: 26px;
-  padding: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
   background: var(--bg-raised);
   color: var(--text);
-  font-size: var(--fs-lg);
   line-height: 1;
 }
 
@@ -6082,7 +6110,6 @@ kbd {
 }
 
 .project-more {
-  font-size: var(--fs-lg);
   line-height: 1;
 }
 
@@ -6111,6 +6138,11 @@ kbd {
    extra class to reach it. */
 .react-flow .react-flow__attribution {
   font-size: var(--fs-xs);
+}
+
+/* Its link's own grey measured 2.85:1 on the light canvas. */
+.react-flow .react-flow__attribution a {
+  color: var(--text-dim);
 }
 
 .model-canvas .canvas-draft {
@@ -6215,10 +6247,6 @@ kbd {
 }
 
 .canvas-help-button {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border-radius: 50%;
   font-weight: 700;
 }
 
