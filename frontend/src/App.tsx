@@ -135,6 +135,7 @@ BASIC IDEA
     destroy before it asks. Deleting an ontology has always deleted every query
     saved against it; onRemove now fetches that count first, puts it in the
     confirmation, and reports afterwards what the server says it actually took.
+    It starts from a card's ⋯ menu on Home, never from the context bar.
 
 INPUTS / INPUT SOURCES
     - The backend API (via api.ts) for the ontology list and graph.
@@ -214,7 +215,6 @@ import {
   IconNetwork,
   IconQuery,
   IconSun,
-  IconTrash,
   IconView,
 } from "./components/icons";
 import { removalConfirmation, removalPrompt } from "./removalPrompt";
@@ -451,16 +451,12 @@ export default function App() {
   // and the error bar would imply the whole screen was broken.
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
-  // The removal pair: `removing` covers the count request that runs before the
-  // confirmation dialog, and `notice` is what the removal is reported in
-  // afterwards. Kept apart from `error` because neither is a failure.
-  const [removing, setRemoving] = useState(false);
+  // What a removal is reported in afterwards. Kept apart from `error` because
+  // it is not a failure.
   const [notice, setNotice] = useState<string | null>(null);
-  const removeRef = useRef<HTMLButtonElement>(null);
-  const wasRemoving = useRef(false);
-  // Which ontology the removal count is running against. It exists because
-  // removal can now be started from a card as well as from the header, and the
-  // card that started it is the one that has to say it is busy.
+  // Which ontology the removal count is running against: the card that
+  // started it, in Home's ⋯ menu, is the one that has to say it is busy.
+  // Removal is started nowhere else (portal-foundations 5.7).
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [mode, setMode] = useState<AppMode>("explore");
   // A mode picked from the header with nothing open. It is remembered rather
@@ -850,23 +846,6 @@ export default function App() {
     return () => window.removeEventListener("beforeunload", onUnload);
   }, [anyDirty]);
 
-  // Give the remove control its focus back when the count finishes.
-  //
-  // Disabling a focused button blurs it to the document body, and re-enabling
-  // it does not undo that. Measured in Chrome on 2026-07-30 against the built
-  // application: after pressing Remove, `document.activeElement` was BODY, so a
-  // keyboard user who declined the dialog was returned to nowhere. The whole
-  // argument for keeping `window.confirm` (spec section 6) is that it returns
-  // focus on dismissal, and it can only return focus to something that had it.
-  //
-  // It has to be an effect rather than a line after `setRemoving(false)`,
-  // because at that point React has not re-rendered and `focus()` on a still
-  // disabled button does nothing.
-  useEffect(() => {
-    if (wasRemoving.current && !removing) removeRef.current?.focus();
-    wasRemoving.current = removing;
-  }, [removing]);
-
   // Reset the per-ontology view state the moment the ontology changes, during
   // render rather than in an effect. In an effect the fetch below would fire
   // once against the new ontology while still carrying the previous one's
@@ -1069,12 +1048,11 @@ export default function App() {
   // saying so. A failure to count is carried as null, never as zero — see
   // removalPrompt.ts, which is where that distinction is enforced and tested.
   //
-  // It takes an id rather than reading activeId, because removal can now be
-  // started from a card's menu on the home screen as well as from the header,
-  // and on that screen the ontology being removed is usually not the active one.
+  // It takes an id rather than reading activeId: removal is started from a
+  // card's menu on the home screen, where the ontology being removed is
+  // usually not the active one.
   const onRemove = async (id: string) => {
     const name = ontologies.find((o) => o.id === id)?.name ?? "this ontology";
-    setRemoving(true);
     setRemovingId(id);
     let count: number | null = null;
     let names: string[] = [];
@@ -1085,7 +1063,6 @@ export default function App() {
     } catch {
       count = null; // unknown, not zero
     } finally {
-      setRemoving(false);
       setRemovingId(null);
     }
     if (!window.confirm(removalPrompt(name, count, names))) return;
@@ -1931,9 +1908,9 @@ export default function App() {
                   </option>
                 ))}
               </select>
-              {/* Close and remove sit side by side and do very different
-                  things, so only one of them is red and their accessible names
-                  say which is which. Close is the ordinary icon button. */}
+              {/* Close only: removing an ontology from the library is in
+                  its card's ⋯ menu on Home, away from the picker it sat
+                  beside (portal-foundations 5.7). */}
               <button
                 className="ghost icon-btn"
                 onClick={onCloseOntology}
@@ -1941,24 +1918,6 @@ export default function App() {
                 aria-label="Close this ontology"
               >
                 <IconClose />
-              </button>
-              {/* Disabled and aria-busy while the saved queries are counted,
-                  so no dialog can open over a stale number and a screen reader
-                  user is told why the control is briefly inert. */}
-              <button
-                ref={removeRef}
-                className="ghost icon-btn danger"
-                onClick={() => void onRemove(activeId!)}
-                disabled={removing}
-                aria-busy={removing}
-                title={
-                  removing
-                    ? "Counting saved queries…"
-                    : "Remove this ontology and delete its stored copy"
-                }
-                aria-label="Remove ontology"
-              >
-                <IconTrash />
               </button>
             </>
           ) : (

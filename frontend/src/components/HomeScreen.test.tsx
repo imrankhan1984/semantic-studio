@@ -406,8 +406,10 @@ describe("HomeScreen catalogue", () => {
     // The library cards too: starting a second ontology underneath a download
     // in flight would leave the finished download overriding the later choice.
     for (const card of cards()) {
+      // The ⋮ button by aria-disabled, so it keeps focus (5.7).
       for (const button of card.querySelectorAll("button")) {
-        expect((button as HTMLButtonElement).disabled).toBe(true);
+        const inert = (button as HTMLButtonElement).disabled || button.getAttribute("aria-disabled") === "true";
+        expect(inert).toBe(true);
       }
     }
   });

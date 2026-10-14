@@ -229,8 +229,11 @@ function OntologyCard({
               // a screen reader user cannot tell apart. The glyph itself
               // announces as "⋮", which is nothing.
               aria-label={`More actions for ${summary.name}`}
-              disabled={disabled}
-              onClick={() => setMenuOpen((was) => !was)}
+              // aria-disabled, never disabled: while a removal counts this
+              // card's saved queries it holds focus, and a disabled button
+              // drops it to the page (portal-foundations 5.7).
+              aria-disabled={disabled}
+              onClick={() => !disabled && setMenuOpen((was) => !was)}
             >
               <span aria-hidden="true">⋮</span>
             </button>
@@ -297,7 +300,9 @@ function OntologyCard({
                   <button
                     className="danger"
                     onClick={() => {
-                      setMenuOpen(false);
+                      // closeMenu first, as the items above: focus waits on
+                      // the ⋮ button through the count and the dialog.
+                      closeMenu();
                       onRemove(summary.id);
                     }}
                   >

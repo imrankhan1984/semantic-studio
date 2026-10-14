@@ -273,9 +273,15 @@ describe("OntologyCard verbs", () => {
   it("every control goes inert while something is loading", () => {
     const { container } = renderCard({}, { busy: true });
 
+    // The ⋮ button is aria-disabled rather than disabled, so a removal's
+    // count never drops its focus to the page (portal-foundations 5.7); a
+    // press on it opens nothing.
     for (const button of container.querySelectorAll("button")) {
-      expect((button as HTMLButtonElement).disabled, button.textContent ?? "").toBe(true);
+      const inert = (button as HTMLButtonElement).disabled || button.getAttribute("aria-disabled") === "true";
+      expect(inert, button.textContent ?? "").toBe(true);
     }
+    fireEvent.click(menuButton());
+    expect(menuButton().getAttribute("aria-expanded")).toBe("false");
   });
 
   it("says which card is the one being worked on", () => {

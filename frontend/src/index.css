@@ -266,17 +266,6 @@ button.icon-btn:hover {
   color: var(--text);
 }
 
-/* Busy, not broken. The remove control is inert while it counts the saved
-   queries it is about to destroy; this is the visible half of that state, the
-   audible half being aria-busy. A static dimming rather than a spinner, which
-   is now a preference rather than a constraint: the reduced-motion rule at the
-   foot of this section would flatten a spinner anyway, and a control that looks
-   the same to everybody is one less thing to reason about. */
-button.icon-btn[aria-busy="true"] {
-  opacity: 0.5;
-  cursor: progress;
-}
-
 input,
 select {
   font: inherit;
