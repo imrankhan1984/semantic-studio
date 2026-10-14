@@ -72,13 +72,14 @@ EXPECTED OUTPUT
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import json
 import re
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Iterator, Optional
+from typing import Callable, ContextManager, Iterator, Optional
 from urllib.parse import urlencode
 
 from pyparsing import ParseResults
@@ -614,7 +615,7 @@ class ServiceRun:
     def outcome(self, block: ServiceBlock) -> _Outcome:
         # The lock is held across the call on purpose: a second evaluation of
         # the same block must wait for the first answer, not make its own call.
-        with self._lock:
+        with hold_stop.get()(), self._lock:
             held = self._outcomes.get(block.key)
             if held is None:
                 held = self._call(block)
@@ -687,6 +688,15 @@ class ServiceRun:
 # worker's context, for exactly the length of one query.
 _current_run: contextvars.ContextVar[Optional[ServiceRun]] = contextvars.ContextVar(
     "semantic_studio_service_run", default=None
+)
+
+
+# Held round each SERVICE call: sparql_exec sets it to its stopper's hold, so
+# a timed-out query's stop never lands inside the broker's or the socket's
+# code, which is not written to be interrupted (D-108). The call's own 20 s
+# limit bounds the wait instead.
+hold_stop: contextvars.ContextVar[Callable[[], ContextManager]] = contextvars.ContextVar(
+    "semantic_studio_hold_stop", default=contextlib.nullcontext
 )
 
 

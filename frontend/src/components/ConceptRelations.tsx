@@ -20,7 +20,9 @@ BASIC IDEA
     A mapping points outside the project. Its target is typed as a link or
     picked from the concepts the document's imports define; the server
     checks it like any link, and it is shown as a link only when linkTarget
-    lets it be one (D-088), otherwise as text.
+    lets it be one (D-088), otherwise as text. Either way it reads by its
+    name, an imported concept's label included, with the IRI in its title;
+    the IRI is the text only for a target with no name.
 
 INPUTS / INPUT SOURCES (props)
     - ontologyId, iri, name, model: the concept and its blocks.
@@ -144,17 +146,20 @@ export default function ConceptRelations({ ontologyId, iri, name, model, runner,
             return (
               <li key={`${m.kind}|${m.target.iri}`}>
                 <span className="edit-annotation-property">{KIND_NAMES[m.kind] ?? m.kind}:</span>{" "}
+                {/* The target's name, as the related rows show theirs; its IRI
+                    only when it has none, and always in the title (PR #49
+                    review: an imported concept showed its raw IRI). */}
                 {href ? (
-                  <a href={href} target="_blank" rel="noreferrer">
-                    {m.target.iri}
+                  <a href={href} target="_blank" rel="noreferrer" title={m.target.iri}>
+                    {m.target.label}
                   </a>
                 ) : (
-                  <span>{m.target.iri}</span>
+                  <span title={m.target.iri}>{m.target.label}</span>
                 )}
                 <button
                   type="button"
                   className="ghost edit-btn"
-                  aria-label={`Remove the ${(KIND_NAMES[m.kind] ?? m.kind).toLowerCase()} ${m.target.iri}`}
+                  aria-label={`Remove the ${(KIND_NAMES[m.kind] ?? m.kind).toLowerCase()} ${m.target.label}`}
                   aria-disabled={busy}
                   onClick={() =>
                     !busy && void run("mappingList", "RemoveMapping", { concept: iri, kind: m.kind, target: m.target.iri })

@@ -18,12 +18,28 @@ SUMMARY
     attribute's sentence and *one value only*, a concept's related line, and
     what each kind of mapping means.
 
+    And the two grammar rules every sentence shares (X-12, T-18, T-19): *a*
+    or *an* before a name, and a relationship's label read as a verb, after
+    a subject or after *must*. backend/app/sentences.py holds the same two,
+    and both sides are tested with one table (sentences.table.json); no
+    other module may define its own (sentences.test.ts scans for one).
+
 BASIC IDEA
     Every relationship reads as a sentence, before and after it is created
     (Section 7), so the sentence is built in one place and tested without
-    drawing anything. Articles are kept simple, as the spec says: *a* or *an*
-    by the first letter, no grammar beyond that. A name is used exactly as
-    written; nothing here reads ontology text as markup or as a pattern.
+    drawing anything. *an* goes before a vowel sound, judged from the first
+    word: a vowel letter, except words starting *uni*, *use*, *usu*, *eu*,
+    *one* or *once*; words starting *hour*, *honest*, *honor* or *heir*; and
+    a word in capitals, read letter by letter, whose first letter's name
+    starts with a vowel sound (*an XML file*, *a URL*). Four copies chose by
+    the first letter alone and wrote *an University*.
+
+    A label is a verb when its first word is one (*is*, *has*, *can*) or ends
+    in a single *s* (*uses*); one ending in a preposition or starting with a
+    participle reads after *is* or *be* (*part of*, *located in*); a bare
+    noun (*holder*) is left as written. No article is guessed before a label:
+    *Ann is member of Team A* stays. A name is used exactly as written;
+    nothing here reads ontology text as markup or as a pattern.
 
 INPUTS / INPUT SOURCES
     - Names: a class's, a concept's, a relationship's, already chosen in the
@@ -34,18 +50,96 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-/** *a* or *an*, by the name's first letter. */
+// Letters whose names start with a vowel sound: "an F", "an H", "an X".
+const VOWEL_NAMED_LETTERS = "AEFHILMNORSX";
+// A vowel letter sounded as a consonant, and a silent h.
+const CONSONANT_STARTS = ["uni", "use", "usu", "eu", "one", "once"];
+const SILENT_H = ["hour", "honest", "honor", "heir"];
+
+/** *a* or *an* before a name, by how its first word sounds. */
 export function article(name: string): string {
-  return /^[aeiou]/i.test(name.trim()) ? "an" : "a";
+  const first = /^[A-Za-z]+/.exec(name.trim())?.[0];
+  if (!first) return "a";
+  // Capitals to start (XML, URLs, a lone X): read letter by letter.
+  const two = first.slice(0, 2);
+  if (two === two.toUpperCase()) return VOWEL_NAMED_LETTERS.includes(first[0]) ? "an" : "a";
+  const lower = first.toLowerCase();
+  if (SILENT_H.some((start) => lower.startsWith(start))) return "an";
+  if (CONSONANT_STARTS.some((start) => lower.startsWith(start))) return "a";
+  return "aeiou".includes(lower[0]) ? "an" : "a";
+}
+
+/** A name with its article: *a Person*, *an Organization*. */
+export function a(name: string): string {
+  return `${article(name)} ${name}`;
+}
+
+// First words that already read as a verb.
+const AUXILIARIES = new Set([
+  "is", "are", "was", "were", "be", "been", "has", "have", "had", "can", "could",
+  "may", "might", "must", "shall", "should", "will", "would", "does", "do", "did",
+]);
+// Last words that mark a label needing *is*.
+const PREPOSITIONS = new Set([
+  "of", "to", "in", "at", "by", "for", "with", "from", "on", "into", "onto", "about",
+  "above", "below", "under", "over", "inside", "near", "before", "after", "within", "than",
+]);
+
+/** A label's words, split as the server splits them: *worksFor* is *works*
+ *  and *For*. */
+function words(label: string): RegExpMatchArray[] {
+  return [...label.matchAll(/[A-Za-z][a-z]*/g)];
+}
+
+function thirdPerson(word: string): boolean {
+  return word.endsWith("s") && !word.endsWith("ss") && !word.endsWith("us");
+}
+
+function readsAfterIs(lower: string[]): boolean {
+  return PREPOSITIONS.has(lower[lower.length - 1]) || lower[0].endsWith("ed");
+}
+
+/** A relationship's label as the verb after a subject: *uses* and *has
+ *  part* stay, *part of* and *located in* read after *is*, a bare noun
+ *  (*holder*) is left alone. */
+export function verb(label: string): string {
+  const lower = words(label).map((m) => m[0].toLowerCase());
+  if (!lower.length) return label;
+  if (AUXILIARIES.has(lower[0]) || thirdPerson(lower[0])) return label;
+  return readsAfterIs(lower) ? `is ${label}` : label;
+}
+
+/** The same label after *must* or *may*: *uses* -> *use*, *has part* ->
+ *  *have part*, *is part of* and *part of* -> *be part of*; a bare noun is
+ *  left alone. */
+export function mustVerb(label: string): string {
+  const found = words(label);
+  if (!found.length) return label;
+  const lower = found.map((m) => m[0].toLowerCase());
+  const head = found[0];
+  const start = head.index ?? 0;
+  const rest = label.slice(start + head[0].length);
+  if (lower[0] === "is" || lower[0] === "are") return `be${rest}`;
+  if (lower[0] === "has") return `have${rest}`;
+  if (AUXILIARIES.has(lower[0])) return label;
+  if (thirdPerson(lower[0])) {
+    const written = head[0];
+    let base: string;
+    if (lower[0].endsWith("ies") && lower[0].length > 4) base = `${written.slice(0, -3)}y`;
+    else if (/(ches|shes|sses|xes|zes|oes)$/.test(lower[0])) base = written.slice(0, -2);
+    else base = written.slice(0, -1);
+    return `${label.slice(0, start)}${base}${rest}`;
+  }
+  return readsAfterIs(lower) ? `be ${label}` : label;
 }
 
 /** A new relationship read as it is named: *A Person works for an
  *  Organization.* With no name yet, the gap is shown, so the sentence has
  *  its shape before the first key. */
 export function relationshipSentence(from: string, name: string, to: string): string {
-  const verb = name.trim() || "…";
+  const said = name.trim() || "…";
   const first = article(from);
-  return `${first[0].toUpperCase()}${first.slice(1)} ${from} ${verb} ${article(to)} ${to}.`;
+  return `${first[0].toUpperCase()}${first.slice(1)} ${from} ${said} ${article(to)} ${to}.`;
 }
 
 /** The link a line would make, or has made, as the relate menu and the link
@@ -133,7 +227,7 @@ function capital(text: string): string {
 
 /** *a Person*, or what stands in for an end not set yet. */
 function end(name: string | null, missing: string): string {
-  return name ? `${article(name)} ${name}` : missing;
+  return name ? a(name) : missing;
 }
 
 /** The Sentence block (5.6): what the blocks below say, read back. */
@@ -176,22 +270,22 @@ export function characteristicExample(
   from: string | null,
   to: string | null,
 ): string {
-  const verb = name.trim() || "…";
+  const said = name.trim() || "…";
   switch (id) {
     case "functional":
-      return `${capital(end(from, "something"))} ${verb} at most one ${to ?? "thing"}.`;
+      return `${capital(end(from, "something"))} ${said} at most one ${to ?? "thing"}.`;
     case "inverseFunctional":
-      return `${capital(end(to, "something"))} is linked by ${verb} to at most one ${from ?? "thing"}.`;
+      return `${capital(end(to, "something"))} is linked by ${said} to at most one ${from ?? "thing"}.`;
     case "symmetric":
-      return `If A ${verb} B, then B ${verb} A.`;
+      return `If A ${said} B, then B ${said} A.`;
     case "transitive":
-      return `If A ${verb} B and B ${verb} C, then A ${verb} C.`;
+      return `If A ${said} B and B ${said} C, then A ${said} C.`;
     case "asymmetric":
-      return `If A ${verb} B, then B never ${verb} A.`;
+      return `If A ${said} B, then B never ${said} A.`;
     case "irreflexive":
-      return `Nothing ${verb} itself.`;
+      return `Nothing ${said} itself.`;
     case "reflexive":
-      return `Everything ${verb} itself.`;
+      return `Everything ${said} itself.`;
   }
 }
 
@@ -212,10 +306,19 @@ export function oneStartOneEnd(name: string, from: string | null): string {
   );
 }
 
-/** The attribute's sentence (5.7): *A Person has a name, as text.* */
+/** A type of value after *as*: *a date*, *a whole number*, but *text* and
+ *  *yes or no*, which take none; a type without a word is its name. */
+export function asType(datatype: string): string {
+  const word = typeWord(datatype);
+  if (!(datatype in TYPE_WORDS) || word === "text" || word === "yes or no") return word;
+  return a(word);
+}
+
+/** The attribute's sentence (5.7): *A Person has a name, as text.*, *A
+ *  Person has a birth date, as a date.* */
 export function attributeSentence(domain: string | null, name: string, datatype: string | null): string {
   const has = `${capital(end(domain, "something"))} has ${end(name.trim() || "…", "a value")}`;
-  return datatype ? `${has}, as ${typeWord(datatype)}.` : `${has}.`;
+  return datatype ? `${has}, as ${asType(datatype)}.` : `${has}.`;
 }
 
 /** *One value only* read with the attribute's names: *A Person has at most

@@ -140,7 +140,7 @@ describe("the Rules block (5.9)", () => {
   it("lists the rules as sentences under its heading, or says there are none", async () => {
     await show(rulesOf([some(), disjoint]));
     const block = screen.getByRole("region", { name: "What is true of every Order" });
-    expect(within(block).getByText("Every Order has at least one has line that is an Order line")).toBeTruthy();
+    expect(within(block).getByText("Every Order has at least one line that is an Order line")).toBeTruthy();
     expect(within(block).getByText("No Order is a Person")).toBeTruthy();
     expect(within(block).getByText(/an Order with no line is not an error here/)).toBeTruthy();
     cleanup();
@@ -164,7 +164,7 @@ describe("the Rules block (5.9)", () => {
     fireEvent.click(add);
     expect(runCommand).not.toHaveBeenCalled();
     fireEvent.change(within(group).getByRole("combobox", { name: "That is a (class)" }), { target: { value: EX + "OrderLine" } });
-    expect(screen.getByRole("group", { name: "Every Order has at least one has line that is an Order line" })).toBe(group);
+    expect(screen.getByRole("group", { name: "Every Order has at least one line that is an Order line" })).toBe(group);
     await act(async () => {
       fireEvent.click(add);
     });
@@ -174,7 +174,7 @@ describe("the Rules block (5.9)", () => {
       "AddRestriction",
       { class: EX + "Order", form: "every", property: EX + "hasLine", kind: "some", filler: EX + "OrderLine", n: null },
     ]);
-    expect(said()).toBe("Added: Every Order has at least one has line that is an Order line. Did AddRestriction.");
+    expect(said()).toBe("Added: Every Order has at least one line that is an Order line. Did AddRestriction.");
     expect(screen.queryByRole("group")).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add a rule" })));
   });
@@ -186,7 +186,7 @@ describe("the Rules block (5.9)", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "What is true of it" }), { target: { value: "atLeast" } });
     const n = screen.getByRole("spinbutton", { name: "How many (0 to 1,000)" });
     fireEvent.change(n, { target: { value: "3" } });
-    expect(screen.getByRole("group").getAttribute("aria-label")).toBe("Every Order has at least 3 has line");
+    expect(screen.getByRole("group").getAttribute("aria-label")).toBe("Every Order has at least 3 lines");
     fireEvent.change(screen.getByRole("combobox", { name: "Rule" }), { target: { value: "disjoint" } });
     fireEvent.change(screen.getByRole("combobox", { name: "Never a (class)" }), { target: { value: EX + "Person" } });
     await act(async () => {
@@ -221,7 +221,7 @@ describe("the Rules block (5.9)", () => {
   it("Edit opens the builder on the rule, and Save sends ReplaceRestriction with its key", async () => {
     const rule = some();
     await show(rulesOf([rule]));
-    fireEvent.click(screen.getByRole("button", { name: "Edit: Every Order has at least one has line that is an Order line" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit: Every Order has at least one line that is an Order line" }));
     fireEvent.change(screen.getByRole("combobox", { name: "What is true of it" }), { target: { value: "only" } });
     fireEvent.change(screen.getByRole("combobox", { name: "That is a (class)" }), { target: { value: EX + "OrderLine" } });
     await act(async () => {
@@ -246,13 +246,13 @@ describe("the Rules block (5.9)", () => {
     const second = some("Person", "Person");
     await show(rulesOf([first, second]));
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Remove: Every Order has at least one has line that is an Order line" }));
+      fireEvent.click(screen.getByRole("button", { name: "Remove: Every Order has at least one line that is an Order line" }));
     });
     expect(runCommand.mock.calls[0].slice(2)).toEqual(["RemoveRestriction", { class: EX + "Order", restriction: first.key }]);
-    expect(said()).toMatch(/^Removed: Every Order has at least one has line that is an Order line\./);
+    expect(said()).toMatch(/^Removed: Every Order has at least one line that is an Order line\./);
     await refetch(rulesOf([second]));
     await waitFor(() =>
-      expect(document.activeElement?.textContent).toContain("Every Order has at least one has line that is a Person"),
+      expect(document.activeElement?.textContent).toContain("Every Order has at least one line that is a Person"),
     );
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /^Remove: / }));
@@ -297,7 +297,7 @@ describe("the Rules block (5.9)", () => {
     await show(rulesOf([rule]));
     await act(async () => {
       fireEvent.click(
-        screen.getByRole("button", { name: "Check it in data too: Every Order has at least one has line that is an Order line" }),
+        screen.getByRole("button", { name: "Check it in data too: Every Order has at least one line that is an Order line" }),
       );
     });
     expect(runCommand.mock.calls[0].slice(1)).toEqual(["shapes", "CheckInData", { class: EX + "Order", restriction: rule.key }]);
@@ -317,7 +317,7 @@ describe("the Rules block (5.9)", () => {
     await act(async () => projectStore.startRule(EX + "Order", EX + "OrderLine"));
     fireEvent.change(screen.getByRole("combobox", { name: "Relationship or attribute" }), { target: { value: EX + "hasLine" } });
     expect((screen.getByRole("combobox", { name: "That is a (class)" }) as HTMLSelectElement).value).toBe(EX + "OrderLine");
-    expect(screen.getByRole("group").getAttribute("aria-label")).toBe("Every Order has at least one has line that is an Order line");
+    expect(screen.getByRole("group").getAttribute("aria-label")).toBe("Every Order has at least one line that is an Order line");
   });
 
   it("a canvas draft arriving while the builder is open starts it afresh (code review)", async () => {

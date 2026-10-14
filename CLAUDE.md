@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1189 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1339 tests, vitest
+cd backend  && python -m pytest tests    # 1244 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1393 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -179,6 +179,8 @@ backend/app/
   snapshots.py       Data snapshots in data/<sid>/: import, refresh, switch,
                      remap, edit as RML, remove; the graphs the views join
   lexical.py         What fits an XML Schema type, shared by editing and the import
+  sentences.py       The one a/an rule and the one verb rule every server sentence
+                     uses; modeling/sentences.ts holds the same two (X-12)
   hierarchy.py       subClassOf / broader / subPropertyOf forests for the tree view
   docs_export.py     The documentation-site zip (with docs_assets/)
   provenance.py      Activity records for exports
@@ -260,6 +262,11 @@ leaves one behind.
 - A 404 is told by `ApiError.status`, never by message text. [leads somewhere]
 - `selectFromOutsideGraph` serves search and results; no `builder.addNode` in it. [leads somewhere]
 - `.query-pinned` keeps `flex: none` and a background; `.next-steps-panel` is bounded in `vh`. [keeps the query]
+- A search answer is applied only if it is the latest; the request it replaces is aborted (CF-4). [latest search]
+- A timed-out query is stopped from outside, on a thread of its own, and only while armed in its query, never inside a SERVICE call, and resent, as a finaliser can swallow one; its end is its thread's end; the worker holds the read lock, and the timeout starts once it has it (D-108). [stopped from outside]
+
+**Sentences**
+- One a/an rule and one verb rule per side, `sentences.py` and `modeling/sentences.ts`, tested with one table; no module defines its own (`test_sentences.py`, `sentences.test.ts` scan). [one a/an rule]
 
 **Authoring**
 - Every `Ontology` cache is `(key, value)` keyed on the revision; the library stays at revision 0. [authoring foundations]

@@ -82,6 +82,7 @@ from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 
 from . import examples
 from .graph_builder import pick_label_in, prefixed
+from .sentences import article, verb
 from .shapes_form import (
     DEFINITION_PATH,
     SH,
@@ -172,10 +173,6 @@ def plural(word: str) -> str:
 def noun(label: str) -> str:
     """A class name inside a sentence: lower case unless it is an acronym."""
     return label[:1].lower() + label[1:] if label[1:2].islower() else label
-
-
-def article(word: str) -> str:
-    return "an" if word[:1].lower() in "aeiou" else "a"
 
 
 def possessive(name: str) -> str:
@@ -388,7 +385,7 @@ class Sentences:
         if component == SH.ClassConstraintComponent:
             cls = self.shapes.value(source, SH["class"])
             cls_name = self.name(cls) if cls is not None else "the class the rule names"
-            return f"{who} {label} {value}, which is not {article(cls_name)} {cls_name}."
+            return f"{who} {verb(label)} {value}, which is not {article(cls_name)} {cls_name}."
         if component in (SH.MinLengthConstraintComponent, SH.MaxLengthConstraintComponent):
             shorter = component == SH.MinLengthConstraintComponent
             limit = self._number(source, SH.minLength if shorter else SH.maxLength)

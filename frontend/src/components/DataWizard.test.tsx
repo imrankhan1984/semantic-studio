@@ -12,7 +12,9 @@ SUMMARY
     sentences, the import and its report, the heading focus on each step,
     and Cancel asking only once the columns are mapped. Stage B: a
     workbook's sheet and header row pickers, kept through a failed read, and
-    step 4 naming the links that match no row yet (5.8, 5.9).
+    step 4 naming the links that match no row yet (5.8, 5.9). X-12: a
+    refresh through step 1, the class reading keyed on the sheet and header
+    row, the announcement's count of things, and a taxonomy's labels.
 
 BASIC IDEA
     api.ts is mocked; the real project store is opened on a fixed project,
@@ -29,8 +31,9 @@ EXPECTED OUTPUT
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { openProject, runCommand, inspectData, previewData, importData, fetchHierarchy, listData, updateData } =
+const { openProject, runCommand, inspectData, previewData, importData, fetchHierarchy, listData, updateData, refreshData } =
   vi.hoisted(() => ({
+    refreshData: vi.fn(),
     openProject: vi.fn(),
     runCommand: vi.fn(),
     inspectData: vi.fn(),
@@ -51,11 +54,12 @@ vi.mock("../api", async (importOriginal) => ({
   fetchHierarchy,
   listData,
   updateData,
+  refreshData,
 }));
 
 import { projectStore } from "../state/projectStore";
 import type { DataInspection, DataPreview, SnapshotSummary } from "../types";
-import DataWizard from "./DataWizard";
+import DataWizard, { type WizardStart } from "./DataWizard";
 
 const PID = "prj-0123456789ab";
 const X = "http://example.org/shop#";
@@ -270,7 +274,7 @@ describe("steps 2 to 4 (5.3 to 5.5)", () => {
     expect(screen.getByText("born: 1 value is not a date, kept as text (row 1)")).toBeTruthy();
     expect(screen.getByText("from people.csv, imported 2 October 2026")).toBeTruthy();
     expect(projectStore.getSnapshot().data?.generation).toBe(2);
-    expect(projectStore.getSnapshot().announcement.text).toBe("Imported people.csv: 1 made.");
+    expect(projectStore.getSnapshot().announcement.text).toBe("Imported people.csv: 1 thing made.");
   });
 });
 
@@ -574,5 +578,133 @@ describe("Stage B: an Excel workbook (5.8) and links (5.9)", () => {
     await press(next());
     expect(screen.getByText("org: 12 values match no Organization row (rows 3, 9 and 10 more)")).toBeTruthy();
     expect(screen.getByText(/These links are still written\. Import the rows they point to, before or after this file/)).toBeTruthy();
+  });
+});
+
+describe("the X-12 tidy-up", () => {
+  const BOOK = new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04])], "orgs.xlsx", {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const WORKBOOK = {
+    sheet: "Notes", headerRow: 1, top: [{ row: 1, cells: ["id", "name"] }],
+    sheets: [{ name: "Notes", rows: 0 }, { name: "Staff", rows: 1 }],
+  };
+
+  async function mount(start: WizardStart, taxonomy = false) {
+    openProject.mockResolvedValue({ project: PROJECT, documents: [MODEL], recovery: { available: false, draftTime: null } });
+    listData.mockResolvedValue({ generation: 1, snapshots: [] });
+    await projectStore.open(PID);
+    fetchHierarchy.mockResolvedValue({
+      classes: { nodes: { [`${X}Person`]: { label: "Person", prefixed: "shop:Person", kind: "class", hasChildren: false } }, children: {}, roots: [`${X}Person`] },
+      concepts: { nodes: {}, children: {}, roots: [] }, counts: { classes: 1, concepts: 0 }, truncated: false,
+    });
+    previewData.mockResolvedValue(preview());
+    onClose = vi.fn<() => void>();
+    await act(async () => {
+      render(<DataWizard projectId={PID} modelOntologyId={`${PID}-model`} taxonomy={taxonomy} start={start} onClose={onClose} />);
+    });
+  }
+
+  it("T-5: a refresh whose sheet is gone starts at step 1, with the sheet to choose and the old one named", async () => {
+    const atFile = "This workbook has no sheet named People. Choose the sheet to refresh from.";
+    const gone = { sheet: "", headerRow: 1, top: [], sheets: WORKBOOK.sheets };
+    const snapshot = { ...SNAPSHOT, source: "staff.xlsx", workbook: { sheet: "People", headerRow: 1 } };
+    await mount({ kind: "refresh", snapshot, file: BOOK, options: {}, inspection: null, workbook: gone, missing: [], choices: null, atFile });
+    expect(screen.getByRole("heading", { name: "Step 1 of 4: the file" })).toBe(document.activeElement);
+    expect(screen.getByText(atFile)).toBeTruthy();
+    const sheet = screen.getByLabelText("Sheet") as HTMLSelectElement;
+    expect(sheet.value).toBe("");
+    expect([...sheet.options].map((o) => o.text)).toEqual(["Choose a sheet", "Notes (0 rows)", "Staff (1 row)"]);
+    expect(next().getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByText("Choose a sheet first.")).toBeTruthy();
+
+    inspectData.mockResolvedValue(inspection({ format: "xlsx", workbook: { ...WORKBOOK, sheet: "Staff" } }));
+    await act(async () => {
+      fireEvent.change(sheet, { target: { value: "Staff" } });
+    });
+    expect(next().getAttribute("aria-disabled")).toBe("false");
+    await press(next());
+    expect(screen.getByRole("heading", { name: "Step 2 of 4: what a row is" })).toBeTruthy();
+    // Back reaches step 1 again, which a refresh normally never shows.
+    await press(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("heading", { name: "Step 1 of 4: the file" })).toBeTruthy();
+  });
+
+  it("T-6: a refresh read by a workbook's default sheet still names that sheet to the server", async () => {
+    const found = inspection({ format: "xlsx", workbook: { ...WORKBOOK, sheet: "Staff", headerRow: 2 } });
+    const atFile = "This snapshot was read from a CSV file. Choose the sheet of this workbook to refresh from.";
+    await mount({ kind: "refresh", snapshot: SNAPSHOT, file: BOOK, options: {}, inspection: found, workbook: found.workbook, missing: [], choices: null, atFile });
+    expect(screen.getByText(atFile)).toBeTruthy();
+    expect((screen.getByLabelText("Sheet") as HTMLSelectElement).value).toBe("Staff");
+    await press(next());
+    await press(next());
+    await press(next());
+    expect(screen.getByRole("heading", { name: "Step 4 of 4: preview and import" })).toBeTruthy();
+    refreshData.mockResolvedValue({ status: "imported", snapshot: SNAPSHOT, generation: 2 });
+    await press(screen.getByRole("button", { name: "Import again" }));
+    expect(refreshData.mock.calls[0][3]).toEqual({ sheet: "Staff", headerRow: 2 });
+  });
+
+  it("T-7: a class reading is not reused after the sheet or the header row changes", async () => {
+    await mount({ kind: "new" });
+    const other = { ...WORKBOOK, sheets: [...WORKBOOK.sheets, { name: "Other", rows: 1 }] };
+    inspectData.mockResolvedValue(inspection({ format: "xlsx", workbook: other }));
+    const input = document.querySelector(".data-wizard input[type=file]") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [BOOK] } });
+    });
+    await press(next());
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Each row is"), { target: { value: `${X}Person` } });
+    });
+    expect(next().getAttribute("aria-disabled")).toBe("false");
+
+    const moved = { ...other, sheet: "Other", top: [{ row: 1, cells: ["id"] }, { row: 2, cells: ["x"] }] };
+    for (const [label, value] of [["Sheet", "Other"], ["Header row", "2"]] as const) {
+      await press(screen.getByRole("button", { name: "Back" }));
+      inspectData.mockResolvedValue(inspection({ format: "xlsx", workbook: moved }));
+      await act(async () => {
+        fireEvent.change(screen.getByLabelText(label), { target: { value } });
+      });
+      // The reading for the new sheet or row never arrives: Next waits for it.
+      previewData.mockReturnValue(new Promise(() => {}));
+      await press(next());
+      expect(screen.getByRole("heading", { name: "Step 2 of 4: what a row is" })).toBeTruthy();
+      expect(next().getAttribute("aria-disabled")).toBe("true");
+      expect(screen.getByText("Checking the identifier…")).toBeTruthy();
+      previewData.mockResolvedValue(preview());
+    }
+  });
+
+  it("T-9: the announcement counts things", async () => {
+    inspectData.mockResolvedValue(inspection({ choices: { classIri: `${X}Person`, idColumn: "id", columns: {} } }));
+    await mount({ kind: "remap", snapshot: SNAPSHOT });
+    const many = { ...SNAPSHOT, report: { ...REPORT, individuals: 120 } };
+    updateData.mockResolvedValue({ snapshot: many, generation: 2 });
+    await press(next());
+    await press(next());
+    await press(screen.getByRole("button", { name: "Import again" }));
+    expect(projectStore.getSnapshot().announcement.text).toBe("Mapped again people.csv: 120 things made.");
+  });
+
+  it("T-10: in a taxonomy every label points at a control, and the row sentence describes the identifier's", async () => {
+    await mount({ kind: "new" }, true);
+    inspectData.mockResolvedValue(inspection());
+    const input = document.querySelector(".data-wizard input[type=file]") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [FILE] } });
+    });
+    await press(next());
+    expect(screen.getByRole("heading", { name: "Step 2 of 4: what a row is" })).toBeTruthy();
+    const labels = [...document.querySelectorAll(".data-wizard label[for]")];
+    expect(labels.length).toBeGreaterThan(0);
+    for (const label of labels) {
+      const target = document.getElementById(label.getAttribute("for")!);
+      expect(target?.matches("input, select, textarea, button")).toBe(true);
+    }
+    const sentence = screen.getByText("Each row is a concept of the project's scheme.");
+    expect(sentence.closest("label")).toBeNull();
+    const id = screen.getByLabelText(/Each row is identified by column/);
+    expect(id.getAttribute("aria-describedby")).toBe(sentence.id);
   });
 });

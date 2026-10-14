@@ -12,8 +12,9 @@ SUMMARY
 
 BASIC IDEA
     The facts are the server's (GET reasoning?about=), fetched again when
-    the entity, the result or the revision moves; App only mounts this while
-    the result is current, so a stale result's facts never show. The block
+    the entity, the result or the revision moves, and shown only for what
+    they were fetched for; App only mounts this while the result is current,
+    so a stale result's facts never show, nor a previous run's. The block
     is outlined dashed and headed *Inferred* in words. The other end of each
     fact is a link through the app's selection, as the tree's rows are.
 
@@ -44,19 +45,24 @@ interface Props {
 }
 
 export default function InferredBlock({ projectId, iri, imports, resultKey, revision, label, onSelect }: Props) {
-  const [about, setAbout] = useState<ReasoningAbout | null>(null);
+  // The facts are kept with what they were fetched for, and shown only for
+  // that: after a new run the last run's facts showed until the new ones
+  // came (PR #55 review).
+  const key = [projectId, iri, imports, resultKey, revision].join("|");
+  const [held, setHeld] = useState<{ key: string; about: ReasoningAbout } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const about = held?.key === key ? held.about : null;
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
     getReasoningAbout(projectId, iri, imports)
-      .then((found) => !cancelled && setAbout(found))
+      .then((found) => !cancelled && setHeld({ key, about: found }))
       .catch((e: unknown) => !cancelled && setError(e instanceof Error ? e.message : String(e)));
     return () => {
       cancelled = true;
     };
-  }, [projectId, iri, imports, resultKey, revision]);
+  }, [key]);
 
   if (error) {
     return (

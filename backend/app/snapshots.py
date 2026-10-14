@@ -93,6 +93,9 @@ from .shapes_form import paths_for
 DATA_DIR = "data"
 TRASH_DIR = ".trash"
 SOURCE = "source.csv"
+# A CSV file's snapshot refreshed with a workbook that names no sheet.
+CHOOSE_SHEET = "This snapshot was read from a CSV file. Choose the sheet of this workbook to refresh from."
+
 # A workbook's original, kept beside the CSV copy its mapping reads (5.8).
 SOURCE_XLSX = "source.xlsx"
 MAPPING = "mapping.rml.ttl"
@@ -712,7 +715,7 @@ class SnapshotService:
     def _sample_check(table: tabular.Table, accept: bool) -> None:
         if table.sample and not accept:
             raise SnapshotError(
-                tabular.rows_sentence(table.total)
+                tabular.rows_sentence(table.total, bool(table.workbook))
                 + f" Choose to use the first {tabular.MAX_ROWS:,} rows, or another file."
             )
 
@@ -785,6 +788,12 @@ class SnapshotService:
         # never from the last sheet's header row (code review).
         if "sheet" not in options and "headerRow" not in options:
             options.update({k: v for k, v in earlier.items() if k in ("sheet", "headerRow")})
+        if not earlier and "sheet" not in options and tabular.is_workbook(data, filename):
+            # A CSV file's snapshot has no sheet to read a workbook by, and
+            # its first sheet is not a choice anyone made: the sheets go
+            # back so step 1 can ask (PR #54 review).
+            found = self.read(data, options, filename)
+            raise tabular.TabularError(CHOOSE_SHEET, "not-text", found.workbook)
         table = self.read(data, options, filename)
         self._sample_check(table, bool(options.get("sample")))
         with self._lock(pid):

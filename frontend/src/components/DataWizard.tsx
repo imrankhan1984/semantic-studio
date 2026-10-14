@@ -9,7 +9,9 @@ SUMMARY
     column identifies it, what each column becomes, and the preview as
     sentences before Import. Also how "Change the mapping" (steps 2 to 4 on
     the copy kept) and a refresh whose headers changed (step 3 with the
-    missing columns marked) are finished (5.7).
+    missing columns marked) are finished (5.7). A refresh whose sheet is
+    gone, or whose file is of the other kind than the snapshot's, starts at
+    step 1 with the reason said, so a sheet is chosen, never taken.
 
 BASIC IDEA
     One decision per step, each a component of its own below, and nothing
@@ -28,7 +30,9 @@ BASIC IDEA
     so the choice can be put right. The detections and the pickers stay
     mounted while the file is read again, so the control just changed
     keeps keyboard focus. Reads are numbered and only the latest reply is
-    applied, and Next waits while one is on its way. A file past
+    applied, and Next waits while one is on its way. The class reading of
+    step 2 is kept with the class, identifier, sheet and header row it was
+    read for, and used for nothing else. A file past
     the tool's 2,000-row limit (D-098) gets the limit sentence and two
     choices, Use the first 2,000 rows or Choose another file, and Next waits
     for one.
@@ -112,9 +116,17 @@ export type WizardStart =
       snapshot: SnapshotSummary;
       file: File;
       options: DataOptions;
-      inspection: DataInspection;
+      // null when the file could not be read as the snapshot was: a
+      // workbook whose sheet is gone (5.8, PR #54 review).
+      inspection: DataInspection | null;
       missing: string[];
       choices: DataChoices | null;
+      // Set when the refresh goes through step 1 first, saying why: the
+      // snapshot's sheet is gone, or the file is of another kind than the
+      // snapshot's, so the sheet and header row are chosen, never taken.
+      atFile?: string;
+      // The sheets to choose from when there is no inspection.
+      workbook?: WorkbookInspection | null;
     };
 
 interface Props {
@@ -151,7 +163,11 @@ export default function DataWizard({
   onShowData,
   onDirtyChange,
 }: Props) {
-  const [step, setStep] = useState<Step>(start.kind === "new" ? 1 : start.kind === "remap" ? 2 : 3);
+  // Where Back stops: a refresh through step 1 can go back to it.
+  const firstStep = start.kind === "new" || (start.kind === "refresh" && start.atFile) ? 1 : 2;
+  const [step, setStep] = useState<Step>(
+    firstStep === 1 ? 1 : start.kind === "remap" ? 2 : 3,
+  );
   const [file, setFile] = useState<File | null>(start.kind === "refresh" ? start.file : null);
   const [options, setOptions] = useState<DataOptions>(start.kind === "refresh" ? start.options : {});
   const [inspection, setInspection] = useState<DataInspection | null>(
@@ -160,7 +176,7 @@ export default function DataWizard({
   const [fileProblem, setFileProblem] = useState<{ text: string; tooLarge: boolean } | null>(null);
   // A workbook's sheets and first rows, kept when a re-read fails.
   const [workbook, setWorkbook] = useState<WorkbookInspection | null>(
-    start.kind === "refresh" ? (start.inspection.workbook ?? null) : null,
+    start.kind === "refresh" ? (start.inspection?.workbook ?? start.workbook ?? null) : null,
   );
   const [reading, setReading] = useState(false);
   const earlier = start.kind === "refresh" ? start.choices : null;
@@ -284,7 +300,9 @@ export default function DataWizard({
   };
 
   const effectiveId = rowNumber ? null : idColumn;
-  const basisKey = `${classIri ?? ""}|${effectiveId ?? ""}`;
+  // The sheet and header row are part of the key: a reading of one sheet was
+  // reused for another with a column of the same name (PR #54 review).
+  const basisKey = [classIri ?? "", effectiveId ?? "", options.sheet ?? "", options.headerRow ?? ""].join("|");
   const basis = classReading && classReading.key === basisKey ? classReading.preview : null;
 
   // Step 2 onwards: the identifier check, the fields of the row's class and
@@ -351,6 +369,7 @@ export default function DataWizard({
           basis: basis ? "ready" : basisFailed ? "failed" : "reading",
           columnsReady: choices !== null,
           reading,
+          sheetChosen: !(workbook && (options.sheet ?? workbook.sheet) === ""),
         })
       : null;
   const retryShown = (step === 2 || step === 3) && basisFailed !== null && !basis;
@@ -363,8 +382,7 @@ export default function DataWizard({
 
   const goBack = () => {
     if (typeof step !== "number") return;
-    const first = start.kind === "new" ? 1 : 2;
-    if (step > first) setStep((step - 1) as Step);
+    if (step > firstStep) setStep((step - 1) as Step);
   };
 
   const doImport = async () => {
@@ -377,7 +395,13 @@ export default function DataWizard({
       if (start.kind === "new") {
         made = (await importData(projectId, file!, options, choices)).snapshot;
       } else if (start.kind === "refresh") {
-        const result = await refreshData(projectId, start.snapshot.id, file!, options, choices);
+        // A workbook read by its default sheet still names it: the server
+        // never takes a sheet nobody chose for a snapshot (PR #54 review).
+        const sent =
+          inspection?.format === "xlsx" && workbook
+            ? { ...options, sheet: options.sheet ?? workbook.sheet, headerRow: options.headerRow ?? workbook.headerRow }
+            : options;
+        const result = await refreshData(projectId, start.snapshot.id, file!, sent, choices);
         if (result.status !== "imported") throw new Error(`The file still lacks ${result.missing.join(", ")}.`);
         made = result.snapshot;
       } else {
@@ -386,7 +410,10 @@ export default function DataWizard({
       setDone(made);
       setStep("report");
       const verb = start.kind === "remap" ? "Mapped again" : "Imported";
-      await projectStore.dataChanged(`${verb} ${made.source}: ${made.report.individuals.toLocaleString("en-US")} made.`);
+      const count = made.report.individuals;
+      await projectStore.dataChanged(
+        `${verb} ${made.source}: ${count.toLocaleString("en-US")} ${count === 1 ? "thing" : "things"} made.`,
+      );
     } catch (e: unknown) {
       setError(message(e));
     } finally {
@@ -421,6 +448,9 @@ export default function DataWizard({
         </p>
       )}
 
+      {step === 1 && start.kind === "refresh" && start.atFile && (
+        <p className="detail-note">{start.atFile}</p>
+      )}
       {step === 1 && (
         <FileStep
           file={file}
@@ -539,7 +569,7 @@ export default function DataWizard({
         </div>
       ) : (
         <div className="wizard-actions">
-          {step !== (start.kind === "new" ? 1 : 2) && (
+          {step !== firstStep && (
             <button type="button" onClick={goBack}>
               Back
             </button>
@@ -677,6 +707,11 @@ function FileStep({
               // Another sheet starts again from its first row.
               onChange={(e) => onOptions({ sheet: e.target.value, headerRow: undefined })}
             >
+              {(options.sheet ?? workbook.sheet) === "" && (
+                <option value="" disabled>
+                  Choose a sheet
+                </option>
+              )}
               {workbook.sheets.map((sheet) => (
                 <option key={sheet.name} value={sheet.name}>
                   {sheetOption(sheet)}
@@ -807,7 +842,6 @@ function FileStep({
   );
 }
 
-/** A sheet's first rows when they could not be read: numbers, no cells. */
 /** The sheets and rows a refused workbook read came back with, if any. */
 function refusedWorkbook(e: unknown): WorkbookInspection | null {
   if (!(e instanceof ApiError) || typeof e.detail !== "object" || e.detail === null) return null;
@@ -815,6 +849,7 @@ function refusedWorkbook(e: unknown): WorkbookInspection | null {
   return listed && Array.isArray(listed.sheets) && Array.isArray(listed.top) ? listed : null;
 }
 
+/** A sheet's first rows when they could not be read: numbers, no cells. */
 function unreadRows(): { row: number; cells: string[]; unread: boolean }[] {
   return Array.from({ length: 20 }, (_, i) => ({ row: i + 1, cells: [], unread: true }));
 }
@@ -900,10 +935,14 @@ function RowStep({
   return (
     <div className="wizard-step">
       <p className="wizard-field">
-        <label htmlFor={classId}>Each row is </label>
         {taxonomy ? (
-          <span id={classId}>a concept of the project's scheme</span>
+          // Nothing to choose: the sentence describes the identifier's
+          // picker below rather than labelling a text (PR #53 review).
+          <span id={classId}>Each row is a concept of the project's scheme.</span>
         ) : (
+          <label htmlFor={classId}>Each row is </label>
+        )}
+        {taxonomy ? null : (
           <select
             id={classId}
             value={creating ? "new" : (classIri ?? "")}
@@ -941,6 +980,7 @@ function RowStep({
           <label htmlFor={idId}>Each row is identified by column </label>
           <select
             id={idId}
+            aria-describedby={taxonomy ? classId : undefined}
             value={rowNumber ? "" : (idColumn ?? "")}
             onChange={(e) => (e.target.value ? onIdColumn(e.target.value) : onRowNumber(true))}
           >

@@ -21,10 +21,15 @@ BASIC IDEA
         introduced); the walk fails closed, so a query nested too deeply to
         verify is refused rather than passed (CF-1);
       * results are capped independently of whatever LIMIT the query carries;
-      * evaluation runs in a worker thread with a wall-clock timeout, because
-        rdflib itself offers no way to interrupt a running query. The worker
-        runs in a copy of the request's context, which is how the just-once
-        grant and the SERVICE run's one-call memo reach it.
+      * evaluation runs on a thread of its own with a wall-clock timeout,
+        holding the ontology's read lock itself. The worker runs in a copy of
+        the request's context, which is how the just-once grant and the
+        SERVICE run's one-call memo reach it;
+      * rdflib offers no way to interrupt a query, so at the timeout the
+        worker is stopped from outside: QueryStopped is raised in it, only
+        while it is still inside the query. A worker still alive two seconds
+        later (inside a C call or a network wait) keeps its ontology's key,
+        and a new query on that ontology is refused until it ends (D-108).
 
 INPUTS / INPUT SOURCES
     - A raw SPARQL query string (from the frontend via the /sparql endpoint).
@@ -36,8 +41,9 @@ EXPECTED OUTPUT
       where each cell is a serialized term (uri/literal/bnode) or None for an
       unbound OPTIONAL variable, plus "services" -- one entry per endpoint
       called -- when the query has SERVICE blocks.
-    - Raises QueryError (bad/forbidden query) or QueryTimeout (too slow), which
-      the router maps to HTTP 400 / 504, and lets the broker's ApprovalRequired,
+    - Raises QueryError (bad/forbidden query), QueryTimeout (too slow) or
+      QueryBusy (the last query is still stopping), which the router maps to
+      HTTP 400 / 504 / 409, and lets the broker's ApprovalRequired,
       HostBlocked and Offline through for main.py to map to 409 / 403 / 503.
 ================================================================================
 """
@@ -45,13 +51,15 @@ EXPECTED OUTPUT
 from __future__ import annotations
 
 # time         - measure query duration and drive the timeout.
-# ThreadPoolExecutor / TimeoutError - run the query off the request thread so a
-#                slow query can be timed out (rdflib cannot self-interrupt).
+# threading    - run the query off the request thread so a slow query can be
+#                timed out; ctypes raises the stop in it (rdflib cannot
+#                self-interrupt).
+import contextlib
 import contextvars
+import ctypes
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FuturesTimeout
-from typing import Optional
+from typing import Callable, Optional
 
 # rdflib term types for serialization. parseQuery and translateQuery are the
 # two halves of prepareQuery, called apart because the SERVICE blocks have to
@@ -77,6 +85,122 @@ class QueryError(Exception):
 
 class QueryTimeout(Exception):
     """The query took longer than the allowed wall-clock time (maps to HTTP 504)."""
+
+
+class QueryBusy(Exception):
+    """A timed-out query of the same ontology is still stopping (maps to HTTP 409)."""
+
+
+class QueryStopped(BaseException):
+    """Raised inside a timed-out query's worker to end it.
+
+    A BaseException, as KeyboardInterrupt is, so an ``except Exception``
+    somewhere in rdflib's evaluation cannot swallow it and carry on."""
+
+
+BUSY_DETAIL = "The last query is still stopping. Try again in a few seconds."
+
+# How long the request waits for a stopped worker to end before giving up on
+# it. The stop lands at the worker's next Python instruction, which for an
+# rdflib query is within milliseconds (0.04 s measured on a three-way join
+# under ORDER BY); only a C call or a network wait outlasts it.
+STOP_GRACE_SECONDS = 2.0
+# How often, within the grace, a stop the worker has not acted on is sent again.
+STOP_RESEND_SECONDS = 0.05
+
+# A worker still alive STOP_GRACE_SECONDS after its stop keeps its ontology's
+# key here, holding the worker's thread, and a new query on the key is refused
+# while that thread lives. Without this, repeated slow queries piled up
+# abandoned workers with nothing bounding them (CF-2, D-108). Before the stop
+# from outside, a query computing its first row kept the key for as long as it
+# ran, hours for a big join, refusing every query on its ontology meanwhile.
+_abandoned: dict[str, threading.Thread] = {}
+_abandoned_lock = threading.Lock()
+
+
+def _set_async_exc(ident: int, exc) -> int:
+    """Raise ``exc`` in thread ``ident`` at its next Python instruction, or
+    clear a pending one when ``exc`` is None. Returns the threads changed."""
+    return ctypes.pythonapi.PyThreadState_SetAsyncExc(
+        ctypes.c_ulong(ident), ctypes.py_object(exc) if exc is not None else None
+    )
+
+
+class _Stopper:
+    """The one stop a worker can be sent, and only while it is in its query.
+
+    A thread id is reused once its thread ends, and a stop raised after the
+    query would land in the worker's own cleanup, so it is sent only while the
+    worker is armed and alive, under the lock the worker takes to disarm.
+    Disarming also clears a stop sent but not yet delivered. A resent stop
+    that lands as the worker disarms can still reach its cleanup; that is
+    harmless by design: the worker's end is its thread's end, not a flag it
+    must set, and the read lock is a ``with`` the exception unwinds.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._ident: Optional[int] = None
+        self._thread: Optional[threading.Thread] = None
+        self._armed = False
+        self._sent = False
+        self._wanted = False
+
+    def arm(self) -> None:
+        with self._lock:
+            self._ident = threading.get_ident()
+            self._thread = threading.current_thread()
+            self._armed = True
+
+    def disarm(self) -> None:
+        with self._lock:
+            self._armed = False
+            if self._sent:
+                _set_async_exc(self._ident, None)
+
+    def stop(self) -> bool:
+        """Send the stop if the worker is in its query and not held. Declined
+        while held, it is raised when the hold ends.
+
+        The worker stays armed, so the stop can be sent again: one that lands
+        in a finaliser the collector runs on the worker (a WeakSet's remove
+        callback, seen on Linux) is reported as unraisable and lost, and the
+        query runs on."""
+        with self._lock:
+            self._wanted = True
+            if not self._armed or not self._thread.is_alive():
+                return False
+            # The C API: more than one thread changed must be undone, and
+            # none means the thread is gone.
+            if _set_async_exc(self._ident, QueryStopped) != 1:
+                _set_async_exc(self._ident, None)
+                return False
+            self._sent = True
+            return True
+
+    @contextlib.contextmanager
+    def held(self):
+        """No stop lands inside: a SERVICE call's socket and broker code is
+        not written to be interrupted between its own lock and bookkeeping.
+        Its 20 s limit bounds the wait; a stop asked for meanwhile is raised
+        here, synchronously, as the hold ends."""
+        with self._lock:
+            if self._wanted:
+                # Asked for already: end now, and clear any copy still on
+                # its way so it cannot land inside the call.
+                if self._sent:
+                    _set_async_exc(self._ident, None)
+                raise QueryStopped
+            was = self._armed
+            self._armed = False
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._armed = was
+                stop_now = was and self._wanted
+            if stop_now:
+                raise QueryStopped
 
 
 # The algebra node rdflib 7.6.0 produces for a SERVICE clause. Verified to be
@@ -229,14 +353,27 @@ def execute_select(
     query: str,
     *,
     max_rows: int = MAX_ROWS,
-    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    timeout: Optional[float] = None,
+    key: Optional[str] = None,
+    reading: Callable[[], contextlib.AbstractContextManager] = contextlib.nullcontext,
 ) -> dict:
     """Run a SELECT query and return JSON-serializable results.
 
     Validates the query, asks about any SERVICE hosts, evaluates it on a
     worker thread under a timeout, truncates at max_rows, and serializes each
-    cell.
+    cell. ``key`` names the ontology for the one-abandoned-query rule;
+    ``reading`` is its read lock, which the worker takes itself, so a caller
+    must not hold it. The timeout is read when called, so a test can lower
+    the module's default.
     """
+    if timeout is None:
+        timeout = DEFAULT_TIMEOUT_SECONDS
+    if key is not None:
+        with _abandoned_lock:
+            stuck = _abandoned.get(key)
+            if stuck is not None and stuck.is_alive():
+                raise QueryBusy(BUSY_DETAIL)
+            _abandoned.pop(key, None)
     # Validate/parse first so a bad query fails before we spin up a thread.
     prepared, plan = _prepare(query)
     # Every SERVICE host is asked about now, all in one 409, before a row is
@@ -246,61 +383,124 @@ def execute_select(
     run_state: Optional[sparql_service.ServiceRun] = (
         sparql_service.ServiceRun(plan) if plan is not None else None
     )
-    started = time.perf_counter()
+    # Set by the request thread when the timeout fires; entered by the worker
+    # once it holds the read lock. The worker has ended when its thread has:
+    # no flag it must remember to set, which a stray stop could skip.
+    stop = threading.Event()
+    entered = threading.Event()
+    stopper = _Stopper()
+    # The worker's one answer: its response parts, None when stopped, or the
+    # exception it ended with (QueryStopped, too, if a resent stop landed as
+    # it disarmed).
+    outcome: list = []
 
-    # The actual evaluation. Defined as a closure so it can run on the worker
-    # thread and return everything the caller needs in one tuple.
+    def evaluate():
+        if stop.is_set():
+            return None
+        result = graph.query(prepared)
+        variables = [str(var) for var in (result.vars or [])]
+        rows = []
+        hit_cap = False
+        # rdflib yields a SELECT's rows lazily, so the flag ends a query the
+        # stop could not reach (in C, or held round a SERVICE call) within
+        # one row; part of the rows is no answer.
+        for row in result:
+            if stop.is_set():
+                return None
+            # Stop collecting once we reach the server cap; flag truncation.
+            if len(rows) >= max_rows:
+                hit_cap = True
+                break
+            rows.append(tuple(row))
+        # Serialized under the same hold of the read lock as the query, so a
+        # row's labels are of the revision it was computed on. The cache
+        # dedupes label lookups across rows.
+        cache: dict[str, dict] = {}
+        serialized = [[_term_json(graph, term, cache) for term in row] for row in rows]
+        return variables, serialized, hit_cap
+
+    # The worker holds the read lock itself, so a stopped query lets go of it
+    # in its own cleanup rather than reading on after the request let go.
     def run():
         token = sparql_service.begin_run(run_state)
+        held = sparql_service.hold_stop.set(stopper.held)
         try:
-            result = graph.query(prepared)
-            variables = [str(var) for var in (result.vars or [])]
-            rows = []
-            hit_cap = False
-            for row in result:
-                # Stop collecting once we reach the server cap; flag truncation.
-                if len(rows) >= max_rows:
-                    hit_cap = True
-                    break
-                rows.append(tuple(row))
-            return variables, rows, hit_cap
+            with reading():
+                entered.set()
+                try:
+                    stopper.arm()
+                    try:
+                        answer = evaluate()
+                    finally:
+                        # However evaluate ended: a stop sent before this
+                        # lands here or is cleared by it, never in the
+                        # cleanup below or in a later thread with this id.
+                        stopper.disarm()
+                except QueryStopped:
+                    answer = None
+            outcome.append(answer)
+        except BaseException as exc:  # handed to the request thread
+            outcome.append(exc)
         finally:
+            sparql_service.hold_stop.reset(held)
             sparql_service.end_run(token)
+            entered.set()
 
-    # A single-worker pool lets us apply a wall-clock timeout to run().
-    executor = ThreadPoolExecutor(max_workers=1)
-    try:
-        # Run in a copy of the caller's context, as store.parse_rdf does: the
-        # just-once grant the request presented is a contextvar, and a bare
-        # submit would start the worker without it, so an approved SERVICE
-        # retry would be asked again, for ever.
-        future = executor.submit(contextvars.copy_context().run, run)
-        try:
-            variables, rows, truncated = future.result(timeout=timeout)
-        except FuturesTimeout as exc:
-            # Query ran too long; surface actionable advice to the user.
-            raise QueryTimeout(
-                f"The query exceeded the {timeout:.0f}s time limit. "
-                "Try adding filters, reducing LIMIT, or avoiding unbounded "
-                "path modifiers such as * and +."
-            ) from exc
-        except (QueryError, NetworkDecision):
-            # Already the right types; main.py maps the broker's decisions.
-            raise
-        except sparql_service.ServiceFailed as exc:
-            # Its sentence already names the endpoint and what went wrong.
-            raise QueryError(str(exc)) from exc
-        except Exception as exc:
-            # Any other evaluation error becomes a QueryError (HTTP 400).
-            raise QueryError(f"The query could not be evaluated: {exc}") from exc
-    finally:
-        # Never block on a timed-out query; the thread is abandoned to finish
-        # (or not) on its own.
-        executor.shutdown(wait=False)
-
-    # Serialize every cell; the cache dedupes label lookups across rows.
-    cache: dict[str, dict] = {}
-    serialized = [[_term_json(graph, term, cache) for term in row] for row in rows]
+    # A thread of its own, never a pool's: the stop is raised in it by id, and
+    # a reused worker could carry it into the next query. Run in a copy of the
+    # caller's context, as store.parse_rdf does: the just-once grant the
+    # request presented is a contextvar, and a bare start would run the worker
+    # without it, so an approved SERVICE retry would be asked again, for ever.
+    worker = threading.Thread(
+        target=contextvars.copy_context().run, args=(run,), name="sparql-query", daemon=True
+    )
+    worker.start()
+    # The wait for the read lock is not the query's time, as it was not when
+    # the request took the lock itself: a query queued behind an edit is not
+    # timed out unrun, nor called "still stopping".
+    while not entered.wait(STOP_RESEND_SECONDS) and worker.is_alive():
+        pass
+    started = time.perf_counter()
+    worker.join(timeout)
+    if worker.is_alive():
+        stop.set()
+        # Sent again until the worker ends: one can land in a finaliser the
+        # collector runs on the worker and be lost. Only ever sent while the
+        # worker is armed in its query.
+        given_up = time.perf_counter() + STOP_GRACE_SECONDS
+        stopper.stop()
+        while True:
+            worker.join(STOP_RESEND_SECONDS)
+            if not worker.is_alive():
+                break
+            if time.perf_counter() >= given_up:
+                if key is not None:
+                    # Inside a C call or a network wait: the stop lands when
+                    # it returns, and until then its ontology takes no new
+                    # query.
+                    with _abandoned_lock:
+                        _abandoned[key] = worker
+                break
+            stopper.stop()
+    answer = outcome[0] if not worker.is_alive() and outcome else None
+    if answer is None or isinstance(answer, QueryStopped):
+        # Stopped, or still stopping. A query that finished just as the
+        # timeout fired was never sent the stop and keeps its rows.
+        raise QueryTimeout(
+            f"The query exceeded the {timeout:.0f}s time limit. "
+            "Try adding filters, reducing LIMIT, or avoiding unbounded "
+            "path modifiers such as * and +."
+        )
+    if isinstance(answer, (QueryError, NetworkDecision)):
+        # Already the right types; main.py maps the broker's decisions.
+        raise answer
+    if isinstance(answer, sparql_service.ServiceFailed):
+        # Its sentence already names the endpoint and what went wrong.
+        raise QueryError(str(answer)) from answer
+    if isinstance(answer, BaseException):
+        # Any other evaluation error becomes a QueryError (HTTP 400).
+        raise QueryError(f"The query could not be evaluated: {answer}") from answer
+    variables, serialized, truncated = answer
     response = {
         "vars": variables,
         "rows": serialized,

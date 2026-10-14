@@ -38,6 +38,7 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
+import { a } from "./sentences";
 import { plural } from "./shapeSentences";
 import type { DataSource, IdCheck, ImportReportData, PreviewRow, RowList } from "../types";
 
@@ -105,7 +106,7 @@ export function previewSentences(row: PreviewRow, className: string): string[] {
     return [`Row ${count(row.row)} has no id, so nothing is made from it.`];
   }
   const who = row.name ?? `Row ${count(row.row)}`;
-  const sentences = [`${who} is ${/^[aeiou]/i.test(className) ? "an" : "a"} ${className}.`];
+  const sentences = [`${who} is ${a(className)}.`];
   for (const value of row.values) {
     if (value.kind === "link") {
       sentences.push(`${who}'s ${value.label}: the one with id ${quoted(value.value)}.`);

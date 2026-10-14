@@ -157,7 +157,7 @@ from .projects import (
     graph_counts,
     valid_lang,
 )
-from . import axioms, examples, lexical, modeling_checks, reasoning, shacl, shapes_form
+from . import axioms, examples, lexical, modeling_checks, reasoning, sentences, shacl, shapes_form
 from .canvas import build_canvas, restrict, with_inferred
 from .imports import imports_service, load_state
 from .snapshots import SnapshotService
@@ -1183,8 +1183,8 @@ def _sub_pair(ctx: Context, a: dict) -> tuple[URIRef, URIRef]:
     if _property_kind(ctx, parent) != _property_kind(ctx, child):
         word = "relationship" if (child, RDF.type, OWL.ObjectProperty) in ctx.graph else "attribute"
         raise CommandError(
-            f"{ctx.name(child)} is {'a' if word == 'relationship' else 'an'} {word}; "
-            f"its more general one must be {'a' if word == 'relationship' else 'an'} {word} too."
+            f"{ctx.name(child)} is {sentences.a(word)}; "
+            f"its more general one must be {sentences.a(word)} too."
         )
     return child, parent
 
@@ -1609,8 +1609,9 @@ def _example_value(ctx: Context, a: dict, key: str = "value") -> tuple[URIRef, U
         if isinstance(end, URIRef) and not set(classes.objects(term, RDF.type)) & examples.subclasses(classes, end):
             target = pick_label_in(classes, term, ctx.languages)[0]
             kind = pick_label_in(classes, end, ctx.languages)[0]
-            article = "an" if kind[:1].lower() in "aeiou" else "a"
-            raise CommandError(f"{target} is not {article} {kind}; {name} links only to {article} {kind}.")
+            # A command's arguments are `a` here, so the article is reached
+            # through its module.
+            raise CommandError(f"{target} is not {sentences.a(kind)}; {name} links only to {sentences.a(kind)}.")
         return iri, prop, term, name
     rng = classes.value(prop, RDFS.range)
     if isinstance(rng, URIRef) and rng not in _DATATYPE_BY_IRI and rng != RDF.langString and rng != RDFS.Literal:
@@ -1941,7 +1942,9 @@ def cmd_add_disjoint_with(ctx: Context, a: dict) -> Change:
     """*No Person is an Organization* (5.8). Disjoint with one of its own
     kinds is kept, and warned on the form (modeling_checks.never_members)."""
     first, second = _class_pair(ctx, a, OWL.disjointWith)
-    if _pair_statements(ctx, first, second, OWL.disjointWith):
+    # Already disjoint by a group (owl:AllDisjointClasses) as well: a second
+    # statement of it would say nothing new (X-12, T-26, Q2).
+    if _pair_statements(ctx, first, second, OWL.disjointWith) or second in axioms.disjoint_with(ctx.graph, first):
         raise CommandError(f"{ctx.name(first)} and {_rule_name(ctx, second)} are already disjoint.")
     return _change(
         ctx.graph, f"Made {ctx.name(first)} and {_rule_name(ctx, second)} disjoint",
@@ -1955,6 +1958,13 @@ def cmd_remove_disjoint_with(ctx: Context, a: dict) -> Change:
     second = ctx.iri(a.get("b"), "class")
     removes = _pair_statements(ctx, first, second, OWL.disjointWith)
     if not removes:
+        # Disjoint through a group the form reads only as Turtle: saying they
+        # were not disjoint was untrue (X-12, T-25).
+        if second in axioms.disjoint_with(ctx.graph, first):
+            raise CommandError(
+                f"{ctx.name(first)} and {_rule_name(ctx, second)} are disjoint through a group of "
+                "classes written in Turtle. Edit it in Turtle."
+            )
         raise CommandError(f"{ctx.name(first)} and {_rule_name(ctx, second)} are not disjoint in this document.")
     return _change(
         ctx.graph, f"Removed the disjointness of {ctx.name(first)} and {_rule_name(ctx, second)}", removes=removes

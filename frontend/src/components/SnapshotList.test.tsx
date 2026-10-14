@@ -11,6 +11,7 @@ SUMMARY
     run, kept outside the engine, and refused; Remove after saying how many
     statements leave. None of it is a model change. Stage B: a workbook's
     snapshot refreshed by its sheet and header row, and its links to no row.
+    A list that cannot be read says so once, with Try again (PR #53 review).
 
 BASIC IDEA
     api.ts is mocked and the real project store is opened on a fixed
@@ -185,7 +186,7 @@ describe("SnapshotList", () => {
     await setup([ORGS]);
     expect(screen.getByText(/· sheet Orgs · 2 links to no row/)).toBeTruthy();
     const book = new File(["PK"], "orgs-2.xlsx");
-    inspectData.mockResolvedValue({ sample: false, limit: 2000 });
+    inspectData.mockResolvedValue({ sample: false, limit: 2000, format: "xlsx" });
     refreshData.mockResolvedValue({ status: "imported", snapshot: { ...ORGS, source: "orgs-2.xlsx" }, generation: 2 });
     const input = document.querySelector(".snapshot-row input[type=file]") as HTMLInputElement;
     expect(input.getAttribute("accept")).toContain(".xlsx");
@@ -231,5 +232,97 @@ describe("SnapshotList", () => {
       "Removed people.csv: 4,000 statements left the views. Its folder is in the project's trash.",
     );
     expect(screen.getByText(/No data yet/)).toBeTruthy();
+  });
+});
+
+describe("SnapshotList, when the list cannot be read", () => {
+  it("says so, announces it, and Try again loads it with focus on the heading", async () => {
+    // PR #53 review: a failed load left the tab reading for ever.
+    openProject.mockResolvedValue({ project: PROJECT, documents: [MODEL], recovery: { available: false, draftTime: null } });
+    listData.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await act(async () => {
+      await projectStore.open(PID);
+    });
+    await act(async () => {
+      render(<SnapshotList projectId={PID} onWizard={() => {}} />);
+    });
+
+    const sentence = "The data snapshots could not be read: the server did not answer.";
+    expect(screen.getByText(sentence)).toBeTruthy();
+    expect(projectStore.getSnapshot().announcement.text).toBe(sentence);
+    expect(document.body.textContent).not.toContain("Failed to fetch");
+    expect(screen.queryByText(/Reading the project's data/)).toBeNull();
+
+    // The server's own sentence, when it sent one.
+    listData.mockRejectedValueOnce(new ApiError("There is no such project.", 404));
+    const again = screen.getByRole("button", { name: "Try again" });
+    again.focus();
+    await press(again);
+    expect(screen.getByText("The data snapshots could not be read: There is no such project.")).toBeTruthy();
+
+    listData.mockResolvedValueOnce({ generation: 1, snapshots: [SNAP] });
+    const third = screen.getByRole("button", { name: "Try again" });
+    third.focus();
+    await press(third);
+    expect(screen.getAllByText(/people\.csv/).length).toBeGreaterThan(0);
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Data" }));
+    expect(projectStore.getSnapshot().dataError).toBeNull();
+  });
+});
+
+describe("SnapshotList, a refresh that goes through step 1 (PR #54 review)", () => {
+  const ORGS: SnapshotSummary = {
+    ...SNAP, id: "orgs-def456", source: "orgs.xlsx", rows: 41, total: 41, sample: false,
+    workbook: { sheet: "People", headerRow: 1 },
+  };
+
+  async function refreshWith(file: File) {
+    const input = document.querySelector(".snapshot-row input[type=file]") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [file] } });
+    });
+  }
+
+  it("a workbook whose sheet is gone opens step 1 with its sheets and the old sheet named", async () => {
+    await setup([ORGS]);
+    const sheets = [{ name: "Notes", rows: 0 }, { name: "Staff", rows: 12 }];
+    const refused = { sheet: "", headerRow: 1, top: [], sheets };
+    inspectData.mockRejectedValue(
+      new ApiError("This workbook has no sheet named People.", 422, { message: "This workbook has no sheet named People.", kind: "not-text", workbook: refused }),
+    );
+    const book = new File(["PK"], "orgs-2.xlsx");
+    await refreshWith(book);
+    expect(refreshData).not.toHaveBeenCalled();
+    expect(onWizard).toHaveBeenCalledWith({
+      kind: "refresh", snapshot: ORGS, file: book, options: {}, inspection: null, workbook: refused,
+      missing: [], choices: null,
+      atFile: "This workbook has no sheet named People. Choose the sheet to refresh from.",
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("a CSV file's snapshot refreshed with a workbook goes through step 1, never its first sheet", async () => {
+    await setup([SNAP]);
+    const book = new File(["PK"], "people.xlsx");
+    const workbook = { sheet: "Notes", headerRow: 1, top: [], sheets: [{ name: "Notes", rows: 3 }] };
+    const found = { sample: false, limit: 2000, format: "xlsx", workbook };
+    inspectData.mockResolvedValue(found);
+    await refreshWith(book);
+    expect(refreshData).not.toHaveBeenCalled();
+    expect(onWizard).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "refresh", inspection: found, workbook, options: {},
+      atFile: "This snapshot was read from a CSV file. Choose the sheet of this workbook to refresh from.",
+    }));
+  });
+
+  it("a workbook's snapshot refreshed with a CSV file goes through step 1 too", async () => {
+    await setup([ORGS]);
+    const found = { sample: false, limit: 2000, format: "csv" };
+    inspectData.mockResolvedValue(found);
+    await refreshWith(FILE);
+    expect(refreshData).not.toHaveBeenCalled();
+    expect(onWizard).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "refresh", inspection: found, atFile: "This snapshot was read from a workbook. Check how this CSV file is read.",
+    }));
   });
 });

@@ -1663,3 +1663,96 @@ EXPECTED OUTPUT
   **Not changed.** The spec asked for the reasoning panel's 35% line to be
   removed from `CLAUDE.md`'s rules; there was no such line, only the CSS
   (`.reasoning { max-height: 35% }`), which is gone, and a test asserts it.
+
+- **Tidy-up, October 2026** (2026-10-13, X-12, `tidy-up-2026-10.md`, D-108;
+  fixes CF-2, CF-3, CF-4). Twenty-six small items from five reviews, in one
+  pull request, one commit per group.
+
+  **A timed-out query is stopped from outside.** `executor.shutdown(wait=
+  False)` left a timed-out query running with nothing bounding it (CF-2).
+  As first built, a stop flag checked between rows ended a query producing
+  rows, but one still computing its first row (a three-way join under ORDER
+  BY) kept its ontology's key for as long as it ran, and every later query
+  there was 409, still 90 s on in the review's probe (PR #58 review, spec
+  v1.2). Now each query runs on a thread of its own, and at the timeout
+  `QueryStopped` is raised in it with `ctypes.pythonapi.
+  PyThreadState_SetAsyncExc`; the same stuck query ended 0.04 s after the
+  stop. Three things make that safe. The stop is sent only while the worker
+  is *armed*, inside its query, under the lock the worker takes to disarm,
+  and disarming clears a stop sent but not yet delivered: so it never lands
+  in `end_run` or the read lock's release, and never in a later thread
+  reusing the id (`_Stopper`). The thread is never a pool's, which would
+  carry a stop into its next query. `QueryStopped` is a `BaseException`, so
+  an `except Exception` in rdflib cannot swallow it. The worker takes the
+  ontology's read lock itself (the router no longer holds it around the
+  call), so a stopped query lets go of it in its own cleanup instead of
+  reading on unlocked after the request has gone; it serialises the rows
+  under the same hold, so their labels are of the revision they came from,
+  and the timeout starts only once it holds the lock, so a query queued
+  behind an edit is neither timed out unrun nor called "still stopping".
+  The stop is held off round a SERVICE call (`sparql_service.hold_stop`,
+  `_Stopper.held`): the broker's and the socket's code is not written to be
+  interrupted between a lock and its bookkeeping, and the call's 20 s limit
+  bounds the wait; a stop asked for meanwhile is raised as the hold ends.
+  Disarming is in a `finally`, so a query ending in an ordinary error is
+  disarmed too. A stop can be lost: on Linux CI one landed in a `WeakSet`
+  remove callback the collector ran on the worker, was reported as
+  unraisable, and the join ran on (409, and its CPU failed an unrelated
+  timing test). So the stop is sent again every 50 ms of the grace while the
+  worker is armed and alive. A resent stop can land as the worker disarms
+  and reach its cleanup; that is made harmless rather than prevented: the
+  worker's end is its thread's end (`is_alive`), never a flag it must set,
+  and the read lock is a `with` the exception unwinds. A stop lands only at a
+  Python instruction: a worker inside a C call or a network wait still
+  alive `STOP_GRACE_SECONDS` (2 s) later keeps its ontology's id in
+  `_abandoned`, and a new query there is 409 *The last query is still
+  stopping. Try again in a few seconds.* (D-108). The row-loop flag stays,
+  for a stop that reached the worker in C. A query whose rows were complete
+  when the timeout fired was never sent the stop and keeps them. The client
+  reads a 409 as an approval request only when its body has the approval
+  shape, so this one shows as its sentence. The tests: the stuck join frees
+  its ontology inside 3 s (a simple query then answers 200); a worker waiting
+  on a gate in C still gets the 409; a worker in its cleanup when the
+  timeout fires finishes it whole, and so does one ending in an error; a
+  query behind a held lock answers; one hold of the lock per query; a stop
+  asked for during a SERVICE call waits for the call; a stop lost in a
+  finaliser is sent again. Each goes red with its
+  part of the fix removed. Accepted: a worker stuck in a C call keeps the
+  project's edit lock until the call returns, as the spec gives the lock to
+  the worker.
+
+  **The source view writes a part of a large ontology, not all of it.**
+  Above `BOUNDED_SOURCE_FROM` (20,000 statements; the bundled vocabularies run
+  37 to 120 bytes a statement in Turtle, so the wordiest pass 2 MB there) the
+  formatted view serialises whole subjects in IRI order, each with its blank
+  nodes, until an estimate of the Turtle passes the cap, and answers
+  `statements: {shown, total}` (CF-3). Measured on 200,000 generated
+  statements: about 3.5 s for the part against 6 s for the whole, and the
+  part's cost no longer grows with the ontology. The test counts the
+  statements handed to `Graph.serialize`; the documentation export keeps
+  `pretty_turtle()`, whole, and a test says so.
+
+  **A search answer is applied only if it is the latest.** Cancelling the
+  debounce timer did not stop a request already sent, so a slow answer for
+  *Pla* could replace the one for *Planet* (CF-4). Searches are numbered, as
+  the data wizard's reads are, and only the latest one's answer is applied;
+  the one it replaces is aborted through `searchNodes`' signal. The number is
+  what makes it correct: an answer can already be on its way when the abort
+  comes.
+
+  **One a/an rule and one verb rule per side.** Four copies chose the
+  article by the first letter (*an University*, *a XML file*) and two verb
+  rules disagreed (*must be uses*). `backend/app/sentences.py` and
+  `frontend/src/modeling/sentences.ts` now hold one of each, and both suites
+  test them with one table, `frontend/src/modeling/sentences.table.json`, so
+  they cannot drift apart. `test_sentences.py` and `sentences.test.ts` scan
+  every module for a function named for either rule, the first-letter
+  ternary or the verb rule's word lists, after asserting they read the
+  files. The scan found two copies nobody had listed, in `editing.py`. No
+  article is guessed before a label: *Ann is member of Team A* stays.
+
+  **Where the spec and the build differ.** T-25's refusal is 422, as every
+  command refusal is, not the 409 the spec wrote. T-22's test is in
+  `test_examples.py`, not `ExampleForm.test.tsx`: the example's choices are
+  the server's, and the form is not told a relationship's characteristics.
+  T-21 writes *has exactly one line*, as 5.8 writes one, not *exactly 1*.

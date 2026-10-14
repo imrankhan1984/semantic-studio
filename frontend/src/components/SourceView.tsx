@@ -13,7 +13,9 @@ SUMMARY
 BASIC IDEA
     Fetches /source (original or pretty). To keep an 8 MB file from freezing the
     browser, only a window of lines is rendered at once ("show more" / search
-    reveal more). Search runs over the whole loaded document (not just the
+    reveal more). The formatted view of a very large ontology arrives as a
+    part, whole subjects up to the cap, and says how many of its statements it
+    holds. Search runs over the whole loaded document (not just the
     rendered window) and scrolls the active match into view. The correct
     highlighter (Turtle vs XML) is chosen from the format.
 
@@ -259,7 +261,15 @@ export default function SourceView({ ontologyId, target = null, onTargetResolved
       {loading && <p className="detail-note">Reading the file…</p>}
       {error && <p className="detail-error">{error}</p>}
 
-      {source?.truncated && (
+      {source?.truncated && source.statements && (
+        <p className="query-hint">
+          This ontology is too large to format in full: you are reading its first{" "}
+          {source.statements.shown.toLocaleString()} of{" "}
+          {source.statements.total.toLocaleString()} statements. Search and Copy cover only
+          this part — Explore and Query still work across the whole ontology.
+        </p>
+      )}
+      {source?.truncated && !source.statements && (
         <p className="query-hint">
           This file is too large to show in full: you are reading the first{" "}
           {lines.length.toLocaleString()} lines (

@@ -151,10 +151,12 @@ class Table:
         return self.columns.index(name)
 
 
-def rows_sentence(total: int) -> str:
-    """The 5.2 sentence for a file past the row limit."""
+def rows_sentence(total: int, sheet: bool = False) -> str:
+    """The 5.2 sentence for a file past the row limit; for a workbook, the
+    limit is its sheet's, and the sentence says so."""
+    what = "sheet" if sheet else "file"
     return (
-        f"This file has {total:,} rows. Semantic Studio imports at most {MAX_ROWS:,} rows: {WHY}."
+        f"This {what} has {total:,} rows. Semantic Studio imports at most {MAX_ROWS:,} rows: {WHY}."
     )
 
 
@@ -595,7 +597,15 @@ def read_workbook(
         else:
             chosen = next((ws for ws in sheets if ws.title == sheet), None)
         if chosen is None:
-            raise TabularError(f"This workbook has no sheet named {sheet}.", "not-text")
+            # Named by an earlier read (a refresh) and gone since: the sheets
+            # go with the sentence, so the wizard can offer them, no sheet
+            # chosen and no rows read (PR #54 review).
+            listing = [{"name": ws.title, "rows": _rows_below_first(ws)} for ws in sheets]
+            raise TabularError(
+                f"This workbook has no sheet named {sheet}.",
+                "not-text",
+                {"sheet": "", "headerRow": 1, "top": [], "sheets": listing},
+            )
         listing = []
         table: Optional[Table] = None
         unread: Optional[TabularError] = None
@@ -610,10 +620,7 @@ def read_workbook(
                     unread = exc
                     listing.append({"name": ws.title, "rows": 0})
             else:
-                count = sum(1 for _, cells in _sheet_cells(ws) if any(cell_text(v).strip() for _, v in cells))
-                # Below a header in its first row holding a value, as the
-                # sheet would first be read.
-                listing.append({"name": ws.title, "rows": max(count - 1, 0)})
+                listing.append({"name": ws.title, "rows": _rows_below_first(ws)})
         if unread is not None:
             # The sheet list and the rows that are there go with the
             # sentence, so step 1 can offer another sheet or row.
@@ -642,6 +649,13 @@ def _reason(exc: BaseException) -> str:
         seen = seen.__cause__ or seen.__context__
     text = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
     return text[:200]
+
+
+def _rows_below_first(ws) -> int:
+    """A sheet's rows below a header in its first row holding a value, as
+    the sheet would first be read."""
+    count = sum(1 for _, cells in _sheet_cells(ws) if any(cell_text(v).strip() for _, v in cells))
+    return max(count - 1, 0)
 
 
 def _has_values(ws) -> bool:
@@ -811,7 +825,7 @@ def inspect(table: Table) -> dict:
         "kept": len(table.rows),
         "limit": MAX_ROWS,
         "sample": table.sample,
-        "limitSentence": rows_sentence(table.total) if table.sample else None,
+        "limitSentence": rows_sentence(table.total, bool(table.workbook)) if table.sample else None,
         "idSuggestion": suggest_id(table),
         "nameSuggestion": suggest_name(table),
         "format": "xlsx" if table.workbook else "csv",

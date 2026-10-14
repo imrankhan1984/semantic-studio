@@ -390,13 +390,16 @@ EXPECTED_REASONS = {
 def test_a_label_that_is_no_verb_reads_after_is():
     # PR #55 review: "unit A part of Acme". A verb stays; a label ending in a
     # preposition, or starting with a participle, takes *is*; a bare noun is
-    # left alone rather than made to say the subject is it.
+    # left alone rather than made to say the subject is it. The rule is
+    # sentences.py's since X-12; this keeps the review's own cases.
+    from app.sentences import verb
+
     for label in ("employs", "works for", "worksFor", "has line", "is part of", "leads", "can see"):
-        assert reasoning.verb(label) == label
+        assert verb(label) == label
     for label in ("part of", "partOf", "married to", "member of", "above", "located in", "Owned by"):
-        assert reasoning.verb(label) == f"is {label}"
+        assert verb(label) == f"is {label}"
     for label in ("holder", "address", "status", "", "42"):
-        assert reasoning.verb(label) == label
+        assert verb(label) == label
 
 
 def why(pid: str, fact: dict) -> dict:
@@ -563,7 +566,8 @@ def test_a_run_past_the_time_limit_is_killed_with_its_sentence(shop, monkeypatch
     result = reason(shop)
     assert time.monotonic() - started < 10
     assert result["status"] == "timedOut"
-    assert result["sentence"] == "Stopped after 30 seconds. Try without the data snapshots, or with fewer imports."
+    # The limit that applied, never the one the module started with.
+    assert result["sentence"] == "Stopped after 1.5 seconds. Try without the data snapshots, or with fewer imports."
     assert not reasoning.service.running(shop)
 
 

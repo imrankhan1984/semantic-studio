@@ -1,0 +1,40 @@
+{
+  "_comment": "The one table both sides test their a/an and verb rules with: frontend/src/modeling/sentences.test.ts and backend/tests/test_sentences.py (X-12, T-18, T-19). Change it, and both rules must follow.",
+  "article": [
+    ["University", "a"],
+    ["hour", "an"],
+    ["XML file", "an"],
+    ["URL", "a"],
+    ["Organization", "an"],
+    ["Person", "a"],
+    ["honest broker", "an"],
+    ["HTML page", "an"],
+    ["heir", "an"],
+    ["Honor roll", "an"],
+    ["useful tool", "a"],
+    ["usual case", "a"],
+    ["European", "a"],
+    ["one-off", "a"],
+    ["once-only offer", "a"],
+    ["invoice", "an"],
+    ["X", "an"],
+    ["Hotel", "a"],
+    ["", "a"]
+  ],
+  "verb": [
+    ["uses", "uses", "use"],
+    ["has part", "has part", "have part"],
+    ["is part of", "is part of", "be part of"],
+    ["part of", "is part of", "be part of"],
+    ["located in", "is located in", "be located in"],
+    ["holder", "holder", "holder"],
+    ["works for", "works for", "work for"],
+    ["worksFor", "worksFor", "workFor"],
+    ["carries", "carries", "carry"],
+    ["teaches", "teaches", "teach"],
+    ["member of", "is member of", "be member of"],
+    ["can see", "can see", "can see"],
+    ["Owned by", "is Owned by", "be Owned by"],
+    ["address", "address", "address"]
+  ]
+}

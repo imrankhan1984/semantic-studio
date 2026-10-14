@@ -7,7 +7,8 @@ FILE: frontend/src/components/DetailPanel.test.tsx
 SUMMARY
     The first test for DetailPanel. Covers the markup and the accessible names
     that the column-collision fix depends on, plus the shape of the panel's
-    render cost as the statement count grows.
+    render cost as the statement count grows; and the Inferred block, which
+    never shows a previous run's facts (X-12).
 
 BASIC IDEA
     The collision itself is a layout defect and jsdom does not do layout, so
@@ -449,6 +450,7 @@ describe("DetailPanel: the Inferred block (axioms-and-reasoning 5.7)", () => {
   const X = "http://example.org/shop#";
   const ROBOT = { ...detailsWith(1), iri: `${X}Robot`, label: "Robot", prefixed: "shop:Robot" };
   const INFERRED = { projectId: "prj-1", resultKey: "3+0|model|no-data|120", imports: false };
+  let view: ReturnType<typeof render>;
 
   async function show(inferred: typeof INFERRED | null) {
     getReasoningAbout.mockClear();
@@ -466,7 +468,7 @@ describe("DetailPanel: the Inferred block (axioms-and-reasoning 5.7)", () => {
     });
     const onNavigate = vi.fn();
     await act(async () => {
-      render(
+      view = render(
         <DetailPanel ontologyId="o1" iri={`${X}Robot`} onNavigate={onNavigate} onClose={vi.fn()} inferred={inferred} />,
       );
     });
@@ -488,6 +490,24 @@ describe("DetailPanel: the Inferred block (axioms-and-reasoning 5.7)", () => {
     // The other end is a link through the app's selection.
     within(block).getByRole("button", { name: "Robot is a kind of Agent" }).click();
     expect(onNavigate).toHaveBeenCalledWith(`${X}Agent`);
+  });
+
+  it("after a new run, never shows the previous run's facts while its own are on their way (PR #55 review)", async () => {
+    await show(INFERRED);
+    expect(screen.getByRole("button", { name: "Robot is a kind of Agent" })).toBeTruthy();
+    // A new run: the block's facts are asked for again and are slow to come.
+    let answer: (about: unknown) => void = () => {};
+    getReasoningAbout.mockReturnValue(new Promise((done) => (answer = done)));
+    await act(async () => {
+      view.rerender(<DetailPanel ontologyId="o1" iri={`${X}Robot`} onNavigate={vi.fn()} onClose={vi.fn()} inferred={{ ...INFERRED, resultKey: "121" }} />);
+    });
+    expect(getReasoningAbout).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("button", { name: "Robot is a kind of Agent" })).toBeNull();
+    expect(screen.queryByRole("region", { name: /Inferred/ })).toBeNull();
+    await act(async () => {
+      answer({ iri: `${X}Robot`, neverMembers: false, stale: false, facts: [] });
+    });
+    expect(screen.getByText("Reasoning concluded nothing new about Robot.")).toBeTruthy();
   });
 
   it("is not there without a current result shown", async () => {

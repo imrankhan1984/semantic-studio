@@ -65,11 +65,11 @@ function rule(part: Partial<RuleRestriction>): RuleRestriction {
 
 // Each 5.8 row: the item as the server reads it, its class, and its sentence.
 const ROWS: [string, RuleRestriction, string, string][] = [
-  ["some", rule({}), "Order", "Every Order has at least one has line that is an Order line"],
+  ["some", rule({}), "Order", "Every Order has at least one line that is an Order line"],
   ["only", rule({ kind: "only" }), "Order", "Every Order's has line can only be Order lines"],
-  ["exactly 2 qualified", rule({ kind: "exactly", n: 2 }), "Order", "Every Order has exactly 2 has line that are Order lines"],
-  ["at least 1 qualified", rule({ kind: "atLeast", n: 1 }), "Order", "Every Order has at least one has line that is an Order line"],
-  ["at most unqualified", rule({ kind: "atMost", n: 10, filler: null }), "Order", "Every Order has at most 10 has line"],
+  ["exactly 2 qualified", rule({ kind: "exactly", n: 2 }), "Order", "Every Order has exactly 2 lines that are Order lines"],
+  ["at least 1 qualified", rule({ kind: "atLeast", n: 1 }), "Order", "Every Order has at least one line that is an Order line"],
+  ["at most unqualified", rule({ kind: "atMost", n: 10, filler: null }), "Order", "Every Order has at most 10 lines"],
   ["attribute at most one", rule({ property: birthDate, kind: "atMost", n: 1, filler: null }), "Person", "Every Person has at most one birth date"],
   [
     "has value",
@@ -104,6 +104,21 @@ describe("a rule as its sentence (5.8)", () => {
       "Client and Customer mean the same thing",
     );
     expect(itemSentence("Order", { type: "turtle", turtle: "x", editable: false })).toBeNull();
+  });
+
+  it("a count on a has X relationship reads without its has, plural when not one (T-21)", () => {
+    expect(itemSentence("Order", rule({ kind: "atMost", n: 2, filler: null }))).toBe("Every Order has at most 2 lines");
+    expect(itemSentence("Order", rule({ kind: "exactly", n: 1, filler: null }))).toBe("Every Order has exactly one line");
+    expect(itemSentence("Order", rule({ kind: "atLeast", n: 1 }))).toBe(
+      "Every Order has at least one line that is an Order line",
+    );
+    // Any other label keeps today's form.
+    expect(itemSentence("Manager", rule({ property: manages, kind: "atMost", n: 2, filler: null }))).toBe(
+      "Every Manager has at most 2 manages",
+    );
+    expect(itemSentence("Manager", rule({ property: manages, kind: "some", filler: ref("Team", "Team") }))).toBe(
+      "Every Manager has at least one manages that is a Team",
+    );
   });
 
   it("a thing as a value reads by its name", () => {
@@ -156,9 +171,9 @@ describe("the builder (5.9)", () => {
     let state = { ...EMPTY_BUILDER };
     expect(builderSentence("Order", state, choices)).toBe("Every Order …");
     state = { ...state, property: EX + "hasLine", kind: "some" };
-    expect(builderSentence("Order", state, choices)).toBe("Every Order has at least one has line that is …");
+    expect(builderSentence("Order", state, choices)).toBe("Every Order has at least one line that is …");
     state = { ...state, filler: EX + "OrderLine" };
-    expect(builderSentence("Order", state, choices)).toBe("Every Order has at least one has line that is an Order line");
+    expect(builderSentence("Order", state, choices)).toBe("Every Order has at least one line that is an Order line");
     expect(builderSentence("Person", { ...EMPTY_BUILDER, type: "disjoint" }, choices)).toBe("No Person is …");
   });
 

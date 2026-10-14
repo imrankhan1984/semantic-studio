@@ -25,7 +25,9 @@ BASIC IDEA
     (shapes_form.paths_for), so an example offers what its class's shape can
     check, and the two never disagree about what Person has. A relationship
     field's choices are the examples of its end class or a subclass of it,
-    all of them when it has no end class; a project is written by hand, so
+    all of them when it has no end class, and never the example itself
+    unless the relationship works both ways or always to itself (X-12,
+    T-22); a project is written by hand, so
     the list is small, and it is capped with the true total all the same.
 
 INPUTS / INPUT SOURCES
@@ -115,15 +117,23 @@ def subclasses(graph: Graph, cls) -> set:
     return seen
 
 
-def _options(graph: Graph, rng, every: list, names: Names) -> tuple[list, int]:
+# A relationship that may link a thing to itself: the example is offered as
+# its own target only for one of these.
+_TO_ITSELF = (OWL.SymmetricProperty, OWL.ReflexiveProperty)
+
+
+def _options(graph: Graph, node, prop, rng, every: list, names: Names) -> tuple[list, int]:
     """The examples a relationship may point to: of its end class or below,
-    every example when it has none. The example itself is a choice too: a
-    relationship to oneself is legal, and a shape may be about it."""
+    every example when it has none. The example itself is left out unless
+    the relationship works both ways or always to itself: offered for any
+    other, it read as a suggestion to link Alice to Alice (PR #51 review)."""
     if rng is None:
         chosen = every
     else:
         allowed = subclasses(graph, rng)
         chosen = [e for e in every if set(graph.objects(e, RDF.type)) & allowed]
+    if not any((prop, RDF.type, kind) in graph for kind in _TO_ITSELF):
+        chosen = [e for e in chosen if e != node]
     ordered = sorted(chosen, key=lambda e: (names(e).casefold(), str(e)))
     return [{"iri": str(e), "label": names(e)} for e in ordered[:OPTIONS_CAP]], len(ordered)
 
@@ -172,7 +182,7 @@ def example_view(
                 rng = URIRef(entry["range"]) if entry.get("range") else None
                 field["range"] = entry.get("range")
                 field["rangeLabel"] = entry.get("rangeLabel")
-                field["options"], field["optionsTotal"] = _options(graph, rng, every, names)
+                field["options"], field["optionsTotal"] = _options(graph, node, prop, rng, every, names)
             fields.append(field)
     fields.sort(key=lambda f: (f["kind"] != "attribute", f["label"].casefold(), f["property"]))
     return {

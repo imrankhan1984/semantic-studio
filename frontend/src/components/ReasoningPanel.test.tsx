@@ -10,7 +10,9 @@ SUMMARY
     table, the start and the end announced and the seconds not, Stop, a
     result gone stale with Reason again, Include data snapshots, a group
     paged with Show more, facts about imported terms collapsed, and a run
-    that outlives its project ignored.
+    that outlives its project ignored. X-12: a failed Stop and a refused
+    Reason said once, in the app's words; Show more paging by the result's
+    own imports switch.
 
 BASIC IDEA
     The run lives in the project store, so the store is opened for real over
@@ -50,6 +52,7 @@ vi.mock("../api", async (importOriginal) => ({
   getWhy,
 }));
 
+import { ApiError } from "../api";
 import { projectStore } from "../state/projectStore";
 import ReasoningPanel, { ReasonControls } from "./ReasoningPanel";
 
@@ -335,6 +338,22 @@ describe("Reason and the results panel (Section 6)", () => {
     expect(screen.getByRole("button", { name: "f199 is a Person" })).toBeTruthy();
   });
 
+  it("Show more pages the run it continues, by its imports switch, after the switch moved (PR #55 review)", async () => {
+    const { rerender } = await setup();
+    rerender(view("ontology", { ...NOW, imports: true }));
+    const many = Array.from({ length: 200 }, (_, i) => fact(`e${i}`, "Person", `e${i} is a Person`));
+    const run = pending();
+    await press("Reason");
+    await run.answer(
+      result({ imports: true, basis: { ...NOW, imports: true }, problems: [], groups: [group("memberships", many, 450)] }),
+    );
+    // The switch goes off: the result is stale, and its pages are still its own.
+    rerender(view("ontology", { ...NOW, imports: false }));
+    getReasoningPage.mockResolvedValue({ ...group("memberships", many, 450), offset: 200, stale: true });
+    await press("Show more");
+    expect(getReasoningPage).toHaveBeenCalledWith(PID, "memberships", 200, true);
+  });
+
   it("starts a group's pages again for a new run whose key reads the same (code review)", async () => {
     await setup();
     const many = (prefix: string) => Array.from({ length: 200 }, (_, i) => fact(`${prefix}${i}`, "Person", `${prefix}${i} is a Person`));
@@ -368,12 +387,13 @@ describe("Reason and the results panel (Section 6)", () => {
     expect(screen.getByRole("button", { name: "Agent is a kind of Thing" })).toBeTruthy();
   });
 
-  it("says a refused run in the panel and the live region", async () => {
+  it("says a refused run once, in the panel's alert (PR #55 review)", async () => {
     await setup();
-    reasonProject.mockRejectedValue(new Error("A run is already going."));
+    reasonProject.mockRejectedValue(new ApiError("A run is already going.", 409));
     await press("Reason");
     expect(screen.getByRole("alert").textContent).toBe("A run is already going.");
-    expect(said()).toBe("A run is already going.");
+    // The alert says it; the live region does not say it again.
+    expect(said()).toBe("Reasoning started.");
     expect(screen.getByRole("button", { name: "Reason" })).toBeTruthy();
   });
 
@@ -466,19 +486,30 @@ describe("Focus and endings (PR #55 review)", () => {
     expect(button.getAttribute("aria-disabled")).toBe("false");
   });
 
-  it("says a Stop that failed, and Stop can be pressed again", async () => {
+  it("says a Stop that failed in the app's words, once, and Stop can be pressed again (PR #55 review)", async () => {
     await setup();
     const run = pending();
-    stopReasoning.mockRejectedValue(new Error("The connection was lost."));
+    // What fetch rejects with when the server is gone: never shown.
+    stopReasoning.mockRejectedValue(new TypeError("Failed to fetch"));
     await press("Reason");
     await press("Stop");
-    expect(screen.getByRole("alert").textContent).toBe("The run could not be stopped: The connection was lost.");
-    expect(said()).toBe("The run could not be stopped: The connection was lost.");
+    expect(screen.getByRole("alert").textContent).toBe(
+      "The run could not be stopped: the server did not answer. Press Stop again.",
+    );
+    expect(document.body.textContent).not.toContain("Failed to fetch");
+    expect(said()).toBe("Reasoning started.");
+    // The server's own sentence, when it sent one.
+    stopReasoning.mockRejectedValueOnce(new ApiError("There is no such project.", 404));
+    await press("Stop");
+    expect(screen.getByRole("alert").textContent).toBe(
+      "The run could not be stopped: There is no such project. Press Stop again.",
+    );
+    expect(said()).toBe("Reasoning started.");
     const button = screen.getByRole("button", { name: "Stop" });
     expect(button.getAttribute("aria-disabled")).toBe("false");
     stopReasoning.mockResolvedValue({ stopped: true });
     await press("Stop");
-    expect(stopReasoning).toHaveBeenCalledTimes(2);
+    expect(stopReasoning).toHaveBeenCalledTimes(3);
     await run.answer(result({ status: "stopped", sentence: "Stopped. Nothing was concluded.", problems: [], groups: [] }));
     // The run's answer replaces the failed Stop's sentence.
     expect(screen.queryByRole("alert")).toBeNull();

@@ -17,9 +17,10 @@ BASIC IDEA
     (axioms.py); everything a learner reads is built here, from those parts,
     so the form, the canvas and the builder say a rule the same way and are
     tested without drawing anything. A name is used exactly as written;
-    nothing here reads ontology text as markup or as a pattern. Articles and
-    plurals are kept simple, as the relationship sentences keep them: *a* or
-    *an* by the first letter, the last word's plural.
+    nothing here reads ontology text as markup or as a pattern. The article
+    is sentences.ts's, the one rule every sentence shares (X-12), and the
+    plural the last word's. A count on a relationship named *has X* reads
+    without its *has*: *has at most 2 lines*, not *has at most 2 has line*.
 
     The builder is one state for every kind of rule. Its blanks are the
     parts of the sentence: which rule, the relationship or attribute, the
@@ -38,17 +39,12 @@ EXPECTED OUTPUT
 */
 
 import type { AnnotationValue, RuleChoices, RuleForm, RuleItem, RuleKey, RuleKind, RuleRef, RuleRestriction } from "../types";
-import { article as articleOf } from "./sentences";
+import { a } from "./sentences";
 import { plural } from "./shapeSentences";
 
 const XSD = "http://www.w3.org/2001/XMLSchema#";
 
 const BLANK = "…";
-
-/** *a Person*, *an Order line*. */
-function a(name: string): string {
-  return `${articleOf(name)} ${name}`;
-}
 
 function capital(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
@@ -121,14 +117,18 @@ export function restrictionSentence(cls: string, parts: RuleParts): string {
     const head = `${capital(a(cls))} is exactly ${parts.with ? a(parts.with) : "something"} that`;
     return `${head} ${definingPhrase(p, kind, f, parts.n)}`;
   }
-  if (kind === "some") return `Every ${cls} has at least one ${p} that is ${f ? a(f) : BLANK}`;
+  // A relationship named *has X* is read without its *has* in a count, so
+  // *has at most 2 has line* reads *has at most 2 lines* (T-21).
+  const counted = parts.property ? hasNoun(parts.property) : null;
+  if (kind === "some") return `Every ${cls} has at least one ${counted ?? p} that is ${f ? a(f) : BLANK}`;
   if (kind === "only") return `Every ${cls}'s ${p} can only be ${f ? plural(f) : BLANK}`;
   if (kind === "value") return `Every ${cls} has ${p} ${f ?? BLANK}`;
   if (isCount(kind)) {
     const n = parts.n;
     const count = n === null ? BLANK : countWord(n);
     const tail = f ? ` ${n === null ? `that are ${plural(f)}` : thatIs(f, n)}` : "";
-    return `Every ${cls} has ${QUANTITY[kind]} ${count} ${p}${tail}`;
+    const what = counted ? (n === 1 ? counted : plural(counted)) : p;
+    return `Every ${cls} has ${QUANTITY[kind]} ${count} ${what}${tail}`;
   }
   return `Every ${cls} ${BLANK}`;
 }
@@ -176,10 +176,15 @@ export function moreRulesText(n: number): string {
   return `${n} more ${n === 1 ? "rule" : "rules"} in the form`;
 }
 
-/** *has line* read as the thing it links to, *line*, for the note; any other
- *  name is read as written. */
+/** *has line* read as the thing it links to, *line*; null for any other
+ *  name, which is read as written. */
+function hasNoun(property: string): string | null {
+  return /^has /i.test(property) && property.trim().length > 4 ? property.trim().slice(4) : null;
+}
+
+/** The thing a property links to, for the note: *line* for *has line*. */
 function thing(property: string): string {
-  return /^has /i.test(property) && property.length > 4 ? property.slice(4) : property;
+  return hasNoun(property) ?? property;
 }
 
 /** The open-world note under a restriction (Q3, Section 7): what the rule

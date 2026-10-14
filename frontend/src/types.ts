@@ -94,9 +94,13 @@ export interface OntologySource {
   format: string;
   pretty: boolean;     // true when this is the re-serialized Turtle form
   truncated: boolean;  // true when only the first max_bytes are included
-  bytes: number;       // true total size
+  bytes: number;       // true total size; for a part, the part's size
   lines: number;
   name: string;
+  // Present when the formatted view of a large ontology is a part written on
+  // its own rather than a cut of the whole (CF-3): statements shown, and the
+  // ontology's true count.
+  statements?: { shown: number; total: number };
 }
 
 /* --- visual query builder ------------------------------------------------ */

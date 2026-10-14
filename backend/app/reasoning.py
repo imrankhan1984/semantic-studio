@@ -84,7 +84,7 @@ from rdflib.util import from_n3
 
 from . import reasoning_worker
 from .graph_builder import pick_label_in
-from .modeling_checks import article
+from .sentences import a, verb
 
 # Fixed, never settings (5.10, as D-098's row limit is). A test lowers the
 # limit through the module attribute, which is all it reads.
@@ -119,9 +119,15 @@ _PROPERTY_TYPES = (
 )
 
 ENDINGS = {
-    "timedOut": f"Stopped after {TIME_LIMIT_SECONDS:g} seconds. Try without the data snapshots, or with fewer imports.",
     "stopped": "Stopped. Nothing was concluded.",
 }
+
+
+def timed_out_sentence(limit: float) -> str:
+    """Said of a run killed at ``limit`` seconds. Built when the run times
+    out, from the limit that applied: written once at import, it said 30
+    of a run a test had stopped at 1.5 (PR #55 review)."""
+    return f"Stopped after {limit:g} seconds. Try without the data snapshots, or with fewer imports."
 RUNNING = "A run is already going."
 NO_REASON = (
     "Concluded by the reasoner (OWL 2 RL); Semantic Studio has no plain-words reason for this one."
@@ -147,7 +153,7 @@ class RawResult:
     added: list = field(default_factory=list)
     errors: list = field(default_factory=list)
     probe_errors: list = field(default_factory=list)
-    message: Optional[str] = None   # a failure's first line
+    message: Optional[str] = None   # a failure's first line, or the timed-out sentence
     duration_ms: float = 0.0
     probe_ms: float = 0.0           # the probe run's share, measured in the worker
 
@@ -201,7 +207,7 @@ def reason(
             if handle.stop_requested.is_set():
                 return RawResult("stopped", duration_ms=elapsed())
             if time.perf_counter() >= deadline:
-                return RawResult("timedOut", duration_ms=elapsed())
+                return RawResult("timedOut", message=timed_out_sentence(limit), duration_ms=elapsed())
             if receiver.poll(_POLL_SECONDS):
                 try:
                     answer = receiver.recv()
@@ -387,6 +393,8 @@ class Outcome:
                 f"reasons over at most {MAX_STATEMENTS:,}: try without the data snapshots, or "
                 "with fewer imports."
             )
+        if self.status == "timedOut":
+            return self.message or timed_out_sentence(TIME_LIMIT_SECONDS)
         return ENDINGS.get(self.status)
 
     def summary(self, current: Optional[Key] = None) -> dict:
@@ -492,42 +500,9 @@ def triple_json(t: tuple, names: Callable) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Sentences (5.4 to 5.6), in the learner's words and E-8's
+# Sentences (5.4 to 5.6), in the learner's words and E-8's; the article and
+# the verb are sentences.py's, shared with every other sentence (X-12).
 # ---------------------------------------------------------------------------
-
-
-def a(name: str) -> str:
-    return f"{article(name)} {name}"
-
-
-# First words that already read as a verb, and last words that mark a label
-# needing *is*: "unit A part of Acme" was the sentence (PR #55 review).
-_AUXILIARIES = frozenset({
-    "is", "are", "was", "were", "be", "been", "has", "have", "had", "can", "could",
-    "may", "might", "must", "shall", "should", "will", "would", "does", "do", "did",
-})
-_PREPOSITIONS = frozenset({
-    "of", "to", "in", "at", "by", "for", "with", "from", "on", "into", "onto", "about",
-    "above", "below", "under", "over", "inside", "near", "before", "after", "within", "than",
-})
-
-
-def verb(name: str) -> str:
-    """A relationship's label as the verb of a sentence. *employs*,
-    *worksFor* and *has part* stay as they are; *part of*, *above* and
-    *located in* read after *is*. A bare noun (*holder*) is left alone:
-    *passport 1 is holder Ann* would say the passport holds."""
-    words = [w.lower() for w in re.findall(r"[A-Za-z][a-z]*", name)]
-    if not words:
-        return name
-    first = words[0]
-    # A first word ending in a single s is a verb's third person, as E-8
-    # names relationships.
-    if first in _AUXILIARIES or (first.endswith("s") and not first.endswith(("ss", "us"))):
-        return name
-    if words[-1] in _PREPOSITIONS or first.endswith("ed"):
-        return f"is {name}"
-    return name
 
 
 def fact_sentence(t: tuple, names: Callable) -> str:

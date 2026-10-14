@@ -33,6 +33,11 @@ BASIC IDEA
     `prj-<hex>-<doc>` id while its project is open, so every read endpoint
     serves it unchanged; it is kept out of `list()`, which is the library.
 
+    The formatted source view of a graph past BOUNDED_SOURCE_FROM statements
+    is a bounded serialisation, whole subjects in IRI order up to the view's
+    cap, so a large ontology is never written whole to show its first 2 MB
+    (CF-3); the documentation export keeps the whole.
+
     A parse can be given a wall-clock timeout by the caller. It runs on a
     worker thread so the request can be released; the work itself cannot be
     killed, which is why the upload size cap matters (see D-013).
@@ -96,7 +101,7 @@ from typing import Callable, Optional
 
 # rdflib is the RDF engine: Graph holds triples; guess_format maps a filename
 # to an rdflib parser name.
-from rdflib import Graph
+from rdflib import BNode, Graph, URIRef
 from rdflib.util import guess_format
 
 # Derived-view builders and the saved-query store live in sibling modules.
@@ -304,6 +309,7 @@ class Ontology:
     schema_cache: Optional[tuple] = field(default=None, repr=False)   # query-builder schema
     hierarchy_cache: Optional[tuple] = field(default=None, repr=False)  # subClassOf/broader forests
     pretty_cache: Optional[tuple] = field(default=None, repr=False)   # re-serialized Turtle
+    bounded_cache: Optional[tuple] = field(default=None, repr=False)  # the source view's part
     # The same views over the file plus its resolved imports, built by
     # imports.py. A cache of its own rather than a second key inside the ones
     # above, so the file-only views cannot be served from a merged build or the
@@ -410,6 +416,17 @@ class Ontology:
         """
         return self._cached(
             "pretty_cache", self.revision, lambda: self.ensure_loaded().serialize(format="turtle")
+        )
+
+    def bounded_turtle(self, max_bytes: int) -> tuple[str, int]:
+        """The source view's part of a large graph as Turtle, and how many
+        statements it holds (cached by revision and size). See
+        bounded_turtle below; the export keeps pretty_turtle, as it must be
+        whole."""
+        return self._cached(
+            "bounded_cache",
+            (self.revision, max_bytes),
+            lambda: bounded_turtle(self.ensure_loaded(), max_bytes),
         )
 
     def source_bytes(self) -> bytes:
@@ -664,3 +681,72 @@ saved_queries = SavedQueryStore(store.data_dir)
 # The broker keeps its policy and activity log beside the library, and this is
 # the one module that knows where that is.
 network_broker.broker.configure(store.data_dir)
+
+
+# Above this many statements the formatted source view is a bounded
+# serialisation rather than a cut of the whole (CF-3). Measured on the bundled
+# vocabularies: Turtle runs at 37 to 120 bytes a statement (FOAF to DC
+# Elements), so the wordiest pass the view's 2 MB at about 20,000 statements,
+# and below that the whole is shown anyway. A constant, not a setting: above it
+# the view shows at most 2 MB either way, only without writing the rest.
+BOUNDED_SOURCE_FROM = 20_000
+
+
+def bounded_turtle(graph: Graph, max_bytes: int) -> tuple[str, int]:
+    """The first subjects of ``graph`` in IRI order, each with all of its
+    statements, as Turtle, stopping before the text would pass ``max_bytes``.
+    Returns (text, statements written).
+
+    Serialising 200,000 statements to show the first 2 MB cost the time and
+    memory of all of them. The size of each subject's block is estimated from
+    the terms as Turtle writes them (prefixed, one statement a line under its
+    subject), so only the part is ever handed to serialize. A blank node an
+    included statement points at comes with its own statements, so a
+    restriction or a list reads whole rather than as a dangling [] -- which is
+    also why blank-node subjects are not walked on their own.
+    """
+    names = graph.namespace_manager
+    part = Graph(bind_namespaces="none")
+    prefix_bytes = 0
+    for prefix, namespace in graph.namespaces():
+        part.bind(prefix, namespace, override=True, replace=True)
+        prefix_bytes += len(prefix) + len(namespace) + 14
+    size = prefix_bytes
+    subjects = sorted(
+        (s for s in graph.subjects(unique=True) if isinstance(s, URIRef)), key=str
+    )
+    lengths: dict = {}
+
+    def written(term) -> int:
+        # Predicates and classes recur on nearly every line; their prefixed
+        # form is worked out once.
+        length = lengths.get(term)
+        if length is None:
+            length = lengths[term] = len(term.n3(names))
+        return length
+
+    for subject in subjects:
+        block: list[tuple] = []
+        cost = 0
+        pending = [subject]
+        seen: set = set()
+        while pending:
+            node = pending.pop()
+            if node in seen:
+                continue
+            seen.add(node)
+            cost += written(node) + 2
+            for _, predicate, obj in graph.triples((node, None, None)):
+                block.append((node, predicate, obj))
+                # "    p o ;" and its line end.
+                cost += written(predicate) + written(obj) + 8
+                if isinstance(obj, BNode):
+                    pending.append(obj)
+        # Always at least one subject, so a single huge one still shows; the
+        # route cuts that at a line, as it cuts any text over the cap.
+        if size + cost > max_bytes and len(part):
+            break
+        for triple in block:
+            part.add(triple)
+        size += cost
+    return part.serialize(format="turtle"), len(part)

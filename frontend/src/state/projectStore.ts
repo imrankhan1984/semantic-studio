@@ -10,7 +10,8 @@ SUMMARY
     display language, the editor's unapplied text, the sentence the live
     region last announced, the last SHACL validation (shacl-authoring
     5.6), which lives for the session and is never saved, the project's
-    data snapshots with their generation (csv-data-import 5.6), and the last
+    data snapshots with their generation (csv-data-import 5.6) or why they
+    could not be read, and the last
     reasoning run with Show inferred (axioms-and-reasoning 5.2 to 5.7).
 
 BASIC IDEA
@@ -80,6 +81,7 @@ EXPECTED OUTPUT
 
 import { useSyncExternalStore } from "react";
 import {
+  ApiError,
   applyDocumentSource,
   closeProject,
   listData,
@@ -96,6 +98,7 @@ import {
   validateProject,
 } from "../api";
 import { validationSummary } from "../modeling/shapeSentences";
+import { failureReason } from "../networkWords";
 import { finishedLine, isStale, staleLine, type ReasoningNow } from "../reasoning/reasonSentences";
 import type {
   ChangeResult,
@@ -138,6 +141,9 @@ export interface ProjectSnapshot {
   /** The project's data snapshots and the server's generation for them
    *  (csv-data-import 5.6); null until fetched. */
   data: SnapshotListing | null;
+  /** Why the snapshot list could not be read, until a read succeeds: the
+   *  Data tab says it with Try again rather than reading for ever. */
+  dataError: string | null;
   /** The last reasoning run (axioms-and-reasoning 5.2): kept for the session
    *  only, never saved, and stale once the model moves (5.3). */
   reasoning: ReasoningResult | null;
@@ -210,6 +216,7 @@ const EMPTY: ProjectSnapshot = {
   validating: false,
   editorTarget: null,
   data: null,
+  dataError: null,
   reasoning: null,
   reasoningSince: null,
   reasoningError: null,
@@ -409,9 +416,20 @@ export const projectStore = {
    *  asked about is still the open one. */
   async loadData(): Promise<SnapshotListing | null> {
     const project = requireProject();
-    const listing = await listData(project.id);
+    let listing: SnapshotListing;
+    try {
+      listing = await listData(project.id);
+    } catch (e) {
+      if (snapshot.project?.id !== project.id) return null;
+      // Said in the live region and kept for the Data tab, which otherwise
+      // read "Reading the project's data…" for ever (PR #53 review).
+      const text = `The data snapshots could not be read: ${failureReason(e)}`;
+      set({ dataError: text });
+      announce(text);
+      throw e;
+    }
     if (snapshot.project?.id !== project.id) return null;
-    set({ data: listing });
+    set({ data: listing, dataError: null });
     return listing;
   },
 
@@ -556,9 +574,10 @@ export const projectStore = {
         result = await reasonProject(project.id, includeData, imports);
       } catch (e) {
         if (stale()) return null;
-        const text = e instanceof Error ? e.message : String(e);
+        // Said once: the Reasoning panel's alert reads it, and a live-region
+        // announcement as well said it twice (PR #55 review).
+        const text = e instanceof ApiError ? e.message : `The run could not be started: ${failureReason(e)}`;
         set({ reasoningError: text });
-        announce(text);
         return null;
       }
       if (stale()) return null;
@@ -587,7 +606,7 @@ export const projectStore = {
 
   /** Stop the run: its process is killed, and its own answer says so. Once
    *  pressed, presses are ignored until that answer; a refused Stop is
-   *  said, and Stop can be pressed again. */
+   *  said, once, in the panel's alert, and Stop can be pressed again. */
   async stopReasoning(): Promise<void> {
     const project = requireProject();
     if (snapshot.reasoningSince === null || snapshot.reasoningStopping) return;
@@ -597,9 +616,10 @@ export const projectStore = {
       await stopReasoning(project.id);
     } catch (e) {
       if (run !== reasoningRun || snapshot.reasoningSince === null) return;
-      const text = `The run could not be stopped: ${e instanceof Error ? e.message : String(e)}`;
+      // In the app's words, never the browser's ("Failed to fetch"), and
+      // said once, by the panel's alert (PR #55 review).
+      const text = `The run could not be stopped: ${failureReason(e)} Press Stop again.`;
       set({ reasoningStopping: false, reasoningError: text });
-      announce(text);
     }
   },
 

@@ -142,10 +142,14 @@ export function stepBlocked(
     columnsReady?: boolean;
     // A read of the file on its way: the table shown may be the last one's.
     reading?: boolean;
+    // false while a workbook's sheet is still to be chosen (a refresh whose
+    // sheet is gone).
+    sheetChosen?: boolean;
   },
 ): string | null {
   if (step === 1) {
     if (state.reading) return "Reading the file…";
+    if (state.sheetChosen === false) return "Choose a sheet first.";
     if (!state.inspection) return "Choose a file first.";
     if (state.inspection.sample && !state.options.sample) {
       return `Choose to use the first ${state.inspection.limit.toLocaleString("en-US")} rows, or another file.`;
