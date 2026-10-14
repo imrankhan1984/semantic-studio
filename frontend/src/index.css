@@ -1,3 +1,16 @@
+/* Six font sizes (portal-foundations 5.4): every font-size in this file is
+   one of them or inherit. 12 px is the smallest text anywhere, uppercase
+   section labels included; where a larger size did not fit, the layout
+   was changed, never the size. */
+:root {
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+}
+
 :root,
 :root[data-theme="dark"] {
   --bg: #0f1219;
@@ -124,7 +137,8 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: 14px;
+  font-size: var(--fs-md);
+  line-height: 1.45;
 }
 
 button {
@@ -347,7 +361,7 @@ select:focus {
 .brand-name {
   display: flex;
   gap: 6px;
-  font-size: 15px;
+  font-size: var(--fs-lg);
   font-weight: 800;
   letter-spacing: 0.09em;
   line-height: 1;
@@ -362,7 +376,7 @@ select:focus {
 }
 
 .brand-tagline {
-  font-size: 8.5px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.22em;
   color: var(--text-dim);
   line-height: 1;
@@ -387,7 +401,7 @@ select:focus {
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--text-dim);
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -464,7 +478,7 @@ select:focus {
 }
 
 .context-label {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.12em;
   color: var(--text-dim);
   font-weight: 600;
@@ -473,7 +487,7 @@ select:focus {
 .context-row select {
   max-width: 340px;
   padding: 4px 8px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .icon-btn.danger:hover {
@@ -526,7 +540,7 @@ select:focus {
 .source-title {
   flex: none;
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -535,7 +549,7 @@ select:focus {
 
 .mode-switch.small .mode-tab {
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .source-search {
@@ -546,18 +560,18 @@ select:focus {
 
 .source-search input {
   width: 190px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 4px 8px;
 }
 
 .source-match-count {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   min-width: 78px;
 }
 
 .source-meta {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   font-family: ui-monospace, Consolas, monospace;
 }
@@ -572,7 +586,7 @@ select:focus {
 .source-scroll pre {
   margin: 0;
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
 }
 
@@ -591,7 +605,7 @@ select:focus {
 
 .show-more {
   margin: 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .graph-area {
@@ -641,7 +655,7 @@ select:focus {
 
 .start-screen h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: var(--fs-2xl);
   font-weight: 700;
   letter-spacing: 0.01em;
 }
@@ -656,7 +670,7 @@ select:focus {
    arrives is not reliably announced. */
 .start-live {
   min-height: 18px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--accent);
 }
 
@@ -666,7 +680,7 @@ select:focus {
 
 .start-section h2 {
   margin: 0 0 8px;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   font-weight: 600;
@@ -726,7 +740,7 @@ select:focus {
   border: 0;
   border-radius: 0;
   padding: 5px 11px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   background: transparent;
   color: var(--text-dim);
 }
@@ -803,7 +817,7 @@ select:focus {
 
 .onto-name {
   margin: 0;
-  font-size: 13.5px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -813,7 +827,7 @@ select:focus {
 
 .onto-summary {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.45;
   color: var(--text-dim);
 }
@@ -839,7 +853,7 @@ select:focus {
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .onto-chips li {
@@ -872,11 +886,11 @@ select:focus {
 .onto-verb {
   flex: 1;
   padding: 5px 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .onto-loading {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--accent);
 }
 
@@ -921,7 +935,7 @@ select:focus {
   background: transparent;
   text-align: left;
   padding: 6px 9px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .onto-menu button:hover {
@@ -1023,7 +1037,7 @@ select:focus {
   border: 1px dashed var(--border);
   border-radius: 8px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .start-error {
@@ -1045,7 +1059,7 @@ select:focus {
   padding: 6px 14px;
   border-top: 1px solid var(--border);
   background: var(--bg-panel);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .status-bar .dim {
@@ -1102,7 +1116,7 @@ select:focus {
   padding: 7px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .graph-notice-icon {
@@ -1132,7 +1146,7 @@ select:focus {
    this block was deleted rather than left as a copy that could drift. */
 
 .theme-toggle {
-  font-size: 16px;
+  font-size: var(--fs-lg);
 }
 
 /* --- graph ----------------------------------------------------------- */
@@ -1158,7 +1172,7 @@ select:focus {
 }
 
 .graph-toolbar-hint {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -1166,7 +1180,7 @@ select:focus {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 4px 9px;
   border-color: transparent;
   background: transparent;
@@ -1242,7 +1256,7 @@ select:focus {
   border-radius: 0;
   background: var(--bg-panel);
   color: var(--text-dim);
-  font-size: 17px;
+  font-size: var(--fs-lg);
   line-height: 1;
   cursor: pointer;
 }
@@ -1276,7 +1290,7 @@ select:focus {
 }
 
 .hint {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -1288,7 +1302,7 @@ select:focus {
   justify-content: center;
   background: color-mix(in srgb, var(--bg) 60%, transparent);
   z-index: 6;
-  font-size: 15px;
+  font-size: var(--fs-lg);
 }
 
 /* --- legend ---------------------------------------------------------- */
@@ -1299,7 +1313,7 @@ select:focus {
   background: var(--bg-panel);
   border-right: 1px solid var(--border-soft);
   padding: 10px 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   overflow-y: auto;
 }
 
@@ -1330,7 +1344,7 @@ select:focus {
 
 .legend-toggle-text {
   writing-mode: vertical-rl;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.14em;
   font-weight: 600;
 }
@@ -1374,7 +1388,7 @@ select:focus {
 .legend-section {
   margin: 8px 0 4px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -1505,14 +1519,14 @@ button.legend-row:hover {
 
 .result-kind {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 /* "not drawn" on a search result. The border and the text carry the meaning;
    the colour only reinforces it, so it survives being read aloud or printed. */
 .result-undrawn {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-dim);
@@ -1541,21 +1555,21 @@ button.legend-row:hover {
 
 .crash-screen h1 {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--fs-xl);
 }
 
 .crash-screen p {
   margin: 0;
   max-width: 520px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 /* The thrown message. Monospace because it is machine text, and wrapped
    anywhere because it usually contains an IRI with no spaces in it. */
 .crash-detail {
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--error-text);
   background: var(--error-bg);
   border: 1px solid var(--error-border);
@@ -1585,7 +1599,7 @@ button.legend-row:hover {
 
 .explore-start h2 {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--fs-lg);
 }
 
 .explore-start section {
@@ -1594,7 +1608,7 @@ button.legend-row:hover {
 
 .explore-start h3 {
   margin: 0 0 6px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-dim);
@@ -1602,7 +1616,7 @@ button.legend-row:hover {
 
 .explore-summary {
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text);
 }
 
@@ -1651,7 +1665,7 @@ button.legend-row:hover {
 
 .hierarchy-toolbar h2 {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1721,7 +1735,7 @@ button.legend-row:hover {
   min-width: 0;
   display: flex;
   margin: 0;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-dim);
@@ -1755,7 +1769,7 @@ button.legend-row:hover {
   gap: 6px;
   padding: 0 12px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   white-space: nowrap;
 }
 
@@ -1788,7 +1802,7 @@ button.legend-row:hover {
   border: none;
   background: none;
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 1;
   cursor: pointer;
 }
@@ -1817,7 +1831,7 @@ button.legend-row:hover {
 
 .hierarchy-kind {
   flex: none;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -1829,7 +1843,7 @@ button.legend-row:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -1842,7 +1856,7 @@ button.legend-row:hover {
 
 .hierarchy-count {
   flex: none;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text);
   background: var(--bg-raised);
   border-radius: 10px;
@@ -1852,7 +1866,7 @@ button.legend-row:hover {
 .hierarchy-flag,
 .hierarchy-inferred {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-dim);
@@ -1870,7 +1884,7 @@ button.legend-row:hover {
 
 .hierarchy-depth {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -1894,13 +1908,13 @@ button.legend-row:hover {
 
 .detail-header h2 {
   margin: 0 0 2px;
-  font-size: 17px;
+  font-size: var(--fs-lg);
   overflow-wrap: anywhere;
 }
 
 .detail-prefixed {
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: ui-monospace, Consolas, monospace;
 }
 
@@ -1909,7 +1923,7 @@ button.legend-row:hover {
   align-items: baseline;
   gap: 4px;
   margin: 8px 0 12px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .detail-iri a {
@@ -1941,7 +1955,7 @@ button.legend-row:hover {
 
 .detail-panel h3 {
   margin: 0 0 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-dim);
@@ -1953,13 +1967,13 @@ button.legend-row:hover {
   border-radius: 10px;
   padding: 1px 8px;
   margin-left: 6px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .detail-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   /* The fix for the column collision, and it has to be on the table.
      Under automatic layout the algorithm sizes columns from their content and
      a `max-width` on a cell is advisory, so the old 150px cap did nothing: with
@@ -1985,7 +1999,7 @@ button.legend-row:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 /* Easy to miss, and the ellipsis does not appear without it. The cell's content
@@ -2022,24 +2036,24 @@ button.legend-row:hover {
 
 .term-tag {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   margin-left: 3px;
 }
 
 .term-bnode {
   color: var(--text-dim);
   font-style: italic;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .detail-note {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .detail-error {
   color: var(--error);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   white-space: pre-wrap;
 }
 
@@ -2073,7 +2087,7 @@ button.legend-row:hover {
 
 .modal-header h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--fs-lg);
 }
 
 /* DOC-1's fetch-source confirmation: a narrower modal with a right-aligned
@@ -2175,28 +2189,28 @@ button.legend-row:hover {
 
 .about-name {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--fs-xl);
   font-weight: 600;
 }
 
 .about-purpose {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-dim);
 }
 
 .about-description {
-  font-size: 14px;
+  font-size: var(--fs-md);
   color: var(--text);
 }
 
 .about-author {
-  font-size: 14px;
+  font-size: var(--fs-md);
   color: var(--text);
 }
 
 .about-link {
   color: var(--accent);
-  font-size: 14px;
+  font-size: var(--fs-md);
   text-decoration: none;
   align-self: flex-start;
 }
@@ -2207,12 +2221,12 @@ button.legend-row:hover {
 
 /* Present and readable, but not competing with the description above it. */
 .about-licence {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
 .about-privacy {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text);
 }
 
@@ -2272,7 +2286,7 @@ button.legend-row:hover {
 
 .catalogue-name {
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: var(--fs-sm);
 }
 
 .catalogue-loading {
@@ -2281,13 +2295,13 @@ button.legend-row:hover {
 }
 
 .catalogue-desc {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   line-height: 1.45;
 }
 
 .catalogue-size {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   font-family: ui-monospace, Consolas, monospace;
 }
@@ -2299,7 +2313,7 @@ button.legend-row:hover {
    it survives a stylesheet that never loads. Same --text-dim as .hint.
    Measured 2026-07-30 against the row background: 5.35:1 dark, 4.97:1 light. */
 .catalogue-audience {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   font-style: italic;
   line-height: 1.45;
@@ -2355,7 +2369,7 @@ button.legend-row:hover {
 }
 
 .path-label {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.06em;
   color: var(--text-dim);
   margin-right: 4px;
@@ -2369,7 +2383,7 @@ button.legend-row:hover {
 
 .path-arrow {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .chip {
@@ -2378,7 +2392,7 @@ button.legend-row:hover {
   gap: 5px;
   border-radius: 14px;
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   border: 1px solid var(--border);
   background: var(--bg-panel);
   white-space: nowrap;
@@ -2401,7 +2415,7 @@ button.legend-row:hover {
   min-width: 16px;
   height: 16px;
   border-radius: 8px;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: #fff;
   padding: 0 4px;
@@ -2409,7 +2423,7 @@ button.legend-row:hover {
 
 .chip-pred {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .chip-pred.optional {
@@ -2418,7 +2432,7 @@ button.legend-row:hover {
 }
 
 .chip-flag {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   background: var(--border);
   border-radius: 6px;
   padding: 0 5px;
@@ -2429,12 +2443,12 @@ button.legend-row:hover {
 }
 
 .chip-branch {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: var(--accent);
 }
 
 .chip-count {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   background: var(--accent);
   color: var(--accent-contrast);
   border-radius: 8px;
@@ -2446,7 +2460,7 @@ button.legend-row:hover {
   background: transparent;
   color: var(--text-dim);
   padding: 0 2px;
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 .chip-remove:hover {
@@ -2459,7 +2473,7 @@ button.legend-row:hover {
 }
 
 .query-hint {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   border-left: 2px solid var(--accent);
@@ -2493,7 +2507,7 @@ button.legend-row:hover {
 
 .menu-section {
   margin: 10px 0 4px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-dim);
@@ -2504,7 +2518,7 @@ button.legend-row:hover {
   align-items: flex-start;
   gap: 8px;
   padding: 4px 2px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 
@@ -2515,7 +2529,7 @@ button.legend-row:hover {
 }
 
 .menu-row-main .hint {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .menu-toggle {
@@ -2542,13 +2556,13 @@ button.legend-row:hover {
 
 .menu-actions button,
 .pin-row button {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 3px 8px;
 }
 
 .dir-badge,
 .primary-badge {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   border-radius: 6px;
   padding: 0 5px;
   margin-right: 4px;
@@ -2566,7 +2580,7 @@ button.legend-row:hover {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   border-radius: 6px;
   padding: 6px 8px;
@@ -2587,7 +2601,7 @@ button.legend-row:hover {
 
 .filter-row select,
 .filter-row input {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 3px 6px;
 }
 
@@ -2597,7 +2611,7 @@ button.legend-row:hover {
 
 .toggle-pill {
   border-radius: 12px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 3px 10px;
   color: var(--text-dim);
 }
@@ -2622,13 +2636,13 @@ button.legend-row:hover {
 }
 
 .query-toolbar-label {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.06em;
   color: var(--text-dim);
 }
 
 .query-toolbar button {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 4px 10px;
 }
 
@@ -2636,14 +2650,14 @@ button.legend-row:hover {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
 .limit-field input {
   width: 68px;
   padding: 3px 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .save-row {
@@ -2709,7 +2723,7 @@ button.legend-row:hover {
 .sparql-preview pre {
   margin: 0;
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
 }
 
@@ -2786,7 +2800,7 @@ button.legend-row:hover {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-dim);
@@ -2810,7 +2824,7 @@ button.legend-row:hover {
 .results-services {
   margin: 0;
   padding: 4px 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -2823,7 +2837,7 @@ button.legend-row:hover {
 }
 
 .results-clear {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 2px 8px;
 }
 
@@ -2831,7 +2845,7 @@ button.legend-row:hover {
    the native attribute) so they stay focusable and announce their state; the
    dimming is the visible half of the same state, never the only signal. */
 .results-export {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 2px 8px;
 }
 .results-export[aria-disabled="true"] {
@@ -2852,7 +2866,7 @@ button.legend-row:hover {
   background: var(--bg-raised);
   border-radius: 6px;
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text);
   cursor: pointer;
 }
@@ -2869,7 +2883,7 @@ button.legend-row:hover {
 }
 
 .results-page-status {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   text-transform: none;
   letter-spacing: normal;
@@ -2887,7 +2901,7 @@ button.legend-row:hover {
 .results-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .results-table th {
@@ -2909,7 +2923,7 @@ button.legend-row:hover {
 
 .sort-arrow {
   margin-left: 4px;
-  font-size: 9px;
+  font-size: var(--fs-xs);
 }
 
 /* The chip and its source control, side by side. inline-flex rather than a
@@ -2927,7 +2941,7 @@ button.legend-row:hover {
   background: var(--bg-raised);
   border-radius: 10px;
   padding: 1px 8px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--accent);
   max-width: 200px;
   overflow: hidden;
@@ -2943,7 +2957,7 @@ button.legend-row:hover {
   border: none;
   background: none;
   padding: 1px 3px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1;
   color: var(--text-dim);
   border-radius: 4px;
@@ -2961,7 +2975,7 @@ button.legend-row:hover {
 
 .saved-queries h3 {
   margin: 0 0 4px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-dim);
@@ -2971,7 +2985,7 @@ button.legend-row:hover {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 3px 0;
 }
 
@@ -3001,7 +3015,7 @@ button.legend-row:hover {
    word rather than a colour, so it says the same thing to everyone. */
 .saved-mode {
   flex: none;
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.04em;
   color: var(--text-dim);
   border: 1px solid var(--border);
@@ -3027,7 +3041,7 @@ button.legend-row:hover {
 }
 
 .sparql-preview-actions button {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 4px 10px;
 }
 
@@ -3054,7 +3068,7 @@ button.legend-row:hover {
   min-height: 8em;
   resize: vertical;
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   background: var(--bg-raised);
   color: var(--text);
@@ -3070,13 +3084,13 @@ button.legend-row:hover {
 
 .sparql-editor-name {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   overflow-wrap: anywhere;
 }
 
 .fork-notice {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   border: 1px solid var(--accent-soft);
   border-radius: 8px;
@@ -3084,7 +3098,7 @@ button.legend-row:hover {
 }
 
 .fork-notice .link-btn {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 0;
   text-decoration: underline;
 }
@@ -3111,7 +3125,7 @@ button.legend-row:hover {
 
 .builder-dimmed-label {
   padding: 0;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-style: italic;
   color: var(--text-dim);
 }
@@ -3125,7 +3139,7 @@ button.legend-row:hover {
 .query-start h3,
 .next-steps h3 {
   margin: 0 0 2px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-dim);
@@ -3158,12 +3172,12 @@ button.legend-row:hover {
 }
 
 .starter-title {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
 }
 
 .starter-detail {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -3199,7 +3213,7 @@ button.legend-row:hover {
 
 .next-filter {
   width: 130px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 3px 8px;
 }
 
@@ -3213,7 +3227,7 @@ button.legend-row:hover {
   background: var(--bg-raised);
   border-radius: 8px;
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text);
   cursor: pointer;
 }
@@ -3229,13 +3243,13 @@ button.legend-row:hover {
 
 .next-steps-count {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .next-steps-arrow {
   margin-left: auto;
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 /* Bounded and scrolling, so however many continuations the schema offers, the
@@ -3261,7 +3275,7 @@ button.legend-row:hover {
 
 .next-chip {
   gap: 4px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   background: var(--bg-raised);
 }
 
@@ -3278,7 +3292,7 @@ button.legend-row:hover {
   height: 15px;
   border-radius: 8px;
   background: var(--border);
-  font-size: 9.5px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
@@ -3288,7 +3302,7 @@ button.legend-row:hover {
 
 .next-arrow {
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 .next-target {
@@ -3299,7 +3313,7 @@ button.legend-row:hover {
   border: none;
   background: transparent;
   color: var(--accent);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   padding: 4px 0;
 }
 
@@ -3309,7 +3323,7 @@ button.legend-row:hover {
 
 .plain-english {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 7%, transparent);
@@ -3320,7 +3334,7 @@ button.legend-row:hover {
 
 .preview-badge {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   font-style: italic;
 }
@@ -3377,7 +3391,7 @@ button.legend-row:hover {
 .approval-heading,
 .network-heading {
   margin: 0 0 16px;
-  font-size: 18px;
+  font-size: var(--fs-xl);
   font-weight: 600;
   /* A long host name wraps rather than widening the dialog. */
   overflow-wrap: anywhere;
@@ -3388,7 +3402,7 @@ button.legend-row:hover {
   grid-template-columns: max-content 1fr;
   gap: 8px 16px;
   margin: 0 0 16px;
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 
 .approval-facts dt {
@@ -3402,7 +3416,7 @@ button.legend-row:hover {
 
 .approval-url {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 /* The exact SERVICE text. Read-only, but a real textarea so it can be
@@ -3418,7 +3432,7 @@ button.legend-row:hover {
   white-space: pre;
   overflow: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text);
   background: var(--bg-raised);
   border: 1px solid var(--border);
@@ -3432,7 +3446,7 @@ button.legend-row:hover {
 
 .approval-why {
   margin-bottom: 16px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .approval-why summary {
@@ -3452,14 +3466,14 @@ button.legend-row:hover {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 
 .approval-scope legend {
   padding: 0;
   margin-bottom: 8px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .approval-scope label {
@@ -3470,7 +3484,7 @@ button.legend-row:hover {
 
 .approval-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -3487,14 +3501,14 @@ button.legend-row:hover {
 
 .network-section h3 {
   margin: 0 0 8px;
-  font-size: 14px;
+  font-size: var(--fs-md);
   font-weight: 600;
 }
 
 .network-state,
 .network-empty {
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-dim);
 }
 
@@ -3507,7 +3521,7 @@ button.legend-row:hover {
   background: none;
   border: none;
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--fs-md);
   padding: 4px 0;
   cursor: pointer;
 }
@@ -3555,7 +3569,7 @@ button.legend-row:hover {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .network-row {
@@ -3581,7 +3595,7 @@ button.legend-row:hover {
 .network-url {
   flex-basis: 100%;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 
@@ -3600,7 +3614,7 @@ button.legend-row:hover {
   padding: 6px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .imports-title {
@@ -3608,7 +3622,7 @@ button.legend-row:hover {
   align-items: baseline;
   gap: 10px;
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: normal;
 }
 
@@ -3681,7 +3695,7 @@ button.legend-row:hover {
 
 .imports-iri {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 
@@ -3708,7 +3722,7 @@ button.legend-row:hover {
 .result-imported,
 .query-scope {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .detail-imported {
@@ -3754,7 +3768,7 @@ button.legend-row:hover {
 .project-header button,
 .project-header select {
   padding: 4px 10px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .project-name {
@@ -3768,7 +3782,7 @@ button.legend-row:hover {
 /* The status is words; the left rule is decoration beside them, never the
    only signal (Section 6: no state by colour alone). */
 .project-status {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 2px 8px;
   border-left: 3px solid var(--accent-3);
   color: var(--text-dim);
@@ -3808,7 +3822,7 @@ button.legend-row:hover {
 .project-lang-menu label {
   display: block;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .project-lang-missing {
@@ -3836,7 +3850,7 @@ button.legend-row:hover {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   margin: 4px 0 8px;
 }
@@ -3879,7 +3893,7 @@ button.legend-row:hover {
 
 .confirm-title {
   margin: 0 0 12px;
-  font-size: 18px;
+  font-size: var(--fs-xl);
   font-weight: 600;
 }
 
@@ -3901,7 +3915,7 @@ button.legend-row:hover {
 
 .form-field label {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .form-field input,
@@ -3920,20 +3934,20 @@ button.legend-row:hover {
 
 .form-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
 .form-error {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--error-text);
 }
 
 /* The project's kind on its Home card, in words (relationships 5.1). */
 .project-kind {
   margin: 2px 0 0;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -3959,7 +3973,7 @@ button.legend-row:hover {
 
 .new-project-kinds legend {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   margin-bottom: 6px;
   padding: 0;
 }
@@ -3990,13 +4004,13 @@ button.legend-row:hover {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.4;
   color: var(--text-dim);
 }
 
 .new-project-kind-text strong {
-  font-size: 14px;
+  font-size: var(--fs-md);
   color: var(--text);
 }
 
@@ -4015,7 +4029,7 @@ button.legend-row:hover {
 /* The Turtle editor: the source view's overlay, with a line-number gutter
    that scrolls with the text. */
 .turtle-state {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -4044,7 +4058,7 @@ button.legend-row:hover {
 .turtle-error pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   margin: 6px 0 0;
 }
 
@@ -4073,7 +4087,7 @@ button.legend-row:hover {
 .turtle-gutter,
 .turtle-textarea {
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
 }
 
@@ -4116,7 +4130,7 @@ button.legend-row:hover {
 .detail-names dt {
   color: var(--text-dim);
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .detail-names dd {
@@ -4151,7 +4165,7 @@ button.legend-row:hover {
 
 .edit-block h4 {
   margin: 0 0 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-dim);
@@ -4159,7 +4173,7 @@ button.legend-row:hover {
 
 .edit-block h5 {
   margin: 8px 0 2px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 
@@ -4189,7 +4203,7 @@ button.legend-row:hover {
 
 .edit-btn {
   padding: 1px 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .edit-actions {
@@ -4203,7 +4217,7 @@ button.legend-row:hover {
 .edit-error {
   margin: 4px 0 0;
   color: var(--error-text);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 
@@ -4223,7 +4237,7 @@ button.legend-row:hover {
 
 .edit-annotation-property {
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--accent);
 }
 
@@ -4234,11 +4248,11 @@ button.legend-row:hover {
 .edit-annotation-kind,
 .entity-picker-from {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .edit-iri {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 
@@ -4249,7 +4263,7 @@ button.legend-row:hover {
 .edit-field-label {
   display: block;
   margin: 6px 0 2px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -4329,7 +4343,7 @@ button.legend-row:hover {
   flex: 1;
   min-width: 0;
   padding: 1px 6px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .hierarchy-menu-btn {
@@ -4374,7 +4388,7 @@ button.legend-row:hover {
 
 kbd {
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 0.9em;
+  font-size: inherit;
   padding: 0 3px;
   border: 1px solid var(--border);
   border-radius: 3px;
@@ -4422,7 +4436,7 @@ kbd {
 
 .canvas-palette-label {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 /* The Add palette's chip (5.5): a grip, a dashed accent border, a hint. */
@@ -4451,7 +4465,7 @@ kbd {
 
 .canvas-palette-hint {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .canvas-hint {
@@ -4459,7 +4473,7 @@ kbd {
   margin: 0;
   padding: 2px 10px;
   min-height: 1.4em;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -4514,7 +4528,7 @@ kbd {
   border-radius: 4px;
   background: var(--bg-raised);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   box-shadow: 0 1px 3px var(--shadow);
 }
 
@@ -4550,7 +4564,7 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 9.5px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -4618,7 +4632,7 @@ kbd {
 
 .canvas-box-from {
   display: block;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -4627,14 +4641,14 @@ kbd {
   margin: 6px 0 0;
   padding: 6px 0 0;
   border-top: 1px solid var(--border-soft);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: ui-monospace, Consolas, monospace;
 }
 
 .canvas-add-attr {
   margin-top: 6px;
   padding: 1px 6px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   border: none;
   background: transparent;
   color: var(--accent);
@@ -4653,7 +4667,7 @@ kbd {
   width: 100%;
   box-sizing: border-box;
   padding: 2px 6px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .canvas-draft {
@@ -4667,7 +4681,7 @@ kbd {
   border-radius: 3px;
   background: var(--bg-raised);
   border: 1px solid var(--border-soft);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text);
   pointer-events: none;
 }
@@ -4783,19 +4797,19 @@ kbd {
 
 .relate-title {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
 .relate-swap {
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 /* The sentence the new relationship will make, as it is typed. */
 .relate-sentence {
   margin: 6px 0 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-style: italic;
   color: var(--text);
 }
@@ -4844,21 +4858,21 @@ kbd {
   margin-top: 4px;
   padding: 4px 8px;
   border-left: 3px solid var(--error-text);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .characteristic label {
   font-weight: 600;
 }
 .owl-term {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 400;
   color: var(--text-dim);
   font-family: ui-monospace, Consolas, monospace;
 }
 .characteristic-example {
   margin: 0 0 6px 22px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 .characteristics {
@@ -4933,11 +4947,11 @@ kbd {
 .shapes-list-head h2,
 .shapes-results-head h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--fs-lg);
 }
 
 .shapes-add {
-  font-size: 18px;
+  font-size: var(--fs-xl);
   line-height: 1;
   padding: 4px 12px;
 }
@@ -5000,7 +5014,7 @@ kbd {
 }
 
 .shapes-row-sentence {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--text-dim);
 }
 
@@ -5008,7 +5022,7 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -5028,12 +5042,12 @@ kbd {
 
 .shape-form h3 {
   margin: 0 0 4px;
-  font-size: 17px;
+  font-size: var(--fs-lg);
 }
 
 .shape-sentence {
   margin: 0 0 10px;
-  font-size: 14px;
+  font-size: var(--fs-md);
   line-height: 1.5;
   background: color-mix(in srgb, var(--accent-2) 9%, transparent);
   border-left: 3px solid var(--accent-2);
@@ -5088,7 +5102,7 @@ kbd {
 
 .example-field h5 {
   margin: 0 0 4px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .example-field-input select {
@@ -5103,7 +5117,7 @@ kbd {
 
 .shape-severity legend,
 .rule-kind legend {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   padding: 0 4px;
 }
@@ -5119,7 +5133,7 @@ kbd {
 
 .rule-editor h5 {
   margin: 0 0 6px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .rule-editor select,
@@ -5268,7 +5282,7 @@ kbd {
 
 .result-group h5 {
   margin: 8px 0 2px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-dim);
@@ -5290,13 +5304,13 @@ kbd {
 }
 
 .result-problem .result-who {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   padding: 0;
 }
 
 .result-value {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--literal);
 }
 
@@ -5424,7 +5438,7 @@ kbd {
 
 .wizard-table {
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   width: 100%;
 }
 
@@ -5454,7 +5468,7 @@ kbd {
 
 .wizard-suggested {
   color: var(--accent-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 
@@ -5490,7 +5504,7 @@ kbd {
 /* Where data came from: text, so it survives being read aloud. */
 .data-label {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .import-report {
@@ -5552,12 +5566,12 @@ kbd {
 }
 
 .snapshot-facts {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .snapshot-switch {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .snapshot-actions {
@@ -5580,13 +5594,13 @@ kbd {
 
 .rml-title {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .rml-textarea {
   width: 100%;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
@@ -5600,7 +5614,7 @@ kbd {
 .project-data {
   margin: 2px 0 6px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .result-data {
@@ -5614,7 +5628,7 @@ kbd {
 /* In the side panel's Reasoning tab (edit-page-rework 5.4), which scrolls
    as a whole: Stage A's 35% share of the tree's column went with it. */
 .reasoning {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .reasoning-intro,
@@ -5643,12 +5657,12 @@ kbd {
 
 .reasoning-results h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 
 .reasoning-group h4 {
   margin: 8px 0 2px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .reasoning-group ul,
@@ -5671,12 +5685,12 @@ kbd {
 
 .why-because {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
 .why-mark {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-dim);
@@ -5705,7 +5719,7 @@ kbd {
 
 .canvas-box-never {
   display: block;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-style: italic;
   color: var(--text-dim);
 }
@@ -5731,7 +5745,7 @@ kbd {
 
 .rule-note {
   margin: 2px 0 0 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .rule-note .detail-note {
@@ -5741,7 +5755,7 @@ kbd {
 .rule-turtle {
   margin: 4px 0;
   padding: 6px 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   background: var(--bg-raised);
@@ -5784,7 +5798,7 @@ kbd {
 
 .canvas-box-rule {
   display: block;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -5846,7 +5860,7 @@ kbd {
 .main.edit-page .hierarchy-expand {
   margin-left: auto;
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .hierarchy-fold {
@@ -5896,7 +5910,7 @@ kbd {
   border-radius: 6px;
   background: var(--bg-raised);
   color: var(--text);
-  font-size: 15px;
+  font-size: var(--fs-lg);
   line-height: 1;
 }
 
@@ -5937,7 +5951,7 @@ kbd {
   border-radius: 0;
   background: transparent;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 
@@ -5975,12 +5989,12 @@ kbd {
 
 .side-heading {
   margin: 0 0 6px;
-  font-size: 15px;
+  font-size: var(--fs-lg);
 }
 
 .side-subheading {
   margin: 14px 0 4px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-dim);
@@ -5989,7 +6003,7 @@ kbd {
 .model-counts {
   margin: 0 0 14px;
   padding-left: 18px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .side-reason-controls {
@@ -6068,7 +6082,7 @@ kbd {
 }
 
 .project-more {
-  font-size: 16px;
+  font-size: var(--fs-lg);
   line-height: 1;
 }
 
@@ -6082,7 +6096,7 @@ kbd {
   display: flex;
   gap: 6px;
   width: 100%;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .project-menu-check {
@@ -6092,6 +6106,13 @@ kbd {
 
 /* --- the canvas aids (edit-page-rework 5.5, 5.7) --- */
 
+/* React Flow's base.css writes its credit at 10 px and loads after this file
+   (the canvas is lazy), so the six sizes (portal-foundations 5.4) need the
+   extra class to reach it. */
+.react-flow .react-flow__attribution {
+  font-size: var(--fs-xs);
+}
+
 .model-canvas .canvas-draft {
   width: 200px;
   padding: 0 0 6px;
@@ -6099,7 +6120,7 @@ kbd {
 
 .canvas-draft-label {
   display: block;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--kind-ink);
@@ -6112,7 +6133,7 @@ kbd {
 
 .canvas-draft-hint {
   margin: 4px 10px 0;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -6131,7 +6152,7 @@ kbd {
   border-radius: 6px;
   background: var(--text);
   color: var(--bg-raised);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   pointer-events: none;
 }
@@ -6150,7 +6171,7 @@ kbd {
   border-radius: 8px;
   background: var(--bg-raised);
   box-shadow: 0 2px 8px var(--shadow);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .canvas-tip {
@@ -6161,7 +6182,7 @@ kbd {
 
 .canvas-tip h3 {
   margin: 0 0 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .canvas-tip ul {
@@ -6223,7 +6244,7 @@ kbd {
   padding: 6px 14px;
   border-top: 1px solid var(--border-soft);
   background: var(--bg-subhead);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .readonly-notice p {

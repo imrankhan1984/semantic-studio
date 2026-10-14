@@ -5,8 +5,9 @@ FILE: frontend/src/styles.test.ts
 
 SUMMARY
     Asserts the portal's visual foundations as the stylesheet writes them
-    (portal-foundations 5.2): the light theme's dim text color, which the
-    design review measured under 4.5:1 on every screen.
+    (portal-foundations 5.2 to 5.5): the light theme's dim text colour, which
+    the design review measured under 4.5:1 on every screen; the six font
+    sizes; the button heights.
 
 BASIC IDEA
     The same blunt instrument as focus-visible.test.ts: index.css read as
@@ -18,7 +19,8 @@ INPUTS / INPUT SOURCES
     - frontend/src/index.css, imported as raw text by Vite.
 
 EXPECTED OUTPUT
-    - Pass/fail per assertion, covering AC-6 of portal-foundations.
+    - Pass/fail per assertion, covering AC-6, AC-7 and AC-8 of
+      portal-foundations.
 ================================================================================
 */
 
@@ -59,5 +61,32 @@ describe("index.css foundations", () => {
     }
     // The accent tint, selected rows and chips: the lowest of the three.
     expect(contrast(dim, "#e6eef8")).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe("six font sizes (portal-foundations 5.4, AC-7)", () => {
+  const SIZES: Record<string, number> = { xs: 12, sm: 13, md: 14, lg: 16, xl: 20, "2xl": 24 };
+
+  it("defines the six tokens, 12 px the smallest", () => {
+    for (const [name, px] of Object.entries(SIZES)) {
+      expect(RULES, `--fs-${name}`).toMatch(new RegExp(`--fs-${name}:\\s*${px}px;`));
+    }
+    const defined = [...RULES.matchAll(/--fs-[\w-]+:\s*([0-9.]+)px/g)].map((m) => Number(m[1]));
+    expect(defined).toHaveLength(6);
+    expect(Math.min(...defined)).toBe(12);
+  });
+
+  it("every font-size is one of the six tokens or inherit", () => {
+    const sizes = [...RULES.matchAll(/font-size:\s*([^;}]+)/g)].map((m) => m[1].trim());
+    expect(sizes.length).toBeGreaterThan(100);
+    const allowed = new Set(["inherit", ...Object.keys(SIZES).map((n) => `var(--fs-${n})`)]);
+    expect(sizes.filter((s) => !allowed.has(s))).toEqual([]);
+    // No size hides in the `font` shorthand either.
+    const shorthands = [...RULES.matchAll(/(?<![-\w])font:\s*([^;}]+)/g)].map((m) => m[1].trim());
+    expect(shorthands.filter((s) => s !== "inherit")).toEqual([]);
+  });
+
+  it("body text has a line height of 1.45", () => {
+    expect(block("body")).toMatch(/line-height:\s*1\.45;/);
   });
 });
