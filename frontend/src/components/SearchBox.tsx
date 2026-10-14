@@ -50,7 +50,7 @@ import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { searchNodes } from "../api";
 import type { Theme, VizNode } from "../types";
-import { KIND_LABELS, kindColor } from "../types";
+import { kindColor, kindLabel } from "../types";
 
 interface Props {
   ontologyId: string | null;
@@ -229,7 +229,7 @@ export default function SearchBox({
                 className={index === active ? "active" : undefined}
                 onClick={() => pick(r.id)}
               >
-                <span className="dot" style={{ background: kindColor(r.kind, theme) }} />
+                <span className="dot" style={{ background: kindColor(r.kind, theme, r.classType) }} />
                 <span className="result-label">{r.label}</span>
                 {/* Words, not a colour or an opacity: the fact that an entity is
                     off the canvas has to survive being read aloud. */}
@@ -244,7 +244,7 @@ export default function SearchBox({
                 {r.importedFrom && (
                   <span className="result-imported">from {r.importedFrom}</span>
                 )}
-                <span className="result-kind">{KIND_LABELS[r.kind] ?? r.kind}</span>
+                <span className="result-kind">{kindLabel(r.kind)}</span>
               </li>
             );
           })}

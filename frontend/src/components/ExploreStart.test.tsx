@@ -391,3 +391,19 @@ describe("ExploreStart budgets", () => {
     expect(counts.summary).toBe(2);
   });
 });
+
+describe("ExploreStart kind colours (portal-foundations 5.3, AC-4)", () => {
+  const css = (colour: string) => {
+    const probe = document.createElement("span");
+    probe.style.background = colour;
+    return probe.style.background;
+  };
+
+  it("an RDFS-only class takes the RDFS class colour; its word stays Class", () => {
+    renderPanel(graphOf([{ ...node("http://x/Plain", "Plain", "class", 9), classType: "rdfs" }, node("http://x/Owl", "Owl", "class", 8)]));
+    const [plain, owl] = rows();
+    expect(plain.querySelector<HTMLElement>(".dot")!.style.background).toBe(css("#7cc6bb"));
+    expect(owl.querySelector<HTMLElement>(".dot")!.style.background).toBe(css("#8fb3e3"));
+    expect(plain.querySelector(".starter-detail")!.textContent).toMatch(/^Class ·/);
+  });
+});

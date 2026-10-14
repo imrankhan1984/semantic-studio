@@ -6,7 +6,8 @@ FILE: frontend/src/types.test.ts
 SUMMARY
     Guards the shared graph palettes. Every theme must define every colour the
     renderer reads, including the label background added to fix the
-    white-on-white selected label.
+    white-on-white selected label; and every lookup by kind is own-key, so a
+    kind named after an Object property is "other" (X-6).
 
 BASIC IDEA
     PALETTES is a plain constant, so this is a pure test with no DOM. It exists
@@ -18,13 +19,14 @@ INPUTS / INPUT SOURCES
     - PALETTES from types.ts.
 
 EXPECTED OUTPUT
-    - Pass/fail per assertion, covering AC-3.
+    - Pass/fail per assertion, covering AC-3, and AC-5 of portal-foundations.
 ================================================================================
 */
 
 import { describe, expect, it } from "vitest";
-import { KIND_LABELS, PALETTES } from "./types";
+import { KIND_LABELS, PALETTES, edgeColor, kindColor, kindLabel, nodeColor } from "./types";
 import type { GraphPalette, Theme } from "./types";
+import type { PaletteKind } from "./theme/kinds";
 
 const THEMES: Theme[] = ["dark", "light"];
 
@@ -44,7 +46,7 @@ const REQUIRED: (keyof GraphPalette)[] = [
 
 /** The canonical set of node kinds: whatever the legend can name. Every one must
  *  have a colour in both themes, or a node of that kind falls back to "other". */
-const KINDS = Object.keys(KIND_LABELS);
+const KINDS = Object.keys(KIND_LABELS) as PaletteKind[];
 
 /** The alpha of an 8-digit #RRGGBBAA colour, as a float in [0, 1]. */
 function alphaOf(color: string): number {
@@ -112,6 +114,43 @@ describe("graph palettes", () => {
         expect(colour, `${theme}.${kind}`).toMatch(/^#[0-9a-f]{8}$/i);
         expect(alphaOf(colour), `${theme}.${kind} alpha`).toBeLessThan(1);
       }
+    }
+  });
+});
+
+describe("lookups by kind are own-key (X-6, portal-foundations AC-5)", () => {
+  // A kind is a string a loaded file decides. `KIND_LABELS["constructor"]`
+  // is Object's constructor function, truthy, so `?? "Other"` never fired.
+  const INHERITED = ["constructor", "valueOf", "__proto__", "toString", "hasOwnProperty"];
+
+  it("kindColor gives other's colour for an inherited name", () => {
+    for (const theme of THEMES) {
+      for (const kind of INHERITED) {
+        expect(kindColor(kind, theme), `${theme}.${kind}`).toBe(kindColor("other", theme));
+      }
+    }
+  });
+
+  it("kindLabel gives Other for an inherited name", () => {
+    for (const kind of INHERITED) expect(kindLabel(kind), kind).toBe("Other");
+    expect(kindLabel("concept")).toBe("SKOS concept");
+  });
+
+  it("node and edge colours fall through the same way", () => {
+    for (const theme of THEMES) {
+      const palette = PALETTES[theme];
+      for (const kind of INHERITED) {
+        expect(nodeColor(palette, kind)).toBe(palette.kind.other);
+        expect(edgeColor(palette, kind)).toBe(palette.defaultEdge);
+      }
+    }
+  });
+
+  it("classType rdfs colours a class only, and rdfsClass is never a kind", () => {
+    for (const theme of THEMES) {
+      expect(kindColor("class", theme, "rdfs")).not.toBe(kindColor("class", theme));
+      expect(kindColor("concept", theme, "rdfs")).toBe(kindColor("concept", theme));
+      expect(kindColor("rdfsClass", theme)).toBe(kindColor("other", theme));
     }
   });
 });

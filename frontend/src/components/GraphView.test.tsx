@@ -1448,3 +1448,32 @@ describe("imported entities (external-access Stage 2, AC-21)", () => {
     plain.view.unmount();
   });
 });
+
+describe("node colours (portal-foundations 5.3)", () => {
+  afterEach(() => {
+    vi.clearAllTimers();
+  });
+
+  it("an RDFS-only class node is drawn in the RDFS class colour; kind stays class", async () => {
+    const { default: GraphView } = await import("./GraphView");
+    const data: VizGraph = {
+      ...DATA,
+      nodes: DATA.nodes.map((n) => (n.id === "http://x/Planet" ? { ...n, classType: "rdfs" as const } : n)),
+    };
+    let view!: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(
+        <GraphView data={data} theme="light" hiddenKinds={new Set()} selected={null} onSelect={() => {}} focusTick={0} />,
+      );
+    });
+    const node = sigmaCalls.last.settings.nodeReducer;
+    const graph = sigmaCalls.last.graph;
+    const planet = node("http://x/Planet", attrsOf(graph, "http://x/Planet"));
+    const celestial = node("http://x/Celestial", attrsOf(graph, "http://x/Celestial"));
+    expect(planet.kind).toBe("class");
+    expect(planet.color).toBe(PALETTES.light.kind.rdfsClass);
+    expect(celestial.color).toBe(PALETTES.light.kind.class);
+    expect(planet.color).not.toBe(celestial.color);
+    view.unmount();
+  });
+});

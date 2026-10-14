@@ -143,3 +143,35 @@ def test_format_detection_and_sniffing():
     g, fmt = parse_rdf(data, None)
     assert fmt == "turtle"
     assert len(g) > 50
+
+
+def test_class_type_marks_rdfs_only_classes():
+    """portal-foundations 5.3, AC-4: a class typed only rdfs:Class carries
+    classType "rdfs", the rule canvas.py uses; owl:Class, both typings, or a
+    class known only from subClassOf carry none. kind stays "class" for all,
+    so filters and counts do not move."""
+    g = Graph()
+    g.parse(
+        data="""
+        @prefix ex: <http://example.org/t#> .
+        @prefix owl: <http://www.w3.org/2002/07/owl#> .
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        ex:Plain a rdfs:Class .
+        ex:Owl a owl:Class .
+        ex:Both a owl:Class, rdfs:Class .
+        ex:Implied rdfs:subClassOf ex:Plain .
+        """,
+        format="turtle",
+    )
+    viz = build_viz_graph(g)
+    ex = "http://example.org/t#"
+    for name in ("Plain", "Owl", "Both", "Implied"):
+        assert _node(viz, ex + name)["kind"] == "class"
+    assert _node(viz, ex + "Plain")["classType"] == "rdfs"
+    for name in ("Owl", "Both", "Implied"):
+        assert "classType" not in _node(viz, ex + name)
+    assert viz["stats"]["kindCounts"] == {"class": 4}
+    # The legend's line under Class, whole-ontology like kindCounts (D-017),
+    # so a budget that drops the class still counts it.
+    assert viz["stats"]["rdfsClassCount"] == 1
+    assert budget_viz(viz, 1)["stats"]["rdfsClassCount"] == 1

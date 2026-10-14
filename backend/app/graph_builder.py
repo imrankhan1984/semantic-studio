@@ -32,6 +32,8 @@ INPUTS / INPUT SOURCES
 EXPECTED OUTPUT
     - build_viz_graph -> {"nodes": [...], "edges": [...], "stats": {...}} as
       JSON-ready dicts consumed by frontend/src/components/GraphView.tsx.
+      A class typed only rdfs:Class carries `classType: "rdfs"` beside its
+      `kind`, which stays "class": a colour, not a kind.
     - budget_viz -> the same shape reduced to the highest-degree nodes, with
       the true totals and a truncation flag added to stats.
     - build_card_sketch -> a twenty-node thumbnail of the same ranking, small
@@ -329,10 +331,19 @@ def build_viz_graph(graph: Graph, langs: Optional[Sequence[str]] = None) -> dict
     # Pass 1: explicit typing — read rdf:type to tag entities by their meta-class.
     object_properties: set[URIRef] = set()
     datatype_properties: set[URIRef] = set()
+    # The two class typings apart (portal-foundations 5.3), canvas.py's rule:
+    # typed rdfs:Class and not owl:Class is an RDFS class. Read in this same
+    # pass, so the colour costs no scan of its own.
+    owl_typed: set[URIRef] = set()
+    rdfs_typed: set[URIRef] = set()
     for subject, obj in graph.subject_objects(RDF.type):
         # Ignore blank nodes and literal types; we only draw named entities.
         if not isinstance(subject, URIRef) or not isinstance(obj, URIRef):
             continue
+        if obj == OWL.Class:
+            owl_typed.add(subject)
+        elif obj == RDFS.Class:
+            rdfs_typed.add(subject)
         kind = TYPE_TO_KIND.get(obj)
         if kind:
             kinds[subject].add(kind)
@@ -409,6 +420,12 @@ def build_viz_graph(graph: Graph, langs: Optional[Sequence[str]] = None) -> dict
         }
         for iri, ks in kinds.items()
     ]
+    # Only a colour: `kind` stays "class", so filters, counts and Query are
+    # untouched, and a class with no field reads as OWL.
+    rdfs_only = rdfs_typed - owl_typed
+    for node, iri in zip(nodes, kinds):
+        if iri in rdfs_only and node["kind"] == KIND_CLASS:
+            node["classType"] = "rdfs"
     if langs:
         for node, iri in zip(nodes, kinds):
             node["names"] = all_names(graph, iri)
@@ -437,6 +454,10 @@ def build_viz_graph(graph: Graph, langs: Optional[Sequence[str]] = None) -> dict
             "nodeCount": len(nodes),
             "edgeCount": len(edge_list),
             "kindCounts": dict(kind_counts),
+            # The class nodes of kindCounts["class"] drawn in the RDFS class
+            # colour, for the legend's line under Class (portal-foundations
+            # 5.3); whole-ontology, as kindCounts is (D-017).
+            "rdfsClassCount": sum(1 for n in nodes if n.get("classType") == "rdfs"),
             "assertionCount": assertion_count,
         },
     }
@@ -498,6 +519,7 @@ def budget_viz(viz: dict, limit: int) -> dict:
             # user expanded something, and a learner would never see the real
             # composition. This will read as a bug. It is not. See D-017.
             "kindCounts": dict(viz["stats"]["kindCounts"]),
+            "rdfsClassCount": viz["stats"].get("rdfsClassCount", 0),
         },
     }
 
@@ -619,6 +641,7 @@ def neighborhood_viz(viz: dict, iri: str, limit: int) -> Optional[dict]:
             # Whole-ontology, exactly as in budget_viz and for the same reason:
             # the legend describes the ontology, not the canvas. See D-017.
             "kindCounts": dict(viz["stats"]["kindCounts"]),
+            "rdfsClassCount": viz["stats"].get("rdfsClassCount", 0),
         },
     }
 

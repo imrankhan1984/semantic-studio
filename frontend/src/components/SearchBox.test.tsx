@@ -327,3 +327,29 @@ describe("SearchBox, answers out of order", () => {
     expect((searchNodes.mock.calls[1][4] as AbortSignal).aborted).toBe(false);
   });
 });
+
+describe("SearchBox kind colours (portal-foundations 5.3)", () => {
+  const css = (colour: string) => {
+    const probe = document.createElement("span");
+    probe.style.background = colour;
+    return probe.style.background;
+  };
+
+  it("an RDFS-only class shows the RDFS class colour, and its word is still Class", async () => {
+    searchNodes.mockResolvedValue([
+      { ...DRAWN, classType: "rdfs" },
+      UNDRAWN,
+    ]);
+    await search(null);
+    const [rdfs, owl] = options();
+    expect(rdfs.querySelector<HTMLElement>(".dot")!.style.background).toBe(css("#7cc6bb"));
+    expect(owl.querySelector<HTMLElement>(".dot")!.style.background).toBe(css("#8fb3e3"));
+    expect(rdfs.querySelector(".result-kind")!.textContent).toBe("Class");
+  });
+
+  it("a kind called constructor reads Other (X-6)", async () => {
+    searchNodes.mockResolvedValue([{ ...DRAWN, kind: "constructor" }]);
+    await search(null);
+    expect(options()[0].querySelector(".result-kind")!.textContent).toBe("Other");
+  });
+});

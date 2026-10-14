@@ -1467,6 +1467,13 @@ export default function App() {
     return [...kinds].sort();
   }, [graphData]);
 
+  // The classes the graph draws in the RDFS class colour, so Query's path bar
+  // says the same (portal-foundations 5.3); the query schema has no class type.
+  const rdfsClasses = useMemo(
+    () => new Set((graphData?.nodes ?? []).filter((n) => n.classType === "rdfs").map((n) => n.id)),
+    [graphData],
+  );
+
   // The server clamps a budget above its maximum and reports what it clamped
   // to, so asking for more than we got is what "no more to draw" looks like.
   // Derived rather than mirroring the server's constant here, which would be a
@@ -2264,6 +2271,7 @@ export default function App() {
                   <Legend
                     theme={theme}
                     kindCounts={graphData.stats.kindCounts}
+                    rdfsClassCount={graphData.stats.rdfsClassCount}
                     edgeKinds={edgeKinds}
                     hiddenKinds={hiddenKinds}
                     onToggleKind={(kind) =>
@@ -2313,6 +2321,7 @@ export default function App() {
               includeImports={includeImports}
               importsCount={importsCount}
               dataSources={dataSources}
+              rdfsClasses={rdfsClasses}
             />
           ) : mode === "explore" ? (
             // The two halves of the Explore column. Which one shows is decided

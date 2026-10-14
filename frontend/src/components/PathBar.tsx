@@ -17,7 +17,8 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES (props)
     - state + stepVars: the path to render and its variable names.
-    - theme, classKinds, labelFor: for colours and labels.
+    - theme, classKinds, rdfsClasses, labelFor: for colours and labels;
+      a class the graph draws as RDFS-only takes that colour here too.
     - openMenu + onOpenMenu: which chip's menu is open.
     - onRemoveStep, onClear: edit actions.
 
@@ -41,6 +42,10 @@ interface Props {
   stepVars: string[];
   theme: Theme;
   classKinds: Record<string, string>;
+  /** Classes the graph draws as RDFS-only (classType "rdfs"). The schema
+   *  carries no class type yet (U-12), so a class the graph's budget left
+   *  out is shown in the OWL colour. */
+  rdfsClasses?: ReadonlySet<string>;
   labelFor: (iri: string) => string;
   openMenu: OpenMenu | null;
   onOpenMenu: (menu: OpenMenu | null) => void;
@@ -53,12 +58,18 @@ export default function PathBar({
   stepVars,
   theme,
   classKinds,
+  rdfsClasses,
   labelFor,
   openMenu,
   onOpenMenu,
   onRemoveStep,
   onClear,
 }: Props) {
+  // A class's colour as the graph draws it; an unknown or inherited kind is
+  // "other" (X-6), an absent one a class.
+  const stepColor = (iri: string) =>
+    kindColor(classKinds[iri] ?? "class", theme, rdfsClasses?.has(iri) ? "rdfs" : undefined);
+
   if (state.steps.length === 0) {
     return (
       <div className="path-bar empty">
@@ -112,12 +123,12 @@ export default function PathBar({
               onClick={() => onOpenMenu(isOpenClass ? null : { kind: "class", index })}
               title={`?${stepVars[index]} — click to select data properties and filters`}
               style={{
-                borderColor: kindColor(classKinds[step.classIri] ?? "class", theme),
+                borderColor: stepColor(step.classIri),
               }}
             >
               <span
                 className="chip-index"
-                style={{ background: kindColor(classKinds[step.classIri] ?? "class", theme) }}
+                style={{ background: stepColor(step.classIri) }}
               >
                 {index + 1}
               </span>

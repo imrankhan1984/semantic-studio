@@ -1405,6 +1405,13 @@ button.legend-row:hover {
   cursor: default;
 }
 
+/* The RDFS class line under Class (portal-foundations 5.3): set in from the
+   rows that filter, so it reads as a note on Class, not a fourth filter. */
+.legend-row.legend-sub {
+  padding-left: 16px;
+  color: var(--text-dim);
+}
+
 .legend-row.off {
   opacity: 0.35;
 }

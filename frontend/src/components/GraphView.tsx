@@ -70,7 +70,7 @@ import { drawDiscNodeLabel } from "sigma/rendering";   // Sigma's own label draw
 import type { NodeHoverDrawingFunction } from "sigma/rendering";
 import { downloadAsPNG } from "@sigma/export-image";   // PNG export
 import type { MergeResult, Theme, VizGraph, VizNeighborhood } from "../types";
-import { PALETTES } from "../types";
+import { PALETTES, edgeColor, nodeColor } from "../types";
 
 /**
  * How far outside the node the selection ring sits, and how thick it is, in the
@@ -573,6 +573,7 @@ export default function GraphView({
       graph.addNode(node.id, {
         label: node.label,
         kind: node.kind,
+        classType: node.classType,
         size: drawnSize(node),
       });
     }
@@ -631,7 +632,7 @@ export default function GraphView({
         const palette = paletteRef.current;
         const res: Record<string, unknown> = {
           ...attrs,
-          color: palette.kind[attrs.kind as string] ?? palette.kind.other,
+          color: nodeColor(palette, attrs.kind as string, attrs.classType as string | undefined),
         };
         if (hiddenRef.current.has(attrs.kind as string)) {
           res.hidden = true;
@@ -696,7 +697,7 @@ export default function GraphView({
         const palette = paletteRef.current;
         const res: Record<string, unknown> = {
           ...attrs,
-          color: palette.edge[attrs.kind as string] ?? palette.defaultEdge,
+          color: edgeColor(palette, attrs.kind as string),
         };
         const g = graphRef.current;
         if (!g) return res;
@@ -925,6 +926,7 @@ export default function GraphView({
       graph.addNode(node.id, {
         label: node.label,
         kind: node.kind,
+        classType: node.classType,
         size: drawnSize(node),
         x: anchorX + Math.cos(angle) * EXPAND_RING_RADIUS,
         y: anchorY + Math.sin(angle) * EXPAND_RING_RADIUS,
