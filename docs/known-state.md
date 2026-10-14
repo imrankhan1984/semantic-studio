@@ -1668,19 +1668,37 @@ EXPECTED OUTPUT
   fixes CF-2, CF-3, CF-4). Twenty-six small items from five reviews, in one
   pull request, one commit per group.
 
-  **A timed-out query stops at its next row; one abandoned query per
-  ontology.** A Python thread cannot be killed, and `executor.shutdown(wait=
+  **A timed-out query is stopped from outside.** `executor.shutdown(wait=
   False)` left a timed-out query running with nothing bounding it (CF-2).
-  `execute_select` now sets a stop flag when the 30 s pass; the row loop
-  checks it between rows, and rdflib yields a SELECT's rows lazily, so a
-  query that is producing rows ends within one. A query still computing its
-  first row (a sort, a big join) cannot be reached: its ontology's id is
-  kept in `_abandoned` with the event its worker sets when it ends, and a new
-  query on that ontology is refused meanwhile with 409 *The last query is
-  still finishing. Try again in a moment.* (D-108). The client reads a 409 as
-  an approval request only when its body has the approval shape, so this
-  one shows as its sentence. The test proves the stop by the statements a
-  paced graph handed out after the timeout (0 or 1), not by a timing.
+  As first built, a stop flag checked between rows ended a query producing
+  rows, but one still computing its first row (a three-way join under ORDER
+  BY) kept its ontology's key for as long as it ran, and every later query
+  there was 409, still 90 s on in the review's probe (PR #58 review, spec
+  v1.2). Now each query runs on a thread of its own, and at the timeout
+  `QueryStopped` is raised in it with `ctypes.pythonapi.
+  PyThreadState_SetAsyncExc`; the same stuck query ended 0.04 s after the
+  stop. Three things make that safe. The stop is sent only while the worker
+  is *armed*, inside its query, under the lock the worker takes to disarm,
+  and disarming clears a stop sent but not yet delivered: so it never lands
+  in `end_run` or the read lock's release, and never in a later thread
+  reusing the id (`_Stopper`). The thread is never a pool's, which would
+  carry a stop into its next query. `QueryStopped` is a `BaseException`, so
+  an `except Exception` in rdflib cannot swallow it. The worker takes the
+  ontology's read lock itself (the router no longer holds it around the
+  call), so a stopped query lets go of it in its own cleanup instead of
+  reading on unlocked after the request has gone. A stop lands only at a
+  Python instruction: a worker inside a C call or a network wait still
+  alive `STOP_GRACE_SECONDS` (2 s) later keeps its ontology's id in
+  `_abandoned`, and a new query there is 409 *The last query is still
+  stopping. Try again in a few seconds.* (D-108). The row-loop flag stays,
+  for a stop that reached the worker in C. A query whose rows were complete
+  when the timeout fired was never sent the stop and keeps them. The client
+  reads a 409 as an approval request only when its body has the approval
+  shape, so this one shows as its sentence. The tests: the stuck join frees
+  its ontology inside 3 s (a simple query then answers 200); a worker waiting
+  on a gate in C still gets the 409; a worker in its cleanup when the
+  timeout fires finishes it whole. Each goes red with its part of the fix
+  removed.
 
   **The source view writes a part of a large ontology, not all of it.**
   Above `BOUNDED_SOURCE_FROM` (20,000 statements; the bundled vocabularies run

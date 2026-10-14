@@ -881,7 +881,7 @@ def run_sparql(oid: str, request: SparqlRequest, imports: bool = IMPORTS_PARAM) 
     """POST /{oid}/sparql -> run a SELECT query and return the result rows.
 
     Maps the executor's exceptions to HTTP: timeout -> 504, bad/forbidden
-    query -> 400, a timed-out query of this ontology still finishing -> 409
+    query -> 400, a timed-out query of this ontology still stopping -> 409
     (D-108). With imports on it runs over the merged view, which is
     read-only by construction, and says how many imported documents it
     covered, so the results can state what was queried.
@@ -889,8 +889,9 @@ def run_sparql(oid: str, request: SparqlRequest, imports: bool = IMPORTS_PARAM) 
     ontology = _get_or_404(oid)
     graph = _graph(ontology, imports)
     try:
-        with ontology.reading():
-            result = execute_select(graph, request.query, key=oid)
+        # The worker takes the read lock itself: held here, the worker would
+        # wait on it, and a stopped query would read on after it was let go.
+        result = execute_select(graph, request.query, key=oid, reading=ontology.reading)
         if imports:
             result["importDocuments"] = imports_service.merged(ontology)["documents"]
         # What the results covered: the switched-on data snapshots, which

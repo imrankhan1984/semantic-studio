@@ -8,8 +8,10 @@ SUMMARY
     and unbound OPTIONAL variables serialize correctly, UPDATE/CONSTRUCT/ASK
     and malformed queries are rejected, a SERVICE clause naming a non-public
     address is refused at any nesting depth without a request being made, the
-    row cap truncates, a timed-out query stops at its next row and holds off
-    a new query on its ontology alone until it ends (D-108), and the
+    row cap truncates, a timed-out query is stopped from outside and frees
+    its ontology, a worker that cannot be stopped at once holds off a new
+    query on its ontology alone until it ends, a query finishing as the
+    timeout fires is never hit by a stale stop (D-108), and the
     schema/query-node/saved-query endpoints behave.
     SERVICE to a public endpoint (D-069) is test_sparql_service.py's.
 
@@ -509,8 +511,8 @@ def test_hand_written_service_to_a_private_address_is_refused(ontology_id, sparq
 
 
 # ---------------------------------------------------------------------------
-# A timed-out query (CF-2, D-108): it stops at its next row, and while one is
-# still computing its first row, a new query on the same ontology is refused.
+# A timed-out query (CF-2, D-108): it is stopped from outside, and only a
+# worker still alive after the grace keeps a new query on its ontology off.
 # ---------------------------------------------------------------------------
 
 
@@ -574,7 +576,10 @@ def test_a_query_while_an_abandoned_one_runs_is_refused(ontology_id, monkeypatch
         router, "_graph", lambda o, imports: stuck if o.id == ontology_id else real_graph(o, imports)
     )
     monkeypatch.setattr(sparql_exec, "DEFAULT_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr(sparql_exec, "STOP_GRACE_SECONDS", 0.3)
     try:
+        # The worker waits on the gate inside a C call, where the stop cannot
+        # land until it returns: only such a worker keeps the ontology.
         first = client.post(f"/api/ontologies/{ontology_id}/sparql", json={"query": EVERYTHING})
         assert first.status_code == 504
         assert first.json()["detail"].startswith("The query exceeded the")
@@ -582,7 +587,7 @@ def test_a_query_while_an_abandoned_one_runs_is_refused(ontology_id, monkeypatch
         second = client.post(f"/api/ontologies/{ontology_id}/sparql", json={"query": PLANETS})
         assert second.status_code == 409
         assert second.json()["detail"] == (
-            "The last query is still finishing. Try again in a moment."
+            "The last query is still stopping. Try again in a few seconds."
         )
         # Another ontology is not held up by this one's abandoned query.
         elsewhere = client.post(f"/api/ontologies/{other}/sparql", json={"query": EVERYTHING})
@@ -601,3 +606,59 @@ def test_a_query_while_an_abandoned_one_runs_is_refused(ontology_id, monkeypatch
         time.sleep(0.05)
     assert third.status_code == 200
     assert third.json()["rowCount"] > 0
+
+
+# A query that never reaches its first row: three unconstrained patterns over
+# 3,000 statements are 2.7e10 combinations, sorted before LIMIT can apply.
+STUCK = "SELECT ?a WHERE { ?a ?b ?c . ?d ?e ?f . ?g ?h ?i } ORDER BY ?a LIMIT 1"
+
+
+def test_a_query_stuck_before_its_first_row_frees_its_ontology(monkeypatch):
+    statements = "".join(f"ex:s{i} ex:p{i % 7} ex:o{i % 11} .\n" for i in range(3000))
+    big = client.post(
+        "/api/ontologies/upload",
+        files={
+            "file": (
+                "stuck-join.ttl",
+                ("@prefix ex: <http://example.org/stuck#> .\n" + statements).encode(),
+                "text/turtle",
+            )
+        },
+    ).json()["id"]
+    monkeypatch.setattr(sparql_exec, "DEFAULT_TIMEOUT_SECONDS", 0.5)
+    first = client.post(f"/api/ontologies/{big}/sparql", json={"query": STUCK})
+    timed_out = time.perf_counter()
+    assert first.status_code == 504
+    # Stopped from outside, it lets go of the ontology at once: the next
+    # query answers, with no 409 between, well inside 3 s of the timeout.
+    simple = client.post(f"/api/ontologies/{big}/sparql", json={"query": EVERYTHING + " LIMIT 5"})
+    assert simple.status_code == 200
+    assert simple.json()["rowCount"] == 5
+    assert time.perf_counter() - timed_out < 3
+
+
+def test_a_query_finishing_as_the_timeout_fires_is_not_stopped(graph, monkeypatch):
+    from app import sparql_service
+
+    # The query itself is done; its worker is still in its cleanup when the
+    # timeout fires, running Python where a stale stop would land.
+    real_end_run = sparql_service.end_run
+    released = threading.Event()
+    cleaned = []
+
+    def slow_end_run(token):
+        released.wait(5)
+        for _ in range(20):
+            time.sleep(0.01)
+        real_end_run(token)
+        cleaned.append(True)
+
+    monkeypatch.setattr(sparql_service, "end_run", slow_end_run)
+    threading.Timer(0.3, released.set).start()
+    result = execute_select(graph, PLANETS, timeout=0.2, key="finishing")
+    # Finished before the stop: its rows stand, and its cleanup ran whole.
+    assert result["rowCount"] > 0
+    assert cleaned == [True]
+    # Nothing is left pending for a later query on the same thread or key.
+    time.sleep(0.1)
+    assert execute_select(graph, PLANETS, key="finishing")["rowCount"] == result["rowCount"]
