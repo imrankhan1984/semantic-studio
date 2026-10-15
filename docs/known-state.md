@@ -1848,3 +1848,51 @@ EXPECTED OUTPUT
   ends, *(Person → Organization)*, were an ellipsis at 1280x720 before this
   build (15 px of 128 shown) and are now 3 px, the row's ⋯ being a 28 px
   square; the outline's 264 px is the Edit page spec's.
+
+- **Explore and Query layout** (2026-10-15, U-12 with U-4,
+  `explore-and-query-layout.md`, D-110). Labels that fit, link names for
+  the node in focus, the legend folded under 1440 px, the toolbar in words,
+  Query's query first at 60 %, four switches that say whether they are on,
+  the RDFS colour in Query's start list, search and save limits in words.
+
+  **One overlap rule, cleared on `beforeRender`.** Sigma 3.0.3's grid keeps
+  one candidate per 100 px cell, and a 13 px name is wider than a cell, so
+  neighbours collided. Sigma has no hook between choosing and drawing, so
+  the rule runs in the drawing functions GraphView hands it
+  (`defaultDrawNodeLabel`, `defaultDrawEdgeLabel`, built by
+  `makeLabelDrawers`): each asks `explore/labelBoxes.ts` to place its box and
+  skips its label on a refusal. Two things a reader will not guess. First,
+  on a hover Sigma redraws link names on their own
+  (`scheduleHighlightedNodesRender`) with no `beforeRender`, so every link
+  name would meet its own box from the pass before; a link seen twice since
+  the last clear starts a new link pass, which drops the link boxes and
+  keeps the node boxes. Second, the hovered and selected nodes' pills are
+  reserved at the frame's first label, not in `beforeRender`: the pill is
+  drawn above everything on the hover layer, Sigma may offer the selected
+  name late in grid order, and `beforeRender` fires before the frame's camera
+  matrix is set, so a box worked out there is in the last frame's place. A
+  second overlap test anywhere else would drift from this one; that is the
+  load-bearing rule. Link names are rotated, so two boxes are separated by
+  the separating-axis test: a bounding rectangle refused names that touch
+  nothing. Measured in Chrome by recording every `fillText` the canvases
+  make, at 1280x720 and 1920x1080 in both themes: no overlapping pair at
+  rest or with a node selected; drawn at rest against what Sigma offered
+  (what `main` draws), 8 of 11 and 23 of 29 at 1280x720, 19 of 19 and 56 of
+  66 at 1920x1080, `space-exploration.ttl` and a generated 200-class file.
+
+  **Four switches, never one choice.** Auto, Paths, Distinct and Count are
+  independent and combine (Distinct with Count, Paths with either). The
+  design review proposed a segmented control; that would remove
+  combinations people use. Each is a toggle with `aria-pressed` and a check
+  mark beside the tint, in one `role="group"`.
+
+  **Where the spec and the build differ.** The pills are reserved first
+  (above); the spec says only that labels are placed in the order Sigma
+  offers them. The 420 px Query panel under 1100 px went: it undercut the
+  520 px floor. The duplicate-name note has no exclusion for the open query:
+  saving the open query is an update under its own name and never shows the
+  prompt. The search box's 100-row budget test now sees 25 rows, the most the
+  box shows. Locally two backend timing budgets fail on this machine
+  (`test_reasoning.py`'s six-thousand-conclusions explain, `test_snapshots.py`'s
+  two-snapshot open) identically with `main`'s code; nothing here touches
+  either path.
