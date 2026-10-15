@@ -1226,23 +1226,25 @@ export default function GraphView({
                 canvas, bottom right, where a map puts them (G-5). What stays
                 here acts on the GRAPH rather than the VIEW: re-running the
                 layout and exporting a PNG. */}
-            {/* Secondary: the layout runs automatically on load and while
-                dragging, so this is only for re-settling a big or fiddled
-                graph. Icon-only to keep it out of the way. */}
+            {/* Two quiet 28 px buttons, each an icon and a word
+                (explore-and-query-layout 5.3): the word is the accessible
+                name, so a screen reader and the eye read the same thing, and
+                the icon is decoration. Re-running the layout is secondary: it
+                runs by itself on load and while dragging. */}
             <button
-              className={layoutRunning ? "tool-btn icon-only active" : "tool-btn icon-only"}
+              className={layoutRunning ? "small ghost active" : "small ghost"}
               onClick={() => (layoutRunning ? stopLayout() : startLayout(15000))}
-              aria-label={layoutRunning ? "Stop the layout" : "Re-run the layout"}
               title={
                 layoutRunning
                   ? "Stop the layout simulation"
                   : "Re-run the layout to untangle the graph"
               }
             >
-              {layoutRunning ? "⏸" : "▶"}
+              <span aria-hidden="true">{layoutRunning ? "⏸" : "▶"}</span>
+              {layoutRunning ? "Stop layout" : "Re-run layout"}
             </button>
             <button
-              className="tool-btn"
+              className="small ghost"
               onClick={() => {
                 const renderer = sigmaRef.current;
                 if (!renderer) return;
@@ -1253,7 +1255,8 @@ export default function GraphView({
               }}
               title="Save the current graph view as a PNG image"
             >
-              ⬇ <span>PNG</span>
+              <span aria-hidden="true">⬇</span>
+              Save as image
             </button>
             {/* Link names are drawn only for the node in focus (D-110), so a
                 newcomer is told where they went. Text, not a tooltip. */}

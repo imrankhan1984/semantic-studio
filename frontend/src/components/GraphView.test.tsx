@@ -1684,3 +1684,38 @@ describe("labels that fit (5.1, D-110)", () => {
     view.unmount();
   });
 });
+
+/* --- the toolbar in words (explore-and-query-layout 5.3, AC-5) ------------ */
+
+describe("the graph toolbar in words (5.3)", () => {
+  afterEach(() => {
+    vi.clearAllTimers();
+    cleanup();
+  });
+
+  it("the layout button is named by its word and changes with the layout", async () => {
+    const { view } = await renderView();
+    // The layout runs on load, so the button first offers to stop it.
+    const stop = screen.getByRole("button", { name: "Stop layout" });
+    expect(stop.textContent).toContain("Stop layout");
+    expect(stop.getAttribute("aria-label")).toBeNull();
+    fireEvent.click(stop);
+    const rerun = screen.getByRole("button", { name: "Re-run layout" });
+    expect(rerun.textContent).toContain("Re-run layout");
+    view.unmount();
+  });
+
+  it("the image button reads Save as image; both are quiet 28 px buttons with a hidden icon", async () => {
+    const { view } = await renderView();
+    const save = screen.getByRole("button", { name: "Save as image" });
+    const layout = screen.getByRole("button", { name: /layout$/ });
+    for (const button of [save, layout]) {
+      expect(button.classList.contains("small")).toBe(true);
+      expect(button.classList.contains("ghost")).toBe(true);
+      const icon = button.querySelector("span")!;
+      expect(icon.getAttribute("aria-hidden")).toBe("true");
+    }
+    expect(screen.queryByText("PNG")).toBeNull();
+    view.unmount();
+  });
+});
