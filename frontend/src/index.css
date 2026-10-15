@@ -27,6 +27,8 @@
   --text: #dbe2ee;
   --text-dim: #8a93a6;
   --accent: #4c9aff;
+  /* Accent as text: the same blue in the dark theme; see the light set. */
+  --accent-text: #4c9aff;
   --accent-soft: #2d5c99;
   --accent-2: #a78bfa;
   --accent-3: #38c5b4;
@@ -81,6 +83,10 @@
      5.2); 5.10:1 now, and above 4.5:1 on every light surface. */
   --text-dim: #5d6678;
   --accent: #2472e8;
+  /* Accent as text: #2472e8 measured 3.99:1 on --bg (portal-foundations
+     AC-6). 5.00:1 on --bg, 4.84:1 on the accent tint. Buttons keep --accent,
+     whose white label is a different pair. */
+  --accent-text: #1d63cc;
   --accent-soft: #bcd3f7;
   --accent-2: #7c3aed;
   --accent-3: #0d9488;
@@ -89,7 +95,9 @@
   --error-bg: #fdecee;
   --error-text: #a12530;
   --error-border: #f2c4c9;
-  --literal: #3f7d20;
+  /* #3f7d20 measured 4.45:1 on --bg (AC-6); 4.60:1 on the accent tint, the
+     lowest of the light surfaces. */
+  --literal: #3c781f;
   --shadow: rgba(30, 40, 60, 0.18);
   --canvas-concept: #7d54c4;
   --canvas-grid: #e5e9f0;
@@ -1998,7 +2006,7 @@ button.legend-row:hover {
 }
 
 .detail-iri a:hover {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* "Show its connections". Full width because it is the panel's one action and
@@ -2082,7 +2090,7 @@ button.legend-row:hover {
   background: none;
   border: none;
   padding: 0;
-  color: var(--accent);
+  color: var(--accent-text);
   cursor: pointer;
   text-align: left;
   overflow-wrap: anywhere;
@@ -2201,7 +2209,7 @@ button.legend-row:hover {
 
 .tab.active {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* --- about panel ------------------------------------------------------ */
@@ -2274,7 +2282,7 @@ button.legend-row:hover {
 }
 
 .about-link {
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: var(--fs-md);
   text-decoration: none;
   align-self: flex-start;
@@ -2798,8 +2806,8 @@ button.legend-row:hover {
   flex: none;
   width: 30px;
   text-align: right;
+  /* No opacity: at 0.6 the line numbers fell under 3:1 (AC-6). */
   color: var(--text-dim);
-  opacity: 0.6;
   user-select: none;
 }
 
@@ -2809,7 +2817,7 @@ button.legend-row:hover {
 }
 
 .sparql-keyword {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -2850,7 +2858,8 @@ button.legend-row:hover {
 
 :root[data-theme="light"] .sparql-number,
 :root[data-theme="light"] .sparql-type {
-  color: #a16207;
+  /* #a16207 measured 4.35:1 on --bg (AC-6). */
+  color: #975c07;
 }
 
 .sparql-comment {
@@ -3017,7 +3026,7 @@ button.legend-row:hover {
 
 .result-source:hover,
 .result-source:focus-visible {
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--bg-raised);
 }
 
@@ -3364,7 +3373,7 @@ button.legend-row:hover {
 .link-btn {
   border: none;
   background: transparent;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .link-btn:hover {
@@ -6133,6 +6142,13 @@ kbd {
    extra class to reach it. */
 .react-flow .react-flow__attribution {
   font-size: var(--fs-xs);
+}
+
+/* React Flow's own panel white sat under a --text-dim link: 1.14:1 in the
+   dark theme (AC-6). The theme's raised surface gives 5.77:1 light, 5.35:1
+   dark. */
+.react-flow .react-flow__attribution {
+  background: var(--bg-raised);
 }
 
 /* Its link's own grey measured 2.85:1 on the light canvas. */

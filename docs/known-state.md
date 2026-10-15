@@ -1824,11 +1824,20 @@ EXPECTED OUTPUT
   **Where the spec and the build differ.** The status bar counts what is
   there only when nothing is open: an ontology still open behind Home keeps
   its line, which two earlier tests require. `stats.rdfsClassCount` is a
-  field the spec did not name. Light-theme text still under 4.5:1 that does
-  not use `--text-dim`, measured in Chrome: the Turtle view's keywords
-  (3.99:1) and strings (4.45:1), and the accent blue as text on the About
-  link and the Load dialog's active tab (4.36:1); 5.2 says nothing else
-  changes, so they are left for the analyst. The Edit outline's relationship
+  field the spec did not name. The light-theme text left under 4.5:1 by the
+  first build (Turtle view keywords 3.99:1, strings 4.45:1, the accent blue
+  as link text 4.36:1), with two more the analyst's review (spec v0.4)
+  found, the line numbers at 60 % opacity (2.38:1 light, 2.93:1 dark) and
+  React Flow's credit on its own pale panel in the dark theme (1.14:1), were
+  closed in a review fix commit. Accent as text is now `--accent-text`
+  (`#1d63cc` light, 5.00:1 on `--bg`; the dark theme's is `--accent`);
+  buttons keep `--accent`, whose white label is another pair. `--literal` is
+  `#3c781f` and numbers and types `#975c07` in the light theme; the gutter
+  has no opacity; the credit sits on `--bg-raised`. `styles.test.ts`
+  computes every light `.sparql-*` colour against `--bg`, `--bg-raised`,
+  `--bg-panel` and the accent tint. Other selectors still use `--accent` as
+  text (chips, the start list's live line, loading lines); the review did
+  not measure them under 4.5:1 and they are unchanged. The Edit outline's relationship
   ends, *(Person → Organization)*, were an ellipsis at 1280x720 before this
   build (15 px of 128 shown) and are now 3 px, the row's ⋯ being a 28 px
   square; the outline's 264 px is the Edit page spec's.
