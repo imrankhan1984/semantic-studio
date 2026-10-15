@@ -16,7 +16,9 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES (props)
     - schema: the ontology's query schema (null -> renders nothing).
-    - theme: for the class swatches.
+    - theme: for the class swatches. A class the schema marks
+      `classType: "rdfs"` is drawn in the RDFS class colour, as the graph
+      draws it (explore-and-query-layout 5.6).
     - onUseStarter: load a starter's ready state.
     - onPickClass: begin the path from a class.
 
@@ -84,11 +86,11 @@ export default function QueryStart({ schema, theme, onUseStarter, onPickClass }:
               <button
                 key={cls.iri}
                 className="chip chip-class start-chip"
-                style={{ borderColor: kindColor(cls.kind, theme) }}
+                style={{ borderColor: kindColor(cls.kind, theme, cls.classType) }}
                 onClick={() => onPickClass(cls.iri, cls.label)}
                 title={cls.prefixed}
               >
-                <span className="dot" style={{ background: kindColor(cls.kind, theme) }} />
+                <span className="dot" style={{ background: kindColor(cls.kind, theme, cls.classType) }} />
                 {cls.label}
                 {cls.instances > 0 && (
                   <span className="chip-count">{cls.instances.toLocaleString()}</span>

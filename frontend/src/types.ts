@@ -124,6 +124,9 @@ export interface SchemaClass {
   prefixed: string;
   instances: number;  // how many instances it has (drives ranking)
   kind: string;       // node kind for colouring (class/concept/...)
+  /** "rdfs" on a class typed only rdfs:Class, as on graph nodes; absent
+   *  otherwise (explore-and-query-layout 5.6). Only a colour. */
+  classType?: "rdfs";
 }
 
 export interface SchemaLink {
