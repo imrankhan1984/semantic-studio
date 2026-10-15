@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1244 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1393 tests, vitest
+cd backend  && python -m pytest tests    # 1245 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1447 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -84,8 +84,8 @@ one sample.
 per file and `vi.mock` over `api.ts`. For the graph, stub `GraphView` (see
 `App.test.tsx`), stub the two WebGL globals (`GraphView.test.tsx`), or stub the
 `sigma` module and read the settings its constructor was handed, which tests
-the shipped reducers. **Untested:** `Logo.tsx`, `PathBar.tsx`, `icons.tsx`, the
-Legend's colours, `SourceView` beyond its target, and
+the shipped reducers. **Untested:** `Logo.tsx`, `icons.tsx`, `SourceView`
+beyond its target, and
 `QueryPanel` beyond a foothold. A change to one adds its first test.
 
 **jsdom fails silently where a browser would not.** It does not blur a focused
@@ -207,6 +207,9 @@ frontend/src/
                      and the data wizard's words and choices
                      (dataSentences.ts, dataChoices.ts)
   links.ts           linkTarget: the one gate an IRI passes to become a link
+  theme/             kinds.ts, the one kind palette every tab draws from
+                     (D-109), and contrast.ts, the WCAG ratio its tests use
+  statusWords.ts     The status bar's words: Home's count, format names
   canvas/            The modeling canvas (D-086): ModelCanvas on React Flow,
                      its boxes and relate menu, its legend and tip card
                      (CanvasAids.tsx), the colour tokens by kind
@@ -219,8 +222,8 @@ docs/known-state.md  Why each load-bearing rule below exists
 
 `sparql/`, `explore/`, `home/`, `projects/`, `modeling/` and `reasoning/` are the same idea six times: logic a
 component needs, kept out of the component so it can be tested without
-rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts`, `links.ts` and
-`catalogue.ts` are the same idea for one function and one constant. Prefer this
+rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts`, `statusWords.ts`,
+`links.ts` and `catalogue.ts` are the same idea for one function and one constant. Prefer this
 split for anything with a rule in it.
 
 Routers stay thin. If you are writing logic in `routers/`, it probably belongs
@@ -380,6 +383,10 @@ leaves one behind.
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]
+- No font size outside the six `--fs-*` tokens, 12 px the smallest; `styles.test.ts` scans `index.css`. [Portal foundations]
+- The button set is `:where()` rules, and the plain `button` rule sets no font or padding: element specificity outranks the set. [Portal foundations]
+- Removal starts only in a Home card's menu; its ⋮ is `aria-disabled` while counting, and Home refocuses when the card goes. [Portal foundations]
+- Home's start focus is `focus({ preventScroll: true })`. [Portal foundations]
 - Mount makes two requests, the ontology list and the project list; the home screen makes none to `/graph`. [card grid, authoring foundations]
 - `CatalogueList` is shared by Home and the Load dialog; its `memo` sits at Home's import. [card grid]
 - The catalogue order is deliberate; read the comment above `CATALOGUE`. [leads with FOAF]
@@ -391,7 +398,9 @@ leaves one behind.
 - The home layout switches on the whole library, not the filtered count. [card grid]
 - `.onto-menu[hidden] { display: none }` stays. [card grid]
 - `summary()` reads `meta.get("card")`; nothing backfills a sketch. [card grid]
-- Touch one `KIND_LABELS[kind]` or `kindColor` lookup, touch all three; the outline's dots left `kindColor` for the Edit page's tokens (X-6, D-107). [card grid, Edit page]
+- No kind colour is written outside `theme/kinds.ts` (`index.css` mirrors the Edit page's, checked by `kindColours.test.ts`); `theme/kinds.test.ts` scans every source (D-109). [Portal foundations]
+- Every lookup by kind is own-key: `kindLabel`, `kindColor`, `nodeColor`, `edgeColor`, never `KIND_LABELS[kind]` (X-6). [Portal foundations]
+- `classType` colours a class; its `kind` stays `class`. [Portal foundations]
 - The About backdrop is the dialog's sibling; its key handler is on `document`. [About panel]
 - The Edit side panel lives in `App.tsx`, the detail panel inside it; property forests hold only `subPropertyOf` ends. [Hierarchy view, Edit page]
 
