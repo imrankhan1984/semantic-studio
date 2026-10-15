@@ -275,7 +275,9 @@ export default function HomeScreen({
     // rather than something only "Close this ontology" did. See D-022.
     target.dataset.startFocus = "";
     target.addEventListener("blur", () => delete target.dataset.startFocus, { once: true });
-    target.focus();
+    // Without preventScroll the browser scrolled to the target, and at
+    // 1280x720 Home opened past My projects (portal-foundations 5.8).
+    target.focus({ preventScroll: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
 

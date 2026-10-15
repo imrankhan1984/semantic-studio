@@ -481,6 +481,19 @@ describe("HomeScreen keyboard and screen reader", () => {
     expect((document.activeElement as HTMLElement).dataset.startFocus).toBe("");
   });
 
+  it("focuses the start target without scrolling to it (portal-foundations 5.8, AC-11)", () => {
+    // At 1280x720 a plain focus() scrolled Home past My projects. The spy
+    // reads the options the call was given; jsdom does no scrolling.
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    renderScreen();
+    const target = document.querySelector<HTMLElement>("[data-start-focus]")!;
+    expect(document.activeElement).toBe(target);
+    const call = focus.mock.calls.find((_, i) => focus.mock.contexts[i] === target);
+    expect(call, "the start target was focused").toBeDefined();
+    expect(call![0]).toEqual({ preventScroll: true });
+    focus.mockRestore();
+  });
+
   it("drops the focus marker once focus moves away", () => {
     renderScreen();
     const focused = document.activeElement as HTMLElement;
