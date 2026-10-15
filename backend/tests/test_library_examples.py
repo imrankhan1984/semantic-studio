@@ -5,12 +5,20 @@ FILE: backend/tests/test_library_examples.py
 
 SUMMARY
     The library's three bundled examples (home-and-examples, U-13a, D-111):
-    the manifest and its hashes, and what each new file must hold -- every
-    floor of 5.2 for Space Exploration, the content of 5.3 for The Lord of the
-    Rings. (test_examples.py is a project's example data, shacl-authoring
-    5.8: a different thing that had the name first.)
+    seeding on a first start and never again, a removal that stays removed,
+    a changed file replacing its entry under the same id, the restore
+    endpoint; the manifest and its hashes; and what each new file must hold
+    -- every floor of 5.2 for Space Exploration, the content of 5.3 for The
+    Lord of the Rings. (test_examples.py is a project's example data,
+    shacl-authoring 5.8: a different thing that had the name first.)
 
 BASIC IDEA
+    Seeding runs against a store on a temporary data folder, a fresh
+    OntologyStore on the same folder standing for a restart, and the parse
+    count is a count of calls to store.parse_rdf -- Section 10's budget is a
+    count, not a timing. The broker's request is replaced with one that fails
+    the test, so "no network" does not lean on the sandbox.
+
     The files are read straight from backend/app/examples/ with rdflib, the
     way the seeding reads them, and each floor is asserted as a count or as
     named statements rather than by eye. A floor is a minimum: the test says
@@ -20,9 +28,11 @@ BASIC IDEA
 INPUTS / INPUT SOURCES
     - backend/app/examples/manifest.json, the two Turtle files beside it, and
       backend/app/vocab/foaf.rdf.
+    - library_examples, OntologyStore and SavedQueryStore on pytest's
+      tmp_path; the FastAPI app through TestClient for the endpoint.
 
 EXPECTED OUTPUT
-    - Pass/fail for AC-5, AC-6 and the manifest half of AC-1.
+    - Pass/fail for AC-1 to AC-6 and the backend half of AC-10.
 ================================================================================
 """
 
@@ -36,6 +46,14 @@ from pathlib import Path
 import pytest
 from rdflib import OWL, RDF, RDFS, SKOS, XSD, Graph, Literal, Namespace, URIRef
 from rdflib.namespace import DCTERMS
+from fastapi.testclient import TestClient
+
+from app import library_examples
+from app import store as store_mod
+from app.main import app
+from app.network_broker import broker
+from app.queries_store import SavedQueryStore
+from app.store import OntologyStore, store as app_store
 
 APP = Path(__file__).resolve().parent.parent / "app"
 MANIFEST = json.loads((APP / "examples" / "manifest.json").read_text(encoding="utf-8"))
@@ -99,6 +117,194 @@ def test_foaf_is_the_bundled_vocabulary_not_a_copy():
 def test_the_new_files_are_binary_in_gitattributes():
     attributes = (APP.parent.parent / ".gitattributes").read_text(encoding="utf-8")
     assert "backend/app/examples/*.ttl binary" in attributes
+
+
+# --- seeding: once, under fixed ids, and a removal stays removed -----------
+
+KEYS = ["space", "middle-earth", "foaf"]
+
+
+@pytest.fixture
+def parses(monkeypatch):
+    """Every parse the store makes, counted; and no connection allowed."""
+    calls: list = []
+    real = store_mod.parse_rdf
+
+    def counting(*args, **kwargs):
+        calls.append(args[1] if len(args) > 1 else kwargs.get("fmt"))
+        return real(*args, **kwargs)
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("seeding the examples opened a connection")
+
+    monkeypatch.setattr(store_mod, "parse_rdf", counting)
+    monkeypatch.setattr(broker, "request", refuse)
+    return calls
+
+
+def test_example_ids_are_fixed_and_shaped_like_any_library_id():
+    for key in KEYS:
+        oid = library_examples.example_id(key)
+        assert re.fullmatch(r"ont-[0-9a-f]{12}", oid)
+        assert oid == "ont-" + hashlib.sha256(f"example:{key}".encode()).hexdigest()[:12]
+    assert len({library_examples.example_id(k) for k in KEYS}) == 3
+
+
+def test_a_first_start_adds_the_three_examples(tmp_path, parses):
+    store = OntologyStore(tmp_path)
+    added = library_examples.seed(store)
+    assert added == [library_examples.example_id(k) for k in KEYS]
+    entries = {o.id: o.summary() for o in store.list()}
+    for entry in MANIFEST["examples"]:
+        summary = entries[library_examples.example_id(entry["key"])]
+        assert summary["source"] == "example"
+        assert summary["name"] == entry["name"]
+        assert summary["example"] == {"key": entry["key"], "purpose": entry["purpose"]}
+        # The card's sketch is computed in the same parse, as for an upload.
+        assert summary["card"]["sketch"]["nodes"]
+    assert len(parses) == 3
+    state = json.loads((tmp_path / "examples.json").read_text(encoding="utf-8"))
+    assert state == {"seeded": {e["key"]: e["sha256"] for e in MANIFEST["examples"]}}
+
+
+def test_a_later_start_parses_nothing_and_keeps_the_ids(tmp_path, parses):
+    library_examples.seed(OntologyStore(tmp_path))
+    first = [o.id for o in OntologyStore(tmp_path).list()]
+    parses.clear()
+    restarted = OntologyStore(tmp_path)
+    assert library_examples.seed(restarted) == []
+    assert parses == []
+    assert sorted(o.id for o in restarted.list()) == sorted(first)
+    # Nothing was parsed to list them either: the lazy start-up holds.
+    assert all(not o.summary()["loaded"] for o in restarted.list())
+
+
+def test_a_removed_example_stays_removed_after_a_restart(tmp_path, parses):
+    store = OntologyStore(tmp_path)
+    library_examples.seed(store)
+    gone = library_examples.example_id("middle-earth")
+    assert store.remove(gone)
+    parses.clear()
+    restarted = OntologyStore(tmp_path)
+    assert library_examples.seed(restarted) == []
+    assert restarted.get(gone) is None
+    assert parses == []
+
+
+def _changed_manifest(tmp_path, key: str, extra: bytes):
+    """The manifest as a release with a changed file would ship it."""
+    entries = json.loads(json.dumps(MANIFEST["examples"]))
+    entry = next(e for e in entries if e["key"] == key)
+    data = (APP / entry["file"]).read_bytes() + extra
+    changed = tmp_path / "changed.ttl"
+    changed.write_bytes(data)
+    # An absolute path wins over APP_DIR in the join seeding makes.
+    entry["file"] = str(changed)
+    entry["sha256"] = hashlib.sha256(data).hexdigest()
+    return entries
+
+
+SOL = b'\n<http://example.org/space#Sun> <http://www.w3.org/2000/01/rdf-schema#label> "Sol"@es .\n'
+
+
+def test_a_changed_file_replaces_its_entry_under_the_same_id(tmp_path, parses, monkeypatch):
+    data_dir = tmp_path / "data"
+    store = OntologyStore(data_dir)
+    library_examples.seed(store)
+    oid = library_examples.example_id("space")
+    before = store.get(oid).summary()["triples"]
+    queries = SavedQueryStore(data_dir)
+    saved = queries.save(name="Missions to Mars", ontology_id=oid, ontology_name="Space Exploration",
+                         state=None, sparql="SELECT * WHERE { ?s ?p ?o }", mode="text")
+
+    entries = _changed_manifest(tmp_path, "space", SOL)
+    monkeypatch.setattr(library_examples, "load_manifest", lambda: entries)
+    parses.clear()
+    restarted = OntologyStore(data_dir)
+    assert library_examples.seed(restarted) == [oid]
+    assert len(parses) == 1
+    assert [o.id for o in restarted.list()].count(oid) == 1
+    assert restarted.get(oid).summary()["triples"] == before + 1
+    # The replacement is on disk, so the start after that serves it too.
+    assert OntologyStore(data_dir).get(oid).summary()["triples"] == before + 1
+    assert [q["id"] for q in SavedQueryStore(data_dir).list(ontology_id=oid)] == [saved["id"]]
+
+
+def test_a_changed_file_does_not_bring_back_a_removed_example(tmp_path, parses, monkeypatch):
+    store = OntologyStore(tmp_path / "data")
+    library_examples.seed(store)
+    oid = library_examples.example_id("space")
+    store.remove(oid)
+    entries = _changed_manifest(tmp_path, "space", SOL)
+    monkeypatch.setattr(library_examples, "load_manifest", lambda: entries)
+    restarted = OntologyStore(tmp_path / "data")
+    assert library_examples.seed(restarted) == []
+    assert restarted.get(oid) is None
+
+
+def test_restore_adds_back_only_the_missing_ones(tmp_path, parses):
+    store = OntologyStore(tmp_path)
+    library_examples.seed(store)
+    gone = library_examples.example_id("foaf")
+    store.remove(gone)
+    kept = store.get(library_examples.example_id("space"))
+    parses.clear()
+    assert library_examples.restore(store) == [gone]
+    assert len(parses) == 1
+    assert store.get(library_examples.example_id("space")) is kept
+    assert library_examples.restore(store) == []
+    # And the next start leaves the restored one where it is.
+    assert library_examples.seed(OntologyStore(tmp_path)) == []
+
+
+# --- the endpoint and the start-up -------------------------------------------
+
+HEADERS = {"X-Semantic-Studio": "1"}
+
+
+@pytest.fixture
+def no_examples_after():
+    """The app's own store is shared by every test file: leave it as found."""
+    yield
+    for key in KEYS:
+        app_store.remove(library_examples.example_id(key))
+    (app_store.data_dir / "examples.json").unlink(missing_ok=True)
+
+
+def test_the_server_start_seeds_the_library(no_examples_after, parses):
+    with TestClient(app, base_url="http://localhost", headers=HEADERS) as client:
+        listed = {o["id"]: o for o in client.get("/api/ontologies").json()}
+    for key in KEYS:
+        assert listed[library_examples.example_id(key)]["source"] == "example"
+
+
+def test_restore_endpoint_brings_back_only_the_missing_ones(no_examples_after, parses):
+    library_examples.seed(app_store)
+    client = TestClient(app, base_url="http://localhost", headers=HEADERS)
+    gone = library_examples.example_id("middle-earth")
+    assert client.delete(f"/api/ontologies/{gone}").status_code == 200
+    parses.clear()
+    response = client.post("/api/examples/restore")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["restored"] == [gone]
+    assert len(parses) == 1
+    ids = [o["id"] for o in body["ontologies"]]
+    assert all(library_examples.example_id(k) in ids for k in KEYS)
+    assert body["ontologies"] == client.get("/api/ontologies").json()
+    assert client.post("/api/examples/restore").json()["restored"] == []
+
+
+def test_restore_endpoint_goes_through_local_guard(no_examples_after, parses):
+    library_examples.seed(app_store)
+    gone = library_examples.example_id("foaf")
+    app_store.remove(gone)
+    bare = TestClient(app, base_url="http://localhost")
+    assert bare.post("/api/examples/restore").status_code == 403
+    foreign = TestClient(app, base_url="http://localhost",
+                         headers={**HEADERS, "Origin": "http://evil.example"})
+    assert foreign.post("/api/examples/restore").status_code == 403
+    assert app_store.get(gone) is None
 
 
 # --- Space Exploration: every floor of 5.2 ------------------------------------

@@ -29,8 +29,10 @@ INPUTS / INPUT SOURCES
     - Environment variable STATIC_DIR: optional override for where the built
       frontend lives. In Docker this is set to /app/static.
     - The upload cap, read from the ontologies router at request time.
-    - The five router modules (ontologies, queries, network, projects, data)
-      which define the actual endpoints.
+    - The six router modules (ontologies, queries, network, projects, data,
+      examples) which define the actual endpoints.
+    - The bundled examples, seeded into the library when the server starts
+      (library_examples.py, home-and-examples 5.1).
 
 EXPECTED OUTPUT
     - A configured `app` object that uvicorn imports and runs (see the Docker
@@ -54,6 +56,7 @@ from __future__ import annotations
 # `os` is used to read the optional STATIC_DIR environment variable.
 import os
 import re
+from contextlib import asynccontextmanager
 # `Path` gives us cross-platform filesystem path handling for locating the
 # built frontend directory.
 from pathlib import Path
@@ -70,12 +73,24 @@ from fastapi.staticfiles import StaticFiles
 # (ontologies vs saved queries) keeps this file small.
 from .local_guard import LocalOnlyMiddleware
 from .network_broker import ApprovalRequired, GrantScopeMiddleware, HostBlocked, Offline
-from . import tabular
-from .routers import data, network, ontologies, projects, queries
+from . import library_examples, tabular
+from .routers import data, examples, network, ontologies, projects, queries
+from .store import store
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Seed the library's examples once the server is up (home-and-examples
+    5.1). Here rather than at import, so a test that builds a TestClient
+    without starting the app gets the library it set up and nothing else; a
+    first start parses three small files, every later one parses nothing."""
+    library_examples.seed(store)
+    yield
+
 
 # Create the application. The title/version surface in the auto-generated
 # OpenAPI docs at /docs.
-app = FastAPI(title="Semantic Studio", version="0.2.0")
+app = FastAPI(title="Semantic Studio", version="0.2.0", lifespan=lifespan)
 
 # During local development the frontend runs on Vite's port 5173 while this API
 # runs on 8000, so the browser makes cross-origin requests. This middleware
@@ -184,6 +199,7 @@ app.include_router(queries.router)
 app.include_router(network.router)
 app.include_router(projects.router)
 app.include_router(data.router)
+app.include_router(examples.router)
 
 
 # The broker's three policy decisions, mapped once for every route. They can
