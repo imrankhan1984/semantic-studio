@@ -1,0 +1,651 @@
+# The Lord of the Rings: a Semantic Studio example (home-and-examples 5.3).
+#
+# Rich instance data a newcomer already understands: people, the groups they
+# belong to, where they live, what they carry, the books they appear in and
+# the events they take part in. Facts only -- names, kinds, places, relations
+# and dates -- and no text from the books or from any other site: every
+# comment is one plain sentence written for this file.
+#
+# Years are in the reckoning of the Third Age, as the books' appendices give
+# them. The file is bundled and pinned by SHA-256 in manifest.json beside it:
+# change a byte and update the hash with it.
+
+@prefix me:      <http://example.org/middle-earth#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+
+# ---------------------------------------------------------------------------
+# The ontology
+# ---------------------------------------------------------------------------
+
+<http://example.org/middle-earth> a owl:Ontology ;
+    dcterms:title "The Lord of the Rings"@en ;
+    dcterms:description "An unofficial teaching dataset of facts from The Lord of the Rings. Not affiliated with or endorsed by the Tolkien Estate."@en ;
+    dcterms:creator "Semantic Studio" ;
+    dcterms:created "2026-10-15"^^xsd:date ;
+    dcterms:license <https://creativecommons.org/licenses/by/4.0/> ;
+    owl:versionInfo "1.0" ;
+    rdfs:label "The Lord of the Rings"@en .
+
+# ---------------------------------------------------------------------------
+# Classes
+# ---------------------------------------------------------------------------
+
+me:Character a owl:Class ;
+    rdfs:label "Character"@en ;
+    rdfs:comment "A person in the story, of any people."@en .
+
+me:Hobbit a owl:Class ;
+    rdfs:subClassOf me:Character ;
+    rdfs:label "Hobbit"@en ;
+    rdfs:comment "One of the small people of the Shire and the lands near it."@en .
+
+me:Elf a owl:Class ;
+    rdfs:subClassOf me:Character ;
+    rdfs:label "Elf"@en ;
+    rdfs:comment "One of the immortal Elves."@en .
+
+me:Dwarf a owl:Class ;
+    rdfs:subClassOf me:Character ;
+    rdfs:label "Dwarf"@en ;
+    rdfs:comment "One of the Dwarves, a people of miners and smiths."@en .
+
+me:Man a owl:Class ;
+    rdfs:subClassOf me:Character ;
+    rdfs:label "Man"@en ;
+    rdfs:comment "One of the mortal race of Men."@en .
+
+me:Maia a owl:Class ;
+    rdfs:subClassOf me:Character ;
+    rdfs:label "Maia"@en ;
+    rdfs:comment "One of the Maiar, spirits older than the world."@en .
+
+# The wizards were Maiar sent to Middle-earth, which is why this class sits
+# under Maia rather than beside it.
+me:Wizard a owl:Class ;
+    rdfs:subClassOf me:Maia ;
+    rdfs:label "Wizard"@en ;
+    rdfs:comment "One of the Istari, the wizards."@en .
+
+me:Ent a owl:Class ;
+    rdfs:subClassOf me:Character ;
+    rdfs:label "Ent"@en ;
+    rdfs:comment "One of the tall, tree-like guardians of the forests."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( me:Hobbit me:Elf me:Dwarf me:Man ) .
+
+me:Group a owl:Class ;
+    rdfs:label "Group"@en ;
+    rdfs:comment "A company or council of characters."@en .
+
+me:Place a owl:Class ;
+    rdfs:label "Place"@en ;
+    rdfs:comment "Somewhere in Middle-earth."@en .
+
+me:Region a owl:Class ;
+    rdfs:subClassOf me:Place ;
+    rdfs:label "Region"@en ;
+    rdfs:comment "A wide land, a forest or a field."@en .
+
+me:Realm a owl:Class ;
+    rdfs:subClassOf me:Place ;
+    rdfs:label "Realm"@en ;
+    rdfs:comment "A land under a ruler."@en .
+
+me:Settlement a owl:Class ;
+    rdfs:subClassOf me:Place ;
+    rdfs:label "Settlement"@en ;
+    rdfs:comment "A village, a town or a city."@en .
+
+me:Fortress a owl:Class ;
+    rdfs:subClassOf me:Place ;
+    rdfs:label "Fortress"@en ;
+    rdfs:comment "A stronghold built for defence."@en .
+
+me:Artifact a owl:Class ;
+    rdfs:label "Artifact"@en ;
+    rdfs:comment "A made thing that matters to the story."@en .
+
+me:Ring a owl:Class ;
+    rdfs:subClassOf me:Artifact ;
+    rdfs:label "Ring"@en ;
+    rdfs:comment "One of the Rings of Power."@en .
+
+me:Weapon a owl:Class ;
+    rdfs:subClassOf me:Artifact ;
+    rdfs:label "Weapon"@en ;
+    rdfs:comment "A named sword."@en .
+
+me:Book a owl:Class ;
+    rdfs:label "Book"@en ;
+    rdfs:comment "One of the three volumes of The Lord of the Rings."@en .
+
+me:Event a owl:Class ;
+    rdfs:label "Event"@en ;
+    rdfs:comment "Something that happens in the story."@en .
+
+me:Battle a owl:Class ;
+    rdfs:subClassOf me:Event ;
+    rdfs:label "Battle"@en ;
+    rdfs:comment "An event in which armies fight."@en .
+
+me:Council a owl:Class ;
+    rdfs:subClassOf me:Event ;
+    rdfs:label "Council"@en ;
+    rdfs:comment "A meeting held to decide what to do."@en .
+
+# ---------------------------------------------------------------------------
+# Object properties
+# ---------------------------------------------------------------------------
+
+me:memberOf a owl:ObjectProperty ;
+    rdfs:domain me:Character ;
+    rdfs:range me:Group ;
+    rdfs:label "member of"@en .
+
+me:livesIn a owl:ObjectProperty ;
+    rdfs:domain me:Character ;
+    rdfs:range me:Place ;
+    rdfs:label "lives in"@en ;
+    rdfs:comment "Where the character makes their home during the story."@en .
+
+me:parentOf a owl:ObjectProperty ;
+    owl:inverseOf me:childOf ;
+    rdfs:domain me:Character ;
+    rdfs:range me:Character ;
+    rdfs:label "parent of"@en .
+
+me:childOf a owl:ObjectProperty ;
+    owl:inverseOf me:parentOf ;
+    rdfs:domain me:Character ;
+    rdfs:range me:Character ;
+    rdfs:label "child of"@en .
+
+me:spouseOf a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:domain me:Character ;
+    rdfs:range me:Character ;
+    rdfs:label "spouse of"@en .
+
+me:siblingOf a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:domain me:Character ;
+    rdfs:range me:Character ;
+    rdfs:label "sibling of"@en .
+
+me:bears a owl:ObjectProperty ;
+    rdfs:domain me:Character ;
+    rdfs:range me:Ring ;
+    rdfs:label "bears"@en ;
+    rdfs:comment "Carries or wears the ring at some time in the story."@en .
+
+me:wields a owl:ObjectProperty ;
+    rdfs:domain me:Character ;
+    rdfs:range me:Weapon ;
+    rdfs:label "wields"@en ;
+    rdfs:comment "Carries the weapon at some time in the story."@en .
+
+me:madeBy a owl:ObjectProperty ;
+    rdfs:domain me:Artifact ;
+    rdfs:range me:Character ;
+    rdfs:label "made by"@en .
+
+me:takesPartIn a owl:ObjectProperty ;
+    rdfs:domain me:Character ;
+    rdfs:range me:Event ;
+    rdfs:label "takes part in"@en .
+
+me:takesPlaceIn a owl:ObjectProperty ;
+    rdfs:domain me:Event ;
+    rdfs:range me:Place ;
+    rdfs:label "takes place in"@en .
+
+me:appearsIn a owl:ObjectProperty ;
+    rdfs:domain me:Character ;
+    rdfs:range me:Book ;
+    rdfs:label "appears in"@en .
+
+me:locatedIn a owl:ObjectProperty, owl:TransitiveProperty ;
+    rdfs:domain me:Place ;
+    rdfs:range me:Place ;
+    rdfs:label "located in"@en ;
+    rdfs:comment "Lies within a larger place; a place within a place is within the whole."@en .
+
+me:leaderOf a owl:ObjectProperty ;
+    rdfs:domain me:Character ;
+    rdfs:label "leader of"@en ;
+    rdfs:comment "Leads the group or rules the place at some time in the story."@en .
+
+# ---------------------------------------------------------------------------
+# Datatype properties
+# ---------------------------------------------------------------------------
+
+me:bornInYear a owl:DatatypeProperty ;
+    rdfs:domain me:Character ;
+    rdfs:range xsd:integer ;
+    rdfs:label "born in year"@en ;
+    rdfs:comment "The year of birth in the reckoning of the Third Age."@en .
+
+me:inYear a owl:DatatypeProperty ;
+    rdfs:domain me:Event ;
+    rdfs:range xsd:integer ;
+    rdfs:label "in year"@en ;
+    rdfs:comment "The year of the event in the reckoning of the Third Age."@en .
+
+me:publishedIn a owl:DatatypeProperty ;
+    rdfs:domain me:Book ;
+    rdfs:range xsd:gYear ;
+    rdfs:label "published in"@en .
+
+# ---------------------------------------------------------------------------
+# Places
+# ---------------------------------------------------------------------------
+
+me:MiddleEarth a me:Region ;
+    rdfs:label "Middle-earth"@en .
+
+me:Eriador a me:Region ;
+    rdfs:label "Eriador"@en ;
+    me:locatedIn me:MiddleEarth .
+
+me:TheShire a me:Region ;
+    rdfs:label "the Shire"@en ;
+    me:locatedIn me:Eriador .
+
+me:Hobbiton a me:Settlement ;
+    rdfs:label "Hobbiton"@en ;
+    me:locatedIn me:TheShire .
+
+me:Buckland a me:Region ;
+    rdfs:label "Buckland"@en ;
+    me:locatedIn me:Eriador .
+
+me:Rivendell a me:Settlement ;
+    rdfs:label "Rivendell"@en ;
+    skos:altLabel "Imladris"@en ;
+    me:locatedIn me:Eriador .
+
+me:Rohan a me:Realm ;
+    rdfs:label "Rohan"@en ;
+    me:locatedIn me:MiddleEarth .
+
+me:Edoras a me:Settlement ;
+    rdfs:label "Edoras"@en ;
+    me:locatedIn me:Rohan .
+
+me:HelmsDeep a me:Fortress ;
+    rdfs:label "Helm's Deep"@en ;
+    me:locatedIn me:Rohan .
+
+me:Gondor a me:Realm ;
+    rdfs:label "Gondor"@en ;
+    me:locatedIn me:MiddleEarth .
+
+me:MinasTirith a me:Settlement ;
+    rdfs:label "Minas Tirith"@en ;
+    me:locatedIn me:Gondor .
+
+me:PelennorFields a me:Region ;
+    rdfs:label "the Pelennor Fields"@en ;
+    me:locatedIn me:Gondor .
+
+me:Mordor a me:Realm ;
+    rdfs:label "Mordor"@en ;
+    me:locatedIn me:MiddleEarth .
+
+me:MountDoom a me:Place ;
+    rdfs:label "Mount Doom"@en ;
+    skos:altLabel "Orodruin"@en ;
+    me:locatedIn me:Mordor .
+
+me:Lothlorien a me:Realm ;
+    rdfs:label "Lothlórien"@en ;
+    me:locatedIn me:MiddleEarth .
+
+me:Moria a me:Realm ;
+    rdfs:label "Moria"@en ;
+    skos:altLabel "Khazad-dûm"@en ;
+    me:locatedIn me:MiddleEarth .
+
+me:Isengard a me:Fortress ;
+    rdfs:label "Isengard"@en ;
+    me:locatedIn me:MiddleEarth .
+
+me:Fangorn a me:Region ;
+    rdfs:label "Fangorn Forest"@en ;
+    me:locatedIn me:MiddleEarth .
+
+me:Mirkwood a me:Region ;
+    rdfs:label "Mirkwood"@en ;
+    me:locatedIn me:MiddleEarth .
+
+me:Erebor a me:Realm ;
+    rdfs:label "Erebor"@en ;
+    skos:altLabel "the Lonely Mountain"@en ;
+    me:locatedIn me:MiddleEarth .
+
+# ---------------------------------------------------------------------------
+# Books
+# ---------------------------------------------------------------------------
+
+me:FellowshipOfTheRing a me:Book ;
+    rdfs:label "The Fellowship of the Ring"@en ;
+    dcterms:creator "J. R. R. Tolkien" ;
+    me:publishedIn "1954"^^xsd:gYear .
+
+me:TheTwoTowers a me:Book ;
+    rdfs:label "The Two Towers"@en ;
+    dcterms:creator "J. R. R. Tolkien" ;
+    me:publishedIn "1954"^^xsd:gYear .
+
+me:TheReturnOfTheKing a me:Book ;
+    rdfs:label "The Return of the King"@en ;
+    dcterms:creator "J. R. R. Tolkien" ;
+    me:publishedIn "1955"^^xsd:gYear .
+
+# ---------------------------------------------------------------------------
+# Groups
+# ---------------------------------------------------------------------------
+
+me:TheFellowship a me:Group ;
+    rdfs:label "the Fellowship"@en ;
+    rdfs:comment "The nine companions who set out from Rivendell with the One Ring."@en .
+
+me:WhiteCouncil a me:Group ;
+    rdfs:label "the White Council"@en .
+
+# ---------------------------------------------------------------------------
+# Rings and weapons
+# ---------------------------------------------------------------------------
+
+me:TheOneRing a me:Ring ;
+    rdfs:label "the One Ring"@en ;
+    me:madeBy me:Sauron .
+
+me:Narya a me:Ring ;
+    rdfs:label "Narya"@en ;
+    rdfs:comment "One of the Three Rings of the Elves."@en ;
+    me:madeBy me:Celebrimbor .
+
+me:Nenya a me:Ring ;
+    rdfs:label "Nenya"@en ;
+    rdfs:comment "One of the Three Rings of the Elves."@en ;
+    me:madeBy me:Celebrimbor .
+
+me:Vilya a me:Ring ;
+    rdfs:label "Vilya"@en ;
+    rdfs:comment "One of the Three Rings of the Elves."@en ;
+    me:madeBy me:Celebrimbor .
+
+me:Sting a me:Weapon ;
+    rdfs:label "Sting"@en .
+
+me:Anduril a me:Weapon ;
+    rdfs:label "Andúril"@en ;
+    rdfs:comment "The sword reforged from the shards of Narsil."@en .
+
+me:Glamdring a me:Weapon ;
+    rdfs:label "Glamdring"@en .
+
+# ---------------------------------------------------------------------------
+# Characters
+# ---------------------------------------------------------------------------
+
+me:Frodo a me:Hobbit ;
+    rdfs:label "Frodo Baggins"@en ;
+    me:bornInYear 2968 ;
+    me:livesIn me:Hobbiton ;
+    me:memberOf me:TheFellowship ;
+    me:bears me:TheOneRing ;
+    me:wields me:Sting ;
+    me:takesPartIn me:CouncilOfElrond, me:DestructionOfTheRing ;
+    me:appearsIn me:FellowshipOfTheRing, me:TheTwoTowers, me:TheReturnOfTheKing .
+
+me:Bilbo a me:Hobbit ;
+    rdfs:label "Bilbo Baggins"@en ;
+    me:bornInYear 2890 ;
+    me:livesIn me:Hobbiton ;
+    me:bears me:TheOneRing ;
+    me:wields me:Sting ;
+    me:takesPartIn me:CouncilOfElrond ;
+    me:appearsIn me:FellowshipOfTheRing, me:TheReturnOfTheKing .
+
+me:Samwise a me:Hobbit ;
+    rdfs:label "Samwise Gamgee"@en ;
+    skos:altLabel "Sam"@en ;
+    me:bornInYear 2980 ;
+    me:livesIn me:Hobbiton ;
+    me:memberOf me:TheFellowship ;
+    me:bears me:TheOneRing ;
+    me:spouseOf me:RosieCotton ;
+    me:takesPartIn me:CouncilOfElrond, me:DestructionOfTheRing ;
+    me:appearsIn me:FellowshipOfTheRing, me:TheTwoTowers, me:TheReturnOfTheKing .
+
+me:Merry a me:Hobbit ;
+    rdfs:label "Meriadoc Brandybuck"@en ;
+    skos:altLabel "Merry"@en ;
+    me:bornInYear 2982 ;
+    me:livesIn me:Buckland ;
+    me:memberOf me:TheFellowship ;
+    me:takesPartIn me:BattleOfThePelennorFields ;
+    me:appearsIn me:FellowshipOfTheRing, me:TheTwoTowers, me:TheReturnOfTheKing .
+
+me:Pippin a me:Hobbit ;
+    rdfs:label "Peregrin Took"@en ;
+    skos:altLabel "Pippin"@en ;
+    me:bornInYear 2990 ;
+    me:livesIn me:TheShire ;
+    me:memberOf me:TheFellowship ;
+    me:appearsIn me:FellowshipOfTheRing, me:TheTwoTowers, me:TheReturnOfTheKing .
+
+me:RosieCotton a me:Hobbit ;
+    rdfs:label "Rosie Cotton"@en ;
+    me:bornInYear 2984 ;
+    me:livesIn me:TheShire ;
+    me:appearsIn me:TheReturnOfTheKing .
+
+me:Gollum a me:Hobbit ;
+    rdfs:label "Gollum"@en ;
+    skos:altLabel "Sméagol"@en ;
+    rdfs:comment "Held the One Ring for centuries before Bilbo found it."@en ;
+    me:bears me:TheOneRing ;
+    me:takesPartIn me:DestructionOfTheRing ;
+    me:appearsIn me:FellowshipOfTheRing, me:TheTwoTowers, me:TheReturnOfTheKing .
+
+me:Gandalf a me:Wizard ;
+    rdfs:label "Gandalf"@en ;
+    skos:altLabel "Mithrandir"@en ;
+    me:memberOf me:TheFellowship, me:WhiteCouncil ;
+    me:leaderOf me:TheFellowship ;
+    me:bears me:Narya ;
+    me:wields me:Glamdring ;
+    me:takesPartIn me:CouncilOfElrond, me:BattleOfHelmsDeep, me:BattleOfThePelennorFields ;
+    me:appearsIn me:FellowshipOfTheRing, me:TheTwoTowers, me:TheReturnOfTheKing .
+
+me:Saruman a me:Wizard ;
+    rdfs:label "Saruman"@en ;
+    me:memberOf me:WhiteCouncil ;
+    me:leaderOf me:WhiteCouncil, me:Isengard ;
+    me:livesIn me:Isengard ;
+    me:appearsIn me:TheTwoTowers, me:TheReturnOfTheKing .
+
+me:Aragorn a me:Man ;
+    rdfs:label "Aragorn"@en ;
+    skos:altLabel "Strider"@en, "Elessar"@en ;
+    me:bornInYear 2931 ;
+    me:memberOf me:TheFellowship ;
+    me:leaderOf me:Gondor ;
+    me:spouseOf me:Arwen ;
+    me:wields me:Anduril ;
+    me:takesPartIn me:CouncilOfElrond, me:BattleOfHelmsDeep, me:BattleOfThePelennorFields ;
+    me:appearsIn me:FellowshipOfTheRing, me:TheTwoTowers, me:TheReturnOfTheKing .
+
+me:Boromir a me:Man ;
+    rdfs:label "Boromir"@en ;
+    me:bornInYear 2978 ;
+    me:livesIn me:MinasTirith ;
+    me:memberOf me:TheFellowship ;
+    me:takesPartIn me:CouncilOfElrond ;
+    me:appearsIn me:FellowshipOfTheRing, me:TheTwoTowers .
+
+me:Faramir a me:Man ;
+    rdfs:label "Faramir"@en ;
+    me:bornInYear 2983 ;
+    me:livesIn me:MinasTirith ;
+    me:spouseOf me:Eowyn ;
+    me:appearsIn me:TheTwoTowers, me:TheReturnOfTheKing .
+
+me:Denethor a me:Man ;
+    rdfs:label "Denethor"@en ;
+    rdfs:comment "The Steward of Gondor."@en ;
+    me:bornInYear 2930 ;
+    me:livesIn me:MinasTirith ;
+    me:leaderOf me:Gondor ;
+    me:parentOf me:Boromir, me:Faramir ;
+    me:appearsIn me:TheReturnOfTheKing .
+
+me:Theoden a me:Man ;
+    rdfs:label "Théoden"@en ;
+    rdfs:comment "The King of Rohan."@en ;
+    me:bornInYear 2948 ;
+    me:livesIn me:Edoras ;
+    me:leaderOf me:Rohan ;
+    me:takesPartIn me:BattleOfHelmsDeep, me:BattleOfThePelennorFields ;
+    me:appearsIn me:TheTwoTowers, me:TheReturnOfTheKing .
+
+me:Eomer a me:Man ;
+    rdfs:label "Éomer"@en ;
+    me:bornInYear 2991 ;
+    me:leaderOf me:Rohan ;
+    me:siblingOf me:Eowyn ;
+    me:takesPartIn me:BattleOfHelmsDeep, me:BattleOfThePelennorFields ;
+    me:appearsIn me:TheTwoTowers, me:TheReturnOfTheKing .
+
+me:Eowyn a me:Man ;
+    rdfs:label "Éowyn"@en ;
+    me:bornInYear 2995 ;
+    me:livesIn me:Edoras ;
+    me:takesPartIn me:BattleOfThePelennorFields ;
+    me:appearsIn me:TheTwoTowers, me:TheReturnOfTheKing .
+
+me:Legolas a me:Elf ;
+    rdfs:label "Legolas"@en ;
+    me:livesIn me:Mirkwood ;
+    me:childOf me:Thranduil ;
+    me:memberOf me:TheFellowship ;
+    me:takesPartIn me:CouncilOfElrond, me:BattleOfHelmsDeep, me:BattleOfThePelennorFields ;
+    me:appearsIn me:FellowshipOfTheRing, me:TheTwoTowers, me:TheReturnOfTheKing .
+
+me:Elrond a me:Elf ;
+    rdfs:label "Elrond"@en ;
+    me:livesIn me:Rivendell ;
+    me:leaderOf me:Rivendell ;
+    me:memberOf me:WhiteCouncil ;
+    me:parentOf me:Arwen, me:Elladan, me:Elrohir ;
+    me:spouseOf me:Celebrian ;
+    me:bears me:Vilya ;
+    me:takesPartIn me:CouncilOfElrond ;
+    me:appearsIn me:FellowshipOfTheRing, me:TheReturnOfTheKing .
+
+me:Arwen a me:Elf ;
+    rdfs:label "Arwen"@en ;
+    me:bornInYear 241 ;
+    me:livesIn me:Rivendell ;
+    me:appearsIn me:FellowshipOfTheRing, me:TheReturnOfTheKing .
+
+me:Galadriel a me:Elf ;
+    rdfs:label "Galadriel"@en ;
+    me:livesIn me:Lothlorien ;
+    me:leaderOf me:Lothlorien ;
+    me:memberOf me:WhiteCouncil ;
+    me:bears me:Nenya ;
+    me:spouseOf me:Celeborn ;
+    me:parentOf me:Celebrian ;
+    me:appearsIn me:FellowshipOfTheRing, me:TheReturnOfTheKing .
+
+me:Celeborn a me:Elf ;
+    rdfs:label "Celeborn"@en ;
+    me:livesIn me:Lothlorien ;
+    me:leaderOf me:Lothlorien ;
+    me:parentOf me:Celebrian ;
+    me:appearsIn me:FellowshipOfTheRing, me:TheReturnOfTheKing .
+
+me:Celebrian a me:Elf ;
+    rdfs:label "Celebrían"@en ;
+    me:parentOf me:Arwen, me:Elladan, me:Elrohir .
+
+me:Elladan a me:Elf ;
+    rdfs:label "Elladan"@en ;
+    me:siblingOf me:Elrohir, me:Arwen ;
+    me:takesPartIn me:BattleOfThePelennorFields ;
+    me:appearsIn me:TheReturnOfTheKing .
+
+me:Elrohir a me:Elf ;
+    rdfs:label "Elrohir"@en ;
+    me:siblingOf me:Arwen ;
+    me:takesPartIn me:BattleOfThePelennorFields ;
+    me:appearsIn me:TheReturnOfTheKing .
+
+me:Thranduil a me:Elf ;
+    rdfs:label "Thranduil"@en ;
+    me:livesIn me:Mirkwood ;
+    me:parentOf me:Legolas .
+
+me:Celebrimbor a me:Elf ;
+    rdfs:label "Celebrimbor"@en ;
+    rdfs:comment "The Elven-smith who made the Three Rings."@en .
+
+me:Gimli a me:Dwarf ;
+    rdfs:label "Gimli"@en ;
+    me:bornInYear 2879 ;
+    me:memberOf me:TheFellowship ;
+    me:childOf me:Gloin ;
+    me:takesPartIn me:CouncilOfElrond, me:BattleOfHelmsDeep, me:BattleOfThePelennorFields ;
+    me:appearsIn me:FellowshipOfTheRing, me:TheTwoTowers, me:TheReturnOfTheKing .
+
+me:Gloin a me:Dwarf ;
+    rdfs:label "Glóin"@en ;
+    me:livesIn me:Erebor ;
+    me:parentOf me:Gimli ;
+    me:takesPartIn me:CouncilOfElrond ;
+    me:appearsIn me:FellowshipOfTheRing .
+
+me:Sauron a me:Maia ;
+    rdfs:label "Sauron"@en ;
+    rdfs:comment "The Dark Lord, who made the One Ring."@en ;
+    me:livesIn me:Mordor ;
+    me:leaderOf me:Mordor .
+
+me:Treebeard a me:Ent ;
+    rdfs:label "Treebeard"@en ;
+    skos:altLabel "Fangorn"@en ;
+    me:livesIn me:Fangorn ;
+    me:appearsIn me:TheTwoTowers, me:TheReturnOfTheKing .
+
+# ---------------------------------------------------------------------------
+# Events
+# ---------------------------------------------------------------------------
+
+me:CouncilOfElrond a me:Council ;
+    rdfs:label "the Council of Elrond"@en ;
+    me:takesPlaceIn me:Rivendell ;
+    me:inYear 3018 .
+
+me:BattleOfHelmsDeep a me:Battle ;
+    rdfs:label "the Battle of Helm's Deep"@en ;
+    me:takesPlaceIn me:HelmsDeep ;
+    me:inYear 3019 .
+
+me:BattleOfThePelennorFields a me:Battle ;
+    rdfs:label "the Battle of the Pelennor Fields"@en ;
+    rdfs:comment "Fought on the fields before Minas Tirith."@en ;
+    me:takesPlaceIn me:PelennorFields, me:MinasTirith ;
+    me:inYear 3019 .
+
+me:DestructionOfTheRing a me:Event ;
+    rdfs:label "the destruction of the One Ring"@en ;
+    me:takesPlaceIn me:MountDoom ;
+    me:inYear 3019 .

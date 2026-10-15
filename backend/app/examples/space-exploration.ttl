@@ -1,0 +1,880 @@
+# Space Exploration: a Semantic Studio example (home-and-examples 5.2).
+#
+# One ontology in which every Explore, View, Query and Edit feature has
+# something to show: a class hierarchy three levels deep with English and
+# French labels, every kind of graph node, individuals linked well enough for
+# the query builder's paths to return rows, data values of every common type,
+# the OWL constructs the reasoner works on, rules on classes, disjointness, a
+# SKOS scheme and the metadata the documentation export reads.
+#
+# Dates are UTC launch and landing dates. Diameters are rounded as NASA's
+# fact sheets give them. The file is bundled and pinned by SHA-256 in
+# manifest.json beside it: change a byte and update the hash with it.
+
+@prefix space:   <http://example.org/space#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+
+# ---------------------------------------------------------------------------
+# The ontology
+# ---------------------------------------------------------------------------
+
+<http://example.org/space> a owl:Ontology ;
+    dcterms:title "Space Exploration"@en, "Exploration spatiale"@fr ;
+    dcterms:description "A teaching ontology of the Solar System, the agencies that explore it and the missions they have flown, with a SKOS scheme of mission types."@en ;
+    dcterms:creator "Semantic Studio" ;
+    dcterms:created "2026-10-15"^^xsd:date ;
+    dcterms:license <https://creativecommons.org/licenses/by/4.0/> ;
+    owl:versionInfo "1.0" ;
+    rdfs:label "Space Exploration"@en, "Exploration spatiale"@fr .
+
+# ---------------------------------------------------------------------------
+# Classes
+# ---------------------------------------------------------------------------
+
+space:CelestialBody a owl:Class ;
+    rdfs:label "Celestial body"@en, "Corps céleste"@fr ;
+    rdfs:comment "A natural object in space, such as a star, a planet or a moon."@en .
+
+space:Star a owl:Class ;
+    rdfs:subClassOf space:CelestialBody ;
+    rdfs:label "Star"@en, "Étoile"@fr ;
+    rdfs:comment "A celestial body that shines by nuclear fusion in its core."@en .
+
+space:Planet a owl:Class ;
+    rdfs:subClassOf space:CelestialBody ,
+        [ a owl:Restriction ; owl:onProperty space:orbits ; owl:allValuesFrom space:Star ] ;
+    rdfs:label "Planet"@en, "Planète"@fr ;
+    rdfs:comment "A large body that orbits a star and has cleared its orbit of other bodies."@en .
+
+space:TerrestrialPlanet a owl:Class ;
+    rdfs:subClassOf space:Planet ;
+    rdfs:label "Terrestrial planet"@en, "Planète tellurique"@fr ;
+    rdfs:comment "A planet made mostly of rock and metal, with a solid surface."@en .
+
+space:GiantPlanet a owl:Class ;
+    rdfs:subClassOf space:Planet ;
+    rdfs:label "Giant planet"@en, "Planète géante"@fr ;
+    rdfs:comment "A large planet made mostly of gas or ices, with no solid surface to land on."@en .
+
+space:DwarfPlanet a owl:Class ;
+    rdfs:subClassOf space:CelestialBody ;
+    rdfs:label "Dwarf planet"@en, "Planète naine"@fr ;
+    rdfs:comment "A body that orbits the Sun and is massive enough to be round, but has not cleared its orbit."@en .
+
+space:Moon a owl:Class ;
+    rdfs:subClassOf space:CelestialBody ,
+        [ a owl:Restriction ; owl:onProperty space:orbits ; owl:someValuesFrom space:CelestialBody ] ;
+    rdfs:label "Moon"@en, "Satellite naturel"@fr ;
+    rdfs:comment "A natural body that orbits a planet, a dwarf planet or an asteroid."@en .
+
+space:Asteroid a owl:Class ;
+    rdfs:subClassOf space:CelestialBody ;
+    rdfs:label "Asteroid"@en, "Astéroïde"@fr ;
+    rdfs:comment "A small rocky body that orbits the Sun."@en .
+
+space:Comet a owl:Class ;
+    rdfs:subClassOf space:CelestialBody ;
+    rdfs:label "Comet"@en, "Comète"@fr ;
+    rdfs:comment "A small icy body that grows a coma and a tail when it passes near the Sun."@en .
+
+space:PlanetarySystem a owl:Class ;
+    rdfs:label "Planetary system"@en, "Système planétaire"@fr ;
+    rdfs:comment "A star and everything bound to it by gravity."@en .
+
+# The one class declared with RDFS alone, so the graph shows the RDFS class
+# colour beside the OWL one.
+space:Galaxy a rdfs:Class ;
+    rdfs:label "Galaxy"@en, "Galaxie"@fr ;
+    rdfs:comment "A system of stars, gas and dust held together by gravity."@en .
+
+space:Spacecraft a owl:Class ;
+    rdfs:label "Spacecraft"@en, "Engin spatial"@fr ;
+    rdfs:comment "A vehicle built to travel or operate in space."@en .
+
+space:Probe a owl:Class ;
+    rdfs:subClassOf space:Spacecraft ;
+    rdfs:label "Space probe"@en, "Sonde spatiale"@fr ;
+    rdfs:comment "An uncrewed spacecraft sent to study other bodies."@en .
+
+space:Orbiter a owl:Class ;
+    rdfs:subClassOf space:Probe ;
+    rdfs:label "Orbiter"@en, "Orbiteur"@fr ;
+    rdfs:comment "A probe that goes into orbit around the body it studies."@en .
+
+space:Lander a owl:Class ;
+    rdfs:subClassOf space:Spacecraft ;
+    rdfs:label "Lander"@en, "Atterrisseur"@fr ;
+    rdfs:comment "A spacecraft that sets down on the surface of a body."@en .
+
+space:Rover a owl:Class ;
+    rdfs:subClassOf space:Spacecraft ;
+    rdfs:label "Rover"@en, "Astromobile"@fr ;
+    rdfs:comment "A vehicle that drives across the surface of a body."@en .
+
+space:CrewedSpacecraft a owl:Class ;
+    rdfs:subClassOf space:Spacecraft ;
+    rdfs:label "Crewed spacecraft"@en, "Vaisseau spatial habité"@fr ;
+    rdfs:comment "A spacecraft that carries people."@en .
+
+space:SpaceStation a owl:Class ;
+    rdfs:subClassOf space:CrewedSpacecraft ;
+    rdfs:label "Space station"@en, "Station spatiale"@fr ;
+    rdfs:comment "A crewed spacecraft that stays in orbit for years as a place to live and work."@en .
+
+space:SpaceTelescope a owl:Class ;
+    rdfs:subClassOf space:Spacecraft ;
+    rdfs:label "Space telescope"@en, "Télescope spatial"@fr ;
+    rdfs:comment "A telescope placed in space, above the blurring of the atmosphere."@en .
+
+space:LaunchVehicle a owl:Class ;
+    rdfs:label "Launch vehicle"@en, "Lanceur"@fr ;
+    rdfs:comment "A rocket that carries a spacecraft from the ground into space."@en .
+
+space:Mission a owl:Class ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty space:operatedBy ; owl:someValuesFrom space:Organization ] ;
+    rdfs:label "Mission"@en, "Mission spatiale"@fr ;
+    rdfs:comment "An undertaking to send a spacecraft into space for a purpose."@en .
+
+# Defined, not only described: any mission that is crewed is a crewed mission,
+# which is what lets the reasoner place one typed only as a Mission.
+space:CrewedMission a owl:Class ;
+    rdfs:subClassOf space:Mission ,
+        [ a owl:Restriction ; owl:onProperty space:crewMember ;
+          owl:minQualifiedCardinality "1"^^xsd:nonNegativeInteger ; owl:onClass space:Astronaut ] ;
+    owl:equivalentClass [ a owl:Class ;
+        owl:intersectionOf ( space:Mission
+            [ a owl:Restriction ; owl:onProperty space:crewed ; owl:hasValue true ] ) ] ;
+    rdfs:label "Crewed mission"@en, "Mission habitée"@fr ;
+    rdfs:comment "A mission that carries people into space."@en .
+
+space:RoboticMission a owl:Class ;
+    rdfs:subClassOf space:Mission ;
+    rdfs:label "Robotic mission"@en, "Mission robotique"@fr ;
+    rdfs:comment "A mission flown with no one on board."@en .
+
+space:Organization a owl:Class ;
+    rdfs:label "Organization"@en, "Organisation"@fr ;
+    rdfs:comment "A body of people with a shared purpose, such as an agency or a programme."@en .
+
+space:SpaceAgency a owl:Class ;
+    rdfs:subClassOf space:Organization ;
+    rdfs:label "Space agency"@en, "Agence spatiale"@fr ;
+    rdfs:comment "A government organization that runs a country's or a region's space activities."@en .
+
+space:Person a owl:Class ;
+    rdfs:label "Person"@en, "Personne"@fr ;
+    rdfs:comment "A human being."@en .
+
+space:Astronaut a owl:Class ;
+    rdfs:subClassOf space:Person ;
+    rdfs:label "Astronaut"@en, "Astronaute"@fr ;
+    rdfs:comment "A person who has travelled into space, called a cosmonaut in the Soviet and Russian programmes."@en .
+
+# ---------------------------------------------------------------------------
+# Disjointness
+# ---------------------------------------------------------------------------
+
+space:Person owl:disjointWith space:Spacecraft .
+space:Mission owl:disjointWith space:Spacecraft .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( space:Star space:Planet space:DwarfPlanet space:Moon ) .
+
+# ---------------------------------------------------------------------------
+# Object properties
+# ---------------------------------------------------------------------------
+
+space:orbits a owl:ObjectProperty ;
+    owl:inverseOf space:isOrbitedBy ;
+    rdfs:range space:CelestialBody ;
+    rdfs:label "orbits"@en, "orbite autour de"@fr ;
+    rdfs:comment "Travels around another body, held by its gravity."@en .
+
+space:isOrbitedBy a owl:ObjectProperty ;
+    owl:inverseOf space:orbits ;
+    rdfs:domain space:CelestialBody ;
+    rdfs:label "is orbited by"@en, "a pour satellite"@fr ;
+    rdfs:comment "Has the other body travelling around it."@en .
+
+space:partOf a owl:ObjectProperty, owl:TransitiveProperty ;
+    rdfs:label "part of"@en, "fait partie de"@fr ;
+    rdfs:comment "Belongs to a larger whole; a part of a part is a part of the whole."@en .
+
+space:cooperatesWith a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:domain space:Organization ;
+    rdfs:range space:Organization ;
+    rdfs:label "cooperates with"@en, "coopère avec"@fr ;
+    rdfs:comment "Works with another organization on shared missions; it works both ways."@en .
+
+space:target a owl:ObjectProperty ;
+    rdfs:domain space:Mission ;
+    rdfs:range space:CelestialBody ;
+    rdfs:label "target"@en, "a pour cible"@fr ;
+    rdfs:comment "A body the mission was sent to study or visit."@en .
+
+space:landedOn a owl:ObjectProperty ;
+    rdfs:subPropertyOf space:target ;
+    rdfs:label "landed on"@en, "s'est posée sur"@fr ;
+    rdfs:comment "A body on which the mission set a spacecraft down."@en .
+
+space:operatedBy a owl:ObjectProperty ;
+    rdfs:range space:Organization ;
+    rdfs:label "operated by"@en, "menée par"@fr ;
+    rdfs:comment "The organization that runs the mission or the spacecraft."@en .
+
+space:usedSpacecraft a owl:ObjectProperty ;
+    rdfs:domain space:Mission ;
+    rdfs:range space:Spacecraft ;
+    rdfs:label "used spacecraft"@en, "a utilisé l'engin"@fr ;
+    rdfs:comment "A spacecraft the mission flew."@en .
+
+space:launchedOn a owl:ObjectProperty ;
+    rdfs:domain space:Mission ;
+    rdfs:range space:LaunchVehicle ;
+    rdfs:label "launched on"@en, "lancée par"@fr ;
+    rdfs:comment "The rocket that carried the mission into space."@en .
+
+space:crewMember a owl:ObjectProperty ;
+    rdfs:domain space:CrewedMission ;
+    rdfs:range space:Astronaut ;
+    rdfs:label "crew member"@en, "membre d'équipage"@fr ;
+    rdfs:comment "A person who flew on the mission."@en .
+
+space:missionType a owl:ObjectProperty ;
+    rdfs:domain space:Mission ;
+    rdfs:range skos:Concept ;
+    rdfs:label "mission type"@en, "type de mission"@fr ;
+    rdfs:comment "What kind of mission it was, from the Mission types scheme."@en .
+
+# ---------------------------------------------------------------------------
+# Datatype properties
+# ---------------------------------------------------------------------------
+
+space:acronym a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "acronym"@en, "sigle"@fr ;
+    rdfs:comment "The short form an organization is known by."@en .
+
+space:diameterKm a owl:DatatypeProperty ;
+    rdfs:domain space:CelestialBody ;
+    rdfs:range xsd:decimal ;
+    rdfs:label "diameter (km)"@en, "diamètre (km)"@fr ;
+    rdfs:comment "The body's approximate diameter in kilometres."@en .
+
+space:discoveryYear a owl:DatatypeProperty ;
+    rdfs:domain space:CelestialBody ;
+    rdfs:range xsd:gYear ;
+    rdfs:label "year of discovery"@en, "année de découverte"@fr ;
+    rdfs:comment "The year the body was first observed or recognised."@en .
+
+space:foundedYear a owl:DatatypeProperty ;
+    rdfs:domain space:Organization ;
+    rdfs:range xsd:gYear ;
+    rdfs:label "year founded"@en, "année de création"@fr ;
+    rdfs:comment "The year the organization was set up."@en .
+
+space:launchDate a owl:DatatypeProperty ;
+    rdfs:domain space:Mission ;
+    rdfs:range xsd:date ;
+    rdfs:label "launch date"@en, "date de lancement"@fr ;
+    rdfs:comment "The day the mission left the ground, in UTC."@en .
+
+space:landingDate a owl:DatatypeProperty ;
+    rdfs:domain space:Mission ;
+    rdfs:range xsd:date ;
+    rdfs:label "landing date"@en, "date d'atterrissage"@fr ;
+    rdfs:comment "The day the mission first set a spacecraft down on its target, in UTC."@en .
+
+space:crewed a owl:DatatypeProperty ;
+    rdfs:domain space:Mission ;
+    rdfs:range xsd:boolean ;
+    rdfs:label "crewed"@en, "habitée"@fr ;
+    rdfs:comment "Whether people flew on the mission."@en .
+
+space:crewSize a owl:DatatypeProperty ;
+    rdfs:domain space:CrewedMission ;
+    rdfs:range xsd:integer ;
+    rdfs:label "crew size"@en, "taille de l'équipage"@fr ;
+    rdfs:comment "How many people flew on the mission."@en .
+
+# ---------------------------------------------------------------------------
+# Annotation property
+# ---------------------------------------------------------------------------
+
+space:namedAfter a owl:AnnotationProperty ;
+    rdfs:label "named after"@en, "nommé d'après"@fr ;
+    rdfs:comment "Who or what the body takes its name from."@en .
+
+# ---------------------------------------------------------------------------
+# Mission types: a SKOS concept scheme
+# ---------------------------------------------------------------------------
+
+space:MissionTypes a skos:ConceptScheme ;
+    skos:prefLabel "Mission types"@en, "Types de mission"@fr ;
+    skos:definition "Kinds of space mission, by what they send and what it does."@en ;
+    skos:hasTopConcept space:mt-mission .
+
+space:mt-mission a skos:Concept ;
+    skos:inScheme space:MissionTypes ;
+    skos:topConceptOf space:MissionTypes ;
+    skos:prefLabel "Space mission"@en, "Mission spatiale"@fr ;
+    skos:notation "MT" ;
+    skos:definition "Any mission that sends a spacecraft into space."@en ;
+    skos:narrower space:mt-crewed, space:mt-robotic, space:mt-observatory .
+
+space:mt-crewed a skos:Concept ;
+    skos:inScheme space:MissionTypes ;
+    skos:prefLabel "Crewed spaceflight"@en, "Vol spatial habité"@fr ;
+    skos:altLabel "Human spaceflight"@en ;
+    skos:notation "MT-1" ;
+    skos:definition "A mission that carries people."@en ;
+    skos:broader space:mt-mission ;
+    skos:narrower space:mt-crewed-orbital, space:mt-crewed-landing .
+
+space:mt-crewed-orbital a skos:Concept ;
+    skos:inScheme space:MissionTypes ;
+    skos:prefLabel "Crewed orbital flight"@en, "Vol orbital habité"@fr ;
+    skos:notation "MT-1.1" ;
+    skos:definition "A crewed mission that orbits the Earth and returns."@en ;
+    skos:broader space:mt-crewed .
+
+space:mt-crewed-landing a skos:Concept ;
+    skos:inScheme space:MissionTypes ;
+    skos:prefLabel "Crewed lunar landing"@en, "Alunissage habité"@fr ;
+    skos:notation "MT-1.2" ;
+    skos:definition "A crewed mission that lands people on the Moon."@en ;
+    skos:broader space:mt-crewed ;
+    skos:related space:mt-lander .
+
+space:mt-robotic a skos:Concept ;
+    skos:inScheme space:MissionTypes ;
+    skos:prefLabel "Robotic exploration"@en, "Exploration robotique"@fr ;
+    skos:altLabel "Uncrewed mission"@en ;
+    skos:notation "MT-2" ;
+    skos:definition "A mission that sends machines, not people, to another body."@en ;
+    skos:broader space:mt-mission ;
+    skos:narrower space:mt-flyby, space:mt-orbiter, space:mt-lander, space:mt-rover, space:mt-sample-return .
+
+space:mt-flyby a skos:Concept ;
+    skos:inScheme space:MissionTypes ;
+    skos:prefLabel "Flyby"@en, "Survol"@fr ;
+    skos:notation "MT-2.1" ;
+    skos:definition "A mission that studies a body while passing it, without stopping."@en ;
+    skos:broader space:mt-robotic .
+
+space:mt-orbiter a skos:Concept ;
+    skos:inScheme space:MissionTypes ;
+    skos:prefLabel "Orbiter mission"@en, "Mission en orbite"@fr ;
+    skos:notation "MT-2.2" ;
+    skos:definition "A mission that goes into orbit around the body it studies."@en ;
+    skos:broader space:mt-robotic ;
+    skos:related space:mt-observatory .
+
+space:mt-lander a skos:Concept ;
+    skos:inScheme space:MissionTypes ;
+    skos:prefLabel "Lander mission"@en, "Mission d'atterrissage"@fr ;
+    skos:notation "MT-2.3" ;
+    skos:definition "A mission that sets a spacecraft down on a surface."@en ;
+    skos:broader space:mt-robotic ;
+    skos:related space:mt-rover, space:mt-crewed-landing .
+
+space:mt-rover a skos:Concept ;
+    skos:inScheme space:MissionTypes ;
+    skos:prefLabel "Rover mission"@en, "Mission d'astromobile"@fr ;
+    skos:notation "MT-2.4" ;
+    skos:definition "A mission that drives a vehicle across a surface."@en ;
+    skos:broader space:mt-robotic ;
+    skos:related space:mt-lander .
+
+space:mt-sample-return a skos:Concept ;
+    skos:inScheme space:MissionTypes ;
+    skos:prefLabel "Sample return"@en, "Retour d'échantillons"@fr ;
+    skos:altLabel "Sample-return mission"@en ;
+    skos:notation "MT-2.5" ;
+    skos:definition "A mission that brings material from another body back to Earth."@en ;
+    skos:broader space:mt-robotic .
+
+space:mt-observatory a skos:Concept ;
+    skos:inScheme space:MissionTypes ;
+    skos:prefLabel "Space observatory"@en, "Observatoire spatial"@fr ;
+    skos:notation "MT-3" ;
+    skos:definition "A mission that carries a telescope to observe the sky from space."@en ;
+    skos:broader space:mt-mission ;
+    skos:related space:mt-orbiter .
+
+space:SurfaceMissions a skos:Collection ;
+    skos:prefLabel "Missions that reach a surface"@en, "Missions qui atteignent une surface"@fr ;
+    skos:member space:mt-lander, space:mt-rover, space:mt-crewed-landing .
+
+# ---------------------------------------------------------------------------
+# The Sun, its system and the galaxy
+# ---------------------------------------------------------------------------
+
+space:MilkyWay a space:Galaxy ;
+    rdfs:label "Milky Way"@en, "Voie lactée"@fr .
+
+space:SolarSystem a space:PlanetarySystem ;
+    rdfs:label "Solar System"@en, "Système solaire"@fr ;
+    space:partOf space:MilkyWay .
+
+space:Sun a space:Star ;
+    rdfs:label "Sun"@en, "Soleil"@fr ;
+    space:partOf space:SolarSystem ;
+    space:diameterKm 1392700.0 .
+
+# ---------------------------------------------------------------------------
+# Planets and dwarf planets
+# ---------------------------------------------------------------------------
+
+space:Mercury a space:TerrestrialPlanet ;
+    rdfs:label "Mercury"@en, "Mercure"@fr ;
+    space:orbits space:Sun ; space:partOf space:SolarSystem ;
+    space:diameterKm 4879.0 ;
+    space:namedAfter "Mercury, the messenger of the Roman gods" .
+
+space:Venus a space:TerrestrialPlanet ;
+    rdfs:label "Venus"@en, "Vénus"@fr ;
+    space:orbits space:Sun ; space:partOf space:SolarSystem ;
+    space:diameterKm 12104.0 ;
+    space:namedAfter "Venus, the Roman goddess of love" .
+
+space:Earth a space:TerrestrialPlanet ;
+    rdfs:label "Earth"@en, "Terre"@fr ;
+    space:orbits space:Sun ; space:partOf space:SolarSystem ;
+    space:diameterKm 12756.0 .
+
+space:Mars a space:TerrestrialPlanet ;
+    rdfs:label "Mars"@en, "Mars"@fr ;
+    space:orbits space:Sun ; space:partOf space:SolarSystem ;
+    space:diameterKm 6792.0 ;
+    space:namedAfter "Mars, the Roman god of war" .
+
+space:Jupiter a space:GiantPlanet ;
+    rdfs:label "Jupiter"@en, "Jupiter"@fr ;
+    space:orbits space:Sun ; space:partOf space:SolarSystem ;
+    space:diameterKm 142984.0 ;
+    space:namedAfter "Jupiter, the king of the Roman gods" .
+
+space:Saturn a space:GiantPlanet ;
+    rdfs:label "Saturn"@en, "Saturne"@fr ;
+    space:orbits space:Sun ; space:partOf space:SolarSystem ;
+    space:diameterKm 120536.0 ;
+    space:namedAfter "Saturn, the Roman god of agriculture" .
+
+space:Uranus a space:GiantPlanet ;
+    rdfs:label "Uranus"@en, "Uranus"@fr ;
+    space:orbits space:Sun ; space:partOf space:SolarSystem ;
+    space:diameterKm 51118.0 ;
+    space:discoveryYear "1781"^^xsd:gYear ;
+    space:namedAfter "Uranus, the Greek god of the sky" .
+
+space:Neptune a space:GiantPlanet ;
+    rdfs:label "Neptune"@en, "Neptune"@fr ;
+    space:orbits space:Sun ; space:partOf space:SolarSystem ;
+    space:diameterKm 49528.0 ;
+    space:discoveryYear "1846"^^xsd:gYear ;
+    space:namedAfter "Neptune, the Roman god of the sea" .
+
+space:Pluto a space:DwarfPlanet ;
+    rdfs:label "Pluto"@en, "Pluton"@fr ;
+    rdfs:comment "Counted as the ninth planet from its discovery until 2006."@en ;
+    space:orbits space:Sun ; space:partOf space:SolarSystem ;
+    space:diameterKm 2376.0 ;
+    space:discoveryYear "1930"^^xsd:gYear ;
+    space:namedAfter "Pluto, the Roman god of the underworld" .
+
+space:Ceres a space:DwarfPlanet ;
+    rdfs:label "Ceres"@en, "Cérès"@fr ;
+    rdfs:comment "The largest body in the asteroid belt between Mars and Jupiter."@en ;
+    space:orbits space:Sun ; space:partOf space:SolarSystem ;
+    space:diameterKm 939.4 ;
+    space:discoveryYear "1801"^^xsd:gYear ;
+    space:namedAfter "Ceres, the Roman goddess of agriculture" .
+
+# ---------------------------------------------------------------------------
+# Moons, asteroids and a comet
+# ---------------------------------------------------------------------------
+
+space:EarthsMoon a space:Moon ;
+    rdfs:label "the Moon"@en, "la Lune"@fr ;
+    space:orbits space:Earth ;
+    space:diameterKm 3475.0 .
+
+# The same body under its Latin name: owl:sameAs lets the reasoner carry every
+# fact about one to the other.
+space:Luna rdfs:label "Luna"@en ;
+    owl:sameAs space:EarthsMoon .
+
+space:Phobos a space:Moon ;
+    rdfs:label "Phobos"@en, "Phobos"@fr ;
+    space:orbits space:Mars ;
+    space:diameterKm 22.2 ;
+    space:discoveryYear "1877"^^xsd:gYear .
+
+space:Deimos a space:Moon ;
+    rdfs:label "Deimos"@en, "Déimos"@fr ;
+    space:orbits space:Mars ;
+    space:diameterKm 12.4 ;
+    space:discoveryYear "1877"^^xsd:gYear .
+
+space:Io a space:Moon ;
+    rdfs:label "Io"@en, "Io"@fr ;
+    space:orbits space:Jupiter ;
+    space:diameterKm 3643.2 ;
+    space:discoveryYear "1610"^^xsd:gYear .
+
+space:Europa a space:Moon ;
+    rdfs:label "Europa"@en, "Europe"@fr ;
+    space:orbits space:Jupiter ;
+    space:diameterKm 3121.6 ;
+    space:discoveryYear "1610"^^xsd:gYear .
+
+space:Ganymede a space:Moon ;
+    rdfs:label "Ganymede"@en, "Ganymède"@fr ;
+    rdfs:comment "The largest moon in the Solar System."@en ;
+    space:orbits space:Jupiter ;
+    space:diameterKm 5268.2 ;
+    space:discoveryYear "1610"^^xsd:gYear .
+
+space:Callisto a space:Moon ;
+    rdfs:label "Callisto"@en, "Callisto"@fr ;
+    space:orbits space:Jupiter ;
+    space:diameterKm 4820.6 ;
+    space:discoveryYear "1610"^^xsd:gYear .
+
+space:Titan a space:Moon ;
+    rdfs:label "Titan"@en, "Titan"@fr ;
+    rdfs:comment "Saturn's largest moon, with a thick atmosphere."@en ;
+    space:orbits space:Saturn ;
+    space:diameterKm 5149.5 ;
+    space:discoveryYear "1655"^^xsd:gYear .
+
+space:Charon a space:Moon ;
+    rdfs:label "Charon"@en, "Charon"@fr ;
+    space:orbits space:Pluto ;
+    space:diameterKm 1212.0 ;
+    space:discoveryYear "1978"^^xsd:gYear .
+
+space:Vesta a space:Asteroid ;
+    rdfs:label "Vesta"@en, "Vesta"@fr ;
+    space:orbits space:Sun ;
+    space:diameterKm 525.4 ;
+    space:discoveryYear "1807"^^xsd:gYear .
+
+space:Ryugu a space:Asteroid ;
+    rdfs:label "Ryugu"@en, "Ryugu"@fr ;
+    space:orbits space:Sun ;
+    space:diameterKm 0.9 ;
+    space:discoveryYear "1999"^^xsd:gYear .
+
+space:Comet67P a space:Comet ;
+    rdfs:label "67P/Churyumov–Gerasimenko"@en, "67P/Tchourioumov-Guérassimenko"@fr ;
+    space:orbits space:Sun ;
+    space:discoveryYear "1969"^^xsd:gYear .
+
+# ---------------------------------------------------------------------------
+# Organizations
+# ---------------------------------------------------------------------------
+
+space:NASA a space:SpaceAgency ;
+    rdfs:label "NASA"@en ;
+    rdfs:comment "The National Aeronautics and Space Administration, the space agency of the United States."@en ;
+    space:acronym "NASA" ;
+    space:foundedYear "1958"^^xsd:gYear ;
+    space:cooperatesWith space:ESA, space:CSA, space:JAXA, space:Roscosmos .
+
+space:ESA a space:SpaceAgency ;
+    rdfs:label "ESA"@en, "ESA"@fr ;
+    rdfs:comment "The European Space Agency, run by its European member states."@en ;
+    space:acronym "ESA" ;
+    space:foundedYear "1975"^^xsd:gYear ;
+    space:cooperatesWith space:JAXA .
+
+space:Roscosmos a space:SpaceAgency ;
+    rdfs:label "Roscosmos"@en ;
+    rdfs:comment "Russia's space agency."@en ;
+    space:acronym "Roscosmos" .
+
+space:JAXA a space:SpaceAgency ;
+    rdfs:label "JAXA"@en ;
+    rdfs:comment "The Japan Aerospace Exploration Agency."@en ;
+    space:acronym "JAXA" ;
+    space:foundedYear "2003"^^xsd:gYear .
+
+space:ISRO a space:SpaceAgency ;
+    rdfs:label "ISRO"@en ;
+    rdfs:comment "The Indian Space Research Organisation."@en ;
+    space:acronym "ISRO" ;
+    space:foundedYear "1969"^^xsd:gYear .
+
+space:CNSA a space:SpaceAgency ;
+    rdfs:label "CNSA"@en ;
+    rdfs:comment "The China National Space Administration."@en ;
+    space:acronym "CNSA" ;
+    space:foundedYear "1993"^^xsd:gYear .
+
+space:CSA a space:SpaceAgency ;
+    rdfs:label "CSA"@en, "ASC"@fr ;
+    rdfs:comment "The Canadian Space Agency."@en ;
+    space:acronym "CSA" ;
+    space:foundedYear "1989"^^xsd:gYear .
+
+space:SovietSpaceProgram a space:Organization ;
+    rdfs:label "Soviet space programme"@en, "Programme spatial soviétique"@fr .
+
+# ---------------------------------------------------------------------------
+# Launch vehicles and crew: deliberately untyped. launchedOn's range and
+# crewMember's range let the reasoner say what they are.
+# ---------------------------------------------------------------------------
+
+space:SaturnV rdfs:label "Saturn V"@en .
+space:VostokK rdfs:label "Vostok-K"@en .
+space:TitanIIIE rdfs:label "Titan IIIE"@en .
+space:TitanIVB rdfs:label "Titan IVB"@en .
+space:AtlasV rdfs:label "Atlas V"@en .
+space:DeltaII rdfs:label "Delta II"@en .
+space:Ariane5 rdfs:label "Ariane 5"@en .
+space:H2A rdfs:label "H-IIA"@en .
+space:PSLV rdfs:label "PSLV"@en .
+space:LVM3 rdfs:label "LVM3"@en .
+space:LongMarch5 rdfs:label "Long March 5"@en, "Longue Marche 5"@fr .
+
+space:NeilArmstrong rdfs:label "Neil Armstrong"@en .
+space:BuzzAldrin rdfs:label "Buzz Aldrin"@en .
+space:MichaelCollins rdfs:label "Michael Collins"@en .
+space:YuriGagarin rdfs:label "Yuri Gagarin"@en, "Youri Gagarine"@fr .
+
+# ---------------------------------------------------------------------------
+# Spacecraft
+# ---------------------------------------------------------------------------
+
+space:Columbia a space:CrewedSpacecraft ;
+    rdfs:label "Columbia"@en ;
+    rdfs:comment "Apollo 11's command and service module."@en .
+
+space:Eagle a space:CrewedSpacecraft, space:Lander ;
+    rdfs:label "Eagle"@en ;
+    rdfs:comment "Apollo 11's lunar module."@en .
+
+space:Vostok3KA a space:CrewedSpacecraft ;
+    rdfs:label "Vostok 3KA"@en .
+
+space:Voyager1 a space:Probe ;
+    rdfs:label "Voyager 1"@en .
+
+space:Cassini a space:Orbiter ;
+    rdfs:label "Cassini"@en .
+
+space:Huygens a space:Probe, space:Lander ;
+    rdfs:label "Huygens"@en .
+
+space:NewHorizons a space:Probe ;
+    rdfs:label "New Horizons"@en .
+
+space:JunoProbe a space:Orbiter ;
+    rdfs:label "Juno"@en .
+
+space:DawnProbe a space:Orbiter ;
+    rdfs:label "Dawn"@en .
+
+space:RosettaOrbiter a space:Orbiter ;
+    rdfs:label "Rosetta"@en .
+
+space:Philae a space:Lander ;
+    rdfs:label "Philae"@en .
+
+space:Hayabusa2 a space:Probe ;
+    rdfs:label "Hayabusa2"@en .
+
+space:Perseverance a space:Rover ;
+    rdfs:label "Perseverance"@en .
+
+space:Vikram a space:Lander ;
+    rdfs:label "Vikram"@en .
+
+space:Pragyan a space:Rover ;
+    rdfs:label "Pragyan"@en .
+
+space:Mangalyaan a space:Orbiter ;
+    rdfs:label "Mangalyaan"@en .
+
+space:Tianwen1Orbiter a space:Orbiter ;
+    rdfs:label "Tianwen-1 orbiter"@en .
+
+space:Zhurong a space:Rover ;
+    rdfs:label "Zhurong"@en .
+
+space:JWST a space:SpaceTelescope ;
+    rdfs:label "James Webb Space Telescope"@en, "Télescope spatial James-Webb"@fr .
+
+space:ISS a space:SpaceStation ;
+    rdfs:label "International Space Station"@en, "Station spatiale internationale"@fr ;
+    space:operatedBy space:NASA, space:Roscosmos, space:ESA, space:JAXA, space:CSA .
+
+# ---------------------------------------------------------------------------
+# Missions
+# ---------------------------------------------------------------------------
+
+space:Apollo11 a space:CrewedMission ;
+    rdfs:label "Apollo 11"@en ;
+    rdfs:comment "The first mission to land people on the Moon."@en ;
+    space:operatedBy space:NASA ;
+    space:launchedOn space:SaturnV ;
+    space:usedSpacecraft space:Columbia, space:Eagle ;
+    space:landedOn space:EarthsMoon ;
+    space:crewMember space:NeilArmstrong, space:BuzzAldrin, space:MichaelCollins ;
+    space:crewed true ;
+    space:crewSize 3 ;
+    space:launchDate "1969-07-16"^^xsd:date ;
+    space:landingDate "1969-07-20"^^xsd:date ;
+    space:missionType space:mt-crewed-landing .
+
+# Typed only as a Mission: CrewedMission's definition places it.
+space:Vostok1 a space:Mission ;
+    rdfs:label "Vostok 1"@en ;
+    rdfs:comment "The first crewed spaceflight, one orbit of the Earth."@en ;
+    space:operatedBy space:SovietSpaceProgram ;
+    space:launchedOn space:VostokK ;
+    space:usedSpacecraft space:Vostok3KA ;
+    space:target space:Earth ;
+    space:crewMember space:YuriGagarin ;
+    space:crewed true ;
+    space:crewSize 1 ;
+    space:launchDate "1961-04-12"^^xsd:date ;
+    space:missionType space:mt-crewed-orbital .
+
+space:Voyager1Mission a space:RoboticMission ;
+    rdfs:label "Voyager 1 mission"@en ;
+    space:operatedBy space:NASA ;
+    space:launchedOn space:TitanIIIE ;
+    space:usedSpacecraft space:Voyager1 ;
+    space:target space:Jupiter, space:Saturn ;
+    space:crewed false ;
+    space:launchDate "1977-09-05"^^xsd:date ;
+    space:missionType space:mt-flyby .
+
+space:CassiniHuygens a space:RoboticMission ;
+    rdfs:label "Cassini–Huygens"@en ;
+    rdfs:comment "A Saturn orbiter that carried a probe down to the surface of Titan."@en ;
+    space:operatedBy space:NASA, space:ESA ;
+    space:launchedOn space:TitanIVB ;
+    space:usedSpacecraft space:Cassini, space:Huygens ;
+    space:target space:Saturn ;
+    space:landedOn space:Titan ;
+    space:crewed false ;
+    space:launchDate "1997-10-15"^^xsd:date ;
+    space:landingDate "2005-01-14"^^xsd:date ;
+    space:missionType space:mt-orbiter, space:mt-lander .
+
+space:Rosetta a space:RoboticMission ;
+    rdfs:label "Rosetta"@en ;
+    rdfs:comment "The first mission to orbit a comet and land on one."@en ;
+    space:operatedBy space:ESA ;
+    space:launchedOn space:Ariane5 ;
+    space:usedSpacecraft space:RosettaOrbiter, space:Philae ;
+    space:landedOn space:Comet67P ;
+    space:crewed false ;
+    space:launchDate "2004-03-02"^^xsd:date ;
+    space:landingDate "2014-11-12"^^xsd:date ;
+    space:missionType space:mt-orbiter, space:mt-lander .
+
+space:Hayabusa2Mission a space:RoboticMission ;
+    rdfs:label "Hayabusa2 mission"@en ;
+    rdfs:comment "Collected samples from the asteroid Ryugu and returned them to Earth in 2020."@en ;
+    space:operatedBy space:JAXA ;
+    space:launchedOn space:H2A ;
+    space:usedSpacecraft space:Hayabusa2 ;
+    space:target space:Ryugu ;
+    space:crewed false ;
+    space:launchDate "2014-12-03"^^xsd:date ;
+    space:missionType space:mt-sample-return .
+
+space:NewHorizonsMission a space:RoboticMission ;
+    rdfs:label "New Horizons mission"@en ;
+    rdfs:comment "The first spacecraft to fly past Pluto, in July 2015."@en ;
+    space:operatedBy space:NASA ;
+    space:launchedOn space:AtlasV ;
+    space:usedSpacecraft space:NewHorizons ;
+    space:target space:Pluto, space:Charon ;
+    space:crewed false ;
+    space:launchDate "2006-01-19"^^xsd:date ;
+    space:missionType space:mt-flyby .
+
+space:JunoMission a space:RoboticMission ;
+    rdfs:label "Juno mission"@en ;
+    space:operatedBy space:NASA ;
+    space:launchedOn space:AtlasV ;
+    space:usedSpacecraft space:JunoProbe ;
+    space:target space:Jupiter ;
+    space:crewed false ;
+    space:launchDate "2011-08-05"^^xsd:date ;
+    space:missionType space:mt-orbiter .
+
+space:DawnMission a space:RoboticMission ;
+    rdfs:label "Dawn mission"@en ;
+    rdfs:comment "Orbited the asteroid Vesta and then the dwarf planet Ceres."@en ;
+    space:operatedBy space:NASA ;
+    space:launchedOn space:DeltaII ;
+    space:usedSpacecraft space:DawnProbe ;
+    space:target space:Vesta, space:Ceres ;
+    space:crewed false ;
+    space:launchDate "2007-09-27"^^xsd:date ;
+    space:missionType space:mt-orbiter .
+
+space:Mars2020 a space:RoboticMission ;
+    rdfs:label "Mars 2020"@en ;
+    space:operatedBy space:NASA ;
+    space:launchedOn space:AtlasV ;
+    space:usedSpacecraft space:Perseverance ;
+    space:landedOn space:Mars ;
+    space:crewed false ;
+    space:launchDate "2020-07-30"^^xsd:date ;
+    space:landingDate "2021-02-18"^^xsd:date ;
+    space:missionType space:mt-rover .
+
+space:MarsOrbiterMission a space:RoboticMission ;
+    rdfs:label "Mars Orbiter Mission"@en ;
+    space:operatedBy space:ISRO ;
+    space:launchedOn space:PSLV ;
+    space:usedSpacecraft space:Mangalyaan ;
+    space:target space:Mars ;
+    space:crewed false ;
+    space:launchDate "2013-11-05"^^xsd:date ;
+    space:missionType space:mt-orbiter .
+
+space:Chandrayaan3 a space:RoboticMission ;
+    rdfs:label "Chandrayaan-3"@en ;
+    rdfs:comment "Landed near the Moon's south pole."@en ;
+    space:operatedBy space:ISRO ;
+    space:launchedOn space:LVM3 ;
+    space:usedSpacecraft space:Vikram, space:Pragyan ;
+    space:landedOn space:EarthsMoon ;
+    space:crewed false ;
+    space:launchDate "2023-07-14"^^xsd:date ;
+    space:landingDate "2023-08-23"^^xsd:date ;
+    space:missionType space:mt-lander, space:mt-rover .
+
+space:Tianwen1 a space:RoboticMission ;
+    rdfs:label "Tianwen-1"@en ;
+    rdfs:comment "Sent an orbiter, a lander and the Zhurong rover to Mars."@en ;
+    space:operatedBy space:CNSA ;
+    space:launchedOn space:LongMarch5 ;
+    space:usedSpacecraft space:Tianwen1Orbiter, space:Zhurong ;
+    space:landedOn space:Mars ;
+    space:crewed false ;
+    space:launchDate "2020-07-23"^^xsd:date ;
+    space:missionType space:mt-orbiter, space:mt-rover .
+
+space:JWSTMission a space:RoboticMission ;
+    rdfs:label "James Webb Space Telescope mission"@en ;
+    space:operatedBy space:NASA, space:ESA, space:CSA ;
+    space:launchedOn space:Ariane5 ;
+    space:usedSpacecraft space:JWST ;
+    space:crewed false ;
+    space:launchDate "2021-12-25"^^xsd:date ;
+    space:missionType space:mt-observatory .
