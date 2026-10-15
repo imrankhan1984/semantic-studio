@@ -112,6 +112,33 @@ interface Props {
 
 /** What the panel says about what a query runs over. Null says nothing: an
  *  ontology with no resolved imports has only one thing to query. */
+/** One of the toolbar's four switches: a toggle button that says whether it
+ *  is on in words for a screen reader (aria-pressed) and with a check mark
+ *  for the eye, as well as the tint. */
+function QuerySwitch({
+  on,
+  onToggle,
+  title,
+  children,
+}: {
+  on: boolean;
+  onToggle: () => void;
+  title: string;
+  children: string;
+}) {
+  return (
+    <button
+      className={on ? "toggle-pill active" : "toggle-pill"}
+      aria-pressed={on}
+      onClick={onToggle}
+      title={title}
+    >
+      {on && <span aria-hidden="true">✓</span>}
+      {children}
+    </button>
+  );
+}
+
 export function queryScopeText(includeImports: boolean, importsCount: number | null): string | null {
   if (includeImports) {
     const n = importsCount ?? 0;
@@ -602,51 +629,59 @@ export default function QueryPanel({
         {!editorShown && (
           <div className="query-toolbar">
             <span className="query-toolbar-label">SPARQL</span>
-            <button
-              className={auto ? "toggle-pill active" : "toggle-pill"}
-              onClick={() => {
-                if (auto) setFrozen(sparql);
-                setAuto(!auto);
-              }}
-              title="Regenerate the query on every edit"
-            >
-              Auto
-            </button>
+            {/* Four independent switches, not one choice: each is on or off
+                on its own and they combine (Distinct with Count, Paths with
+                either), so a segmented control would take combinations away
+                (explore-and-query-layout 5.5). One joined group, each button
+                announcing pressed or not, and a check mark beside the tint so
+                the state never rests on colour. */}
+            <div className="query-switches" role="group" aria-label="Query options">
+              <QuerySwitch
+                on={auto}
+                onToggle={() => {
+                  if (auto) setFrozen(sparql);
+                  setAuto(!auto);
+                }}
+                title="Regenerate the query on every edit"
+              >
+                Auto
+              </QuerySwitch>
+              <QuerySwitch
+                on={state.pathsMode}
+                onToggle={() => setState({ ...state, pathsMode: !state.pathsMode })}
+                title="Collapse plain hops into compact property paths"
+              >
+                Paths
+              </QuerySwitch>
+              <QuerySwitch
+                on={state.distinct}
+                onToggle={() => setState({ ...state, distinct: !state.distinct })}
+                title="Remove duplicate rows"
+              >
+                Distinct
+              </QuerySwitch>
+              <QuerySwitch
+                on={state.aggregate === "count"}
+                onToggle={() =>
+                  setState({
+                    ...state,
+                    aggregate: state.aggregate === "count" ? "none" : "count",
+                  })
+                }
+                title={
+                  state.steps.length > 1
+                    ? "Count the last step, grouped by the first"
+                    : "Count how many there are"
+                }
+              >
+                Count
+              </QuerySwitch>
+            </div>
             {!auto && (
               <button className="ghost" onClick={() => setFrozen(sparql)} title="Regenerate now">
                 ↻ Refresh
               </button>
             )}
-            <button
-              className={state.pathsMode ? "toggle-pill active" : "toggle-pill"}
-              onClick={() => setState({ ...state, pathsMode: !state.pathsMode })}
-              title="Collapse plain hops into compact property paths"
-            >
-              Paths
-            </button>
-            <button
-              className={state.distinct ? "toggle-pill active" : "toggle-pill"}
-              onClick={() => setState({ ...state, distinct: !state.distinct })}
-              title="Remove duplicate rows"
-            >
-              Distinct
-            </button>
-            <button
-              className={state.aggregate === "count" ? "toggle-pill active" : "toggle-pill"}
-              onClick={() =>
-                setState({
-                  ...state,
-                  aggregate: state.aggregate === "count" ? "none" : "count",
-                })
-              }
-              title={
-                state.steps.length > 1
-                  ? "Count the last step, grouped by the first"
-                  : "Count how many there are"
-              }
-            >
-              Count
-            </button>
             <label className="limit-field" title="Maximum rows to return">
               LIMIT
               <input

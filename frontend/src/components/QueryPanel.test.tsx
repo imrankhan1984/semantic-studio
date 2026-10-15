@@ -28,8 +28,9 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import QueryPanel, { queryScopeText } from "./QueryPanel";
 import type { useQueryBuilder } from "../sparql/useQueryBuilder";
 import type { QueryState } from "../sparql/types";
@@ -195,7 +196,7 @@ describe("QueryPanel result navigation", () => {
 // In the order explore-and-query-layout 5.4 puts them: the query's toolbar
 // first, then the builder's path bar.
 const BUTTONS_BEFORE = [
-  "Auto",
+  "✓Auto",
   "Paths",
   "Distinct",
   "Count",
@@ -350,5 +351,74 @@ describe("QueryPanel order (explore-and-query-layout 5.4, AC-6)", () => {
     const start = document.querySelector(".query-start")!;
     expect(start).not.toBeNull();
     expect(before(execute, start)).toBe(true);
+  });
+});
+
+describe("Query's four switches (explore-and-query-layout 5.5, AC-7)", () => {
+  /** The panel over a builder whose state really changes, so a switch's
+   *  pressed state can follow a click. */
+  function Harness() {
+    const [state, setState] = useState<QueryState>(STATE);
+    const builder = { ...builderStub(), state, setState };
+    return (
+      <QueryPanel
+        ontologyId="ont-1"
+        theme="light"
+        builder={builder as unknown as ReturnType<typeof useQueryBuilder>}
+        onPickIri={vi.fn()}
+        onViewInSource={vi.fn()}
+        ontologyTriples={0}
+      />
+    );
+  }
+
+  const group = () => screen.getByRole("group", { name: "Query options" });
+  const switchNamed = (name: string) =>
+    within(group()).getByRole("button", { name: new RegExp(`^${name}$`) });
+
+  it("the four sit in one group, each a toggle with aria-pressed", () => {
+    render(<Harness />);
+    const buttons = within(group()).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent?.replace("✓", ""))).toEqual([
+      "Auto",
+      "Paths",
+      "Distinct",
+      "Count",
+    ]);
+    for (const button of buttons) expect(["true", "false"]).toContain(button.getAttribute("aria-pressed"));
+    expect(switchNamed("Auto").getAttribute("aria-pressed")).toBe("true");
+    expect(switchNamed("Paths").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("each follows its own click, and they combine", () => {
+    render(<Harness />);
+    fireEvent.click(switchNamed("Distinct"));
+    fireEvent.click(switchNamed("Count"));
+    expect(switchNamed("Distinct").getAttribute("aria-pressed")).toBe("true");
+    expect(switchNamed("Count").getAttribute("aria-pressed")).toBe("true");
+    expect(switchNamed("Paths").getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(switchNamed("Distinct"));
+    expect(switchNamed("Distinct").getAttribute("aria-pressed")).toBe("false");
+    expect(switchNamed("Count").getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(switchNamed("Auto"));
+    expect(switchNamed("Auto").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("an on switch shows a check mark, hidden from assistive technology; an off one none", () => {
+    render(<Harness />);
+    const auto = switchNamed("Auto");
+    const mark = auto.querySelector("span[aria-hidden='true']");
+    expect(mark?.textContent).toBe("✓");
+    expect(switchNamed("Paths").textContent).not.toContain("✓");
+    fireEvent.click(switchNamed("Paths"));
+    expect(switchNamed("Paths").querySelector("span[aria-hidden='true']")?.textContent).toBe("✓");
+  });
+
+  it("Refresh, shown when Auto is off, is outside the group", () => {
+    render(<Harness />);
+    expect(screen.queryByRole("button", { name: /Refresh/ })).toBeNull();
+    fireEvent.click(switchNamed("Auto"));
+    const refresh = screen.getByRole("button", { name: /Refresh/ });
+    expect(group().contains(refresh)).toBe(false);
   });
 });

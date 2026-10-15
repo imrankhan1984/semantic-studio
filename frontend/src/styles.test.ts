@@ -242,13 +242,28 @@ describe("one button set (portal-foundations 5.5, AC-8)", () => {
   });
 });
 
-describe("Query's layout (explore-and-query-layout 5.4, AC-6)", () => {
+describe("Query's layout (explore-and-query-layout 5.4, AC-6; 5.5, AC-7)", () => {
+  /** Every rule as [selector, body]. */
+  const rules = [...RULES.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => [m[1].trim(), m[2]] as const);
+
   it("the builder panel is 60 % of the width, never under 520 px", () => {
     const panel = block(".query-panel");
     expect(panel).toMatch(/(?<![-\w])width:\s*60%;/);
     expect(panel).toMatch(/min-width:\s*520px;/);
     // No narrower width for a smaller window, which would undercut the floor.
     expect(RULES).not.toMatch(/\.query-panel\s*\{[^}]*width:\s*4\d\dpx/);
+  });
+
+  it("the switch group's buttons are 28 px: the button set's, never resized in the group", () => {
+    // .toggle-pill is in the set's 28 px list...
+    const small = rules.find(([sel]) => sel.startsWith(":where(") && /\.toggle-pill/.test(sel) && /button\.small/.test(sel));
+    expect(small, "the 28 px rule").toBeDefined();
+    expect(small![1]).toMatch(/height:\s*var\(--btn-sm\);/);
+    expect(block(":root")).toMatch(/--btn-sm:\s*28px;/);
+    // ...and nothing in the group gives it another height.
+    const group = rules.filter(([sel]) => sel.includes(".query-switches"));
+    expect(group.length).toBeGreaterThan(0);
+    for (const [, body] of group) expect(body).not.toMatch(/(?<![-\w])(height|padding):/);
   });
 
   it(".query-pinned stays sticky, opaque and flex: none", () => {
