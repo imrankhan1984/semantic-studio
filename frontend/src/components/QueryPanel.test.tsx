@@ -192,10 +192,9 @@ describe("QueryPanel result navigation", () => {
   });
 });
 
+// In the order explore-and-query-layout 5.4 puts them: the query's toolbar
+// first, then the builder's path bar.
 const BUTTONS_BEFORE = [
-  "1Bond",
-  "✕",
-  "✕ Clear path",
   "Auto",
   "Paths",
   "Distinct",
@@ -203,6 +202,9 @@ const BUTTONS_BEFORE = [
   "⧉ Copy",
   "⌸ Save",
   "▶ Execute",
+  "1Bond",
+  "✕",
+  "✕ Clear path",
 ];
 
 describe("QueryPanel with the editor never opened (sparql-text-and-query-files, AC-1)", () => {
@@ -294,5 +296,59 @@ describe("QueryPanel imports (external-access Stage 2, AC-20)", () => {
       fireEvent.click(screen.getByRole("button", { name: /Execute/ }));
     });
     expect(runSparql).toHaveBeenCalledWith("ont-1", expect.any(String), true);
+  });
+});
+
+describe("QueryPanel order (explore-and-query-layout 5.4, AC-6)", () => {
+  /** Whether `a` comes before `b` in the document. */
+  const before = (a: Element, b: Element) =>
+    (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+
+  it("the pinned block comes before the builder, the builder before the results, the results before the saved queries", async () => {
+    listSavedQueries.mockResolvedValue([
+      {
+        id: "q1",
+        name: "Bonds",
+        ontologyId: "ont-1",
+        ontologyName: "Bonds ontology",
+        state: STATE,
+        sparql: "SELECT * WHERE {}",
+        mode: "visual",
+        createdAt: "2026-10-01T00:00:00Z",
+        updatedAt: "2026-10-01T00:00:00Z",
+      },
+    ]);
+    await renderPanelWithResults();
+    await waitFor(() => expect(document.querySelector(".saved-queries")).not.toBeNull());
+    const pinned = document.querySelector(".query-pinned")!;
+    const builder = document.querySelector(".path-bar-wrap")!;
+    const sentence = document.querySelector(".plain-english")!;
+    const results = document.querySelector(".results")!;
+    const saved = document.querySelector(".saved-queries")!;
+    expect(pinned.querySelector("button.primary")?.textContent).toContain("Execute");
+    expect(before(pinned, builder)).toBe(true);
+    expect(before(builder, sentence)).toBe(true);
+    expect(before(sentence, results)).toBe(true);
+    expect(before(results, saved)).toBe(true);
+    // The builder is not inside the sticky block: it scrolls under it.
+    expect(pinned.contains(builder)).toBe(false);
+  });
+
+  it("with nothing picked, the starting options come after Execute", () => {
+    const empty = { ...builderStub(), state: { ...STATE, steps: [] }, sparql: "" };
+    render(
+      <QueryPanel
+        ontologyId="ont-1"
+        theme="light"
+        builder={empty as unknown as ReturnType<typeof useQueryBuilder>}
+        onPickIri={vi.fn()}
+        onViewInSource={vi.fn()}
+        ontologyTriples={0}
+      />,
+    );
+    const execute = screen.getByRole("button", { name: /Execute/ });
+    const start = document.querySelector(".query-start")!;
+    expect(start).not.toBeNull();
+    expect(before(execute, start)).toBe(true);
   });
 });

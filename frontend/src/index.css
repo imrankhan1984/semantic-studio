@@ -2430,8 +2430,11 @@ button.legend-row:hover {
   font-weight: 600;
 }
 
+/* 60 % of the window, never under 520 px (explore-and-query-layout 5.4):
+   in this tab the graph is a picker, and the builder is where the work is. */
 .query-panel {
-  width: 520px;
+  width: 60%;
+  min-width: 520px;
   flex: none;
   border-left: 1px solid var(--border);
   background: var(--bg-panel);
@@ -3412,12 +3415,6 @@ button.legend-row:hover {
   font-size: var(--fs-xs);
   color: var(--text-dim);
   font-style: italic;
-}
-
-@media (max-width: 1100px) {
-  .query-panel {
-    width: 420px;
-  }
 }
 
 /* --- network: approval dialog and Network settings (external-access) ------ */

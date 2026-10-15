@@ -19,7 +19,10 @@ BASIC IDEA
     One piece of its markup is layout rather than orchestration: the toolbar,
     the save prompt and the SPARQL preview are wrapped in a single
     .query-pinned element so they can stick to the top of the panel while the
-    results scroll under them.
+    results scroll under them. The order is the scope line, that block, the
+    builder, the results and the saved queries (explore-and-query-layout 5.4):
+    the query and Execute first, the results where they do not push the
+    builder away.
 
     It also wires SPARQL as text (spec sparql-text-and-query-files). Edit as
     text and New text query open SparqlEditor in the preview's place; while
@@ -583,27 +586,15 @@ export default function QueryPanel({
       {loadingSchema && <div className="detail-note">Analysing the ontology…</div>}
       {schemaError && <p className="detail-error">{schemaError}</p>}
 
-      {inText ? (
-        <fieldset className="builder-dimmed" disabled>
-          <legend className="builder-dimmed-label">Not in use while editing text</legend>
-          {builderParts}
-        </fieldset>
-      ) : (
-        builderParts
-      )}
-      {schema?.truncated && (
-        <p className="query-hint">
-          This ontology is very large, so the schema was sampled — some rare relationships
-          may be missing.
-        </p>
-      )}
-
       {/* The toolbar, the save prompt and the query text are one sticky
-          block. Reading results used to mean scrolling the query out of
-          sight, which is exactly when it is needed — so this stays at the
-          top of the panel while everything below scrolls under it. The
-          opaque background in .query-pinned is load-bearing: without one,
-          the table shows through. */}
+          block, and it comes first (explore-and-query-layout 5.4): the
+          builder used to come before it, and at 1280×720 with nothing picked
+          the starting list pushed Execute below the panel's bottom. Reading
+          results used to mean scrolling the query out of sight, which is
+          exactly when it is needed — so this stays at the top of the panel
+          while everything below scrolls under it. The opaque background in
+          .query-pinned is load-bearing: without one, the table shows
+          through. */}
       <div className={editorShown ? "query-pinned editing" : "query-pinned"}>
         {/* The builder's own controls step aside while the editor is open,
             which has its own row: they describe the visual query, and a
@@ -753,6 +744,25 @@ export default function QueryPanel({
           />
         )}
       </div>
+
+      {/* The builder under the query, and the results under the builder:
+          an Auto preview lands after each pick, and above the builder it
+          would push the next steps below the fold mid-build (Section 15,
+          question 2). */}
+      {inText ? (
+        <fieldset className="builder-dimmed" disabled>
+          <legend className="builder-dimmed-label">Not in use while editing text</legend>
+          {builderParts}
+        </fieldset>
+      ) : (
+        builderParts
+      )}
+      {schema?.truncated && (
+        <p className="query-hint">
+          This ontology is very large, so the schema was sampled — some rare relationships
+          may be missing.
+        </p>
+      )}
 
       {/* With the editor open its errors are shown above it, where the text
           that caused them is. */}

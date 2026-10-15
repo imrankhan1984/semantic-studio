@@ -241,3 +241,20 @@ describe("one button set (portal-foundations 5.5, AC-8)", () => {
     expect(rules.some(([sel]) => sel === "button.primary:disabled")).toBe(false);
   });
 });
+
+describe("Query's layout (explore-and-query-layout 5.4, AC-6)", () => {
+  it("the builder panel is 60 % of the width, never under 520 px", () => {
+    const panel = block(".query-panel");
+    expect(panel).toMatch(/(?<![-\w])width:\s*60%;/);
+    expect(panel).toMatch(/min-width:\s*520px;/);
+    // No narrower width for a smaller window, which would undercut the floor.
+    expect(RULES).not.toMatch(/\.query-panel\s*\{[^}]*width:\s*4\d\dpx/);
+  });
+
+  it(".query-pinned stays sticky, opaque and flex: none", () => {
+    const pinned = block(".query-pinned");
+    expect(pinned).toMatch(/position:\s*sticky;/);
+    expect(pinned).toMatch(/background:\s*var\(--bg-panel\);/);
+    expect(pinned).toMatch(/flex:\s*none;/);
+  });
+});
