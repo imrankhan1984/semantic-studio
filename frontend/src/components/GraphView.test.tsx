@@ -49,7 +49,7 @@ EXPECTED OUTPUT
 
 import { Profiler } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { PALETTES } from "../types";
 import type { MergeResult, Theme, VizGraph, VizNeighborhood } from "../types";
 
@@ -152,10 +152,27 @@ vi.mock("sigma", () => {
     getNodeDisplayData(node: string) {
       const graph = sigmaCalls.last?.graph;
       if (!graph?.hasNode?.(node)) return null;
-      return { x: graph.getNodeAttribute(node, "x"), y: graph.getNodeAttribute(node, "y") };
+      return {
+        x: graph.getNodeAttribute(node, "x"),
+        y: graph.getNodeAttribute(node, "y"),
+        size: graph.getNodeAttribute(node, "size"),
+        label: graph.getNodeAttribute(node, "label"),
+      };
     }
     getCamera() {
       return this.camera;
+    }
+    // What the label drawers ask to reserve a pill: the graph, and the screen
+    // position and size of a node. Identity transforms are enough, as the
+    // drawers are handed graph coordinates by the tests too.
+    getGraph() {
+      return sigmaCalls.last?.graph;
+    }
+    framedGraphToViewport(p: { x: number; y: number }) {
+      return { x: p.x, y: p.y };
+    }
+    scaleSize(size: number) {
+      return size;
     }
   }
   return { default: FakeSigma };
@@ -340,7 +357,10 @@ describe("selecting something that is not in the drawn graph", () => {
     for (const key of graph.edges()) {
       const res = edge(key, graph.getEdgeAttributes(key));
       expect(res.color).not.toBe(PALETTES.dark.dimEdge);
-      expect(res.label).toBe(graph.getEdgeAttributes(key).label);
+      // At rest, as with nothing selected: no link name (D-110), and nothing
+      // forced, which is what an off-graph focus would have made it.
+      expect(res.label).toBe("");
+      expect(res.forceLabel).toBeUndefined();
     }
     unmount();
   });
@@ -1474,6 +1494,245 @@ describe("node colours (portal-foundations 5.3)", () => {
     expect(planet.color).toBe(PALETTES.light.kind.rdfsClass);
     expect(celestial.color).toBe(PALETTES.light.kind.class);
     expect(planet.color).not.toBe(celestial.color);
+    view.unmount();
+  });
+});
+
+/* --- labels that fit (explore-and-query-layout 5.1, D-110) ---------------- */
+
+/** A canvas context that records the text it was asked to draw. */
+function textContext() {
+  const drawn: string[] = [];
+  const ctx = {
+    font: "",
+    fillStyle: "",
+    measureText: (t: string) => ({ width: t.length * 7 }),
+    fillText: (t: string) => drawn.push(t),
+    save() {},
+    restore() {},
+    translate() {},
+    rotate() {},
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return { ctx: ctx as any, drawn };
+}
+
+/** The settings the drawers read, as GraphView gave them to Sigma. */
+function drawerSettings() {
+  const s = sigmaCalls.last.settings;
+  return { ...s, edgeLabelWeight: "normal" };
+}
+
+/** DATA plus a link that does not touch Celestial. */
+const WITH_STRANGER_LINK: VizGraph = {
+  ...DATA,
+  edges: [
+    ...DATA.edges,
+    { source: "http://x/NASA", target: "http://x/Planet", kind: "objectProperty", label: "studies" },
+  ],
+};
+
+describe("labels that fit (5.1, D-110)", () => {
+  afterEach(() => {
+    vi.clearAllTimers();
+    // A failed assertion skips its unmount; without this one failure here
+    // shows as two.
+    cleanup();
+  });
+
+  it("node names go through the overlap rule, and beforeRender starts a new frame", async () => {
+    const { view } = await renderView();
+    const settings = drawerSettings();
+    const draw = settings.defaultDrawNodeLabel;
+    expect(typeof draw).toBe("function");
+    expect(sigmaCalls.last.handlers.beforeRender).toBeTypeOf("function");
+    const { ctx, drawn } = textContext();
+    const a = { key: "a", x: 0, y: 0, size: 5, label: "Celestial Body", color: "#000" };
+    const b = { key: "b", x: 20, y: 4, size: 5, label: "Planet", color: "#000" };
+    draw(ctx, a, settings);
+    draw(ctx, b, settings);
+    expect(drawn).toEqual(["Celestial Body"]);
+    // A new frame: the boxes of the last one are gone.
+    sigmaCalls.last.handlers.beforeRender();
+    draw(ctx, b, settings);
+    expect(drawn).toEqual(["Celestial Body", "Planet"]);
+    view.unmount();
+  });
+
+  it("names far apart are all drawn", async () => {
+    const { view } = await renderView();
+    const settings = drawerSettings();
+    const { ctx, drawn } = textContext();
+    settings.defaultDrawNodeLabel(ctx, { key: "a", x: 0, y: 0, size: 5, label: "One" }, settings);
+    settings.defaultDrawNodeLabel(ctx, { key: "b", x: 0, y: 100, size: 5, label: "Two" }, settings);
+    expect(drawn).toEqual(["One", "Two"]);
+    view.unmount();
+  });
+
+  it("the selected node's pill is kept clear even when its name is offered last", async () => {
+    // Celestial is selected; a name offered before it, over its pill, is not
+    // drawn, and Celestial's own name is.
+    const { view } = await renderView({ selected: "http://x/Celestial" });
+    const graph = sigmaCalls.last.graph;
+    const x = graph.getNodeAttribute("http://x/Celestial", "x");
+    const y = graph.getNodeAttribute("http://x/Celestial", "y");
+    const settings = drawerSettings();
+    const { ctx, drawn } = textContext();
+    sigmaCalls.last.handlers.beforeRender();
+    settings.defaultDrawNodeLabel(ctx, { key: "other", x: x + 20, y, size: 4, label: "Crowding" }, settings);
+    settings.defaultDrawNodeLabel(
+      ctx,
+      { key: "http://x/Celestial", x, y, size: 8, label: "Celestial Body" },
+      settings,
+    );
+    expect(drawn).toEqual(["Celestial Body"]);
+    view.unmount();
+  });
+
+  it("link names are 12 px and node names 13 px", async () => {
+    const { view } = await renderView();
+    expect(sigmaCalls.last.settings.edgeLabelSize).toBe(12);
+    expect(sigmaCalls.last.settings.labelSize).toBe(13);
+    view.unmount();
+  });
+
+  it("with nothing in focus no link is named", async () => {
+    const { edge, graph, unmount } = await reducersFor(null);
+    for (const key of graph.edges()) {
+      const res = edge(key, graph.getEdgeAttributes(key));
+      expect(res.label).toBe("");
+      expect(res.forceLabel).toBeUndefined();
+    }
+    unmount();
+  });
+
+  it("the focus node's links are named and forced; no other link is", async () => {
+    const { default: GraphView } = await import("./GraphView");
+    let view!: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(
+        <GraphView
+          data={WITH_STRANGER_LINK}
+          theme="dark"
+          hiddenKinds={new Set()}
+          selected="http://x/Celestial"
+          onSelect={() => {}}
+          focusTick={0}
+        />,
+      );
+    });
+    const edge = sigmaCalls.last.settings.edgeReducer;
+    const graph = sigmaCalls.last.graph;
+    let own = 0;
+    let other = 0;
+    for (const key of graph.edges()) {
+      const attrs = graph.getEdgeAttributes(key);
+      const res = edge(key, attrs);
+      if (graph.extremities(key).includes("http://x/Celestial")) {
+        own += 1;
+        expect(res.forceLabel).toBe(true);
+        expect(res.label).toBe(attrs.label);
+      } else {
+        other += 1;
+        expect(res.forceLabel).toBeUndefined();
+        expect(res.label).toBe("");
+      }
+    }
+    expect([own, other]).toEqual([1, 1]);
+    view.unmount();
+  });
+
+  it("a link name that would cross a name already placed is skipped", async () => {
+    const { view } = await renderView();
+    const settings = drawerSettings();
+    const { ctx, drawn } = textContext();
+    const s = { x: 0, y: 0, size: 5 };
+    const t = { x: 200, y: 0, size: 5 };
+    const link = { key: "e1", label: "range", size: 1, color: "#000" };
+    const twin = { key: "e2", label: "domain", size: 1, color: "#000" };
+    settings.defaultDrawEdgeLabel(ctx, link, s, t, settings);
+    // The same line, so the same place: the second name is skipped.
+    settings.defaultDrawEdgeLabel(ctx, twin, s, t, settings);
+    expect(drawn).toEqual(["range"]);
+    // And a link name never crosses a node name placed before it.
+    sigmaCalls.last.handlers.beforeRender();
+    settings.defaultDrawNodeLabel(ctx, { key: "n", x: 70, y: 10, size: 4, label: "Mid" }, settings);
+    settings.defaultDrawEdgeLabel(ctx, link, s, t, settings);
+    expect(drawn).toEqual(["range", "Mid"]);
+    view.unmount();
+  });
+
+  it("Sigma's link-names-only redraw draws the same names again", async () => {
+    // On a hover Sigma redraws link names with no beforeRender; a name meeting
+    // its own box from the pass before must not be refused.
+    const { view } = await renderView();
+    const settings = drawerSettings();
+    const { ctx, drawn } = textContext();
+    const link = { key: "e1", label: "range", size: 1, color: "#000" };
+    const s = { x: 0, y: 0, size: 5 };
+    const t = { x: 200, y: 0, size: 5 };
+    settings.defaultDrawEdgeLabel(ctx, link, s, t, settings);
+    settings.defaultDrawEdgeLabel(ctx, link, s, t, settings);
+    expect(drawn).toEqual(["range", "range"]);
+    view.unmount();
+  });
+
+  it("the toolbar says when link names show", async () => {
+    const { view } = await renderView();
+    const note = screen.getByText("Link names show when you point at or select a node.");
+    expect(document.querySelector(".graph-toolbar")!.contains(note)).toBe(true);
+    view.unmount();
+  });
+
+  it("above 3,000 links, where Sigma draws no link name, the toolbar promises none", async () => {
+    const nodes = Array.from({ length: 80 }, (_, i) => ({
+      id: `http://x/n${i}`, label: `N${i}`, kind: "class", degree: 1,
+    }));
+    const edges = [];
+    for (let i = 0; i < 80 && edges.length < 3001; i++) {
+      for (let j = 0; j < 80 && edges.length < 3001; j++) {
+        if (i !== j) edges.push({ source: `http://x/n${i}`, target: `http://x/n${j}`, kind: "subClassOf", label: "" });
+      }
+    }
+    const big = { ...DATA, nodes, edges, stats: { ...DATA.stats, nodeCount: 80, edgeCount: edges.length } };
+    const { view } = await renderView({ data: big });
+    expect(sigmaCalls.last.settings.renderEdgeLabels).toBe(false);
+    expect(screen.queryByText("Link names show when you point at or select a node.")).toBeNull();
+    view.unmount();
+  });
+});
+
+/* --- the toolbar in words (explore-and-query-layout 5.3, AC-5) ------------ */
+
+describe("the graph toolbar in words (5.3)", () => {
+  afterEach(() => {
+    vi.clearAllTimers();
+    cleanup();
+  });
+
+  it("the layout button is named by its word and changes with the layout", async () => {
+    const { view } = await renderView();
+    // The layout runs on load, so the button first offers to stop it.
+    const stop = screen.getByRole("button", { name: "Stop layout" });
+    expect(stop.textContent).toContain("Stop layout");
+    expect(stop.getAttribute("aria-label")).toBeNull();
+    fireEvent.click(stop);
+    const rerun = screen.getByRole("button", { name: "Re-run layout" });
+    expect(rerun.textContent).toContain("Re-run layout");
+    view.unmount();
+  });
+
+  it("the image button reads Save as image; both are quiet 28 px buttons with a hidden icon", async () => {
+    const { view } = await renderView();
+    const save = screen.getByRole("button", { name: "Save as image" });
+    const layout = screen.getByRole("button", { name: /layout$/ });
+    for (const button of [save, layout]) {
+      expect(button.classList.contains("small")).toBe(true);
+      expect(button.classList.contains("ghost")).toBe(true);
+      const icon = button.querySelector("span")!;
+      expect(icon.getAttribute("aria-hidden")).toBe("true");
+    }
+    expect(screen.queryByText("PNG")).toBeNull();
     view.unmount();
   });
 });

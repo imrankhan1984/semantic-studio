@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1245 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1453 tests, vitest
+cd backend  && python -m pytest tests    # 1246 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1503 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -193,8 +193,9 @@ frontend/src/
   state/             projectStore.ts, the useSyncExternalStore store for
                      authoring state (D-084); App's own state is not in it
   sparql/            Pure query-building logic
-  explore/           Pure Explore-mode logic: the suggestion ranking and the
-                     ontology summary sentence
+  explore/           Pure Explore-mode logic: the suggestion ranking, the
+                     ontology summary sentence, and the graph's one label
+                     overlap rule (labelBoxes.ts, D-110)
   reasoning/         Pure reasoning words: status lines, headings, endings and
                      when a result is stale (reasonSentences.ts)
   home/              Pure home-screen logic: the card thumbnail's layout and
@@ -266,6 +267,7 @@ leaves one behind.
 - `selectFromOutsideGraph` serves search and results; no `builder.addNode` in it. [leads somewhere]
 - `.query-pinned` keeps `flex: none` and a background; `.next-steps-panel` is bounded in `vh`. [keeps the query]
 - A search answer is applied only if it is the latest; the request it replaces is aborted (CF-4). [latest search]
+- Query's four switches are independent toggles with `aria-pressed`, never a single-choice control. [Explore and Query layout]
 - A timed-out query is stopped from outside, on a thread of its own, and only while armed in its query, never inside a SERVICE call, and resent, as a finaliser can swallow one; its end is its thread's end; the worker holds the read lock, and the timeout starts once it has it (D-108). [stopped from outside]
 
 **Sentences**
@@ -300,6 +302,7 @@ leaves one behind.
 - The selection ring is drawn in the hover overlay, keyed on a `selected` flag checked before hover. [pastel]
 - Node-reducer performance tests are counts, not timings. [pastel]
 - Zoom's disabled state is a three-value edge; the camera listener is removed on cleanup. [zoom controls]
+- The label boxes are cleared on `beforeRender`, and `explore/labelBoxes.ts` is the only overlap rule (D-110). [Explore and Query layout]
 
 **Modeling canvas**
 - Only `canvas/` imports `@xyflow/react`, and App reaches `canvas/` only through `React.lazy` (D-086). [modeling canvas]

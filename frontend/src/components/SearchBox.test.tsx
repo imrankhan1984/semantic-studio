@@ -234,13 +234,17 @@ describe("SearchBox as a combobox", () => {
     // The measurement is deliberately independent of React's render count. A
     // render pass over 100 memo-free rows is cheap; replacing 100 DOM nodes is
     // not, and only the second is observable from outside the component.
+    //
+    // The box shows at most 25 since explore-and-query-layout 5.7, so a
+    // server answering 100 is held to 25 rows; the count per press is what
+    // this budget is about, and it is the same.
     searchNodes.mockResolvedValue(MANY);
     render(<SearchBox ontologyId="o1" theme="dark" onPick={vi.fn()} />);
     fireEvent.change(input(), { target: { value: "thing" } });
     await act(async () => {
       vi.advanceTimersByTime(250);
     });
-    expect(options()).toHaveLength(100);
+    expect(options()).toHaveLength(25);
 
     const before = options();
     const list = document.querySelector(".search-box")!;
@@ -265,7 +269,7 @@ describe("SearchBox as a combobox", () => {
     // assertion that fails if the option ids are ever derived from the active
     // index, which would rewrite every id on every press.
     const after = options();
-    expect(after).toHaveLength(100);
+    expect(after).toHaveLength(25);
     for (let i = 0; i < after.length; i++) expect(after[i]).toBe(before[i]);
     expect(input().getAttribute("aria-activedescendant")).toBe(after[2].id);
   });
@@ -285,6 +289,7 @@ describe("SearchBox imports (external-access Stage 2)", () => {
       true,
       undefined,
       expect.any(AbortSignal),
+      26,
     );
     const rows = options();
     expect(rows.find((r) => r.textContent?.includes("Hidden Thing"))!.textContent).toContain(
@@ -351,5 +356,68 @@ describe("SearchBox kind colours (portal-foundations 5.3)", () => {
     searchNodes.mockResolvedValue([{ ...DRAWN, kind: "constructor" }]);
     await search(null);
     expect(options()[0].querySelector(".result-kind")!.textContent).toBe("Other");
+  });
+});
+
+describe("SearchBox limits in words (explore-and-query-layout 5.7, U-4, AC-9)", () => {
+  const typed = async (value: string) => {
+    fireEvent.change(input(), { target: { value } });
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+    });
+  };
+  const HINT = "Type at least 2 letters to search.";
+  const MORE = "More than 25 match. Type more of the name to narrow the list.";
+
+  it("one character shows the hint, tied to the field; none at 0 or at 2", async () => {
+    render(<SearchBox ontologyId="o1" theme="dark" onPick={vi.fn()} />);
+    expect(screen.queryByText(HINT)).toBeNull();
+    expect(input().getAttribute("aria-describedby")).toBeNull();
+    await typed("p");
+    const hint = screen.getByText(HINT);
+    expect(input().getAttribute("aria-describedby")).toBe(hint.id);
+    expect(searchNodes).not.toHaveBeenCalled();
+    await typed("pl");
+    expect(screen.queryByText(HINT)).toBeNull();
+    expect(input().getAttribute("aria-describedby")).toBeNull();
+    await typed("");
+    expect(screen.queryByText(HINT)).toBeNull();
+  });
+
+  it("the hint goes on an outside click and on Escape, like the list", async () => {
+    render(<SearchBox ontologyId="o1" theme="dark" onPick={vi.fn()} />);
+    await typed("p");
+    expect(screen.getByText(HINT)).toBeTruthy();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByText(HINT)).toBeNull();
+    await typed("q");
+    expect(screen.getByText(HINT)).toBeTruthy();
+    fireEvent.keyDown(input(), { key: "Escape" });
+    expect(screen.queryByText(HINT)).toBeNull();
+    expect(input().value).toBe("q");
+  });
+
+  it("asks for 26 and, when 26 come back, shows 25 options and the more-match line, announced", async () => {
+    searchNodes.mockResolvedValue(MANY.slice(0, 26));
+    render(<SearchBox ontologyId="o1" theme="dark" onPick={vi.fn()} />);
+    await typed("thing");
+    expect(searchNodes.mock.calls[0][5]).toBe(26);
+    expect(options()).toHaveLength(25);
+    const line = screen.getByText(MORE);
+    // A line after the options, not one of them.
+    expect(line.closest("[role='option']")).toBeNull();
+    expect(line.closest("[role='listbox']")).toBeNull();
+    const list = screen.getByRole("listbox");
+    expect(list.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("25 results shown, more match");
+  });
+
+  it("25 results show no line and the plain count", async () => {
+    searchNodes.mockResolvedValue(MANY.slice(0, 25));
+    render(<SearchBox ontologyId="o1" theme="dark" onPick={vi.fn()} />);
+    await typed("thing");
+    expect(options()).toHaveLength(25);
+    expect(screen.queryByText(MORE)).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("25 results");
   });
 });

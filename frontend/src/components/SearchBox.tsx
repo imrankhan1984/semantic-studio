@@ -41,6 +41,10 @@ INPUTS / INPUT SOURCES (props)
 EXPECTED OUTPUT
     - The rendered search box and dropdown; onPick on selection.
     - A polite announcement of how many results a completed search found.
+    - The limits in words (U-4, explore-and-query-layout 5.7): a hint tied to
+      the field while one character is typed, and a line after the 25th
+      result when more match. One more than is shown is asked for, so the box
+      knows.
     - Only the latest search's answer is applied; an older request still on
       its way is aborted (CF-4).
 ================================================================================
@@ -68,6 +72,11 @@ interface Props {
  *  name the exact same strings the elements carry. */
 const LIST_ID = "search-results-list";
 const optionId = (index: number) => `search-result-${index}`;
+const HINT_ID = "search-hint";
+
+/** How many results the box shows. One more is asked for, so the box knows
+ *  when more match and can say so rather than stopping silently (U-4). */
+export const SHOWN_RESULTS = 25;
 
 export default function SearchBox({
   ontologyId,
@@ -88,6 +97,8 @@ export default function SearchBox({
   // What the polite region says. Set only when a search COMPLETES, so it never
   // announces a count for a query the user is still in the middle of typing.
   const [announcement, setAnnouncement] = useState("");
+  // Whether the server had more than SHOWN_RESULTS for the latest search.
+  const [more, setMore] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   const wrapRef = useRef<HTMLDivElement>(null);
   // Searches are numbered and only the latest one's answer is applied, the
@@ -106,6 +117,7 @@ export default function SearchBox({
     inFlight.current = null;
     if (!ontologyId || query.trim().length < 2) {
       setResults([]);
+      setMore(false);
       setActive(-1);
       setAnnouncement("");
       return;
@@ -114,14 +126,22 @@ export default function SearchBox({
       const controller = new AbortController();
       inFlight.current = controller;
       const latest = () => ticket === searchCount.current;
-      searchNodes(ontologyId, query, imports, undefined, controller.signal)
+      searchNodes(ontologyId, query, imports, undefined, controller.signal, SHOWN_RESULTS + 1)
         .then((r) => {
           if (!latest()) return;
-          setResults(r);
+          const overflow = r.length > SHOWN_RESULTS;
+          setResults(overflow ? r.slice(0, SHOWN_RESULTS) : r);
+          setMore(overflow);
           setActive(-1);
           setOpen(true);
           setAnnouncement(
-            r.length === 0 ? "No results" : r.length === 1 ? "1 result" : `${r.length} results`,
+            overflow
+              ? `${SHOWN_RESULTS} results shown, more match`
+              : r.length === 0
+                ? "No results"
+                : r.length === 1
+                  ? "1 result"
+                  : `${r.length} results`,
           );
         })
         .catch(() => {
@@ -142,6 +162,10 @@ export default function SearchBox({
   }, []);
 
   const expanded = open && results.length > 0;
+  // One character typed: the search waits for two, and says so where the
+  // results would open, rather than looking broken (U-4).
+  // Shown and closed like the list: an outside click or Escape puts it away.
+  const tooShort = open && query.trim().length === 1;
 
   // Keep the active option on screen. The list is bounded at 50vh and scrolls,
   // so arrowing past the fold moves an aria-activedescendant nobody can see —
@@ -171,7 +195,7 @@ export default function SearchBox({
    */
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
-      if (expanded) {
+      if (expanded || tooShort) {
         e.preventDefault();
         setOpen(false);
         setActive(-1);
@@ -203,10 +227,14 @@ export default function SearchBox({
         aria-controls={LIST_ID}
         aria-autocomplete="list"
         aria-activedescendant={expanded && active >= 0 ? optionId(active) : undefined}
+        aria-describedby={tooShort && ontologyId ? HINT_ID : undefined}
         placeholder={placeholder}
         value={query}
         disabled={!ontologyId}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+        }}
         onKeyDown={onKeyDown}
         onFocus={() => results.length > 0 && setOpen(true)}
       />
@@ -216,39 +244,53 @@ export default function SearchBox({
       <div className="visually-hidden" role="status" aria-live="polite">
         {announcement}
       </div>
+      {tooShort && ontologyId && (
+        <p className="search-results search-hint" id={HINT_ID}>
+          Type at least 2 letters to search.
+        </p>
+      )}
       {expanded && (
-        <ul className="search-results" id={LIST_ID} role="listbox" aria-label="Search results">
-          {results.map((r, index) => {
-            const notDrawn = drawnIds !== null && !drawnIds.has(r.id);
-            return (
-              <li
-                key={r.id}
-                id={optionId(index)}
-                role="option"
-                aria-selected={index === active}
-                className={index === active ? "active" : undefined}
-                onClick={() => pick(r.id)}
-              >
-                <span className="dot" style={{ background: kindColor(r.kind, theme, r.classType) }} />
-                <span className="result-label">{r.label}</span>
-                {/* Words, not a colour or an opacity: the fact that an entity is
-                    off the canvas has to survive being read aloud. */}
-                {notDrawn && (
-                  <span
-                    className="result-undrawn"
-                    title="This entity is outside the drawn part of the graph"
-                  >
-                    not drawn
-                  </span>
-                )}
-                {r.importedFrom && (
-                  <span className="result-imported">from {r.importedFrom}</span>
-                )}
-                <span className="result-kind">{kindLabel(r.kind)}</span>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="search-results">
+          <ul className="search-options" id={LIST_ID} role="listbox" aria-label="Search results">
+            {results.map((r, index) => {
+              const notDrawn = drawnIds !== null && !drawnIds.has(r.id);
+              return (
+                <li
+                  key={r.id}
+                  id={optionId(index)}
+                  role="option"
+                  aria-selected={index === active}
+                  className={index === active ? "active" : undefined}
+                  onClick={() => pick(r.id)}
+                >
+                  <span className="dot" style={{ background: kindColor(r.kind, theme, r.classType) }} />
+                  <span className="result-label">{r.label}</span>
+                  {/* Words, not a colour or an opacity: the fact that an entity is
+                      off the canvas has to survive being read aloud. */}
+                  {notDrawn && (
+                    <span
+                      className="result-undrawn"
+                      title="This entity is outside the drawn part of the graph"
+                    >
+                      not drawn
+                    </span>
+                  )}
+                  {r.importedFrom && (
+                    <span className="result-imported">from {r.importedFrom}</span>
+                  )}
+                  <span className="result-kind">{kindLabel(r.kind)}</span>
+                </li>
+              );
+            })}
+          </ul>
+          {/* After the 25th option and not one itself: a listbox holds only
+              options, so the line sits beside it, in the same box. */}
+          {more && (
+            <p className="search-more">
+              More than {SHOWN_RESULTS} match. Type more of the name to narrow the list.
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

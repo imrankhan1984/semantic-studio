@@ -402,6 +402,15 @@ describe("the merged-view flag (external-access Stage 2)", () => {
       "/api/ontologies/ont-1/sparql?imports=true",
     ]);
   });
+
+  it("searchNodes sends limit only when given (explore-and-query-layout 5.7)", async () => {
+    await api.searchNodes("ont-1", "ab");
+    await api.searchNodes("ont-1", "ab", false, undefined, undefined, 26);
+    expect(recorded.map((r) => r.url)).toEqual([
+      "/api/ontologies/ont-1/search?q=ab",
+      "/api/ontologies/ont-1/search?q=ab&limit=26",
+    ]);
+  });
 });
 
 describe("projects in the client (authoring-foundations)", () => {

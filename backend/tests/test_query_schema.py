@@ -195,3 +195,31 @@ def test_describe_query_node(graph, schema):
 def test_namespaces_present(schema):
     assert schema["namespaces"]["skos"] == str(SKOS)
     assert schema["truncated"] is False
+
+
+def test_rdfs_only_class_carries_class_type():
+    """explore-and-query-layout 5.6 (AC-8): the start list colours an RDFS-only
+    class as the graph does, so the schema says which classes are; graph_builder's
+    rule, and nothing on any other entry."""
+    g = Graph()
+    g.parse(
+        data="""
+        @prefix ex: <http://example.org/> .
+        @prefix owl: <http://www.w3.org/2002/07/owl#> .
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        ex:Plain a rdfs:Class .
+        ex:Owl a owl:Class .
+        ex:Both a owl:Class, rdfs:Class .
+        ex:Child rdfs:subClassOf ex:Plain .
+        ex:thing a ex:Plain .
+        """,
+        format="turtle",
+    )
+    schema = build_query_schema(g)
+    by_iri = {c["iri"]: c for c in schema["classes"]}
+    ex = "http://example.org/"
+    assert by_iri[ex + "Plain"]["classType"] == "rdfs"
+    assert by_iri[ex + "Plain"]["kind"] == "class"
+    # Typed owl:Class, or both, or not typed at all: no field.
+    for name in ("Owl", "Both", "Child"):
+        assert "classType" not in by_iri[ex + name], name

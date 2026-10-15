@@ -28,8 +28,9 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import QueryPanel, { queryScopeText } from "./QueryPanel";
 import type { useQueryBuilder } from "../sparql/useQueryBuilder";
 import type { QueryState } from "../sparql/types";
@@ -192,17 +193,19 @@ describe("QueryPanel result navigation", () => {
   });
 });
 
+// In the order explore-and-query-layout 5.4 puts them: the query's toolbar
+// first, then the builder's path bar.
 const BUTTONS_BEFORE = [
-  "1Bond",
-  "✕",
-  "✕ Clear path",
-  "Auto",
+  "✓Auto",
   "Paths",
   "Distinct",
   "Count",
   "⧉ Copy",
   "⌸ Save",
   "▶ Execute",
+  "1Bond",
+  "✕",
+  "✕ Clear path",
 ];
 
 describe("QueryPanel with the editor never opened (sparql-text-and-query-files, AC-1)", () => {
@@ -294,5 +297,195 @@ describe("QueryPanel imports (external-access Stage 2, AC-20)", () => {
       fireEvent.click(screen.getByRole("button", { name: /Execute/ }));
     });
     expect(runSparql).toHaveBeenCalledWith("ont-1", expect.any(String), true);
+  });
+});
+
+describe("QueryPanel order (explore-and-query-layout 5.4, AC-6)", () => {
+  /** Whether `a` comes before `b` in the document. */
+  const before = (a: Element, b: Element) =>
+    (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+
+  it("the pinned block comes before the builder, the builder before the results, the results before the saved queries", async () => {
+    listSavedQueries.mockResolvedValue([
+      {
+        id: "q1",
+        name: "Bonds",
+        ontologyId: "ont-1",
+        ontologyName: "Bonds ontology",
+        state: STATE,
+        sparql: "SELECT * WHERE {}",
+        mode: "visual",
+        createdAt: "2026-10-01T00:00:00Z",
+        updatedAt: "2026-10-01T00:00:00Z",
+      },
+    ]);
+    await renderPanelWithResults();
+    await waitFor(() => expect(document.querySelector(".saved-queries")).not.toBeNull());
+    const pinned = document.querySelector(".query-pinned")!;
+    const builder = document.querySelector(".path-bar-wrap")!;
+    const sentence = document.querySelector(".plain-english")!;
+    const results = document.querySelector(".results")!;
+    const saved = document.querySelector(".saved-queries")!;
+    expect(pinned.querySelector("button.primary")?.textContent).toContain("Execute");
+    expect(before(pinned, builder)).toBe(true);
+    expect(before(builder, sentence)).toBe(true);
+    expect(before(sentence, results)).toBe(true);
+    expect(before(results, saved)).toBe(true);
+    // The builder is not inside the sticky block: it scrolls under it.
+    expect(pinned.contains(builder)).toBe(false);
+  });
+
+  it("with nothing picked, the starting options come after Execute", () => {
+    const empty = { ...builderStub(), state: { ...STATE, steps: [] }, sparql: "" };
+    render(
+      <QueryPanel
+        ontologyId="ont-1"
+        theme="light"
+        builder={empty as unknown as ReturnType<typeof useQueryBuilder>}
+        onPickIri={vi.fn()}
+        onViewInSource={vi.fn()}
+        ontologyTriples={0}
+      />,
+    );
+    const execute = screen.getByRole("button", { name: /Execute/ });
+    const start = document.querySelector(".query-start")!;
+    expect(start).not.toBeNull();
+    expect(before(execute, start)).toBe(true);
+  });
+});
+
+describe("Query's four switches (explore-and-query-layout 5.5, AC-7)", () => {
+  /** The panel over a builder whose state really changes, so a switch's
+   *  pressed state can follow a click. */
+  function Harness() {
+    const [state, setState] = useState<QueryState>(STATE);
+    const builder = { ...builderStub(), state, setState };
+    return (
+      <QueryPanel
+        ontologyId="ont-1"
+        theme="light"
+        builder={builder as unknown as ReturnType<typeof useQueryBuilder>}
+        onPickIri={vi.fn()}
+        onViewInSource={vi.fn()}
+        ontologyTriples={0}
+      />
+    );
+  }
+
+  const group = () => screen.getByRole("group", { name: "Query options" });
+  const switchNamed = (name: string) =>
+    within(group()).getByRole("button", { name: new RegExp(`^${name}$`) });
+
+  it("the four sit in one group, each a toggle with aria-pressed", () => {
+    render(<Harness />);
+    const buttons = within(group()).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent?.replace("✓", ""))).toEqual([
+      "Auto",
+      "Paths",
+      "Distinct",
+      "Count",
+    ]);
+    for (const button of buttons) expect(["true", "false"]).toContain(button.getAttribute("aria-pressed"));
+    expect(switchNamed("Auto").getAttribute("aria-pressed")).toBe("true");
+    expect(switchNamed("Paths").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("each follows its own click, and they combine", () => {
+    render(<Harness />);
+    fireEvent.click(switchNamed("Distinct"));
+    fireEvent.click(switchNamed("Count"));
+    expect(switchNamed("Distinct").getAttribute("aria-pressed")).toBe("true");
+    expect(switchNamed("Count").getAttribute("aria-pressed")).toBe("true");
+    expect(switchNamed("Paths").getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(switchNamed("Distinct"));
+    expect(switchNamed("Distinct").getAttribute("aria-pressed")).toBe("false");
+    expect(switchNamed("Count").getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(switchNamed("Auto"));
+    expect(switchNamed("Auto").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("an on switch shows a check mark, hidden from assistive technology; an off one none", () => {
+    render(<Harness />);
+    const auto = switchNamed("Auto");
+    const mark = auto.querySelector("span[aria-hidden='true']");
+    expect(mark?.textContent).toBe("✓");
+    expect(switchNamed("Paths").textContent).not.toContain("✓");
+    fireEvent.click(switchNamed("Paths"));
+    expect(switchNamed("Paths").querySelector("span[aria-hidden='true']")?.textContent).toBe("✓");
+  });
+
+  it("Refresh, shown when Auto is off, is outside the group", () => {
+    render(<Harness />);
+    expect(screen.queryByRole("button", { name: /Refresh/ })).toBeNull();
+    fireEvent.click(switchNamed("Auto"));
+    const refresh = screen.getByRole("button", { name: /Refresh/ });
+    expect(group().contains(refresh)).toBe(false);
+  });
+});
+
+describe("a name already used (explore-and-query-layout 5.7, U-4, AC-10)", () => {
+  const BONDS = {
+    id: "q1",
+    name: "Bonds",
+    ontologyId: "ont-1",
+    ontologyName: "Bonds ontology",
+    state: STATE,
+    sparql: "SELECT * WHERE {}",
+    mode: "visual" as const,
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-01T00:00:00Z",
+  };
+  const NOTE = "You already have a query called “Bonds”. Saving keeps both.";
+
+  beforeEach(() => {
+    saveQuery.mockReset();
+  });
+
+  function renderWith(openQuery: { id: string; name: string } | null) {
+    const builder = { ...builderStub(), openQuery };
+    render(
+      <QueryPanel
+        ontologyId="ont-1"
+        theme="light"
+        builder={builder as unknown as ReturnType<typeof useQueryBuilder>}
+        onPickIri={vi.fn()}
+        onViewInSource={vi.fn()}
+        ontologyTriples={0}
+      />,
+    );
+  }
+
+  it("a new query named like a saved one, in another case with spaces, shows the note and still saves", async () => {
+    listSavedQueries.mockResolvedValue([BONDS]);
+    saveQuery.mockResolvedValue({ ...BONDS, id: "q2", name: "  bONDS " });
+    renderWith(null);
+    await waitFor(() => expect(document.querySelector(".saved-queries")).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /Save/ }));
+    const field = screen.getByPlaceholderText("Query name");
+    fireEvent.change(field, { target: { value: "Bond" } });
+    expect(screen.queryByText(NOTE)).toBeNull();
+    expect(field.getAttribute("aria-describedby")).toBeNull();
+    fireEvent.change(field, { target: { value: "  bONDS " } });
+    const note = screen.getByText(NOTE);
+    expect(field.getAttribute("aria-describedby")).toBe(note.id);
+    await act(async () => {
+      fireEvent.click(within(document.querySelector(".save-row")!).getByRole("button", { name: "Save" }));
+    });
+    // Saved as a new query, beside the other: no id, so nothing is replaced.
+    expect(saveQuery).toHaveBeenCalledTimes(1);
+    expect(saveQuery.mock.calls[0][0]).toMatchObject({ name: "  bONDS " });
+    expect(saveQuery.mock.calls[0][0].id).toBeUndefined();
+  });
+
+  it("the open query saved under its own name shows nothing", async () => {
+    listSavedQueries.mockResolvedValue([BONDS]);
+    saveQuery.mockResolvedValue(BONDS);
+    renderWith({ id: "q1", name: "Bonds" });
+    await waitFor(() => expect(document.querySelector(".saved-queries")).not.toBeNull());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Update/ }));
+    });
+    expect(screen.queryByText(NOTE)).toBeNull();
+    expect(saveQuery.mock.calls[0][0]).toMatchObject({ id: "q1", name: "Bonds" });
   });
 });

@@ -27,6 +27,13 @@ BASIC IDEA
     bounded number of iterations with everything that was already drawn pinned.
     Nothing already on the canvas moves.
 
+    Names are drawn only where they fit (D-110). Sigma chooses candidates
+    through its label grid and hands each to the drawers here, which ask
+    explore/labelBoxes.ts whether the name's box would overlap one already
+    placed in the frame and skip it if so; `beforeRender` starts each frame
+    afresh. Link names are drawn only for the hovered or selected node's links,
+    which the edge reducer forces, and go through the same rule.
+
     Two things here are for people who are not using a mouse or who have asked
     the machine to stop moving. The container carries role="img" and a label
     saying how much of the ontology is drawn and where the keyboard route is,
@@ -67,10 +74,22 @@ import forceAtlas2, { inferSettings } from "graphology-layout-forceatlas2"; // s
 import FA2Layout from "graphology-layout-forceatlas2/worker";               // worker physics
 import Sigma from "sigma";                             // WebGL renderer
 import { drawDiscNodeLabel } from "sigma/rendering";   // Sigma's own label drawing
-import type { NodeHoverDrawingFunction } from "sigma/rendering";
+import type {
+  EdgeLabelDrawingFunction,
+  NodeHoverDrawingFunction,
+  NodeLabelDrawingFunction,
+} from "sigma/rendering";
 import { downloadAsPNG } from "@sigma/export-image";   // PNG export
 import type { MergeResult, Theme, VizGraph, VizNeighborhood } from "../types";
 import { PALETTES, edgeColor, nodeColor } from "../types";
+import {
+  LabelBoxes,
+  edgeLabelBox,
+  edgeLabelPlacement,
+  fitEdgeLabel,
+  nodeLabelBox,
+  pillBox,
+} from "../explore/labelBoxes";
 
 /**
  * How far outside the node the selection ring sits, and how thick it is, in the
@@ -191,6 +210,116 @@ export const NODE_HOVER_DRAWERS: Record<Theme, NodeHoverDrawingFunction> = {
   dark: makeDrawNodeHover(PALETTES.dark.labelBackground, PALETTES.dark.selectedRing),
   light: makeDrawNodeHover(PALETTES.light.labelBackground, PALETTES.light.selectedRing),
 };
+
+/** Node and link names, in pixels. Link names at 12, the smallest of the six
+ *  sizes (D-110), and drawn only for the node in focus. */
+const LABEL_SIZE = 13;
+const EDGE_LABEL_SIZE = 12;
+/** Above this many links Sigma draws no link name at all, and the toolbar
+ *  does not promise any. */
+const EDGE_LABEL_MAX_EDGES = 3000;
+
+/** What the label drawers need from the component, read at draw time. */
+interface LabelSource {
+  /** The renderer, once built: null during Sigma's own first frame, which it
+   *  draws inside its constructor, before there is anything to ask. */
+  renderer: () => Sigma | null;
+  /** The nodes drawn with a pill on the hover layer this frame. */
+  pillNodes: () => Iterable<string | null>;
+}
+
+/**
+ * The node and link name drawers Sigma is handed, both going through one
+ * LabelBoxes (D-110), and the `beforeRender` handler that starts each frame.
+ *
+ * The pills come first. They are drawn on the hover layer, above everything,
+ * so a name placed under one would be hidden by it and a measurement of what
+ * the canvas draws would count the two as overlapping. Sigma offers names in
+ * grid order and the selected node may come late, so its pill's box is
+ * reserved at the first label of the frame, which is after Sigma has set the
+ * frame's camera matrix — `beforeRender` is too early for that.
+ *
+ * Built once per renderer: the per-frame path allocates one box per name it
+ * places and nothing per comparison.
+ */
+export function makeLabelDrawers(source: LabelSource): {
+  drawNodeLabel: NodeLabelDrawingFunction;
+  drawEdgeLabel: EdgeLabelDrawingFunction;
+  beforeRender: () => void;
+  boxes: LabelBoxes;
+} {
+  const boxes = new LabelBoxes();
+  const pilled = new Set<string>();
+  let primed = false;
+
+  const prime = (
+    context: CanvasRenderingContext2D,
+    settings: Parameters<NodeLabelDrawingFunction>[2],
+  ) => {
+    if (primed) return;
+    primed = true;
+    const renderer = source.renderer();
+    if (!renderer) return;
+    const graph = renderer.getGraph();
+    context.font = `${settings.labelWeight} ${settings.labelSize}px ${settings.labelFont}`;
+    for (const node of source.pillNodes()) {
+      if (!node || pilled.has(node) || !graph.hasNode(node)) continue;
+      const display = renderer.getNodeDisplayData(node);
+      if (!display || display.hidden || !display.label) continue;
+      const at = renderer.framedGraphToViewport(display);
+      const width = context.measureText(display.label).width;
+      boxes.reserve(pillBox(at.x, at.y, renderer.scaleSize(display.size), settings.labelSize, width));
+      pilled.add(node);
+    }
+  };
+
+  const drawNodeLabel: NodeLabelDrawingFunction = (context, data, settings) => {
+    if (!data.label) return;
+    prime(context, settings);
+    // A node with a pill keeps the place reserved for it; its name under the
+    // pill is drawn as Sigma always drew it.
+    const key = (data as { key?: string }).key;
+    if (key === undefined || !pilled.has(key)) {
+      context.font = `${settings.labelWeight} ${settings.labelSize}px ${settings.labelFont}`;
+      const width = context.measureText(data.label).width;
+      if (!boxes.tryPlace(nodeLabelBox(data.x, data.y, data.size, settings.labelSize, width))) return;
+    }
+    drawDiscNodeLabel(context, data, settings);
+  };
+
+  // Sigma's drawStraightEdgeLabel, with the box tested between working out
+  // where the text goes and drawing it.
+  const drawEdgeLabel: EdgeLabelDrawingFunction = (context, edgeData, sourceData, targetData, settings) => {
+    prime(context, settings);
+    boxes.beginEdgeLabel(String((edgeData as { key?: string }).key));
+    const label = edgeData.label;
+    if (!label) return;
+    const placement = edgeLabelPlacement(
+      sourceData.x, sourceData.y, sourceData.size,
+      targetData.x, targetData.y, targetData.size,
+    );
+    if (!placement) return;
+    const size = settings.edgeLabelSize;
+    context.font = `${settings.edgeLabelWeight} ${size}px ${settings.edgeLabelFont}`;
+    const fitted = fitEdgeLabel(label, placement.length, (t) => context.measureText(t).width);
+    if (!fitted) return;
+    if (!boxes.tryPlace(edgeLabelBox(placement, fitted.width, size, edgeData.size))) return;
+    context.fillStyle = settings.edgeLabelColor.color ?? "#000";
+    context.save();
+    context.translate(placement.cx, placement.cy);
+    context.rotate(placement.angle);
+    context.fillText(fitted.text, -fitted.width / 2, edgeData.size / 2 + size);
+    context.restore();
+  };
+
+  const beforeRender = () => {
+    boxes.clear();
+    pilled.clear();
+    primed = false;
+  };
+
+  return { drawNodeLabel, drawEdgeLabel, beforeRender, boxes };
+}
 
 // Props — see the file header for the meaning of each.
 interface Props {
@@ -393,6 +522,9 @@ export default function GraphView({
   // re-render, and a merge that runs twice reports its additions twice.
   const expandedRef = useRef(onExpanded);
   const [layoutRunning, setLayoutRunning] = useState(false);
+  // Whether this graph draws link names at all, so the toolbar's line about
+  // them is only shown when it is true.
+  const [edgeLabelsOn, setEdgeLabelsOn] = useState(true);
   // How many entities are on the canvas, for the container's accessible label.
   // Held here rather than read off `data.stats`, because a merge adds nodes
   // without replacing `data` and a label that ignored expansions would tell a
@@ -609,8 +741,21 @@ export default function GraphView({
     // motion event more than a reduced-motion user asked for.
     if (reduceMotionRef.current) settleLayout();
 
+    let built: Sigma | null = null;
+    const labels = makeLabelDrawers({
+      renderer: () => built,
+      // The nodes the reducer marks highlighted, which the hover layer pills:
+      // the path and the hovered node in Query mode, else selected and hovered.
+      pillNodes: () =>
+        queryModeRef.current
+          ? [hoveredRef.current, ...pathRef.current]
+          : [selectedRef.current, hoveredRef.current],
+    });
+
+    const edgeLabels = graph.size <= EDGE_LABEL_MAX_EDGES;
+    setEdgeLabelsOn(edgeLabels);
     const renderer = new Sigma(graph, container, {
-      renderEdgeLabels: graph.size <= 3000,
+      renderEdgeLabels: edgeLabels,
       labelColor: { color: paletteRef.current.label },
       edgeLabelColor: { color: paletteRef.current.edgeLabel },
       // Every node the reducer marks `highlighted` draws through this, so the
@@ -618,11 +763,16 @@ export default function GraphView({
       // and the selected one additionally its ring, which the drawer keys on the
       // `selected` flag the reducer sets.
       defaultDrawNodeHover: NODE_HOVER_DRAWERS[theme],
+      // Every name goes through the one overlap rule (D-110): one already
+      // placed in the frame keeps its place, and a later one that would cross
+      // it is not drawn. Sigma's grid still chooses the candidates.
+      defaultDrawNodeLabel: labels.drawNodeLabel,
+      defaultDrawEdgeLabel: labels.drawEdgeLabel,
       labelFont: "Inter, system-ui, sans-serif",
       edgeLabelFont: "Inter, system-ui, sans-serif",
       labelWeight: "600",
-      labelSize: 13,
-      edgeLabelSize: 10,
+      labelSize: LABEL_SIZE,
+      edgeLabelSize: EDGE_LABEL_SIZE,
       labelRenderedSizeThreshold: 5,
       minCameraRatio: MIN_CAMERA_RATIO,
       maxCameraRatio: MAX_CAMERA_RATIO,
@@ -733,14 +883,22 @@ export default function GraphView({
           g,
           queryModeRef.current ? hoveredRef.current : hoveredRef.current ?? selectedRef.current,
         );
+        // Link names only for the node in focus (D-110). Sigma would also name
+        // every link whose two ends have their names drawn, which at rest put
+        // small rotated words across the node names; with no focus, none.
+        // `forceLabel` is what makes Sigma offer a focus link whose far end has
+        // no name drawn.
         if (focusNode) {
           if (src === focusNode || dst === focusNode) {
             res.size = 2;
             res.zIndex = 2;
+            res.forceLabel = true;
           } else {
             res.color = palette.dimEdge;
             res.label = "";
           }
+        } else {
+          res.label = "";
         }
         return res;
       },
@@ -829,6 +987,8 @@ export default function GraphView({
     renderer.on("upNode", endDrag);
     renderer.on("upStage", endDrag);
 
+    built = renderer;
+    renderer.on("beforeRender", labels.beforeRender);
     sigmaRef.current = renderer;
 
     // Drive the zoom controls' disabled state from the camera. Storing the
@@ -1074,23 +1234,25 @@ export default function GraphView({
                 canvas, bottom right, where a map puts them (G-5). What stays
                 here acts on the GRAPH rather than the VIEW: re-running the
                 layout and exporting a PNG. */}
-            {/* Secondary: the layout runs automatically on load and while
-                dragging, so this is only for re-settling a big or fiddled
-                graph. Icon-only to keep it out of the way. */}
+            {/* Two quiet 28 px buttons, each an icon and a word
+                (explore-and-query-layout 5.3): the word is the accessible
+                name, so a screen reader and the eye read the same thing, and
+                the icon is decoration. Re-running the layout is secondary: it
+                runs by itself on load and while dragging. */}
             <button
-              className={layoutRunning ? "tool-btn icon-only active" : "tool-btn icon-only"}
+              className={layoutRunning ? "small ghost active" : "small ghost"}
               onClick={() => (layoutRunning ? stopLayout() : startLayout(15000))}
-              aria-label={layoutRunning ? "Stop the layout" : "Re-run the layout"}
               title={
                 layoutRunning
                   ? "Stop the layout simulation"
                   : "Re-run the layout to untangle the graph"
               }
             >
-              {layoutRunning ? "⏸" : "▶"}
+              <span aria-hidden="true">{layoutRunning ? "⏸" : "▶"}</span>
+              {layoutRunning ? "Stop layout" : "Re-run layout"}
             </button>
             <button
-              className="tool-btn"
+              className="small ghost"
               onClick={() => {
                 const renderer = sigmaRef.current;
                 if (!renderer) return;
@@ -1101,8 +1263,16 @@ export default function GraphView({
               }}
               title="Save the current graph view as a PNG image"
             >
-              ⬇ <span>PNG</span>
+              <span aria-hidden="true">⬇</span>
+              Save as image
             </button>
+            {/* Link names are drawn only for the node in focus (D-110), so a
+                newcomer is told where they went. Text, not a tooltip. */}
+            {edgeLabelsOn && (
+              <span className="graph-toolbar-note">
+                Link names show when you point at or select a node.
+              </span>
+            )}
           </>
         ) : (
           <span className="graph-toolbar-hint">No ontology loaded</span>

@@ -14,12 +14,17 @@ BASIC IDEA
     useQueryBuilder hook (passed in as `builder`); this component renders it and
     wires the buttons. It adds a few local concerns: an auto-preview that runs a
     small LIMITed query as you build (only on small ontologies, so it stays
-    instant), the Auto/refresh toggle for the preview, and the save flow.
+    instant), the Auto/refresh toggle for the preview, and the save flow,
+    which says in a note under the name field when the name is already used
+    (U-4).
 
     One piece of its markup is layout rather than orchestration: the toolbar,
     the save prompt and the SPARQL preview are wrapped in a single
     .query-pinned element so they can stick to the top of the panel while the
-    results scroll under them.
+    results scroll under them. The order is the scope line, that block, the
+    builder, the results and the saved queries (explore-and-query-layout 5.4):
+    the query and Execute first, the results where they do not push the
+    builder away.
 
     It also wires SPARQL as text (spec sparql-text-and-query-files). Edit as
     text and New text query open SparqlEditor in the preview's place; while
@@ -105,6 +110,33 @@ interface Props {
   dataSources?: DataSource[];
   /** Classes the graph draws in the RDFS class colour, for the path bar. */
   rdfsClasses?: ReadonlySet<string>;
+}
+
+/** One of the toolbar's four switches: a toggle button that says whether it
+ *  is on in words for a screen reader (aria-pressed) and with a check mark
+ *  for the eye, as well as the tint. */
+function QuerySwitch({
+  on,
+  onToggle,
+  title,
+  children,
+}: {
+  on: boolean;
+  onToggle: () => void;
+  title: string;
+  children: string;
+}) {
+  return (
+    <button
+      className={on ? "toggle-pill active" : "toggle-pill"}
+      aria-pressed={on}
+      onClick={onToggle}
+      title={title}
+    >
+      {on && <span aria-hidden="true">✓</span>}
+      {children}
+    </button>
+  );
 }
 
 /** What the panel says about what a query runs over. Null says nothing: an
@@ -371,6 +403,16 @@ export default function QueryPanel({
     }
   };
 
+  // A saved query of this ontology with the typed name, trimmed and in any
+  // case (U-4). Saving still works and keeps both; the note only says so, so a
+  // second "Bonds" is a choice rather than a surprise. The open query never
+  // meets it: saving it is an update under its own name, with no prompt.
+  const sameName = useMemo(() => {
+    const typed = saveName.trim().toLowerCase();
+    if (!savePrompt || !typed) return null;
+    return saved.find((entry) => entry.name.trim().toLowerCase() === typed) ?? null;
+  }, [saveName, savePrompt, saved]);
+
   const save = () => {
     if (openQuery) void doSave(openQuery.name);
     else {
@@ -583,27 +625,15 @@ export default function QueryPanel({
       {loadingSchema && <div className="detail-note">Analysing the ontology…</div>}
       {schemaError && <p className="detail-error">{schemaError}</p>}
 
-      {inText ? (
-        <fieldset className="builder-dimmed" disabled>
-          <legend className="builder-dimmed-label">Not in use while editing text</legend>
-          {builderParts}
-        </fieldset>
-      ) : (
-        builderParts
-      )}
-      {schema?.truncated && (
-        <p className="query-hint">
-          This ontology is very large, so the schema was sampled — some rare relationships
-          may be missing.
-        </p>
-      )}
-
       {/* The toolbar, the save prompt and the query text are one sticky
-          block. Reading results used to mean scrolling the query out of
-          sight, which is exactly when it is needed — so this stays at the
-          top of the panel while everything below scrolls under it. The
-          opaque background in .query-pinned is load-bearing: without one,
-          the table shows through. */}
+          block, and it comes first (explore-and-query-layout 5.4): the
+          builder used to come before it, and at 1280×720 with nothing picked
+          the starting list pushed Execute below the panel's bottom. Reading
+          results used to mean scrolling the query out of sight, which is
+          exactly when it is needed — so this stays at the top of the panel
+          while everything below scrolls under it. The opaque background in
+          .query-pinned is load-bearing: without one, the table shows
+          through. */}
       <div className={editorShown ? "query-pinned editing" : "query-pinned"}>
         {/* The builder's own controls step aside while the editor is open,
             which has its own row: they describe the visual query, and a
@@ -611,51 +641,59 @@ export default function QueryPanel({
         {!editorShown && (
           <div className="query-toolbar">
             <span className="query-toolbar-label">SPARQL</span>
-            <button
-              className={auto ? "toggle-pill active" : "toggle-pill"}
-              onClick={() => {
-                if (auto) setFrozen(sparql);
-                setAuto(!auto);
-              }}
-              title="Regenerate the query on every edit"
-            >
-              Auto
-            </button>
+            {/* Four independent switches, not one choice: each is on or off
+                on its own and they combine (Distinct with Count, Paths with
+                either), so a segmented control would take combinations away
+                (explore-and-query-layout 5.5). One joined group, each button
+                announcing pressed or not, and a check mark beside the tint so
+                the state never rests on colour. */}
+            <div className="query-switches" role="group" aria-label="Query options">
+              <QuerySwitch
+                on={auto}
+                onToggle={() => {
+                  if (auto) setFrozen(sparql);
+                  setAuto(!auto);
+                }}
+                title="Regenerate the query on every edit"
+              >
+                Auto
+              </QuerySwitch>
+              <QuerySwitch
+                on={state.pathsMode}
+                onToggle={() => setState({ ...state, pathsMode: !state.pathsMode })}
+                title="Collapse plain hops into compact property paths"
+              >
+                Paths
+              </QuerySwitch>
+              <QuerySwitch
+                on={state.distinct}
+                onToggle={() => setState({ ...state, distinct: !state.distinct })}
+                title="Remove duplicate rows"
+              >
+                Distinct
+              </QuerySwitch>
+              <QuerySwitch
+                on={state.aggregate === "count"}
+                onToggle={() =>
+                  setState({
+                    ...state,
+                    aggregate: state.aggregate === "count" ? "none" : "count",
+                  })
+                }
+                title={
+                  state.steps.length > 1
+                    ? "Count the last step, grouped by the first"
+                    : "Count how many there are"
+                }
+              >
+                Count
+              </QuerySwitch>
+            </div>
             {!auto && (
               <button className="ghost" onClick={() => setFrozen(sparql)} title="Regenerate now">
                 ↻ Refresh
               </button>
             )}
-            <button
-              className={state.pathsMode ? "toggle-pill active" : "toggle-pill"}
-              onClick={() => setState({ ...state, pathsMode: !state.pathsMode })}
-              title="Collapse plain hops into compact property paths"
-            >
-              Paths
-            </button>
-            <button
-              className={state.distinct ? "toggle-pill active" : "toggle-pill"}
-              onClick={() => setState({ ...state, distinct: !state.distinct })}
-              title="Remove duplicate rows"
-            >
-              Distinct
-            </button>
-            <button
-              className={state.aggregate === "count" ? "toggle-pill active" : "toggle-pill"}
-              onClick={() =>
-                setState({
-                  ...state,
-                  aggregate: state.aggregate === "count" ? "none" : "count",
-                })
-              }
-              title={
-                state.steps.length > 1
-                  ? "Count the last step, grouped by the first"
-                  : "Count how many there are"
-              }
-            >
-              Count
-            </button>
             <label className="limit-field" title="Maximum rows to return">
               LIMIT
               <input
@@ -701,6 +739,7 @@ export default function QueryPanel({
               autoFocus
               placeholder="Query name"
               value={saveName}
+              aria-describedby={sameName ? "save-same-name" : undefined}
               onChange={(e) => setSaveName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void doSave(saveName);
@@ -714,6 +753,11 @@ export default function QueryPanel({
               Cancel
             </button>
           </div>
+        )}
+        {sameName && (
+          <p className="save-note" id="save-same-name">
+            You already have a query called “{sameName.name}”. Saving keeps both.
+          </p>
         )}
 
         {editorShown ? (
@@ -753,6 +797,25 @@ export default function QueryPanel({
           />
         )}
       </div>
+
+      {/* The builder under the query, and the results under the builder:
+          an Auto preview lands after each pick, and above the builder it
+          would push the next steps below the fold mid-build (Section 15,
+          question 2). */}
+      {inText ? (
+        <fieldset className="builder-dimmed" disabled>
+          <legend className="builder-dimmed-label">Not in use while editing text</legend>
+          {builderParts}
+        </fieldset>
+      ) : (
+        builderParts
+      )}
+      {schema?.truncated && (
+        <p className="query-hint">
+          This ontology is very large, so the schema was sampled — some rare relationships
+          may be missing.
+        </p>
+      )}
 
       {/* With the editor open its errors are shown above it, where the text
           that caused them is. */}

@@ -30,6 +30,8 @@ INPUTS / INPUT SOURCES
 EXPECTED OUTPUT
     - build_query_schema -> a JSON-ready dict with keys: classes, links,
       superClasses, dataProperties, namespaces, truncated, embeddedQueryCount.
+      A class entry typed rdfs:Class and not owl:Class carries
+      `classType: "rdfs"` (graph_builder.py's rule); no other entry does.
       Consumed by frontend/src/sparql/useQueryBuilder.ts.
     - describe_query_node -> how a clicked node maps to a steppable class (the
       class itself, or the types of an individual, best-shared type first).
@@ -271,11 +273,17 @@ def build_query_schema(graph: Graph) -> dict:
     classes: set[URIRef] = set(type_counts)
 
     # Also include classes that are DECLARED but have no instances, so an empty
-    # ontology schema still lists them.
+    # ontology schema still lists them. Which declaration is recorded too: a
+    # class typed rdfs:Class and not owl:Class is an RDFS class, graph_builder's
+    # rule, so the start list colours it as the graph does (D-109, U-12 5.6).
+    owl_typed: set[URIRef] = set()
+    rdfs_typed: set[URIRef] = set()
     for subject, obj in graph.subject_objects(RDF.type):
         if isinstance(subject, URIRef) and obj in (OWL.Class, RDFS.Class):
             if subject not in META_CLASSES:
                 classes.add(subject)
+                (owl_typed if obj == OWL.Class else rdfs_typed).add(subject)
+    rdfs_only = rdfs_typed - owl_typed
 
     # Record direct parents (child -> {parents}) via the shared asserted
     # subClassOf pass; the frontend walks this to inherit links/properties down
@@ -437,6 +445,9 @@ def build_query_schema(graph: Graph) -> dict:
             "prefixed": prefixed(graph, iri),
             "instances": type_counts.get(iri, 0),
             "kind": CLASS_KINDS.get(iri, "class"),
+            # Only a colour, and only on the entries it applies to: every other
+            # entry carries no field, which reads as OWL, as on graph nodes.
+            **({"classType": "rdfs"} if iri in rdfs_only and iri not in CLASS_KINDS else {}),
         }
         for iri in classes
     ]
