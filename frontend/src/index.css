@@ -513,7 +513,7 @@ select:focus {
 }
 
 .nav-item.active svg {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* With no ontology open the three mode tabs are disabled, and one of them still
@@ -754,7 +754,7 @@ select:focus {
 .start-live {
   min-height: 18px;
   font-size: var(--fs-xs);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .start-section {
@@ -956,7 +956,7 @@ select:focus {
    applied before G-2 exists. */
 .onto-chips .chip-on {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .onto-verbs {
@@ -972,7 +972,7 @@ select:focus {
 
 .onto-loading {
   font-size: var(--fs-xs);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* The card's menu. Positioned rather than in the flow, so opening it does not
@@ -1201,7 +1201,7 @@ select:focus {
 }
 
 .graph-notice-icon {
-  color: var(--accent);
+  color: var(--accent-text);
   flex: none;
 }
 
@@ -1273,7 +1273,7 @@ select:focus {
 }
 
 .tool-btn.active {
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: var(--accent);
 }
 
@@ -1340,7 +1340,7 @@ select:focus {
 
 .zoom-btn:hover:not(:disabled) {
   background: var(--bg-raised);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .zoom-btn:disabled {
@@ -1447,7 +1447,7 @@ select:focus {
 
 .legend-header:hover {
   border-color: var(--border-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* The relations section is a list of facts, not of controls, so it is a real
@@ -1485,7 +1485,7 @@ select:focus {
 
 button.legend-row:hover {
   border-color: transparent;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .legend-row.static {
@@ -1949,7 +1949,7 @@ button.legend-row:hover {
 }
 
 .hierarchy-inferred {
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: var(--accent);
   /* With the word, a dashed outline: never colour alone (axioms-and-reasoning 5.7). */
   border-style: dashed;
@@ -1986,7 +1986,7 @@ button.legend-row:hover {
 }
 
 .detail-prefixed {
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: var(--fs-xs);
   font-family: ui-monospace, Consolas, monospace;
 }
@@ -2363,7 +2363,7 @@ button.legend-row:hover {
 }
 
 .catalogue-loading {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 400;
 }
 
@@ -2490,7 +2490,7 @@ button.legend-row:hover {
   border-radius: 8px;
   font-size: var(--fs-xs);
   font-weight: 700;
-  color: #fff;
+  color: var(--accent-contrast);
   padding: 0 4px;
 }
 
@@ -2501,7 +2501,7 @@ button.legend-row:hover {
 
 .chip-pred.optional {
   border-style: dashed;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .chip-flag {
@@ -2517,7 +2517,7 @@ button.legend-row:hover {
 
 .chip-branch {
   font-size: var(--fs-xs);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .chip-count {
@@ -2617,7 +2617,7 @@ button.legend-row:hover {
 }
 
 .menu-toggle.active {
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: var(--accent);
 }
 
@@ -3003,7 +3003,7 @@ button.legend-row:hover {
   border-radius: 10px;
   padding: 1px 8px;
   font-size: var(--fs-xs);
-  color: var(--accent);
+  color: var(--accent-text);
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3051,7 +3051,7 @@ button.legend-row:hover {
 }
 
 .saved-row.open .saved-name {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -3510,7 +3510,7 @@ button.legend-row:hover {
 
 .approval-why summary {
   cursor: pointer;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .approval-why p {
@@ -4002,7 +4002,7 @@ button.legend-row:hover {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .new-project-reason {
@@ -4288,7 +4288,7 @@ button.legend-row:hover {
 .edit-annotation-property {
   font-family: ui-monospace, Consolas, monospace;
   font-size: var(--fs-xs);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .edit-annotation-value {
@@ -4700,7 +4700,7 @@ kbd {
   font-size: var(--fs-xs);
   border: none;
   background: transparent;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .canvas-attr-form {

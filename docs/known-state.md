@@ -1835,9 +1835,16 @@ EXPECTED OUTPUT
   `#3c781f` and numbers and types `#975c07` in the light theme; the gutter
   has no opacity; the credit sits on `--bg-raised`. `styles.test.ts`
   computes every light `.sparql-*` colour against `--bg`, `--bg-raised`,
-  `--bg-panel` and the accent tint. Other selectors still use `--accent` as
-  text (chips, the start list's live line, loading lines); the review did
-  not measure them under 4.5:1 and they are unchanged. The Edit outline's relationship
+  `--bg-panel` and the accent tint. The analyst's re-check (spec v0.6) then
+  measured the detail panel's prefixed name at 4.36:1: `--accent` as text
+  passes only on white, so no rule sets `color: var(--accent)` any more (21
+  were moved to `--accent-text`; the dark theme is unchanged), and
+  `styles.test.ts` fails on one that does. Query's numbered chips write their
+  digits in `--accent-contrast`: white on the dark theme's pale kind colours
+  was 1.83:1 to 2.28:1, `#0b1220` is at least 8.20:1. Their background is the
+  class's kind colour, not `--accent`, and in the light theme white on three
+  kinds is still under 4.5:1 (individual 4.12, object property 3.82,
+  datatype property 4.28); left for the analyst. The Edit outline's relationship
   ends, *(Person → Organization)*, were an ellipsis at 1280x720 before this
   build (15 px of 128 shown) and are now 3 px, the row's ⋯ being a 28 px
   square; the outline's 264 px is the Edit page spec's.

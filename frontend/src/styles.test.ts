@@ -8,7 +8,8 @@ SUMMARY
     (portal-foundations 5.2 to 5.5): the light theme's dim text colour, which
     the design review measured under 4.5:1 on every screen, and the rest of
     AC-6 the spec's v0.4 review found: the SPARQL and Turtle syntax colours,
-    the gutter, accent text on --accent-text, React Flow's credit; the six
+    the gutter, accent text on --accent-text and never --accent (v0.6),
+    Query's chip digits on --accent-contrast, React Flow's credit; the six
     font sizes; the button heights.
 
 BASIC IDEA
@@ -119,6 +120,21 @@ describe("index.css foundations", () => {
       for (const [, body] of own) expect(body, sel).not.toMatch(/(?<![-\w])color:\s*var\(--accent\)/);
       expect(own.some(([, body]) => /(?<![-\w])color:\s*var\(--accent-text\)/.test(body)), sel).toBe(true);
     }
+  });
+
+  it("AC-6: no rule sets its text colour to --accent; borders and fills keep it", () => {
+    // --accent as text is 4.36:1 on the light --bg-panel (.detail-prefixed,
+    // spec v0.6); only white lifts it over 4.5:1, and no rule can promise white.
+    expect(rules.some(([, body]) => /border-color:\s*var\(--accent\)/.test(body))).toBe(true);
+    const offenders = rules.filter(([, body]) => /(?<![-\w])color:\s*var\(--accent\)/.test(body)).map(([sel]) => sel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("AC-6: Query's numbered chips write their digits in --accent-contrast", () => {
+    // White on the dark theme's #4c9aff chip is 2.16:1; #0b1220 is 6.57:1.
+    const chip = rules.filter(([sel]) => sel === ".chip-index");
+    expect(chip.length).toBeGreaterThan(0);
+    expect(chip.map(([, body]) => body).join("")).toMatch(/(?<![-\w])color:\s*var\(--accent-contrast\);/);
   });
 
   it("AC-6: React Flow's credit sits on the theme's raised surface", () => {

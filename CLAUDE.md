@@ -50,7 +50,7 @@ app writes into the real per-user ontology library.
 
 ```bash
 cd backend  && python -m pytest tests    # 1245 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1451 tests, vitest
+cd frontend && npm run test              # 1453 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -384,7 +384,7 @@ leaves one behind.
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]
 - No font size outside the six `--fs-*` tokens, 12 px the smallest; `styles.test.ts` scans `index.css`. [Portal foundations]
-- Link, tab and syntax text in the accent is `--accent-text`; buttons keep `--accent`; the gutter has no opacity; `styles.test.ts` measures every light `.sparql-*` colour. [Portal foundations]
+- No rule sets `color: var(--accent)`: accent text is `--accent-text`; buttons keep `--accent`; `.chip-index` digits are `--accent-contrast`; the gutter has no opacity; `styles.test.ts` measures every light `.sparql-*` colour. [Portal foundations]
 - The button set is `:where()` rules, and the plain `button` rule sets no font or padding: element specificity outranks the set. [Portal foundations]
 - Removal starts only in a Home card's menu; its ⋮ is `aria-disabled` while counting, and Home refocuses when the card goes. [Portal foundations]
 - Home's start focus is `focus({ preventScroll: true })`. [Portal foundations]
