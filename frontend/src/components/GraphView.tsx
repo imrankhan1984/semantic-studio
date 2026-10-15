@@ -215,6 +215,9 @@ export const NODE_HOVER_DRAWERS: Record<Theme, NodeHoverDrawingFunction> = {
  *  sizes (D-110), and drawn only for the node in focus. */
 const LABEL_SIZE = 13;
 const EDGE_LABEL_SIZE = 12;
+/** Above this many links Sigma draws no link name at all, and the toolbar
+ *  does not promise any. */
+const EDGE_LABEL_MAX_EDGES = 3000;
 
 /** What the label drawers need from the component, read at draw time. */
 interface LabelSource {
@@ -519,6 +522,9 @@ export default function GraphView({
   // re-render, and a merge that runs twice reports its additions twice.
   const expandedRef = useRef(onExpanded);
   const [layoutRunning, setLayoutRunning] = useState(false);
+  // Whether this graph draws link names at all, so the toolbar's line about
+  // them is only shown when it is true.
+  const [edgeLabelsOn, setEdgeLabelsOn] = useState(true);
   // How many entities are on the canvas, for the container's accessible label.
   // Held here rather than read off `data.stats`, because a merge adds nodes
   // without replacing `data` and a label that ignored expansions would tell a
@@ -746,8 +752,10 @@ export default function GraphView({
           : [selectedRef.current, hoveredRef.current],
     });
 
+    const edgeLabels = graph.size <= EDGE_LABEL_MAX_EDGES;
+    setEdgeLabelsOn(edgeLabels);
     const renderer = new Sigma(graph, container, {
-      renderEdgeLabels: graph.size <= 3000,
+      renderEdgeLabels: edgeLabels,
       labelColor: { color: paletteRef.current.label },
       edgeLabelColor: { color: paletteRef.current.edgeLabel },
       // Every node the reducer marks `highlighted` draws through this, so the
@@ -1260,9 +1268,11 @@ export default function GraphView({
             </button>
             {/* Link names are drawn only for the node in focus (D-110), so a
                 newcomer is told where they went. Text, not a tooltip. */}
-            <span className="graph-toolbar-note">
-              Link names show when you point at or select a node.
-            </span>
+            {edgeLabelsOn && (
+              <span className="graph-toolbar-note">
+                Link names show when you point at or select a node.
+              </span>
+            )}
           </>
         ) : (
           <span className="graph-toolbar-hint">No ontology loaded</span>

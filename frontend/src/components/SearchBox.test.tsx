@@ -384,6 +384,19 @@ describe("SearchBox limits in words (explore-and-query-layout 5.7, U-4, AC-9)", 
     expect(screen.queryByText(HINT)).toBeNull();
   });
 
+  it("the hint goes on an outside click and on Escape, like the list", async () => {
+    render(<SearchBox ontologyId="o1" theme="dark" onPick={vi.fn()} />);
+    await typed("p");
+    expect(screen.getByText(HINT)).toBeTruthy();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByText(HINT)).toBeNull();
+    await typed("q");
+    expect(screen.getByText(HINT)).toBeTruthy();
+    fireEvent.keyDown(input(), { key: "Escape" });
+    expect(screen.queryByText(HINT)).toBeNull();
+    expect(input().value).toBe("q");
+  });
+
   it("asks for 26 and, when 26 come back, shows 25 options and the more-match line, announced", async () => {
     searchNodes.mockResolvedValue(MANY.slice(0, 26));
     render(<SearchBox ontologyId="o1" theme="dark" onPick={vi.fn()} />);

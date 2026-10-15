@@ -112,8 +112,6 @@ interface Props {
   rdfsClasses?: ReadonlySet<string>;
 }
 
-/** What the panel says about what a query runs over. Null says nothing: an
- *  ontology with no resolved imports has only one thing to query. */
 /** One of the toolbar's four switches: a toggle button that says whether it
  *  is on in words for a screen reader (aria-pressed) and with a check mark
  *  for the eye, as well as the tint. */
@@ -141,6 +139,8 @@ function QuerySwitch({
   );
 }
 
+/** What the panel says about what a query runs over. Null says nothing: an
+ *  ontology with no resolved imports has only one thing to query. */
 export function queryScopeText(includeImports: boolean, importsCount: number | null): string | null {
   if (includeImports) {
     const n = importsCount ?? 0;

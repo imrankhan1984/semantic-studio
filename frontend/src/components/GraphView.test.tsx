@@ -1683,6 +1683,23 @@ describe("labels that fit (5.1, D-110)", () => {
     expect(document.querySelector(".graph-toolbar")!.contains(note)).toBe(true);
     view.unmount();
   });
+
+  it("above 3,000 links, where Sigma draws no link name, the toolbar promises none", async () => {
+    const nodes = Array.from({ length: 80 }, (_, i) => ({
+      id: `http://x/n${i}`, label: `N${i}`, kind: "class", degree: 1,
+    }));
+    const edges = [];
+    for (let i = 0; i < 80 && edges.length < 3001; i++) {
+      for (let j = 0; j < 80 && edges.length < 3001; j++) {
+        if (i !== j) edges.push({ source: `http://x/n${i}`, target: `http://x/n${j}`, kind: "subClassOf", label: "" });
+      }
+    }
+    const big = { ...DATA, nodes, edges, stats: { ...DATA.stats, nodeCount: 80, edgeCount: edges.length } };
+    const { view } = await renderView({ data: big });
+    expect(sigmaCalls.last.settings.renderEdgeLabels).toBe(false);
+    expect(screen.queryByText("Link names show when you point at or select a node.")).toBeNull();
+    view.unmount();
+  });
 });
 
 /* --- the toolbar in words (explore-and-query-layout 5.3, AC-5) ------------ */

@@ -445,14 +445,12 @@ def build_query_schema(graph: Graph) -> dict:
             "prefixed": prefixed(graph, iri),
             "instances": type_counts.get(iri, 0),
             "kind": CLASS_KINDS.get(iri, "class"),
+            # Only a colour, and only on the entries it applies to: every other
+            # entry carries no field, which reads as OWL, as on graph nodes.
+            **({"classType": "rdfs"} if iri in rdfs_only and iri not in CLASS_KINDS else {}),
         }
         for iri in classes
     ]
-    # Only a colour, and only on the entries it applies to: every other entry
-    # carries no field, which reads as OWL, as on graph nodes.
-    for entry, iri in zip(classes_out, classes):
-        if iri in rdfs_only and entry["kind"] == "class":
-            entry["classType"] = "rdfs"
     classes_out.sort(key=lambda c: (-c["instances"], c["label"].lower()))
 
     links_out = [

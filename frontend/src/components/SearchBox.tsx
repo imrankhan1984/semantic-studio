@@ -164,7 +164,8 @@ export default function SearchBox({
   const expanded = open && results.length > 0;
   // One character typed: the search waits for two, and says so where the
   // results would open, rather than looking broken (U-4).
-  const tooShort = query.trim().length === 1;
+  // Shown and closed like the list: an outside click or Escape puts it away.
+  const tooShort = open && query.trim().length === 1;
 
   // Keep the active option on screen. The list is bounded at 50vh and scrolls,
   // so arrowing past the fold moves an aria-activedescendant nobody can see —
@@ -194,7 +195,7 @@ export default function SearchBox({
    */
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
-      if (expanded) {
+      if (expanded || tooShort) {
         e.preventDefault();
         setOpen(false);
         setActive(-1);
@@ -230,7 +231,10 @@ export default function SearchBox({
         placeholder={placeholder}
         value={query}
         disabled={!ontologyId}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+        }}
         onKeyDown={onKeyDown}
         onFocus={() => results.length > 0 && setOpen(true)}
       />
