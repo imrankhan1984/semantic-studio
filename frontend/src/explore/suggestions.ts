@@ -43,7 +43,7 @@ EXPECTED OUTPUT
 
 import { plural } from "../sparql/describe";
 import type { VizGraph, VizNode } from "../types";
-import { KIND_LABELS } from "../types";
+import { kindLabel } from "../types";
 
 /** Eight fills the 380px panel without scrolling, and leaves the per-kind
  *  spread rule room to show three kinds. Reversible by one constant. */
@@ -134,7 +134,7 @@ export function suggestedEntities(
  * different panel, and two naive pluralisers would disagree eventually.
  */
 function kindWords(kind: string, count: number): string {
-  const label = KIND_LABELS[kind] ?? KIND_LABELS.other;
+  const label = kindLabel(kind);
   // Lowercased to read mid-sentence, except when the label opens with an
   // acronym: "SKOS concept" is not a capitalised word and "skos concepts" is
   // wrong in a way a learner would notice.

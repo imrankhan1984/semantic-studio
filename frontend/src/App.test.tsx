@@ -674,20 +674,19 @@ describe("App startup chooser", () => {
     expect(listOntologies).toHaveBeenCalledTimes(1);
   });
 
-  it("close and delete are distinguishable by name, not only by color", async () => {
-    // AC-4. They sit side by side and do very different things. Colour is the
-    // only visual difference, so the accessible names have to carry it.
+  it("the context bar has close and no remove control, in Explore, View and Query (AC-10)", async () => {
+    // portal-foundations 5.7: the bin sat beside the picker and ✕. Removal
+    // is in Home's card menu only.
     await renderAppOpened();
-
-    const close = screen.getByRole("button", { name: /close this ontology/i });
-    const remove = screen.getByRole("button", { name: /remove ontology/i });
-
-    expect(close).not.toBe(remove);
-    expect(close.getAttribute("aria-label")).toBe("Close this ontology");
-    expect(remove.getAttribute("aria-label")).toBe("Remove ontology");
-    // Only one of the two is the destructive one.
-    expect(close.classList.contains("danger")).toBe(false);
-    expect(remove.classList.contains("danger")).toBe(true);
+    for (const name of ["Explore", "View", "Query"]) {
+      await act(async () => {
+        fireEvent.click(screen.getByRole("tab", { name }));
+      });
+      const bar = document.querySelector(".context-row")!;
+      expect(within(bar as HTMLElement).getByRole("button", { name: "Close this ontology" })).toBeTruthy();
+      expect(within(bar as HTMLElement).queryByRole("button", { name: /remove/i }), name).toBeNull();
+      expect(bar.querySelector(".danger"), name).toBeNull();
+    }
   });
 
   it("removing the active ontology returns to the chooser", async () => {
@@ -702,8 +701,15 @@ describe("App startup chooser", () => {
     });
     getGraph.mockClear();
 
+    // From Home's card menu, the one place removal starts (5.7).
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /remove ontology/i }));
+      fireEvent.click(screen.getByRole("tab", { name: "Home" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "More actions for FIBO" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     });
 
     expect(deleteOntology).toHaveBeenCalledWith("o1");
@@ -1634,14 +1640,18 @@ describe("App removal warning", () => {
     { id: "q2", name: "All jurisdictions" },
   ];
 
-  /** The remove control, by the accessible name a screen reader would read. */
-  function removeButton(): HTMLButtonElement {
-    return screen.getByRole("button", { name: /remove ontology/i }) as HTMLButtonElement;
+  /** The card's ⋮ button: removal starts in its menu on Home, and nowhere
+   *  else (portal-foundations 5.7). */
+  function moreButton(): HTMLButtonElement {
+    return screen.getByRole("button", { name: "More actions for FIBO" }) as HTMLButtonElement;
   }
 
   async function clickRemove() {
     await act(async () => {
-      fireEvent.click(removeButton());
+      fireEvent.click(moreButton());
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     });
   }
 
@@ -1661,7 +1671,7 @@ describe("App removal warning", () => {
       return false;
     });
 
-    await renderAppOpened();
+    await renderApp();
     await clickRemove();
 
     expect(listSavedQueries).toHaveBeenCalledWith("o1");
@@ -1674,10 +1684,12 @@ describe("App removal warning", () => {
     confirm.mockRestore();
   });
 
-  it("disables the remove control while counting", async () => {
-    // AC-12. A dialog must never open over a stale count, so the control is
-    // inert while the count is in flight, and says so rather than only
-    // looking it.
+  it("keeps the card inert, and focus on its ⋮ button, while counting", async () => {
+    // AC-12. A dialog must never open over a stale count, so the card is
+    // inert while the count is in flight. Its ⋮ button is aria-disabled, not
+    // disabled: a disabled button drops focus to the page in Chrome, which
+    // the context bar's bin once did (measured 2026-07-30), and no control
+    // may (portal-foundations AC-10).
     let release: (queries: unknown[]) => void = () => {};
     listSavedQueries.mockReturnValue(
       new Promise((resolve) => {
@@ -1686,64 +1698,39 @@ describe("App removal warning", () => {
     );
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 
-    await renderAppOpened();
-    // Not awaited: the count is deliberately left unresolved.
-    await act(async () => {
-      fireEvent.click(removeButton());
-    });
+    await renderApp();
+    await clickRemove();
 
-    expect(removeButton().disabled).toBe(true);
-    expect(removeButton().getAttribute("aria-busy")).toBe("true");
+    expect(moreButton().getAttribute("aria-disabled")).toBe("true");
+    expect(moreButton().disabled).toBe(false);
+    expect(document.activeElement).toBe(moreButton());
     expect(confirm).not.toHaveBeenCalled();
 
     await act(async () => {
       release([]);
     });
 
-    expect(removeButton().disabled).toBe(false);
-    expect(removeButton().getAttribute("aria-busy")).toBe("false");
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(moreButton().getAttribute("aria-disabled")).toBe("false");
+    // Declined: focus is where the person left it.
+    expect(document.activeElement).toBe(moreButton());
     confirm.mockRestore();
   });
 
-  it("gives the remove control its focus back after counting", async () => {
-    // Not in the spec's test plan; it is here because the browser said so.
-    // Disabling a focused button blurs it to the body, and re-enabling does not
-    // undo that — measured in Chrome on the built application, where
-    // document.activeElement read BODY after the count. A keyboard user who
-    // declined the dialog was left outside the tab order, which quietly undoes
-    // the reason section 6 gives for keeping window.confirm at all: that it
-    // returns focus on dismissal.
-    //
-    // This asserts on the mechanism rather than on document.activeElement, and
-    // the reason is a measurement: jsdom does not blur a focused element when
-    // it is disabled, and will not let focus be moved off a disabled one
-    // either, so the losing condition cannot be reproduced here at all. An
-    // activeElement assertion passed with the fix deleted — checked. What can
-    // be held is that focus is deliberately put back, and that does fail
-    // without it. The state it recovers from is browser-only and is recorded
-    // in App.tsx beside the effect.
-    let release: (queries: unknown[]) => void = () => {};
-    listSavedQueries.mockReturnValue(
-      new Promise((resolve) => {
-        release = resolve;
-      }),
-    );
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("gives focus to Home's start target when the removed card goes", async () => {
+    // AC-10: the ⋮ button that held focus goes with its card, and focus
+    // must not fall to the page.
+    listOntologies.mockResolvedValue([SUMMARY, { ...SUMMARY, id: "o2", name: "FOAF" }]);
+    listSavedQueries.mockResolvedValue([]);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    await renderAppOpened();
-    const focused = vi.spyOn(removeButton(), "focus");
-    await act(async () => {
-      fireEvent.click(removeButton());
-    });
-    expect(removeButton().disabled).toBe(true);
-    expect(focused).not.toHaveBeenCalled(); // not while it is still inert
+    await renderApp();
+    await clickRemove();
 
-    await act(async () => {
-      release([]);
-    });
-
-    expect(focused).toHaveBeenCalledTimes(1);
-    expect(removeButton().disabled).toBe(false);
+    expect(deleteOntology).toHaveBeenCalledWith("o1");
+    expect(screen.queryByRole("heading", { level: 3, name: "FIBO" })).toBeNull();
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(cardVerb("Explore", "FOAF"));
     confirm.mockRestore();
   });
 
@@ -1753,7 +1740,7 @@ describe("App removal warning", () => {
     listSavedQueries.mockRejectedValue(new Error("network down"));
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    await renderAppOpened();
+    await renderApp();
     await clickRemove();
 
     const message = String(confirm.mock.calls[0][0]);
@@ -1770,11 +1757,11 @@ describe("App removal warning", () => {
     listSavedQueries.mockResolvedValue(SAVED);
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 
-    await renderAppOpened();
+    await renderApp();
     await clickRemove();
 
     expect(deleteOntology).not.toHaveBeenCalled();
-    expect(homeShown()).toBe(false);
+    expect(libraryCard("FIBO")).toBeTruthy();
     expect(document.querySelector(".notice-bar")).toBeNull();
     confirm.mockRestore();
   });
@@ -1787,7 +1774,7 @@ describe("App removal warning", () => {
     deleteOntology.mockResolvedValue({ deleted: "o1", deletedQueries: 3 });
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    await renderAppOpened();
+    await renderApp();
     await clickRemove();
 
     expect(document.querySelector(".notice-bar")!.textContent).toBe(
@@ -1802,7 +1789,7 @@ describe("App removal warning", () => {
     listSavedQueries.mockResolvedValue([]);
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    await renderAppOpened();
+    await renderApp();
     await clickRemove();
 
     expect(homeShown()).toBe(true);
@@ -1822,7 +1809,7 @@ describe("App removal warning", () => {
     deleteOntology.mockResolvedValue({ deleted: "o1", deletedQueries: 2 });
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    await renderAppOpened();
+    await renderApp();
     // The region exists before there is anything to say. A live region added
     // to the DOM in the same commit as its text is unreliably announced, and
     // this removal replaces the whole main area in that same commit.
@@ -3084,6 +3071,71 @@ describe("App Shapes view (shacl-authoring Stage A)", () => {
     expect(last[0]).toBe(OID);
     expect(last[1]).toBe("http://example.org/invoices#bob");
   });
+
+  // CF-10 (portal-foundations 5.1): Shapes → View shows shapes.ttl, and the
+  // next tab used to keep it, so Explore drew 0 nodes.
+  const docSelect = () => document.getElementById("project-doc-select") as HTMLSelectElement;
+  const lastGraphId = () => getGraph.mock.calls[getGraph.mock.calls.length - 1]?.[0];
+
+  async function shapesThenView() {
+    getDocumentSource.mockResolvedValue({ text: "@prefix : <x#> .\n", revision: 0, fromEditor: true });
+    await openShapes();
+    await act(async () => {
+      fireEvent.click(tab("View"));
+    });
+    expect(docSelect().value).toBe("shapes");
+  }
+
+  it("CF-10: Shapes → View → Explore lands on the model, not shapes.ttl", async () => {
+    await shapesThenView();
+    getGraph.mockClear();
+    await act(async () => {
+      fireEvent.click(tab("Explore"));
+    });
+    expect(projectStore.getSnapshot().activeDoc).toBe("model");
+    expect(docSelect().value).toBe("model");
+    expect(lastGraphId()).toBe(OID);
+  });
+
+  it("CF-10: the same through Query and through Edit", async () => {
+    await shapesThenView();
+    getQuerySchema.mockClear();
+    await act(async () => {
+      fireEvent.click(tab("Query"));
+    });
+    expect(projectStore.getSnapshot().activeDoc).toBe("model");
+    expect(getQuerySchema.mock.calls[getQuerySchema.mock.calls.length - 1]?.[0]).toBe(OID);
+    cleanup();
+    projectStore._reset();
+    await shapesThenView();
+    getGraph.mockClear();
+    await act(async () => {
+      fireEvent.click(tab("Edit"));
+    });
+    expect(projectStore.getSnapshot().activeDoc).toBe("model");
+    await act(async () => {
+      fireEvent.click(tab("Explore"));
+    });
+    expect(lastGraphId()).toBe(OID);
+  });
+
+  it("CF-10: shapes.ttl picked in the project bar while in View is kept on → Explore", async () => {
+    await shapesThenView();
+    // The person's own choice: back to the model, then shapes.ttl again.
+    await act(async () => {
+      fireEvent.change(docSelect(), { target: { value: "model" } });
+    });
+    await act(async () => {
+      fireEvent.change(docSelect(), { target: { value: "shapes" } });
+    });
+    getGraph.mockClear();
+    await act(async () => {
+      fireEvent.click(tab("Explore"));
+    });
+    expect(projectStore.getSnapshot().activeDoc).toBe("shapes");
+    expect(docSelect().value).toBe("shapes");
+    expect(getGraph.mock.calls.some((c) => c[0] === OID)).toBe(false);
+  });
 });
 
 /* --- edit-page-rework: the Edit tab, the side panel, the one draft -------- */
@@ -3464,5 +3516,35 @@ describe("App Edit page, a library ontology (edit-page-rework 5.9, AC-9)", () =>
     projectStore._reset();
     await renderProject();
     expect(screen.queryByRole("note")).toBeNull();
+  });
+});
+
+/* --- portal-foundations 5.6: the status bar's words ---------------------- */
+
+describe("App status bar (portal-foundations 5.6, AC-9)", () => {
+  it("on Home counts the projects and the library", async () => {
+    listProjects.mockResolvedValue([PROJECT, { ...PROJECT, id: "prj-111111111111", name: "Second" }]);
+    await renderApp();
+    expect(statusBar()).toBe("2 projects · 1 ontology in the library");
+  });
+
+  it("says 1 project, and leaves out a library of none", async () => {
+    listProjects.mockResolvedValue([PROJECT]);
+    listOntologies.mockResolvedValue([]);
+    await renderApp();
+    expect(statusBar()).toBe("1 project");
+  });
+
+  it("with nothing at all, says how to begin", async () => {
+    listOntologies.mockResolvedValue([]);
+    await renderApp();
+    expect(statusBar()).toBe("Load an ontology or start a project to begin.");
+  });
+
+  it("names the format as people write it: Turtle, not turtle", async () => {
+    await renderAppOpened();
+    const parts = [...document.querySelectorAll(".status-bar span")].map((s) => s.textContent);
+    expect(parts).toContain("Turtle");
+    expect(parts).not.toContain("turtle");
   });
 });

@@ -135,6 +135,7 @@ BASIC IDEA
     destroy before it asks. Deleting an ontology has always deleted every query
     saved against it; onRemove now fetches that count first, puts it in the
     confirmation, and reports afterwards what the server says it actually took.
+    It starts from a card's ⋯ menu on Home, never from the context bar.
 
 INPUTS / INPUT SOURCES
     - The backend API (via api.ts) for the ontology list and graph.
@@ -214,10 +215,10 @@ import {
   IconNetwork,
   IconQuery,
   IconSun,
-  IconTrash,
   IconView,
 } from "./components/icons";
 import { removalConfirmation, removalPrompt } from "./removalPrompt";
+import { formatName, homeStatus } from "./statusWords";
 import type { SourceTarget } from "./sourceTarget";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type {
@@ -450,16 +451,12 @@ export default function App() {
   // and the error bar would imply the whole screen was broken.
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
-  // The removal pair: `removing` covers the count request that runs before the
-  // confirmation dialog, and `notice` is what the removal is reported in
-  // afterwards. Kept apart from `error` because neither is a failure.
-  const [removing, setRemoving] = useState(false);
+  // What a removal is reported in afterwards. Kept apart from `error` because
+  // it is not a failure.
   const [notice, setNotice] = useState<string | null>(null);
-  const removeRef = useRef<HTMLButtonElement>(null);
-  const wasRemoving = useRef(false);
-  // Which ontology the removal count is running against. It exists because
-  // removal can now be started from a card as well as from the header, and the
-  // card that started it is the one that has to say it is busy.
+  // Which ontology the removal count is running against: the card that
+  // started it, in Home's ⋯ menu, is the one that has to say it is busy.
+  // Removal is started nowhere else (portal-foundations 5.7).
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [mode, setMode] = useState<AppMode>("explore");
   // A mode picked from the header with nothing open. It is remembered rather
@@ -760,8 +757,14 @@ export default function App() {
   // stays the model's, so a problem's link can select an individual without
   // a document switch. Leaving for View shows shapes.ttl in the editor;
   // leaving for anything else goes back to the model.
+  //
+  // View is a waypoint, not a destination (CF-10): the switch Shapes → View
+  // made is undone on the next move to any tab but Shapes, or Explore drew
+  // shapes.ttl's 0 nodes. `shapesInView` marks that switch alone; the
+  // project bar's picker clears it, so a document picked there is kept.
   const hasShapesDoc = projectDocuments.some((d) => d.doc === "shapes");
   const previousMode = useRef(mode);
+  const shapesInView = useRef(false);
   useEffect(() => {
     const was = previousMode.current;
     previousMode.current = mode;
@@ -770,11 +773,18 @@ export default function App() {
     const model = snap.documents.find((d) => d.doc === "model");
     const shapes = snap.documents.find((d) => d.doc === "shapes");
     if (mode === "shapes") {
+      shapesInView.current = false;
       if (model && activeId !== model.ontologyId) setActiveId(model.ontologyId);
       if (shapes && snap.activeDoc !== "shapes") projectStore.switchDocument("shapes");
     } else if (was === "shapes") {
-      if (mode === "view" && shapes) setActiveId(shapes.ontologyId);
-      else if (snap.activeDoc !== "model") projectStore.switchDocument("model");
+      if (mode === "view" && shapes) {
+        setActiveId(shapes.ontologyId);
+        shapesInView.current = true;
+      } else if (snap.activeDoc !== "model") projectStore.switchDocument("model");
+    } else if (was === "view" && mode !== "view" && shapesInView.current) {
+      shapesInView.current = false;
+      if (model && activeId !== model.ontologyId) setActiveId(model.ontologyId);
+      if (snap.activeDoc !== "model") projectStore.switchDocument("model");
     }
     // activeId is read, not followed: only entering, leaving, or the first
     // shape making shapes.ttl moves the document.
@@ -835,23 +845,6 @@ export default function App() {
     window.addEventListener("beforeunload", onUnload);
     return () => window.removeEventListener("beforeunload", onUnload);
   }, [anyDirty]);
-
-  // Give the remove control its focus back when the count finishes.
-  //
-  // Disabling a focused button blurs it to the document body, and re-enabling
-  // it does not undo that. Measured in Chrome on 2026-07-30 against the built
-  // application: after pressing Remove, `document.activeElement` was BODY, so a
-  // keyboard user who declined the dialog was returned to nowhere. The whole
-  // argument for keeping `window.confirm` (spec section 6) is that it returns
-  // focus on dismissal, and it can only return focus to something that had it.
-  //
-  // It has to be an effect rather than a line after `setRemoving(false)`,
-  // because at that point React has not re-rendered and `focus()` on a still
-  // disabled button does nothing.
-  useEffect(() => {
-    if (wasRemoving.current && !removing) removeRef.current?.focus();
-    wasRemoving.current = removing;
-  }, [removing]);
 
   // Reset the per-ontology view state the moment the ontology changes, during
   // render rather than in an effect. In an effect the fetch below would fire
@@ -1055,12 +1048,11 @@ export default function App() {
   // saying so. A failure to count is carried as null, never as zero — see
   // removalPrompt.ts, which is where that distinction is enforced and tested.
   //
-  // It takes an id rather than reading activeId, because removal can now be
-  // started from a card's menu on the home screen as well as from the header,
-  // and on that screen the ontology being removed is usually not the active one.
+  // It takes an id rather than reading activeId: removal is started from a
+  // card's menu on the home screen, where the ontology being removed is
+  // usually not the active one.
   const onRemove = async (id: string) => {
     const name = ontologies.find((o) => o.id === id)?.name ?? "this ontology";
-    setRemoving(true);
     setRemovingId(id);
     let count: number | null = null;
     let names: string[] = [];
@@ -1071,7 +1063,6 @@ export default function App() {
     } catch {
       count = null; // unknown, not zero
     } finally {
-      setRemoving(false);
       setRemovingId(null);
     }
     if (!window.confirm(removalPrompt(name, count, names))) return;
@@ -1454,6 +1445,13 @@ export default function App() {
     return [...kinds].sort();
   }, [graphData]);
 
+  // The classes the graph draws in the RDFS class colour, so Query's path bar
+  // says the same (portal-foundations 5.3); the query schema has no class type.
+  const rdfsClasses = useMemo(
+    () => new Set((graphData?.nodes ?? []).filter((n) => n.classType === "rdfs").map((n) => n.id)),
+    [graphData],
+  );
+
   // The server clamps a budget above its maximum and reports what it clamped
   // to, so asking for more than we got is what "no more to draw" looks like.
   // Derived rather than mirroring the server's constant here, which would be a
@@ -1646,6 +1644,7 @@ export default function App() {
     guardEditor(() => {
       const target = projectStore.getSnapshot().documents.find((d) => d.doc === doc);
       if (!target) return;
+      shapesInView.current = false;
       projectStore.switchDocument(doc);
       setActiveId(target.ontologyId);
     });
@@ -1909,9 +1908,9 @@ export default function App() {
                   </option>
                 ))}
               </select>
-              {/* Close and remove sit side by side and do very different
-                  things, so only one of them is red and their accessible names
-                  say which is which. Close is the ordinary icon button. */}
+              {/* Close only: removing an ontology from the library is in
+                  its card's ⋯ menu on Home, away from the picker it sat
+                  beside (portal-foundations 5.7). */}
               <button
                 className="ghost icon-btn"
                 onClick={onCloseOntology}
@@ -1919,24 +1918,6 @@ export default function App() {
                 aria-label="Close this ontology"
               >
                 <IconClose />
-              </button>
-              {/* Disabled and aria-busy while the saved queries are counted,
-                  so no dialog can open over a stale number and a screen reader
-                  user is told why the control is briefly inert. */}
-              <button
-                ref={removeRef}
-                className="ghost icon-btn danger"
-                onClick={() => void onRemove(activeId!)}
-                disabled={removing}
-                aria-busy={removing}
-                title={
-                  removing
-                    ? "Counting saved queries…"
-                    : "Remove this ontology and delete its stored copy"
-                }
-                aria-label="Remove ontology"
-              >
-                <IconTrash />
               </button>
             </>
           ) : (
@@ -2250,6 +2231,7 @@ export default function App() {
                   <Legend
                     theme={theme}
                     kindCounts={graphData.stats.kindCounts}
+                    rdfsClassCount={graphData.stats.rdfsClassCount}
                     edgeKinds={edgeKinds}
                     hiddenKinds={hiddenKinds}
                     onToggleKind={(kind) =>
@@ -2299,6 +2281,7 @@ export default function App() {
               includeImports={includeImports}
               importsCount={importsCount}
               dataSources={dataSources}
+              rdfsClasses={rdfsClasses}
             />
           ) : mode === "explore" ? (
             // The two halves of the Explore column. Which one shows is decided
@@ -2335,6 +2318,9 @@ export default function App() {
       )}
 
       <footer className="status-bar">
+        {/* The open ontology while there is one, Home included (it is still
+            open there); with none, what is there to open (portal-foundations
+            5.6). */}
         {active ? (
           <>
             <span>{active.name}</span>
@@ -2344,13 +2330,13 @@ export default function App() {
                 the view is partial is never fully hidden. */}
             <span>{countOf(graphData, "node", expanded)} nodes</span>
             <span>{countOf(graphData, "edge", expanded)} edges</span>
-            <span className="dim">{active.format}</span>
+            <span className="dim">{formatName(active.format)}</span>
             {active.source !== "upload" && active.source !== "project" && (
               <span className="dim src">{active.source}</span>
             )}
           </>
         ) : (
-          <span className="dim">Load an ontology to begin — RDF, RDFS, OWL & SKOS supported.</span>
+          <span className="dim">{homeStatus(projects.length, ontologies.length)}</span>
         )}
       </footer>
 

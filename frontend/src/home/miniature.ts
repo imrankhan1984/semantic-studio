@@ -47,7 +47,7 @@ EXPECTED OUTPUT
 */
 
 import type { CardSketch } from "../types";
-import { KIND_LABELS } from "../types";
+import { kindLabel } from "../types";
 
 /**
  * The box each layout draws into, in its own units. The SVG scales these with a
@@ -298,7 +298,7 @@ export function compositionSegments(
     .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
     .map(([kind, count]) => ({
       kind,
-      label: KIND_LABELS[kind] ?? KIND_LABELS.other,
+      label: kindLabel(kind),
       count,
       percent: (count / total) * 100,
     }));

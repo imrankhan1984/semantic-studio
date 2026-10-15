@@ -41,7 +41,7 @@ import { useMemo } from "react";
 import { describeContents, suggestedEntities } from "../explore/suggestions";
 import { dataLabel } from "../modeling/dataSentences";
 import type { DataSource, Theme, VizGraph } from "../types";
-import { KIND_LABELS, kindColor } from "../types";
+import { kindColor, kindLabel } from "../types";
 
 interface Props {
   graph: VizGraph | null;
@@ -106,18 +106,18 @@ export default function ExploreStart({ graph, loading, theme, onSelect, dataSour
               >
                 <span className="starter-title">
                   {/* Decorative: the kind is written out on the line below, so
-                      nothing on this panel depends on colour. The graph's kind
-                      encoding still does, which is backlog G-2 and is not fixed
-                      here. */}
+                      nothing on this panel depends on colour. An RDFS-only
+                      class takes the RDFS class colour (portal-foundations
+                      5.3); its word is still Class. */}
                   <span
                     className="dot"
                     aria-hidden="true"
-                    style={{ background: kindColor(entity.kind, theme) }}
+                    style={{ background: kindColor(entity.kind, theme, entity.classType) }}
                   />
                   {entity.label}
                 </span>
                 <span className="starter-detail">
-                  {KIND_LABELS[entity.kind] ?? KIND_LABELS.other} ·{" "}
+                  {kindLabel(entity.kind)} ·{" "}
                   {entity.degree.toLocaleString()}{" "}
                   {entity.degree === 1 ? "connection" : "connections"}
                 </span>

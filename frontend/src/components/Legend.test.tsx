@@ -236,3 +236,58 @@ describe("Legend rendering cost", () => {
     ).toBe("true");
   });
 });
+
+/** A colour as jsdom writes it back, so a hex compares with its rgb(). */
+function css(colour: string): string {
+  const probe = document.createElement("span");
+  probe.style.background = colour;
+  return probe.style.background;
+}
+
+describe("Legend RDFS class line (portal-foundations 5.3, AC-4)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("explains the second class colour under Class, as text, not a control", () => {
+    render(
+      <Legend
+        theme="light"
+        kindCounts={{ class: 5, individual: 2 }}
+        rdfsClassCount={2}
+        edgeKinds={[]}
+        hiddenKinds={new Set()}
+        onToggleKind={vi.fn()}
+      />,
+    );
+    const line = screen.getByText("RDFS class").closest(".legend-row")!;
+    expect(line.tagName).not.toBe("BUTTON");
+    expect(line.querySelector("button, [role=button], [tabindex]")).toBeNull();
+    expect(line.textContent).toContain("2");
+    // Directly under Class, and Class is still the one filter for both.
+    const classRow = screen.getByRole("button", { name: "Class, 5" });
+    expect(classRow.nextElementSibling).toBe(line);
+    expect(filterRows()).toHaveLength(2);
+    const dot = line.querySelector<HTMLElement>(".dot")!;
+    expect(dot.style.background).toBe(css("#2f7f78"));
+    expect(classRow.querySelector<HTMLElement>(".dot")!.style.background).toBe(css("#4a72a8"));
+  });
+
+  it("has no RDFS class line when the ontology has no RDFS-only class", () => {
+    renderLegend();
+    expect(screen.queryByText("RDFS class")).toBeNull();
+  });
+
+  it("names a kind called constructor Other (X-6)", () => {
+    render(
+      <Legend
+        theme="dark"
+        kindCounts={{ constructor: 1 }}
+        edgeKinds={["valueOf"]}
+        hiddenKinds={new Set()}
+        onToggleKind={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Other, 1" })).toBeTruthy();
+  });
+});

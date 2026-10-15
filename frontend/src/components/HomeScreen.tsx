@@ -252,12 +252,15 @@ export default function HomeScreen({
   // card to take it. This screen is the only thing on screen whenever it is
   // shown — on startup and on every press of Home — so taking focus interrupts
   // nothing.
+  const startTarget = () =>
+    firstControl.current ??
+    catalogueRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)") ??
+    null;
+
   useEffect(() => {
     if (loading || focusTaken.current) return;
     focusTaken.current = true;
-    const target =
-      firstControl.current ??
-      catalogueRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+    const target = startTarget();
     if (!target) return;
 
     // Mark the row so index.css can draw a ring on it. Measured in headless
@@ -272,8 +275,25 @@ export default function HomeScreen({
     // rather than something only "Close this ontology" did. See D-022.
     target.dataset.startFocus = "";
     target.addEventListener("blur", () => delete target.dataset.startFocus, { once: true });
-    target.focus();
+    // Without preventScroll the browser scrolled to the target, and at
+    // 1280x720 Home opened past My projects (portal-foundations 5.8).
+    target.focus({ preventScroll: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
+
+  // A card removed from its ⋮ menu takes its focused ⋮ button with it, and
+  // focus would fall to the page (portal-foundations 5.7: removal lives only
+  // here now). It goes to the screen's start target instead; a removal that
+  // was declined left focus on the ⋮, and this does nothing.
+  const shownIds = useRef(ontologies.map((o) => o.id));
+  useEffect(() => {
+    const was = shownIds.current;
+    shownIds.current = ontologies.map((o) => o.id);
+    if (!was.some((id) => !shownIds.current.includes(id))) return;
+    if (document.activeElement && document.activeElement !== document.body) return;
+    startTarget()?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ontologies]);
 
   const pickCatalogue = useCallback(
     async (entry: CatalogueEntry) => {

@@ -43,6 +43,8 @@ INPUTS / INPUT SOURCES (props)
       imported documents. The panel states which, in text (AC-20).
     - dataSources: a project's switched-on data snapshots, each named on a
       source line, a sample's words included (csv-data-import 5.6).
+    - rdfsClasses: the classes the graph draws as RDFS-only, for the path
+      bar's colours (portal-foundations 5.3).
 
 EXPECTED OUTPUT
     - The rendered query panel and the side effects of its controls (executing
@@ -101,6 +103,8 @@ interface Props {
   /** A project's switched-on data snapshots, named on the source line with
    *  their labels (csv-data-import 5.6). */
   dataSources?: DataSource[];
+  /** Classes the graph draws in the RDFS class colour, for the path bar. */
+  rdfsClasses?: ReadonlySet<string>;
 }
 
 /** What the panel says about what a query runs over. Null says nothing: an
@@ -144,6 +148,7 @@ export default function QueryPanel({
   includeImports = false,
   importsCount = null,
   dataSources = [],
+  rdfsClasses,
 }: Props) {
   const {
     schema,
@@ -525,6 +530,7 @@ export default function QueryPanel({
           stepVars={stepVars}
           theme={theme}
           classKinds={classKinds}
+          rdfsClasses={rdfsClasses}
           labelFor={labelFor}
           openMenu={openMenu}
           onOpenMenu={setOpenMenu}

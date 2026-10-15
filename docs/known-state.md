@@ -1756,3 +1756,95 @@ EXPECTED OUTPUT
   `test_examples.py`, not `ExampleForm.test.tsx`: the example's choices are
   the server's, and the form is not told a relationship's characteristics.
   T-21 writes *has exactly one line*, as 5.8 writes one, not *exactly 1*.
+
+- **Portal foundations** (2026-10-15, U-11, `portal-foundations.md`, D-109;
+  fixes CF-10, closes X-6 and G-2). One palette, six sizes, one button set,
+  the status bar's words, the bin out of the context bar, Home at its top.
+
+  **One place writes a kind's colour.** `frontend/src/theme/kinds.ts` holds
+  every kind's accent, tint and ink in both themes and every edge colour;
+  `canvas/kindColours.ts` and `types.ts` read it, so the Edit page and every
+  other tab cannot drift apart again. It sits outside `canvas/` because App
+  reaches `canvas/` only through `React.lazy`. `index.css` still says the
+  Edit page's values as custom properties (CSS cannot import TypeScript), and
+  `kindColours.test.ts` checks they agree. `theme/kinds.test.ts` scans every
+  production source for a palette hex outside `theme/`, after asserting it
+  read them; the dark graph's `dimEdge` equals the dark *other* tint by
+  chance and is allowed by its line, not by its value. Graph nodes are
+  measured as drawn, composited at `GRAPH_ALPHA`: at the old 90 % the light
+  object property was 3.03:1, so the test's floors are 5.3's (3.2 light,
+  6.0 dark), not AC-3's 3:1, or putting 90 % back would pass.
+
+  **classType is a colour, not a kind.** `graph_builder.py` reads the two
+  class typings in its first pass and marks a class typed only `rdfs:Class`
+  `classType: "rdfs"`; `kind` stays `class`, so filters, counts and Query
+  are untouched. `stats.rdfsClassCount` counts them over the whole ontology,
+  as `kindCounts` does (D-017), for the legend's line under Class. The path
+  bar reads the query schema, which has no class type yet (U-12), so App
+  hands it the RDFS-only classes the graph holds; one the budget did not
+  draw is shown in the OWL colour there. Query's start list keeps the OWL
+  colour (Section 15). The Home thumbnail's sketch carries no class type
+  and nothing backfills a sketch, so it stays OWL-coloured too.
+
+  **Every lookup by kind is own-key.** A kind is a string from a loaded
+  file, and `KIND_LABELS["constructor"]` was Object's constructor, truthy,
+  so `?? "Other"` never fired (X-6). `own()` and `paletteKind()` in
+  `theme/kinds.ts`, `kindLabel()`, `kindColor()`, `nodeColor()` and
+  `edgeColor()` in `types.ts` are the lookups; ES2020's lib has no
+  `Object.hasOwn`, so it is `hasOwnProperty.call`, as `networkWords.ts`.
+
+  **Six font sizes.** Every `font-size` in `index.css` is a `--fs-*` token or
+  `inherit`; `styles.test.ts` scans it, the `font` shorthand included.
+  React Flow's `base.css` loads after `index.css` and writes its credit at
+  10 px, so the override carries the extra `.react-flow` class. Measured in
+  Chrome on every tab against the previous stylesheet: no new clipping, no
+  sideways scroll, and exactly the six sizes rendered.
+
+  **The button set has no specificity, and the plain rule sets no size.**
+  The set is `:where()` rules, so a class's own rule still places its
+  button; the tabs, rows, cards, chips, links and menu items in its `:not()`
+  list keep their shapes. As first built the plain `button` rule still set
+  `font` and `padding`: element specificity beats `:where()`'s none, so no
+  size in the set applied and icon buttons kept 12 px side padding, their
+  icons squeezed to 4 to 8 px. The screenshots showed it; the tests did not.
+  Both now sit in a `:where(button)` default, and `styles.test.ts` holds the
+  plain rule to colours. The zoom stack keeps radius 0 between its three
+  joined buttons. The turned-off look is one rule on
+  `button[aria-disabled="true"]` (and `:disabled`, for the few native ones
+  left), replacing five per-area copies.
+
+  **Removal starts on Home only, and keeps focus.** The bin left the context
+  bar (5.7) and `removeRef` with it. The spec said Home already placed focus
+  after a removal from its menu; it did not: the Remove item unmounted with
+  focus on it, and the card's ⋮ was natively `disabled` during the count, so
+  focus fell to the page. The ⋮ is now `aria-disabled`, Remove closes the
+  menu onto it first, and when the card goes Home focuses its start target.
+  Checked in Chrome by keyboard.
+
+  **Where the spec and the build differ.** The status bar counts what is
+  there only when nothing is open: an ontology still open behind Home keeps
+  its line, which two earlier tests require. `stats.rdfsClassCount` is a
+  field the spec did not name. The light-theme text left under 4.5:1 by the
+  first build (Turtle view keywords 3.99:1, strings 4.45:1, the accent blue
+  as link text 4.36:1), with two more the analyst's review (spec v0.4)
+  found, the line numbers at 60 % opacity (2.38:1 light, 2.93:1 dark) and
+  React Flow's credit on its own pale panel in the dark theme (1.14:1), were
+  closed in a review fix commit. Accent as text is now `--accent-text`
+  (`#1d63cc` light, 5.00:1 on `--bg`; the dark theme's is `--accent`);
+  buttons keep `--accent`, whose white label is another pair. `--literal` is
+  `#3c781f` and numbers and types `#975c07` in the light theme; the gutter
+  has no opacity; the credit sits on `--bg-raised`. `styles.test.ts`
+  computes every light `.sparql-*` colour against `--bg`, `--bg-raised`,
+  `--bg-panel` and the accent tint. The analyst's re-check (spec v0.6) then
+  measured the detail panel's prefixed name at 4.36:1: `--accent` as text
+  passes only on white, so no rule sets `color: var(--accent)` any more (21
+  were moved to `--accent-text`; the dark theme is unchanged), and
+  `styles.test.ts` fails on one that does. Query's numbered chips write their
+  digits in `--accent-contrast`: white on the dark theme's pale kind colours
+  was 1.83:1 to 2.28:1, `#0b1220` is at least 8.20:1. Their background is the
+  class's kind colour, not `--accent`, and in the light theme white on three
+  kinds is still under 4.5:1 (individual 4.12, object property 3.82,
+  datatype property 4.28); left for the analyst. The Edit outline's relationship
+  ends, *(Person → Organization)*, were an ellipsis at 1280x720 before this
+  build (15 px of 128 shown) and are now 3 px, the row's ⋯ being a 28 px
+  square; the outline's 264 px is the Edit page spec's.

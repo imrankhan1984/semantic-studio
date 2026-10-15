@@ -406,8 +406,10 @@ describe("HomeScreen catalogue", () => {
     // The library cards too: starting a second ontology underneath a download
     // in flight would leave the finished download overriding the later choice.
     for (const card of cards()) {
+      // The ⋮ button by aria-disabled, so it keeps focus (5.7).
       for (const button of card.querySelectorAll("button")) {
-        expect((button as HTMLButtonElement).disabled).toBe(true);
+        const inert = (button as HTMLButtonElement).disabled || button.getAttribute("aria-disabled") === "true";
+        expect(inert).toBe(true);
       }
     }
   });
@@ -477,6 +479,19 @@ describe("HomeScreen keyboard and screen reader", () => {
 
     expect(document.querySelectorAll("[data-start-focus]")).toHaveLength(1);
     expect((document.activeElement as HTMLElement).dataset.startFocus).toBe("");
+  });
+
+  it("focuses the start target without scrolling to it (portal-foundations 5.8, AC-11)", () => {
+    // At 1280x720 a plain focus() scrolled Home past My projects. The spy
+    // reads the options the call was given; jsdom does no scrolling.
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    renderScreen();
+    const target = document.querySelector<HTMLElement>("[data-start-focus]")!;
+    expect(document.activeElement).toBe(target);
+    const call = focus.mock.calls.find((_, i) => focus.mock.contexts[i] === target);
+    expect(call, "the start target was focused").toBeDefined();
+    expect(call![0]).toEqual({ preventScroll: true });
+    focus.mockRestore();
   });
 
   it("drops the focus marker once focus moves away", () => {

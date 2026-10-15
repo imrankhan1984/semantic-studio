@@ -20,12 +20,24 @@ INPUTS / INPUT SOURCES
     - None at runtime; these are type declarations and colour constants.
 
 EXPECTED OUTPUT
-    - Types imported across the app; PALETTES / kindColor / KIND_LABELS for
-      rendering the graph and legend.
+    - Types imported across the app; PALETTES / kindColor / nodeColor /
+      edgeColor / KIND_LABELS / kindLabel for rendering the graph and legend,
+      every colour read from theme/kinds.ts.
 ================================================================================
 */
 
 import type { QueryState } from "./sparql/types";
+import {
+  EDGES,
+  GRAPH_ALPHA,
+  KINDS,
+  NEUTRAL_EDGE,
+  own,
+  paletteKind,
+  type KindTokens,
+  type PaletteKind,
+  type Theme,
+} from "./theme/kinds";
 
 // --- the network broker (external-access Stage 1, D-066) -----------------
 
@@ -79,7 +91,7 @@ export interface NetworkActivity {
 }
 
 // Which colour theme is active.
-export type Theme = "dark" | "light";
+export type { Theme } from "./theme/kinds";
 
 // The top-level modes. View / Explore / Query / Hierarchy are selected by the
 // header tabs and act on an ontology; `home` is the library screen, which acts
@@ -249,6 +261,9 @@ export interface VizNode {
   id: string;
   label: string;
   kind: string;    // colours the node and keys the legend
+  // "rdfs" on a class typed only rdfs:Class: drawn in the RDFS class colour,
+  // still kind "class" for filters and counts (portal-foundations 5.3).
+  classType?: "rdfs";
   degree: number;  // edge count, used to size the node
   // With imports on: the import that defines this entity. The graph draws it
   // smaller, so being imported is not told by colour alone (AC-21).
@@ -288,6 +303,9 @@ export interface VizGraph {
     // subset, so these will not add up to nodeCount. That is deliberate: the
     // legend describes the ontology, not the canvas. See D-017.
     kindCounts: Record<string, number>;
+    // Of kindCounts.class, those typed only rdfs:Class, whole-ontology too:
+    // the legend's RDFS class line (portal-foundations 5.3).
+    rdfsClassCount?: number;
   };
 }
 
@@ -574,103 +592,22 @@ export interface ModelWarning {
 }
 
 /* --- theme-aware palettes ------------------------------------------------ */
-// Node colours per kind, one map per theme. Keys match the backend's node
-// "kind" strings so a new kind only needs a colour added here.
-//
-// These are the calmer, lower-saturation palettes of G-8 (spec
-// graph-legibility). The previous set was fully saturated, and at FIBO density
-// hundreds of overlapping circles read as noise — Imran's words were "the colour
-// used today is hardly distinguishable". Two constraints shaped every value and
-// they pull against each other, so the numbers were chosen by loading FIBO in
-// both themes rather than by arithmetic:
-//
-//   - Each colour must stay distinguishable from --bg-canvas in its own theme.
-//     Pastels are lowest-contrast against a dark canvas, so the dark set is
-//     lightened rather than merely desaturated, and the light set is kept
-//     medium-depth rather than pale, because a pale colour under alpha washes
-//     into white.
-//   - Eleven kinds is near the limit of what colour alone can carry, and
-//     lowering saturation shrinks the distance between them. The SKOS purples
-//     (concept / collection / conceptScheme) are the tightest cluster and were
-//     the ones checked hardest; they remain tellable apart but this is exactly
-//     G-2's argument arriving a band early. See the build report.
-//
-// The alpha (the last two hex digits) is the transparency G-8 asked for, and it
-// is chosen against the DENSE case: two translucent circles blend to a third
-// colour belonging to no kind, so too little alpha is invisible and too much
-// washes a light-theme cluster toward white (normal compositing over white
-// lightens). The dark theme carries more transparency than the light one for
-// that reason — see the risk note in the spec's Section 8.
-const KIND_COLORS_DARK: Record<string, string> = {
-  class: "#7db4f2d9",
-  objectProperty: "#f2b866d9",
-  datatypeProperty: "#e6d879d9",
-  annotationProperty: "#cba07dd9",
-  property: "#ef9d76d9",
-  concept: "#b79bf0d9",
-  conceptScheme: "#ef9bc9d9",
-  collection: "#d3a9e8d9",
-  individual: "#86d6a0d9",
-  ontology: "#6fd0c2d9",
-  other: "#9aa3b5d9",
-};
-
-const KIND_COLORS_LIGHT: Record<string, string> = {
-  class: "#3f82cfe6",
-  objectProperty: "#c9822ee6",
-  datatypeProperty: "#9a8420e6",
-  annotationProperty: "#9c6b45e6",
-  property: "#cc6a45e6",
-  concept: "#7d54c4e6",
-  conceptScheme: "#c25a92e6",
-  collection: "#a06fc0e6",
-  individual: "#3f955fe6",
-  ontology: "#2f938ae6",
-  other: "#667284e6",
-};
-
-// Edge colours per relation kind, one map per theme.
-const EDGE_COLORS_DARK: Record<string, string> = {
-  subClassOf: "#4c9aff",
-  subPropertyOf: "#e07b53",
-  domain: "#9aa7bd",
-  range: "#9aa7bd",
-  instanceOf: "#57cc7c",
-  assertion: "#3ba98f",
-  broader: "#b06ef7",
-  related: "#d38ce8",
-  inScheme: "#ef6ab8",
-  member: "#d38ce8",
-  equivalentClass: "#38c5b4",
-  equivalentProperty: "#38c5b4",
-  disjointWith: "#e15b64",
-  inverseOf: "#e07b53",
-  sameAs: "#38c5b4",
-  seeAlso: "#8a93a6",
-};
-
-const EDGE_COLORS_LIGHT: Record<string, string> = {
-  subClassOf: "#1f6fe0",
-  subPropertyOf: "#c2410c",
-  domain: "#6b7280",
-  range: "#6b7280",
-  instanceOf: "#15803d",
-  assertion: "#0f766e",
-  broader: "#7c3aed",
-  related: "#a855f7",
-  inScheme: "#db2777",
-  member: "#a855f7",
-  equivalentClass: "#0d9488",
-  equivalentProperty: "#0d9488",
-  disjointWith: "#dc2626",
-  inverseOf: "#c2410c",
-  sameAs: "#0d9488",
-  seeAlso: "#64748b",
+// Node and edge colours come from theme/kinds.ts, the one kind palette every
+// tab draws from (portal-foundations 5.3, D-109); nothing here writes a
+// kind's hex. G-8's calmer palette and its reasoning about transparency
+// (overlapping nodes stay readable) are kept: the nodes are the palette's
+// accents at GRAPH_ALPHA, measured as drawn by theme/kinds.test.ts.
+const graphKinds = (theme: Theme): Record<PaletteKind, string> => {
+  const out = {} as Record<PaletteKind, string>;
+  for (const [kind, tokens] of Object.entries(KINDS[theme]) as [PaletteKind, KindTokens][]) {
+    out[kind] = tokens.accent + GRAPH_ALPHA[theme];
+  }
+  return out;
 };
 
 // The complete set of colours the graph renderer needs for one theme.
 export interface GraphPalette {
-  kind: Record<string, string>;   // node colour by kind
+  kind: Record<PaletteKind, string>; // node colour by palette kind (paletteKind)
   edge: Record<string, string>;   // edge colour by kind
   defaultEdge: string;            // fallback edge colour
   dimNode: string;                // dimmed (out-of-focus) node colour
@@ -694,9 +631,9 @@ export interface GraphPalette {
 // Assembled palette per theme, consumed by GraphView.
 export const PALETTES: Record<Theme, GraphPalette> = {
   dark: {
-    kind: KIND_COLORS_DARK,
-    edge: EDGE_COLORS_DARK,
-    defaultEdge: "#3a4353",
+    kind: graphKinds("dark"),
+    edge: EDGES.dark,
+    defaultEdge: NEUTRAL_EDGE.dark,
     dimNode: "#333a47",
     dimEdge: "#262c37",
     label: "#f2f5fa",
@@ -711,9 +648,9 @@ export const PALETTES: Record<Theme, GraphPalette> = {
     selectedRing: "#4c9aff",
   },
   light: {
-    kind: KIND_COLORS_LIGHT,
-    edge: EDGE_COLORS_LIGHT,
-    defaultEdge: "#c4ccd8",
+    kind: graphKinds("light"),
+    edge: EDGES.light,
+    defaultEdge: NEUTRAL_EDGE.light,
     dimNode: "#d5dae3",
     dimEdge: "#e3e7ee",
     label: "#141821",
@@ -726,10 +663,22 @@ export const PALETTES: Record<Theme, GraphPalette> = {
   },
 };
 
-/** The colour for a node kind in the given theme (falls back to "other"). */
-export function kindColor(kind: string, theme: Theme): string {
-  const palette = PALETTES[theme].kind;
-  return palette[kind] ?? palette.other;
+/** A kind's dot, swatch or stripe: the palette's opaque accent. A class
+ *  typed only rdfs:Class (`classType: "rdfs"`) takes the RDFS class colour;
+ *  any kind the palette does not hold as its own, `constructor` included,
+ *  is "other" (X-6). */
+export function kindColor(kind: string, theme: Theme, classType?: string | null): string {
+  return KINDS[theme][paletteKind(kind, classType)].accent;
+}
+
+/** A graph node's fill, translucent, from the palette `GraphView` holds. */
+export function nodeColor(palette: GraphPalette, kind: string, classType?: string | null): string {
+  return palette.kind[paletteKind(kind, classType)];
+}
+
+/** A graph edge's colour; an unknown or inherited kind is neutral. */
+export function edgeColor(palette: GraphPalette, kind: string): string {
+  return own(palette.edge, kind) ?? palette.defaultEdge;
 }
 
 // Human-readable names for each node kind, shown in the legend and menus.
@@ -746,6 +695,11 @@ export const KIND_LABELS: Record<string, string> = {
   ontology: "Ontology",
   other: "Other",
 };
+
+/** A kind in words; an unknown or inherited kind is "Other" (X-6). */
+export function kindLabel(kind: string): string {
+  return own(KIND_LABELS, kind) ?? KIND_LABELS.other;
+}
 
 /* --- owl:imports (external-access Stage 2) --------------------------------- */
 

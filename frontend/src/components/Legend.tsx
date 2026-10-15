@@ -22,11 +22,17 @@ BASIC IDEA
     header carries aria-expanded and names the panel it controls.
 
     The Relations rows do nothing and stay non-interactive, as a plain list. A
-    control that does nothing is worse than text.
+    control that does nothing is worse than text. So is the RDFS class line
+    under Class (portal-foundations 5.3): it explains the graph's second class
+    colour, and Class stays the one filter for both.
+
+    Every lookup by kind is own-key (kindLabel, kindColor, edgeColor): a kind
+    is a string from a loaded file (X-6).
 
 INPUTS / INPUT SOURCES (props)
     - theme: for the swatch colours.
     - kindCounts: node count per kind (from graph stats).
+    - rdfsClassCount: how many of the classes are RDFS-only (graph stats).
     - edgeKinds: which relation kinds are present.
     - hiddenKinds + onToggleKind: the show/hide filter state and its setter.
 
@@ -35,13 +41,15 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import type { Theme } from "../types";
-import { KIND_LABELS, PALETTES, kindColor } from "../types";
+import { PALETTES, edgeColor, kindColor, kindLabel } from "../types";
+import { own } from "../theme/kinds";
 
 interface Props {
   theme: Theme;
   kindCounts: Record<string, number>;
+  rdfsClassCount?: number;
   edgeKinds: string[];
   hiddenKinds: Set<string>;
   onToggleKind: (kind: string) => void;
@@ -69,7 +77,7 @@ const EDGE_LABELS: Record<string, string> = {
 /** What the collapse header controls, named so aria-controls can point at it. */
 const PANEL_ID = "legend-panel";
 
-export default function Legend({ theme, kindCounts, edgeKinds, hiddenKinds, onToggleKind }: Props) {
+export default function Legend({ theme, kindCounts, rdfsClassCount = 0, edgeKinds, hiddenKinds, onToggleKind }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const kinds = Object.entries(kindCounts).sort((a, b) => b[1] - a[1]);
   if (kinds.length === 0) return null;
@@ -125,18 +133,26 @@ export default function Legend({ theme, kindCounts, edgeKinds, hiddenKinds, onTo
           //
           // aria-pressed is TRUE when the kind is hidden — the control's job is
           // "hide this kind", and pressing it in is what hides it.
-          <button
-            key={kind}
-            className={hiddenKinds.has(kind) ? "legend-row off" : "legend-row"}
-            onClick={() => onToggleKind(kind)}
-            aria-pressed={hiddenKinds.has(kind)}
-            aria-label={`${KIND_LABELS[kind] ?? kind}, ${count}`}
-            title="Toggle visibility"
-          >
-            <span className="dot" style={{ background: kindColor(kind, theme) }} />
-            <span className="legend-label">{KIND_LABELS[kind] ?? kind}</span>
-            <span className="legend-count">{count}</span>
-          </button>
+          <Fragment key={kind}>
+            <button
+              className={hiddenKinds.has(kind) ? "legend-row off" : "legend-row"}
+              onClick={() => onToggleKind(kind)}
+              aria-pressed={hiddenKinds.has(kind)}
+              aria-label={`${kindLabel(kind)}, ${count}`}
+              title="Toggle visibility"
+            >
+              <span className="dot" style={{ background: kindColor(kind, theme) }} />
+              <span className="legend-label">{kindLabel(kind)}</span>
+              <span className="legend-count">{count}</span>
+            </button>
+            {kind === "class" && rdfsClassCount > 0 && (
+              <div className="legend-row static legend-sub">
+                <span className="dot" style={{ background: kindColor("class", theme, "rdfs") }} />
+                <span className="legend-label">RDFS class</span>
+                <span className="legend-count">{rdfsClassCount}</span>
+              </div>
+            )}
+          </Fragment>
         ))}
         {edgeKinds.length > 0 && (
           <>
@@ -149,9 +165,9 @@ export default function Legend({ theme, kindCounts, edgeKinds, hiddenKinds, onTo
                 <li key={kind} className="legend-row static">
                   <span
                     className="line"
-                    style={{ background: palette.edge[kind] ?? palette.defaultEdge }}
+                    style={{ background: edgeColor(palette, kind) }}
                   />
-                  <span className="legend-label">{EDGE_LABELS[kind] ?? kind}</span>
+                  <span className="legend-label">{own(EDGE_LABELS, kind) ?? kind}</span>
                 </li>
               ))}
             </ul>

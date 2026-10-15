@@ -254,7 +254,13 @@ describe("AboutPanel typography", () => {
     const panel = rule("\\.about-panel");
     const width = Number(panel.match(/width:\s*(\d+)px/)![1]);
     const padding = Number(panel.match(/padding:\s*(\d+)px/)![1]);
-    const body = Number(rule("\\.about-description").match(/font-size:\s*(\d+)px/)![1]);
+    // The size is one of the six tokens (portal-foundations 5.4): resolved
+    // to the pixels the token says.
+    const declared = rule("\\.about-description").match(/font-size:\s*([^;]+);/)![1].trim();
+    const token = declared.match(/^var\((--fs-[\w-]+)\)$/);
+    const body = Number(
+      token ? CSS.match(new RegExp(`${token[1]}:\\s*(\\d+)px`))![1] : declared.match(/^(\d+)px$/)![1],
+    );
     expect(width).toBe(420);
 
     // Half the font size per character is the usual working figure for a

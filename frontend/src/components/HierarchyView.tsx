@@ -123,7 +123,7 @@ import {
 import { ApiError, fetchHierarchy } from "../api";
 import type { CanvasSet, DataSource, Hierarchy, HierarchyForest, HierarchyNode, HierarchyOrigin } from "../types";
 import { dataLabel } from "../modeling/dataSentences";
-import { KIND_LABELS } from "../types";
+import { kindLabel } from "../types";
 import type { CreatingKind, ProjectKind } from "../types";
 import { otherKindNote, otherKindReason, rowEnds } from "../modeling/sentences";
 import DeleteDialog from "./DeleteDialog";
@@ -241,10 +241,9 @@ function keepForFilter(forest: HierarchyForest, query: string): Set<string> | nu
 
 /** A row's dot, in the Edit page's kind colours (edit-page-rework 5.8), the
  *  canvas's own: an OWL or RDFS class, a concept, a scheme, an example, an
- *  attribute, a relationship. The tokens are index.css's; the canvas's
- *  values live in canvas/kindColours.ts, which this file must not import
- *  (App reaches canvas/ only through React.lazy). Explore keeps kindColor
- *  until the portal-wide review (U-10). */
+ *  attribute, a relationship. The tokens are index.css's, which say what
+ *  the portal's one palette says (theme/kinds.ts, D-109); this file must
+ *  not import canvas/ (App reaches canvas/ only through React.lazy). */
 function dotKind(kind: string, classType?: string): string {
   switch (kind) {
     case "class":
@@ -1464,7 +1463,7 @@ function TreeRow({
       )}
       {row.pending && <span className="visually-hidden">, being created</span>}
       {row.ends && !rename && <span className="hierarchy-ends">({row.ends})</span>}
-      <span className="hierarchy-kind">{KIND_LABELS[row.kind] ?? KIND_LABELS.other}</span>
+      <span className="hierarchy-kind">{kindLabel(row.kind)}</span>
       {row.importedFrom && (
         // Text, not a tint: imported and read-only has to survive being read
         // aloud (AC-21, AC-35).
