@@ -143,6 +143,15 @@ describe("one button set (portal-foundations 5.5, AC-8)", () => {
     }
   });
 
+  it("the plain button rule sets no font or padding, which would outrank the set", () => {
+    // Element specificity beats :where()'s none: a padding on `button` kept
+    // every icon button 24 px narrower than its square, and a font on it
+    // kept every button at the inherited size. Measured in Chrome.
+    const plain = rules.filter(([sel]) => sel === "button");
+    expect(plain.length).toBeGreaterThan(0);
+    for (const [, body] of plain) expect(body).not.toMatch(/(?<![-\w])(padding|font|font-size|height):/);
+  });
+
   it("the turned-off look is on aria-disabled", () => {
     const off = rules.find(([sel]) => sel.split(",").some((s) => s.trim() === 'button[aria-disabled="true"]'));
     expect(off, 'a button[aria-disabled="true"] rule').toBeDefined();
