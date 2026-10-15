@@ -39,8 +39,20 @@ EXPECTED OUTPUT
 */
 
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import Legend from "./Legend";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import Legend, { LEGEND_KEY } from "./Legend";
+
+/** jsdom's window is 1024 px wide, where the legend starts folded (5.2). */
+function setWidth(px: number) {
+  Object.defineProperty(window, "innerWidth", { value: px, configurable: true, writable: true });
+}
+
+// Every test but the 5.2 ones reads the open legend: a wide window and no
+// kept choice.
+beforeEach(() => {
+  setWidth(1600);
+  localStorage.clear();
+});
 
 /** Counts as the graph endpoint reports them: class-heavy, as every real
  *  ontology is, and sorted descending by the component rather than by this. */
@@ -289,5 +301,80 @@ describe("Legend RDFS class line (portal-foundations 5.3, AC-4)", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "Other, 1" })).toBeTruthy();
+  });
+});
+
+describe("Legend folded by default on smaller screens (explore-and-query-layout 5.2, AC-4)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("starts folded at a 1280 px window on first use", () => {
+    setWidth(1280);
+    renderLegend();
+    expect(header().getAttribute("aria-expanded")).toBe("false");
+    expect(filterRows()).toHaveLength(0);
+  });
+
+  it("starts open at 1600 px, and at exactly 1440 px", () => {
+    renderLegend();
+    expect(header().getAttribute("aria-expanded")).toBe("true");
+    document.body.innerHTML = "";
+    setWidth(1440);
+    renderLegend();
+    expect(header().getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("the person's choice survives a remount, at either width", () => {
+    setWidth(1280);
+    const first = renderLegend();
+    fireEvent.click(header()); // open it
+    expect(localStorage.getItem(LEGEND_KEY)).toBe("open");
+    first.view.unmount();
+    renderLegend();
+    expect(header().getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(header()); // fold it
+    expect(localStorage.getItem(LEGEND_KEY)).toBe("folded");
+    document.body.innerHTML = "";
+    setWidth(1920);
+    renderLegend();
+    expect(header().getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("a localStorage that throws falls back to the width rule", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    setWidth(1280);
+    renderLegend();
+    expect(header().getAttribute("aria-expanded")).toBe("false");
+    // Folding and opening still work when nothing can be kept, and nothing
+    // throws: jsdom reports a handler's exception as an error event rather
+    // than failing the click.
+    const errors: unknown[] = [];
+    const onError = (e: ErrorEvent) => {
+      errors.push(e.error);
+      e.preventDefault();
+    };
+    window.addEventListener("error", onError);
+    fireEvent.click(header());
+    window.removeEventListener("error", onError);
+    expect(errors).toEqual([]);
+    expect(setItem).toHaveBeenCalled();
+    expect(header().getAttribute("aria-expanded")).toBe("true");
+    document.body.innerHTML = "";
+    setWidth(1600);
+    renderLegend();
+    expect(header().getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("a resize does not refold it", () => {
+    renderLegend();
+    setWidth(1000);
+    fireEvent(window, new Event("resize"));
+    expect(header().getAttribute("aria-expanded")).toBe("true");
   });
 });

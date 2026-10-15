@@ -11,7 +11,9 @@ SUMMARY
 BASIC IDEA
     Purely presentational over data passed in. Activating a node-kind row calls
     onToggleKind; the parent (App) tracks hidden kinds and GraphView dims them.
-    A collapsed state saves space on small screens.
+    A collapsed state saves space on small screens: a first visit starts
+    folded under 1440 px, and the person's own choice is kept for this
+    browser after that (explore-and-query-layout 5.2).
 
     Every row that does something is a <button>, and that is the whole of this
     file's accessibility story. They were <div onClick> until 2026-07-31, which
@@ -35,6 +37,8 @@ INPUTS / INPUT SOURCES (props)
     - rdfsClassCount: how many of the classes are RDFS-only (graph stats).
     - edgeKinds: which relation kinds are present.
     - hiddenKinds + onToggleKind: the show/hide filter state and its setter.
+    - localStorage `semantic-studio-legend` and the window's width, read once
+      on mount for whether it starts folded.
 
 EXPECTED OUTPUT
     - The rendered legend/filter rail (or a collapsed toggle button).
@@ -77,8 +81,41 @@ const EDGE_LABELS: Record<string, string> = {
 /** What the collapse header controls, named so aria-controls can point at it. */
 const PANEL_ID = "legend-panel";
 
+/** The person's last choice, per browser, like the theme: "open" or "folded"
+ *  (explore-and-query-layout 5.2). */
+export const LEGEND_KEY = "semantic-studio-legend";
+
+/** Narrower than this, a first visit starts folded: 208 px of legend is a
+ *  sixth of a 1280 px window. */
+export const LEGEND_OPEN_FROM = 1440;
+
+/**
+ * Whether the legend starts folded: the person's choice if one is kept, else
+ * the width rule. Read once, when the legend mounts; a resize does not refold
+ * it. Storage that throws (a private window, blocked site data) leaves the
+ * width rule to decide.
+ */
+function startsFolded(): boolean {
+  try {
+    const kept = localStorage.getItem(LEGEND_KEY);
+    if (kept === "open") return false;
+    if (kept === "folded") return true;
+  } catch {
+    // Fall through to the width rule.
+  }
+  return window.innerWidth < LEGEND_OPEN_FROM;
+}
+
 export default function Legend({ theme, kindCounts, rdfsClassCount = 0, edgeKinds, hiddenKinds, onToggleKind }: Props) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsedState] = useState(startsFolded);
+  const setCollapsed = (folded: boolean) => {
+    setCollapsedState(folded);
+    try {
+      localStorage.setItem(LEGEND_KEY, folded ? "folded" : "open");
+    } catch {
+      // Not kept; the width rule decides next time.
+    }
+  };
   const kinds = Object.entries(kindCounts).sort((a, b) => b[1] - a[1]);
   if (kinds.length === 0) return null;
   const palette = PALETTES[theme];
