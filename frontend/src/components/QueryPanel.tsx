@@ -14,7 +14,9 @@ BASIC IDEA
     useQueryBuilder hook (passed in as `builder`); this component renders it and
     wires the buttons. It adds a few local concerns: an auto-preview that runs a
     small LIMITed query as you build (only on small ontologies, so it stays
-    instant), the Auto/refresh toggle for the preview, and the save flow.
+    instant), the Auto/refresh toggle for the preview, and the save flow,
+    which says in a note under the name field when the name is already used
+    (U-4).
 
     One piece of its markup is layout rather than orchestration: the toolbar,
     the save prompt and the SPARQL preview are wrapped in a single
@@ -401,6 +403,16 @@ export default function QueryPanel({
     }
   };
 
+  // A saved query of this ontology with the typed name, trimmed and in any
+  // case (U-4). Saving still works and keeps both; the note only says so, so a
+  // second "Bonds" is a choice rather than a surprise. The open query never
+  // meets it: saving it is an update under its own name, with no prompt.
+  const sameName = useMemo(() => {
+    const typed = saveName.trim().toLowerCase();
+    if (!savePrompt || !typed) return null;
+    return saved.find((entry) => entry.name.trim().toLowerCase() === typed) ?? null;
+  }, [saveName, savePrompt, saved]);
+
   const save = () => {
     if (openQuery) void doSave(openQuery.name);
     else {
@@ -727,6 +739,7 @@ export default function QueryPanel({
               autoFocus
               placeholder="Query name"
               value={saveName}
+              aria-describedby={sameName ? "save-same-name" : undefined}
               onChange={(e) => setSaveName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void doSave(saveName);
@@ -740,6 +753,11 @@ export default function QueryPanel({
               Cancel
             </button>
           </div>
+        )}
+        {sameName && (
+          <p className="save-note" id="save-same-name">
+            You already have a query called “{sameName.name}”. Saving keeps both.
+          </p>
         )}
 
         {editorShown ? (

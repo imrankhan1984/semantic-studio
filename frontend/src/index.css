@@ -1568,6 +1568,29 @@ button.legend-row:hover {
   box-shadow: 0 8px 30px var(--shadow);
 }
 
+.search-options {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* The two lines that state a limit: the minimum, in the box where results
+   would open, and "more match" after the last option. */
+.search-hint {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.search-more {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border-soft);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
 .search-results li {
   display: flex;
   align-items: center;
@@ -2787,6 +2810,13 @@ button.legend-row:hover {
 
 .save-row input {
   flex: 1;
+}
+
+/* A name already used: said under the field, in words (U-4). */
+.save-note {
+  margin: -4px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
 }
 
 /* The toolbar, the save prompt and the query text, pinned to the top of the

@@ -374,8 +374,12 @@ export function searchNodes(
   imports = false,
   kind?: SearchKind,
   signal?: AbortSignal,
+  /** How many results at most; the route's own default (25) when absent and
+   *  its cap (100) above. The search box asks for one more than it shows, to
+   *  know whether more match (explore-and-query-layout 5.7). */
+  limit?: number,
 ): Promise<VizNode[]> {
-  const extra = kind ? `&kind=${kind}` : "";
+  const extra = (kind ? `&kind=${kind}` : "") + (limit !== undefined ? `&limit=${limit}` : "");
   return send(
     withLang(
       withImports(`/api/ontologies/${id}/search?q=${encodeURIComponent(q)}${extra}`, imports),

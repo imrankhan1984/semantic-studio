@@ -422,3 +422,70 @@ describe("Query's four switches (explore-and-query-layout 5.5, AC-7)", () => {
     expect(group().contains(refresh)).toBe(false);
   });
 });
+
+describe("a name already used (explore-and-query-layout 5.7, U-4, AC-10)", () => {
+  const BONDS = {
+    id: "q1",
+    name: "Bonds",
+    ontologyId: "ont-1",
+    ontologyName: "Bonds ontology",
+    state: STATE,
+    sparql: "SELECT * WHERE {}",
+    mode: "visual" as const,
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-01T00:00:00Z",
+  };
+  const NOTE = "You already have a query called “Bonds”. Saving keeps both.";
+
+  beforeEach(() => {
+    saveQuery.mockReset();
+  });
+
+  function renderWith(openQuery: { id: string; name: string } | null) {
+    const builder = { ...builderStub(), openQuery };
+    render(
+      <QueryPanel
+        ontologyId="ont-1"
+        theme="light"
+        builder={builder as unknown as ReturnType<typeof useQueryBuilder>}
+        onPickIri={vi.fn()}
+        onViewInSource={vi.fn()}
+        ontologyTriples={0}
+      />,
+    );
+  }
+
+  it("a new query named like a saved one, in another case with spaces, shows the note and still saves", async () => {
+    listSavedQueries.mockResolvedValue([BONDS]);
+    saveQuery.mockResolvedValue({ ...BONDS, id: "q2", name: "  bONDS " });
+    renderWith(null);
+    await waitFor(() => expect(document.querySelector(".saved-queries")).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /Save/ }));
+    const field = screen.getByPlaceholderText("Query name");
+    fireEvent.change(field, { target: { value: "Bond" } });
+    expect(screen.queryByText(NOTE)).toBeNull();
+    expect(field.getAttribute("aria-describedby")).toBeNull();
+    fireEvent.change(field, { target: { value: "  bONDS " } });
+    const note = screen.getByText(NOTE);
+    expect(field.getAttribute("aria-describedby")).toBe(note.id);
+    await act(async () => {
+      fireEvent.click(within(document.querySelector(".save-row")!).getByRole("button", { name: "Save" }));
+    });
+    // Saved as a new query, beside the other: no id, so nothing is replaced.
+    expect(saveQuery).toHaveBeenCalledTimes(1);
+    expect(saveQuery.mock.calls[0][0]).toMatchObject({ name: "  bONDS " });
+    expect(saveQuery.mock.calls[0][0].id).toBeUndefined();
+  });
+
+  it("the open query saved under its own name shows nothing", async () => {
+    listSavedQueries.mockResolvedValue([BONDS]);
+    saveQuery.mockResolvedValue(BONDS);
+    renderWith({ id: "q1", name: "Bonds" });
+    await waitFor(() => expect(document.querySelector(".saved-queries")).not.toBeNull());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Update/ }));
+    });
+    expect(screen.queryByText(NOTE)).toBeNull();
+    expect(saveQuery.mock.calls[0][0]).toMatchObject({ id: "q1", name: "Bonds" });
+  });
+});
