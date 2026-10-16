@@ -217,7 +217,7 @@ import {
   IconView,
 } from "./components/icons";
 import { removalConfirmation, removalPrompt } from "./removalPrompt";
-import { formatName, homeStatus } from "./statusWords";
+import { formatName, homeStatus, statementCount } from "./statusWords";
 import type { SourceTarget } from "./sourceTarget";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type {
@@ -1903,7 +1903,7 @@ export default function App() {
               >
                 {ontologies.map((o) => (
                   <option key={o.id} value={o.id}>
-                    {o.name} ({o.triples.toLocaleString()} triples)
+                    {o.name} ({statementCount(o.triples)})
                   </option>
                 ))}
               </select>
@@ -2320,7 +2320,7 @@ export default function App() {
         {active ? (
           <>
             <span>{active.name}</span>
-            <span>{active.triples.toLocaleString()} triples</span>
+            <span>{statementCount(active.triples)}</span>
             {/* Under a budget these read "2,000 of 18,717". The status bar
                 keeps saying so after the notice is dismissed, so the fact that
                 the view is partial is never fully hidden. */}

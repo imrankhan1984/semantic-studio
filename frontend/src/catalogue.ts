@@ -68,7 +68,7 @@ export const CATALOGUE: CatalogueEntry[] = [
     name: "FOAF — Friend of a Friend",
     description:
       "A small, classic vocabulary describing people, their links and the things they make. A good first ontology.",
-    size: "~150 KB · 600 triples",
+    size: "~150 KB · 600 statements",
     audience: "Start here if you are new to ontologies.",
     url: "http://xmlns.com/foaf/spec/index.rdf",
   },
@@ -77,7 +77,7 @@ export const CATALOGUE: CatalogueEntry[] = [
     name: "schema.org",
     description:
       "The vocabulary behind structured data on the web — around 900 classes covering people, places, products, events and creative works.",
-    size: "~3 MB · 17k triples",
+    size: "~3 MB · 17k statements",
     audience: "A good second step: familiar subjects, real scale.",
     url: "https://github.com/schemaorg/schemaorg/blob/main/data/releases/28.1/schemaorg-current-https.ttl",
   },
@@ -86,7 +86,7 @@ export const CATALOGUE: CatalogueEntry[] = [
     name: "FIBO — Financial Industry Business Ontology",
     description:
       "The EDM Council's production release: financial entities, instruments, markets and legal structures. Relationships are stated as OWL restrictions, which the query builder reads.",
-    size: "~5 MB · 132k triples · ~15s",
+    size: "~5 MB · 132k statements · ~15s",
     audience: "Best for testing OWL restrictions and the query builder.",
     url: "https://spec.edmcouncil.org/fibo/ontology/master/latest/prod.fibo-quickstart.ttl",
   },
@@ -100,7 +100,7 @@ export const CATALOGUE: CatalogueEntry[] = [
     // parsed in 3.5 seconds. No warning word, because there is nothing to warn
     // about — the entry this replaced ended in the word "slow" and that was the
     // most useful word in it.
-    size: "~3.8 MB · 100k triples · ~4s",
+    size: "~3.8 MB · 100k statements · ~4s",
     audience: "Start here for SKOS: taxonomies, concept schemes and broader/narrower.",
     url: "https://vocabularies.unesco.org/exports/thesaurus/latest/unesco-thesaurus.ttl",
   },

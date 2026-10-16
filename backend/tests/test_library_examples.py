@@ -9,7 +9,8 @@ SUMMARY
     a changed file replacing its entry under the same id, the restore
     endpoint; the manifest and its hashes; and what each new file must hold
     -- every floor of 5.2 for Space Exploration, the content of 5.3 for The
-    Lord of the Rings. (test_examples.py is a project's example data,
+    Lord of the Rings; and the one server sentence that said *triples*, now
+    *statements* (5.7). (test_examples.py is a project's example data,
     shacl-authoring 5.8: a different thing that had the name first.)
 
 BASIC IDEA
@@ -32,7 +33,8 @@ INPUTS / INPUT SOURCES
       tmp_path; the FastAPI app through TestClient for the endpoint.
 
 EXPECTED OUTPUT
-    - Pass/fail for AC-1 to AC-6 and the backend half of AC-10.
+    - Pass/fail for AC-1 to AC-6, the backend half of AC-10, and the
+      server's part of AC-9.
 ================================================================================
 """
 
@@ -305,6 +307,16 @@ def test_restore_endpoint_goes_through_local_guard(no_examples_after, parses):
                          headers={**HEADERS, "Origin": "http://evil.example"})
     assert foreign.post("/api/examples/restore").status_code == 403
     assert app_store.get(gone) is None
+
+
+def test_an_unknown_entity_is_said_in_statements_not_triples(no_examples_after, parses):
+    # 5.7: the detail panel shows this 404's words as they come.
+    library_examples.seed(app_store)
+    client = TestClient(app, base_url="http://localhost", headers=HEADERS)
+    oid = library_examples.example_id("space")
+    response = client.get(f"/api/ontologies/{oid}/node", params={"iri": "http://example.org/space#Nothing"})
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No statements found for http://example.org/space#Nothing"
 
 
 # --- Space Exploration: every floor of 5.2 ------------------------------------

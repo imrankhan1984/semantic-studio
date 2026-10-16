@@ -5,14 +5,16 @@ FILE: frontend/src/statusWords.test.ts
 
 SUMMARY
     The status bar's words (portal-foundations 5.6, AC-9): Home's count,
-    singular, plural and zero, and the formats by their written names.
+    singular, plural and zero, and the formats by their written names; and
+    a file's size in statements, singular and plural (home-and-examples 5.7,
+    AC-9).
 
 BASIC IDEA
     Pure functions, so a table of cases. App.test.tsx checks the same words
     reach the bar.
 
 INPUTS / INPUT SOURCES
-    - homeStatus and formatName from statusWords.ts.
+    - homeStatus, formatName and statementCount from statusWords.ts.
 
 EXPECTED OUTPUT
     - Pass/fail per assertion.
@@ -20,7 +22,7 @@ EXPECTED OUTPUT
 */
 
 import { describe, expect, it } from "vitest";
-import { formatName, homeStatus } from "./statusWords";
+import { formatName, homeStatus, statementCount } from "./statusWords";
 
 describe("homeStatus", () => {
   it.each([
@@ -31,6 +33,17 @@ describe("homeStatus", () => {
     [0, 0, "Load an ontology or start a project to begin."],
   ])("%i projects, %i ontologies", (projects, ontologies, words) => {
     expect(homeStatus(projects, ontologies)).toBe(words);
+  });
+});
+
+describe("statementCount", () => {
+  it.each([
+    [0, "0 statements"],
+    [1, "1 statement"],
+    [2, "2 statements"],
+    [132001, "132,001 statements"],
+  ])("%i is %s", (n, words) => {
+    expect(statementCount(n)).toBe(words);
   });
 });
 

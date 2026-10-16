@@ -6,7 +6,9 @@ FILE: frontend/src/statusWords.ts
 SUMMARY
     The status bar's words (portal-foundations 5.6): on Home, what is there
     (*2 projects · 1 ontology in the library*); elsewhere, a file's format
-    named as people write it (*Turtle*, not *turtle*).
+    named as people write it (*Turtle*, not *turtle*), and its size in
+    statements (home-and-examples 5.7), the word a person reads wherever the
+    code says triples.
 
 BASIC IDEA
     Kept out of App so the singular, the plural and the zero case are tested
@@ -22,6 +24,8 @@ INPUTS / INPUT SOURCES
 EXPECTED OUTPUT
     - homeStatus(projects, ontologies): the Home line.
     - formatName(format): the format's written name.
+    - statementCount(n): *1 statement*, *142 statements*: the status bar,
+      the ontology picker and the library card all say it this way.
 ================================================================================
 */
 
@@ -32,6 +36,12 @@ export function homeStatus(projects: number, ontologies: number): string {
   if (projects > 0) parts.push(plural(projects, "project", "projects"));
   if (ontologies > 0) parts.push(`${plural(ontologies, "ontology", "ontologies")} in the library`);
   return parts.length ? parts.join(" · ") : "Load an ontology or start a project to begin.";
+}
+
+/** "142 statements". A person reads *statements*; *triples* is a word for
+ *  the code, which keeps it (`summary.triples`). */
+export function statementCount(n: number): string {
+  return plural(n, "statement", "statements");
 }
 
 /** The parser names store.py's EXTENSION_FORMATS and SNIFF_ORDER use. */

@@ -3555,4 +3555,13 @@ describe("App status bar (portal-foundations 5.6, AC-9)", () => {
     expect(parts).toContain("Turtle");
     expect(parts).not.toContain("turtle");
   });
+
+  it("counts statements, not triples, in the bar and the picker (home-and-examples 5.7)", async () => {
+    await renderAppOpened();
+    const parts = [...document.querySelectorAll(".status-bar span")].map((s) => s.textContent);
+    expect(parts).toContain(`${SUMMARY.triples.toLocaleString()} statements`);
+    const options = [...document.querySelectorAll("#ontology-select option")].map((o) => o.textContent);
+    expect(options).toContain(`${SUMMARY.name} (${SUMMARY.triples.toLocaleString()} statements)`);
+    expect(document.body.textContent).not.toMatch(/\btriples?\b/i);
+  });
 });

@@ -64,6 +64,7 @@ EXPECTED OUTPUT
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { describeKindCounts } from "../explore/suggestions";
 import { CARD_MINIATURE, ROW_MINIATURE, compositionSegments, layoutSketch } from "../home/miniature";
+import { statementCount } from "../statusWords";
 import type { AppMode, OntologySummary, Theme } from "../types";
 import { PALETTES, kindColor } from "../types";
 
@@ -100,12 +101,6 @@ function addedOn(iso: string | undefined): string | null {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
   return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
-}
-
-/** "1 statement", "142 statements": the word a person reads for what the
- *  code calls triples (home-and-examples 5.7). */
-function statements(count: number): string {
-  return `${count.toLocaleString()} ${count === 1 ? "statement" : "statements"}`;
 }
 
 function OntologyCard({
@@ -357,7 +352,7 @@ function OntologyCard({
         {/* The two facts, and Read-only, every one of them text. Counts are the
             whole file's (summary.triples), never what a canvas drew. */}
         <ul className="onto-chips">
-          <li className="chip-metric">{statements(summary.triples)}</li>
+          <li className="chip-metric">{statementCount(summary.triples)}</li>
           {example ? (
             <li className="chip-state">Example</li>
           ) : (
