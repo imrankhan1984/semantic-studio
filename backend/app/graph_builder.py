@@ -353,7 +353,7 @@ def rule_edges(graph: Graph, classes: set, label: Callable[[URIRef], str]) -> li
             else:
                 defining = axioms.parse_defining(graph, node)
                 content = axioms.content_of("defines", defining[1], defining[0]) if defining is not None else None
-            if content is None or not axioms.draws_line(content):
+            if content is None or not axioms.draws_line(content, classes):
                 continue
             key = axioms.key_json(content)
             identity = (cls, repr(key))  # key_json writes its fields in one order

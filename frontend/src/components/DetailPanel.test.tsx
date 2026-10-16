@@ -613,8 +613,42 @@ describe("DetailPanel: a class's rules (explore-rules 5.3, AC-3, AC-4)", () => {
     expect(screen.getByRole("region", { name: "Edit" })).toBeTruthy();
     expect(screen.queryByRole("heading", { level: 3, name: "Rules" })).toBeNull();
     expect(screen.getAllByText("Every Crewed mission has at least one crew member that is an Astronaut")).toHaveLength(1);
-    // Said in the Edit section, so not listed again as raw rows either.
-    expect(document.querySelector(".term-bnode")).toBeNull();
+    // The rows stay: the Edit section says rules only in some of its forms,
+    // and hiding the rows behind one that does not lost them (code review).
+    expect(document.querySelectorAll(".term-bnode")).toHaveLength(2);
+  });
+
+  it("keeps an imported class's rule rows, which its read-only Edit section does not say", async () => {
+    getNodeDetails.mockResolvedValue({ ...crewed(), kind: "class", importedFrom: "Space", names: [{ lang: "en", value: "Crewed mission" }] });
+    await act(async () => {
+      render(
+        <DetailPanel
+          ontologyId="o1"
+          iri={`${SPACE}CrewedMission`}
+          onNavigate={vi.fn()}
+          onClose={vi.fn()}
+          editing={{ primaryLanguage: "en", languages: ["en"] }}
+          imports
+        />,
+      );
+    });
+    expect(screen.getByRole("heading", { level: 2, name: "Crewed mission" })).toBeTruthy();
+    expect(document.querySelectorAll(".term-bnode")).toHaveLength(2);
+  });
+
+  it("keeps the true total when the server cut the list, and says where the rules went", async () => {
+    await renderPanel({ ...crewed(), outgoingTotal: 600 });
+    expect(screen.getByRole("heading", { name: /Statements/ }).textContent).toBe("Statements 600");
+    expect(screen.getByText("Showing 2 of 600 statements; 2 more are the rules above.")).toBeTruthy();
+  });
+
+  it("lists the same rule written twice twice, without a key collision", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    await renderPanel(crewed([CREWED_RULES[0], CREWED_RULES[0]]));
+    const block = screen.getByRole("heading", { level: 3, name: "Rules" }).closest("section") as HTMLElement;
+    expect(within(block).getAllByRole("listitem")).toHaveLength(2);
+    expect(errors.mock.calls.some((call) => String(call[0]).includes("same key"))).toBe(false);
+    errors.mockRestore();
   });
 
   it("shows no Rules heading for a property, and keeps its blank-node rows", async () => {

@@ -57,9 +57,11 @@ INPUTS / INPUT SOURCES (props)
     A class's rules come with its details for every ontology (explore-rules
     5.3, D-113). Without the Edit section they are a Rules block of their
     own, one sentence each in the Edit page's words, read-only, a shape
-    outside the sentences as its Turtle; with it, its Rules block says them.
-    Either way the blank-node statements they came from are not listed
-    again.
+    outside the sentences as its Turtle, and the blank-node statements they
+    came from are not listed again. With the Edit section the panel leaves
+    rules and rows as they were: that section says them only in some of its
+    forms (not for an imported class, an example, a class of the other
+    kind), and hiding the rows there lost them (code review).
 
     The IRI under the title is a link only when linkTarget allows it (D-088):
     http and https. Any other scheme is shown as text, with Copy beside it.
@@ -225,9 +227,14 @@ export default function DetailPanel({
 
   if (!iri) return null;
   const href = linkTarget(iri);
-  // A class's rules, when the server read them; its blank-node rows go.
-  const statements = details?.rules ? details.outgoing.filter((row) => !isRuleRow(row)) : (details?.outgoing ?? []);
+  // A class's rules as sentences, when the server read some and no Edit
+  // section is here to say them; only then do their blank-node rows go.
+  const showRules = !editing && (details?.rules?.items.length ?? 0) > 0;
+  const statements = details && showRules ? details.outgoing.filter((row) => !isRuleRow(row)) : (details?.outgoing ?? []);
   const hiddenRows = (details?.outgoing.length ?? 0) - statements.length;
+  // Only what this page holds is known to be a rule: when the server cut the
+  // list, the true total stays the heading's number (CLAUDE.md, limits).
+  const truncated = details !== null && details.outgoingTotal > details.outgoing.length;
 
   return (
     <aside className="detail-panel" aria-labelledby={HEADING_ID}>
@@ -336,16 +343,17 @@ export default function DetailPanel({
               </dl>
             </section>
           )}
-          {details.rules && !editing && details.rules.items.length > 0 && (
-            // The Edit page's sentences, read-only (explore-rules 5.3): with
-            // `editing`, EditSection's Rules block already says them.
+          {showRules && details.rules && (
+            // The Edit page's sentences, read-only (explore-rules 5.3); with
+            // `editing`, the Edit section is their place.
             <section>
               <h3>Rules</h3>
               <ul className="detail-rules">
-                {details.rules.items.map((item) => {
+                {details.rules.items.map((item, index) => {
                   const sentence = itemSentence(details.label, item);
                   return (
-                    <li key={itemKey(item)} className="rule-item">
+                    // The same rule written twice is two items with one key.
+                    <li key={`${itemKey(item)}|${index}`} className="rule-item">
                       {item.type === "turtle" ? (
                         <>
                           <p className="detail-note">Written in Turtle, outside the sentences:</p>
@@ -362,7 +370,7 @@ export default function DetailPanel({
           )}
           <section>
             <h3>
-              Statements <span className="count">{details.outgoingTotal - hiddenRows}</span>
+              Statements <span className="count">{truncated ? details.outgoingTotal : statements.length}</span>
             </h3>
             <table className="detail-table">
               <tbody>
@@ -378,9 +386,10 @@ export default function DetailPanel({
                 ))}
               </tbody>
             </table>
-            {details.outgoingTotal > details.outgoing.length && (
+            {truncated && (
               <p className="detail-note">
-                Showing {statements.length} of {details.outgoingTotal - hiddenRows} statements.
+                Showing {statements.length} of {details.outgoingTotal} statements
+                {hiddenRows > 0 ? `; ${hiddenRows} more are the rules above` : ""}.
               </p>
             )}
           </section>

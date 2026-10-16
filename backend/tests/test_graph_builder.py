@@ -298,6 +298,21 @@ def test_rule_edges_equal_the_canvas_rules(fixture, rules_graph):
     assert _rule_set(build_viz_graph(g)["edges"]) == canvas_rules
 
 
+def test_a_rule_to_owl_thing_is_drawn_only_where_it_is_a_box():
+    """Code review: the canvas always drew a rule to owl:Thing when the
+    document declares owl:Thing a class, and never otherwise; Explore the same."""
+    rule = """
+        @prefix ex: <http://example.org/r#> . @prefix owl: <http://www.w3.org/2002/07/owl#> .
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        ex:A a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex:p ; owl:someValuesFrom owl:Thing ] .
+        """
+    for declared, drawn in (("", 0), ("owl:Thing a owl:Class .", 1)):
+        g = Graph().parse(data=rule + declared, format="turtle")
+        canvas_rules = _rule_set(build_canvas(g, None)["edges"])
+        assert len(canvas_rules) == drawn
+        assert _rule_set(build_viz_graph(g)["edges"]) == canvas_rules
+
+
 def test_graph_builder_reads_no_restriction_shape_itself():
     """AC-1, one reader (D-113): graph_builder.py names no restriction
     predicate; axioms.py's parsers are the only reader."""

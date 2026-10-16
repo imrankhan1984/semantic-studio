@@ -243,7 +243,7 @@ def build_canvas(
             readable.add(node)
             filler = content.filler
             # Explore's graph asks draws_line too (D-113): one test, one set.
-            drawn = axioms.draws_line(content) and end(filler, "class")
+            drawn = axioms.draws_line(content, classes | concepts) and end(filler, "class")
             if not drawn:
                 more[cls] = more.get(cls, 0) + 1
                 continue

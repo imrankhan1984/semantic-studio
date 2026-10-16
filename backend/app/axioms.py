@@ -49,7 +49,7 @@ INPUTS / INPUT SOURCES
 EXPECTED OUTPUT
     - parse_restriction / parse_defining -> the content, or None.
     - content_of(form, parsed, with_) -> a parsed rule as its Content.
-    - draws_line(content) -> whether the canvas and Explore draw it as a line.
+    - draws_line(content, boxes) -> whether the canvas and Explore draw it as a line.
     - class_rules(graph, cls, own, name) -> the form's items;
       read_only_rules(graph, cls, name) the same, none editable.
     - find(graph, cls, key) -> the (predicate, node) pairs with that content.
@@ -257,14 +257,16 @@ def contents(g: Graph, cls) -> list[tuple]:
     return found
 
 
-def draws_line(content: Content) -> bool:
-    """Whether a rule is a line between two classes: its filler a named class
-    other than owl:Thing, never a value or a datatype. The Edit canvas and
-    Explore's graph both ask this, so the two pages draw the same set (D-113)."""
+def draws_line(content: Content, boxes) -> bool:
+    """Whether a rule is a line between two classes: its filler a named class,
+    never a value or a datatype, and owl:Thing or rdfs:Resource only when the
+    document makes it one of `boxes`, as the canvas always has. The Edit
+    canvas and Explore's graph both ask this, so the two pages draw one set
+    (D-113)."""
     filler = content.filler
     return (
-        content.kind != "value" and isinstance(filler, URIRef)
-        and not is_datatype(filler) and filler not in (OWL.Thing, RDFS.Resource)
+        content.kind != "value" and isinstance(filler, URIRef) and not is_datatype(filler)
+        and (filler not in (OWL.Thing, RDFS.Resource) or filler in boxes)
     )
 
 
