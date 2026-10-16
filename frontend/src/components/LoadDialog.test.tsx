@@ -31,6 +31,7 @@ EXPECTED OUTPUT
 */
 
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { fetchHierarchy, inspectData, previewData, openProject, listData, restoreExamples, uploadOntology } = vi.hoisted(() => ({
@@ -193,6 +194,72 @@ describe("LoadDialog suggestions (home-and-examples 5.8)", () => {
   });
 });
 
+describe("the Load dialog is a dialog (load-and-shapes 5.2, AC-3)", () => {
+  it("is announced as a modal dialog, labelled by its heading", () => {
+    const { rerender } = render(<LoadDialog onLoaded={() => {}} onClose={() => {}} project={PROJECT} />);
+    const dialog = screen.getByRole("dialog", { name: "Load ontology" });
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+    const heading = document.getElementById(dialog.getAttribute("aria-labelledby")!)!;
+    expect(heading.tagName).toBe("H2");
+    fireEvent.click(screen.getByRole("button", { name: "Data for this project" }));
+    rerender(<LoadDialog onLoaded={() => {}} onClose={() => {}} project={PROJECT} />);
+    expect(screen.getByRole("dialog", { name: "Data for Shop" })).toBeTruthy();
+  });
+
+  it("closes on Escape, wherever focus is in it or on the page's body", () => {
+    const onClose = vi.fn();
+    render(<LoadDialog onLoaded={() => {}} onClose={onClose} />);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Local file" }), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Local file" }), { key: "Enter" });
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves an Escape pressed in another dialog over it to that dialog", () => {
+    const onClose = vi.fn();
+    render(
+      <>
+        <LoadDialog onLoaded={() => {}} onClose={onClose} />
+        <div role="dialog" aria-label="Approval">
+          <button type="button">Don't allow</button>
+        </div>
+      </>,
+    );
+    fireEvent.keyDown(screen.getByRole("button", { name: "Don't allow" }), { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("takes focus on open, and gives it back to what opened it on close", () => {
+    function Host() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open a file
+          </button>
+          {open && <LoadDialog onLoaded={() => {}} onClose={() => setOpen(false)} initialTab="file" />}
+        </>
+      );
+    }
+    render(<Host />);
+    const opener = screen.getByRole("button", { name: "Open a file" });
+    opener.focus();
+    fireEvent.click(opener);
+    const dialog = screen.getByRole("dialog", { name: "Load ontology" });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("keeps the URL field's own focus when it opens on the URL tab", () => {
+    render(<LoadDialog onLoaded={() => {}} onClose={() => {}} initialTab="url" />);
+    expect(document.activeElement).toBe(screen.getByRole("textbox"));
+  });
+});
+
 describe("LoadDialog", () => {
   it("has the three ontology tabs and no Data tab without a project", () => {
     render(<LoadDialog onLoaded={() => {}} onClose={() => {}} />);
@@ -320,6 +387,20 @@ describe("LoadDialog", () => {
       expect(screen.getByText(/Well-known public ontologies/)).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: "Data for this project" }));
       expect(screen.queryByRole("heading", { name: "Step 3 of 4: the columns" })).toBeNull();
+    });
+
+    it("past step 3 Escape asks, Escape again keeps going, and Leave closes (load-and-shapes 5.2)", async () => {
+      const onClose = await toStep3();
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByRole("group", { name: "Leave the wizard?" })).toBeTruthy();
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+      expect(screen.queryByRole("group", { name: "Leave the wizard?" })).toBeNull();
+      expect(screen.getByRole("heading", { name: "Step 3 of 4: the columns" })).toBeTruthy();
+      expect(onClose).not.toHaveBeenCalled();
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      fireEvent.click(within(screen.getByRole("group", { name: "Leave the wizard?" })).getByRole("button", { name: "Leave" }));
+      expect(onClose).toHaveBeenCalledTimes(1);
     });
 
     it("does not ask before step 3, where there is nothing to lose", async () => {

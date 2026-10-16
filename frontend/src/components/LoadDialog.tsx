@@ -38,6 +38,10 @@ BASIC IDEA
     heading takes focus, which the unmounted wizard would otherwise drop to
     the page; a later tab switch does not take it again (X4).
 
+    It is a dialog like the others (load-and-shapes 5.2): role, aria-modal,
+    labelled by its heading. Escape is the ✕, asking first past the
+    wizard's third step, and closing gives focus back to what opened it.
+
 INPUTS / INPUT SOURCES (props)
     - onLoaded: called with the new ontology's summary on success.
     - onClose: dismiss the dialog.
@@ -57,7 +61,7 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, fetchOntology, restoreExamples, uploadOntology, type ExamplesRestored } from "../api";
 import type { CatalogueEntry } from "../catalogue";
 import CatalogueList from "./CatalogueList";
@@ -148,6 +152,21 @@ export default function LoadDialog({
   // button that was pressed goes with them, and focus would fall to the page.
   const suggestedTab = useRef<HTMLButtonElement>(null);
   const [restoredNote, setRestoredNote] = useState("");
+  const panelRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  // Into the dialog on open, unless a control in it took focus already (the
+  // URL field's autoFocus); back to whatever opened it on close -- the
+  // header's Load, Home's two buttons, the project's data button -- if it is
+  // still in the document (load-and-shapes 5.2). Taken in the effect body,
+  // before any child moves focus; mount and unmount only.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    if (!panelRef.current?.contains(document.activeElement)) headingRef.current?.focus();
+    return () => {
+      if (opener && opener !== document.body && opener.isConnected) opener.focus();
+    };
+  }, []);
   const [dragOver, setDragOver] = useState(false);
 
   const submitFile = async (file: File) => {
@@ -208,12 +227,44 @@ export default function LoadDialog({
     }
   };
 
+  // Escape is the ✕: it asks first while the wizard has a mapping, and with
+  // the question showing it keeps going. On `document`, as useDialogTrap's
+  // is, since a click on the dialog's prose blurs focus to <body>; a key
+  // pressed in another dialog over this one (an approval) is that dialog's.
+  const onEscape = useRef<() => void>(() => {});
+  onEscape.current = () => {
+    if (leaving) setLeaving(null);
+    else guard(onClose);
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      const target = e.target as Node | null;
+      if (target && target !== document.body && !panelRef.current?.contains(target)) return;
+      e.preventDefault();
+      onEscape.current();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  const title = tab === "data" && project ? `Data for ${project.name}` : "Load ontology";
+
   return (
     // A click outside does not drop a wizard half way: Cancel does, and asks.
     <div className="modal-backdrop" onClick={() => !(tab === "data" && wizard) && onClose()}>
-      <div className={tab === "data" ? "modal modal-wide" : "modal"} onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={panelRef}
+        className={tab === "data" ? "modal modal-wide" : "modal"}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="load-dialog-title"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-header">
-          <h2>{tab === "data" && project ? `Data for ${project.name}` : "Load ontology"}</h2>
+          <h2 id="load-dialog-title" ref={headingRef} tabIndex={-1}>
+            {title}
+          </h2>
           <button className="icon-btn" onClick={() => guard(onClose)} title="Close" aria-label="Close">
             ✕
           </button>
