@@ -756,6 +756,10 @@ def build_graph_data(viz: dict, anchors: dict[str, str], include_individuals: bo
 
     edges = []
     for e in viz["edges"]:
+        # Explore's rule lines (D-113) are worded by the app's frontend, which
+        # the published site does not carry: the site keeps the lines it had.
+        if e["kind"] == "rule":
+            continue
         if not include_individuals:
             if e["kind"] in _ABOX_EDGE_KINDS:
                 continue

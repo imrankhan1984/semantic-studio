@@ -518,6 +518,22 @@ def test_hostile_edge_label_is_escaped():
     assert "\\u003cscript\\u003e" in inline
 
 
+def test_rule_lines_stay_out_of_the_site():
+    """explore-rules (D-113): Explore's rule lines are worded by the app's
+    frontend; the published site keeps the lines it had."""
+    viz = {
+        "nodes": [
+            {"id": "a", "label": "A", "kind": "class", "degree": 2},
+            {"id": "b", "label": "B", "kind": "class", "degree": 2},
+        ],
+        "edges": [
+            {"source": "a", "target": "b", "kind": "subClassOf", "label": ""},
+            {"source": "a", "target": "b", "kind": "rule", "label": "", "rule": {}, "key": {}},
+        ],
+    }
+    assert [e["kind"] for e in build_graph_data(viz, {})["edges"]] == ["subClassOf"]
+
+
 # --- AC-18: the original source bytes are preserved -------------------------
 
 

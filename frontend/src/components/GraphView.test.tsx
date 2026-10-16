@@ -51,6 +51,7 @@ import { Profiler } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { PALETTES } from "../types";
+import { EDGES } from "../theme/kinds";
 import type { MergeResult, Theme, VizGraph, VizNeighborhood } from "../types";
 
 // Sigma touches WebGL2RenderingContext when its module is evaluated. Stubbing
@@ -1734,5 +1735,104 @@ describe("the graph toolbar in words (5.3)", () => {
     }
     expect(screen.queryByText("PNG")).toBeNull();
     view.unmount();
+  });
+});
+
+/* --- rule lines (explore-rules 5.1, D-113) ------------------------------- */
+
+const RULE_KEY = (kind: "some" | "atMost", n: number | null) => ({
+  form: "every" as const,
+  property: "http://x/hasLine",
+  kind,
+  filler: "http://x/Line",
+  n,
+});
+
+/** Order has two rules on Line (some, at most 3); Party is out of focus. */
+const WITH_RULES: VizGraph = {
+  ...DATA,
+  nodes: [
+    { id: "http://x/Order", label: "Order", kind: "class", degree: 2 },
+    { id: "http://x/Line", label: "Line", kind: "class", degree: 2 },
+    { id: "http://x/Party", label: "Party", kind: "class", degree: 0 },
+  ],
+  edges: (["some", "atMost"] as const).map((kind) => ({
+    source: "http://x/Order",
+    target: "http://x/Line",
+    kind: "rule",
+    label: "",
+    rule: {
+      form: "every" as const,
+      kind,
+      n: kind === "atMost" ? 3 : null,
+      property: "http://x/hasLine",
+      propertyLabel: "has line",
+      fillerLabel: "Line",
+      withLabel: null,
+    },
+    key: RULE_KEY(kind, kind === "atMost" ? 3 : null),
+  })),
+};
+
+describe("rule lines (explore-rules 5.1)", () => {
+  afterEach(() => {
+    vi.clearAllTimers();
+  });
+
+  async function rendered(selected: string | null, theme: Theme = "light") {
+    const { default: GraphView } = await import("./GraphView");
+    let view!: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(
+        <GraphView data={WITH_RULES} theme={theme} hiddenKinds={new Set()} selected={selected} onSelect={() => {}} focusTick={0} />,
+      );
+    });
+    return { settings: sigmaCalls.last.settings, graph: sigmaCalls.last.graph, view };
+  }
+
+  it("two rules on the same two classes are two edges, keyed by their keys", async () => {
+    const { graph, view } = await rendered(null);
+    expect(graph.size).toBe(2);
+    expect(graph.edges().sort()).toEqual([
+      `rule|http://x/Order|${JSON.stringify(RULE_KEY("atMost", 3))}`,
+      `rule|http://x/Order|${JSON.stringify(RULE_KEY("some", null))}`,
+    ]);
+    view.unmount();
+  });
+
+  it("a rule line is the rule colour in both themes, a plain arrow, named by shortLabel", async () => {
+    for (const theme of ["light", "dark"] as const) {
+      const { settings, graph, view } = await rendered("http://x/Order", theme);
+      const words = graph.edges().map((key: string) => {
+        const attrs = graph.getEdgeAttributes(key);
+        const res = settings.edgeReducer(key, attrs);
+        expect(res.color).toBe(EDGES[theme].rule);
+        // Solid: Sigma's own arrow, no edge program of ours (Section 15).
+        expect(attrs.type).toBe("arrow");
+        return res.label;
+      });
+      expect(words.sort()).toEqual(["at least 1 · has line", "at most 3 · has line"]);
+      expect(settings.edgeProgramClasses).toBeUndefined();
+      // Link names at 12 px (D-110).
+      expect(settings.edgeLabelSize).toBe(12);
+      view.unmount();
+    }
+  });
+
+  it("a rule's words are drawn only when its class or filler is in focus", async () => {
+    for (const [selected, named] of [
+      [null, false],
+      ["http://x/Party", false],
+      ["http://x/Order", true],
+      ["http://x/Line", true],
+    ] as const) {
+      const { settings, graph, view } = await rendered(selected);
+      for (const key of graph.edges()) {
+        const res = settings.edgeReducer(key, graph.getEdgeAttributes(key));
+        expect(res.label === "").toBe(!named);
+        expect(res.forceLabel === true).toBe(named);
+      }
+      view.unmount();
+    }
   });
 });
