@@ -227,7 +227,6 @@ def test_a_concept_scheme_and_collection_explain_their_skos(space):
     assert crewed["kind"] == "concept"
     assert crewed["broader"] == [_ref("mt-mission", "Space mission")]
     assert crewed["schemes"] == [_ref("MissionTypes", "Mission types")]
-    # Two narrower ones, each stated only as skos:broader on the narrower.
     assert crewed["narrower"] == {"count": 2, "capped": False}
     scheme = _explain(space, SPACE + "MissionTypes")
     assert scheme["kind"] == "conceptScheme"
@@ -236,6 +235,26 @@ def test_a_concept_scheme_and_collection_explain_their_skos(space):
     assert collection["kind"] == "collection"
     assert collection["members"]["count"] == 3
     assert collection["description"] is None
+
+
+def test_a_concept_reads_broader_and_narrower_from_either_side():
+    # Space Exploration states its hierarchy both ways; a file stating it
+    # one way only must give the same facts from both ends.
+    graph = Graph()
+    graph.parse(data=(
+        "@prefix ex: <http://example.org/c#> .\n"
+        "@prefix skos: <http://www.w3.org/2004/02/skos/core#> .\n"
+        "ex:top a skos:Concept .\n"
+        "ex:a a skos:Concept ; skos:broader ex:top .\n"
+        "ex:b a skos:Concept ; skos:broader ex:top .\n"
+        "ex:top skos:narrower ex:c .\n"
+        "ex:c a skos:Concept .\n"
+    ), format="turtle")
+    name = labeler(graph, None)
+    assert explain(graph, URIRef("http://example.org/c#top"), name)["narrower"] == {"count": 3, "capped": False}
+    assert explain(graph, URIRef("http://example.org/c#c"), name)["broader"] == [
+        {"iri": "http://example.org/c#top", "label": "top"}
+    ]
 
 
 def test_the_ontology_an_annotation_property_and_an_other_say_only_their_kind(space):

@@ -142,8 +142,8 @@ function present(counted: ExplainCount | undefined): counted is ExplainCount {
   return counted !== undefined && (counted.count > 0 || counted.capped);
 }
 
-/** The facts the file states, at most four sentences, only for what is
- *  there (5.2's second table). */
+/** The facts the file states, only for what is there (5.2's second
+ *  table): three sentences at most, a class's, within 5.2's four. */
 export function factSentences(label: string, explain: Explain): Sentence[] {
   const out: Sentence[] = [];
   switch (explain.kind) {
@@ -203,7 +203,7 @@ export function factSentences(label: string, explain: Explain): Sentence[] {
       break;
     }
   }
-  return out.slice(0, 4);
+  return out;
 }
 
 /** The authors' own words, quoted, or nothing when they wrote none. */

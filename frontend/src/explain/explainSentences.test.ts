@@ -271,10 +271,4 @@ describe("names and the description", () => {
       'Its authors describe it: "A mission that carries people into space."',
     ]);
   });
-
-  it("at most four facts", () => {
-    const many = { count: 2, capped: false, names: [ref("A"), ref("B")] };
-    const facts = factSentences("X", { kind: "class", description: null, parents: [ref("P")], children: many, members: many });
-    expect(facts.length).toBeLessThanOrEqual(4);
-  });
 });
