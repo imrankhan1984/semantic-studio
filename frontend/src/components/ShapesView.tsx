@@ -215,7 +215,7 @@ export default function ShapesView({
           <button
             ref={plusRef}
             type="button"
-            className="primary shapes-add"
+            className="shapes-add"
             aria-label="Add a shape"
             aria-expanded={choosing === "menu"}
             aria-controls={menuId}

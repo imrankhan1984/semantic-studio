@@ -179,7 +179,7 @@ def _known(fmt: str, message: str, line: Optional[int]) -> Optional[str]:
                 p = prefix.group(1)
                 return (
                     f"{at}the prefix {p} is used but never declared. "
-                    f"Add `@prefix {p} <…> .` near the top of the file."
+                    f"Add @prefix {p} <…> . near the top of the file."
                 )
             if "newline found in string literal" in message:
                 return f"{at}a text value in quotes is not closed before the end of the line."

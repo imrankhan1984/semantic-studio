@@ -588,6 +588,8 @@ describe("ShapesView in two columns (load-and-shapes 5.3, AC-4)", () => {
     const head = document.querySelector(".shapes-list-head")!;
     const buttons = within(head as HTMLElement).getAllByRole("button");
     expect(buttons.map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Validate", "Add a shape"]);
+    // Validate is the area's one primary button; + beside it is secondary (U-11).
+    expect(buttons.map((b) => b.classList.contains("primary"))).toEqual([true, false]);
     // On the Results tab too, the one Validate is the list's.
     fireEvent.click(screen.getByRole("tab", { name: "Results" }));
     expect(screen.getAllByRole("button", { name: "Validate" })).toHaveLength(1);

@@ -6,8 +6,8 @@ FILE: backend/tests/test_parse_errors.py
 SUMMARY
     A failed load explained in one sentence (load-and-shapes 5.1, AC-1, AC-2):
     parse_errors.py's table row by row from the parser messages it names, the
-    line read from each of the three shapes parsers write it in, the choice of
-    which attempt to explain, the *not RDF* sentence and its table hint; and
+    line read from each of the three shapes parsers write it in, no sentence
+    carrying a backtick, the choice of which attempt to explain, the *not RDF* sentence and its table hint; and
     the seven broken files of 5.1 uploaded through the API.
 
 BASIC IDEA
@@ -29,6 +29,8 @@ EXPECTED OUTPUT
 ================================================================================
 """
 
+import ast
+import inspect
 import io
 import ipaddress
 import re
@@ -66,7 +68,7 @@ EXPECTED = {
         "Line 3: the statement before this line is not finished. It probably needs a full stop (.) at its end.",
         3, "Turtle"),
     "no-prefix.ttl": (
-        "Line 1: the prefix ex: is used but never declared. Add `@prefix ex: <…> .` near the top of the file.",
+        "Line 1: the prefix ex: is used but never declared. Add @prefix ex: <…> . near the top of the file.",
         1, "Turtle"),
     "open-string.ttl": (
         "Line 2: a text value in quotes is not closed before the end of the line.", 2, "Turtle"),
@@ -112,7 +114,7 @@ def say(attempts, suggested=None, head=RDF_HEAD, filename="file.ttl"):
     ("turtle", TURTLE_FULL_STOP,
      "Line 3: the statement before this line is not finished. It probably needs a full stop (.) at its end."),
     ("turtle", TURTLE_PREFIX,
-     "Line 1: the prefix ex: is used but never declared. Add `@prefix ex: <…> .` near the top of the file."),
+     "Line 1: the prefix ex: is used but never declared. Add @prefix ex: <…> . near the top of the file."),
     ("turtle", TURTLE_STRING, "Line 2: a text value in quotes is not closed before the end of the line."),
     ("turtle", TURTLE_EOF, "The file ends in the middle of a statement."),
     # TriG reads the same grammar and says the same things.
@@ -134,6 +136,29 @@ def test_each_row_of_the_table(fmt, message, sentence):
     assert detail["message"] == sentence
     assert detail["code"] == "parse_error"
     assert detail["technical"] == "raw"
+
+
+def test_no_sentence_carries_a_backtick():
+    # A person reads the sentence as plain text: a backtick is shown as a
+    # character, not code (load-and-shapes v1.2). Every string the module
+    # writes, docstrings aside, is read from its source, so a sentence added
+    # later is covered without a row here.
+    tree = ast.parse(inspect.getsource(parse_errors))
+    docstrings = {
+        id(node.body[0].value) for node in ast.walk(tree)
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.ClassDef))
+        and node.body and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+    }
+    strings = [
+        node.value for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        and id(node) not in docstrings
+    ]
+    assert any("never declared" in text for text in strings)
+    assert [text for text in strings if "`" in text] == []
+    for fmt, message in [("turtle", TURTLE_PREFIX), ("turtle", TURTLE_OTHER), ("json-ld", JSON_COMMA)]:
+        assert "`" not in say([(fmt, message)], suggested=fmt)["message"]
 
 
 def test_the_sentence_never_quotes_the_parser():
