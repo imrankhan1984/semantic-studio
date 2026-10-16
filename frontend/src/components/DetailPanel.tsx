@@ -63,6 +63,11 @@ INPUTS / INPUT SOURCES (props)
     forms (not for an imported class, an example, a class of the other
     kind), and hiding the rows there lost them (code review).
 
+    Without the Edit section the panel opens on In plain words (explain-panel
+    5.1, D-114): what kind of thing this is and what its file states about
+    it, in sentences, from the response's `explain`. The statements below
+    stay complete; the block is a summary, not a replacement.
+
     The IRI under the title is a link only when linkTarget allows it (D-088):
     http and https. Any other scheme is shown as text, with Copy beside it.
 
@@ -78,6 +83,7 @@ import { dataLabel } from "../modeling/dataSentences";
 import { itemKey, itemSentence } from "../modeling/ruleSentences";
 import type { CanvasSet, NodeDetails, TermRef, ProjectKind } from "../types";
 import EditSection from "./EditSection";
+import ExplainBlock from "./ExplainBlock";
 import InferredBlock from "./InferredBlock";
 
 interface Props {
@@ -312,6 +318,11 @@ export default function DetailPanel({
 
       {details && (
         <>
+          {!editing && details.explain && (
+            // What it is, in sentences, before the statements that say it
+            // (explain-panel 5.1); the Edit section says it in its forms.
+            <ExplainBlock label={details.label} explain={details.explain} onNavigate={onNavigate} />
+          )}
           {editing && ontologyId && (
             <EditSection
               key={details.iri}

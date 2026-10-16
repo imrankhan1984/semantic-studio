@@ -5892,6 +5892,17 @@ kbd {
   padding: 4px 0;
 }
 
+/* In plain words (explain-panel 5.2): sentences at body size, a little air
+   between them; the names in them are the panel's term links, inline. */
+.explain-sentence {
+  margin: 0 0 6px;
+  line-height: 1.45;
+}
+
+.explain-sentence .term-link {
+  display: inline;
+}
+
 /* Explore's read-only Rules block (explore-rules 5.3): the sentences alone. */
 .detail-rules {
   list-style: none;

@@ -33,14 +33,15 @@ INPUTS / INPUT SOURCES
 EXPECTED OUTPUT
     - Pass/fail per assertion, covering AC-6 to AC-10 and AC-13; and for
       visual-modeling-canvas.md, AC-7 (a javascript: IRI is text, never a
-      link) and AC-4 (a read-only document says why, in text).
+      link) and AC-4 (a read-only document says why, in text); and for
+      explain-panel.md, AC-1, AC-2 and AC-5 (the In plain words block).
 ================================================================================
 */
 
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DetailPanel from "./DetailPanel";
-import type { NodeDetails } from "../types";
+import type { Explain, NodeDetails } from "../types";
 
 const { getNodeDetails, getReasoningAbout, getWhy } = vi.hoisted(() => ({
   getNodeDetails: vi.fn(),
@@ -656,5 +657,89 @@ describe("DetailPanel: a class's rules (explore-rules 5.3, AC-3, AC-4)", () => {
     expect(screen.getByRole("heading", { level: 2, name: "crew member" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Rules" })).toBeNull();
     expect(document.querySelectorAll("table.detail-table tbody tr")).toHaveLength(4);
+  });
+});
+
+/* --- In plain words (explain-panel 5.1, 5.2) ------------------------------ */
+
+const CREWED_EXPLAIN: Explain = {
+  kind: "class",
+  description: { text: "A mission that carries people into space.", lang: "en" },
+  parents: [{ iri: `${SPACE}Mission`, label: "Mission" }],
+  children: { count: 0, capped: false, names: [] },
+  members: { count: 1, capped: false, names: [{ iri: `${SPACE}Apollo11`, label: "Apollo 11" }] },
+};
+
+function explained(extra: Partial<NodeDetails> = {}): NodeDetails {
+  return { ...crewed(), explain: CREWED_EXPLAIN, ...extra };
+}
+
+function plainWords(): HTMLElement {
+  return screen.getByRole("heading", { level: 3, name: "In plain words" }).closest("section") as HTMLElement;
+}
+
+describe("DetailPanel: In plain words (explain-panel 5.1, 5.2, AC-1, AC-2, AC-5)", () => {
+  it("opens with the block, before Rules and Statements", async () => {
+    await renderPanel(explained());
+    const heading = screen.getByRole("heading", { level: 3, name: "In plain words" });
+    const rules = screen.getByRole("heading", { level: 3, name: "Rules" });
+    const statements = screen.getByRole("heading", { name: /Statements/ });
+    expect(heading.compareDocumentPosition(rules) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(heading.compareDocumentPosition(statements) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The first h3 in the panel: nothing is said before it.
+    expect(document.querySelector(".detail-panel h3")).toBe(heading);
+  });
+
+  it("says the kind, the facts and the authors' description, in that order", async () => {
+    await renderPanel(explained());
+    const lines = [...plainWords().querySelectorAll("p")].map((p) => p.textContent);
+    expect(lines).toEqual([
+      "Crewed mission is a class: a category of things.",
+      "Crewed mission is a more specific kind of Mission.",
+      "It has 1 individual of its own, Apollo 11.",
+      'Its authors describe it: "A mission that carries people into space."',
+    ]);
+  });
+
+  it("makes each name a term button that selects it", async () => {
+    const onNavigate = vi.fn();
+    getNodeDetails.mockResolvedValue(explained());
+    await act(async () => {
+      render(<DetailPanel ontologyId="o1" iri={`${SPACE}CrewedMission`} onNavigate={onNavigate} onClose={vi.fn()} />);
+    });
+    const apollo = within(plainWords()).getByRole("button", { name: "Apollo 11" });
+    expect(apollo.className).toBe("term-link");
+    act(() => apollo.click());
+    expect(onNavigate).toHaveBeenCalledWith(`${SPACE}Apollo11`);
+  });
+
+  it("leaves the statements complete", async () => {
+    await renderPanel(explained({ rules: undefined }));
+    // The block summarises; every row is still listed below it.
+    expect(document.querySelectorAll("table.detail-table tbody tr")).toHaveLength(4);
+  });
+
+  it("is not shown with an Edit section, which says it in its forms (AC-5)", async () => {
+    getNodeDetails.mockResolvedValue({ ...explained(), kind: "class", names: [{ lang: "en", value: "Crewed mission" }] });
+    await act(async () => {
+      render(
+        <DetailPanel
+          ontologyId="o1"
+          iri={`${SPACE}CrewedMission`}
+          onNavigate={vi.fn()}
+          onClose={vi.fn()}
+          editing={{ primaryLanguage: "en", languages: ["en"] }}
+        />,
+      );
+    });
+    expect(screen.getByRole("region", { name: "Edit" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "In plain words" })).toBeNull();
+    expect(screen.queryByText("Crewed mission is a class: a category of things.")).toBeNull();
+  });
+
+  it("is not shown for a response without explain", async () => {
+    await renderPanel(crewed());
+    expect(screen.getByRole("heading", { level: 2, name: "Crewed mission" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "In plain words" })).toBeNull();
   });
 });
