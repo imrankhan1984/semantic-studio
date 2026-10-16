@@ -2087,3 +2087,50 @@ EXPECTED OUTPUT
   statements, 2,000 of them definitions), median of five: `build_viz_graph`
   118 ms before, 553 ms after, against a 1,000 ms budget. Each term is named
   once per build: labels were a fifth of the rule pass.
+
+- **The explain panel: In plain words, and what the words mean**
+  (2026-10-16, spec `explain-panel`, backlog L-2, decision D-114). The node
+  response carries `explain` for every ontology's entity: its kind, its
+  authors' description, and the facts its file states, as structure. The
+  detail panel words it as **In plain words** wherever no Edit section is
+  present, and ends the block with a closed **What these words mean**.
+
+  **A standard term's definition lives in `explain/glossary.ts` alone; a
+  SKOS mapping's in `MAPPINGS`.** The list is the app's own, fixed, keyed by
+  full IRI, and nothing is fetched or generated (D-114): a learner reading
+  a definition has to be able to trust that it is the one the reviewer
+  read against its standard. A second list, or a definition written in a
+  component, would drift from it without a test noticing. The SKOS mapping
+  definitions are `modeling/sentences.ts`'s, the Edit page's concept form's
+  words, read from there: copied, the two pages would one day say two
+  things about one term. `glossary.test.ts` checks that every standard term
+  the bundled examples show has an entry, against `exampleTerms.json`,
+  which `test_node_detail.py` measures from the files themselves; and that
+  each entry is one sentence of at most 25 words naming no prefixed term.
+
+  **The panel's kind is the graph's, not `rdf:type`'s.** `term_kind` reads
+  `rdf:type` alone, so Apollo 11, typed only as a Crewed mission, is
+  *other* there and an individual on the graph. `node_kind` reads one node
+  the way `build_viz_graph`'s passes do (its types, the kinds a
+  subClassOf, subPropertyOf or SKOS link implies, and typed with a class
+  means an individual), and `test_node_detail.py` compares the two on
+  every node of every bundled example.
+
+  **The words are the frontend's, through `modeling/sentences.ts`.** The
+  server sends names and counts; `explain/explainSentences.ts` writes them
+  with `a`, `parentSentence`, `linkSentence` and `asType`, so the one
+  article rule stays where it is. A property's label is never read as a
+  verb: the relationship sentence wrote *A Crewed mission crew member an
+  Astronaut* for a library's noun label, so the block says *crew member
+  links a Crewed mission to an Astronaut*. A sentence from `sentences.ts` is
+  asked for with control-character markers where its names go and split on
+  them, so each name stays the panel's term button and no name is ever
+  searched for in a sentence.
+
+  **Counts are bounded.** A class's members, its subclasses, a concept's
+  narrower ones, a scheme's top concepts and a collection's members stop at
+  10,000, reading at most 10,001 from one iterator; names are sorted and
+  sent, three of them, only for a count of 50 or fewer. A class with ten
+  thousand individuals costs the same as one with 10,001. A literal's type
+  reaches the panel prefixed only (`^^xsd:date`), so the glossary looks it
+  up by the standard prefixes alone.

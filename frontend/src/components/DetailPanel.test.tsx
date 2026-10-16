@@ -34,7 +34,8 @@ EXPECTED OUTPUT
     - Pass/fail per assertion, covering AC-6 to AC-10 and AC-13; and for
       visual-modeling-canvas.md, AC-7 (a javascript: IRI is text, never a
       link) and AC-4 (a read-only document says why, in text); and for
-      explain-panel.md, AC-1, AC-2 and AC-5 (the In plain words block).
+      explain-panel.md, AC-1, AC-2, AC-3 and AC-5 (the In plain words block
+      and What these words mean).
 ================================================================================
 */
 
@@ -735,6 +736,64 @@ describe("DetailPanel: In plain words (explain-panel 5.1, 5.2, AC-1, AC-2, AC-5)
     expect(screen.getByRole("region", { name: "Edit" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "In plain words" })).toBeNull();
     expect(screen.queryByText("Crewed mission is a class: a category of things.")).toBeNull();
+  });
+
+  it("ends with What these words mean, closed, counting the defined terms (5.3, AC-3)", async () => {
+    const apollo = { type: "uri" as const, value: `${SPACE}Apollo11`, prefixed: "space:Apollo11", label: "Apollo 11" };
+    const type = { type: "uri" as const, value: "http://www.w3.org/1999/02/22-rdf-syntax-ns#type", prefixed: "rdf:type" };
+    await renderPanel(explained({ incoming: [{ subject: apollo, predicate: type }], incomingTotal: 1 }));
+    const disclosure = plainWords().querySelector("details") as HTMLDetailsElement;
+    expect(disclosure).toBeTruthy();
+    // A native details element, closed until opened: one control.
+    expect(disclosure.open).toBe(false);
+    const summary = disclosure.querySelector("summary") as HTMLElement;
+    // rdf:type, owl:Class, rdfs:subClassOf; the rule rows are not listed, so
+    // owl:equivalentClass is not in the panel, and rdf:type again in the
+    // references is the same term.
+    expect(summary.textContent).toBe("What these words mean (3)");
+    act(() => summary.click());
+    expect(disclosure.open).toBe(true);
+    const items = [...disclosure.querySelectorAll("li")].map((li) => li.textContent);
+    expect(items).toEqual([
+      "rdf:type: says what kind of thing something is; the value is a class.",
+      "owl:Class: a category of things, as the Web Ontology Language defines one; its members are individuals.",
+      "rdfs:subClassOf: says one class is a more specific kind of another; everything in the first is also in the second.",
+    ]);
+    // At the end of the block, after its sentences.
+    expect(plainWords().lastElementChild).toBe(disclosure);
+  });
+
+  it("names a term as the panel shows it, its prefixed form beside it", async () => {
+    const labelled = explained({
+      outgoing: [
+        {
+          predicate: { type: "uri", value: "http://www.w3.org/1999/02/22-rdf-syntax-ns#type", prefixed: "rdf:type", label: "type" },
+          object: { type: "uri", value: `${SPACE}Mission`, prefixed: "space:Mission", label: "Mission" },
+        },
+      ],
+      outgoingTotal: 1,
+      rules: undefined,
+    });
+    await renderPanel(labelled);
+    const items = [...plainWords().querySelectorAll("details li")].map((li) => li.textContent);
+    expect(items).toEqual(["type (rdf:type): says what kind of thing something is; the value is a class."]);
+  });
+
+  it("has no What these words mean when the panel shows no defined term", async () => {
+    const plain = explained({
+      outgoing: [
+        {
+          predicate: { type: "uri", value: `${SPACE}crewSize`, prefixed: "space:crewSize", label: "crew size" },
+          object: { type: "literal", value: "3", lang: null, datatype: null },
+        },
+      ],
+      outgoingTotal: 1,
+      rules: undefined,
+    });
+    await renderPanel(plain);
+    expect(plainWords()).toBeTruthy();
+    expect(document.querySelector("details")).toBeNull();
+    expect(screen.queryByText(/What these words mean/)).toBeNull();
   });
 
   it("is not shown for a response without explain", async () => {

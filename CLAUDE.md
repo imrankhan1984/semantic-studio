@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1353 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1579 tests, vitest
+cd backend  && python -m pytest tests    # 1378 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1630 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -204,6 +204,9 @@ frontend/src/
                      overlap rule (labelBoxes.ts, D-110)
   reasoning/         Pure reasoning words: status lines, headings, endings and
                      when a result is stale (reasonSentences.ts)
+  explain/           Pure In plain words logic (D-114): the detail panel's
+                     sentences (explainSentences.ts) and the one glossary
+                     of standard terms (glossary.ts)
   home/              Pure home-screen logic: the card thumbnail's layout,
                      the composition bar's bands, and the one library's
                      order, your work first and the examples last
@@ -230,7 +233,7 @@ frontend/src/
 docs/known-state.md  Why each load-bearing rule below exists
 ```
 
-`sparql/`, `explore/`, `home/`, `projects/`, `modeling/` and `reasoning/` are the same idea six times: logic a
+`sparql/`, `explore/`, `home/`, `projects/`, `modeling/`, `reasoning/` and `explain/` are the same idea seven times: logic a
 component needs, kept out of the component so it can be tested without
 rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts`, `statusWords.ts`,
 `links.ts` and `catalogue.ts` are the same idea for one function and one constant. Prefer this
@@ -285,6 +288,8 @@ leaves one behind.
 
 **Sentences**
 - One a/an rule and one verb rule per side, `sentences.py` and `modeling/sentences.ts`, tested with one table; no module defines its own (`test_sentences.py`, `sentences.test.ts` scan). [one a/an rule]
+- A standard term's definition lives in `explain/glossary.ts` alone; a SKOS mapping's in `MAPPINGS` (D-114). [explain panel]
+- The explain block's kind is `node_kind`, the graph's, never `term_kind`; its words go through `modeling/sentences.ts`, a property's label never read as a verb. [explain panel]
 
 **Authoring**
 - Every `Ontology` cache is `(key, value)` keyed on the revision; the library stays at revision 0. [authoring foundations]

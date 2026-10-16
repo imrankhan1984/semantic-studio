@@ -19,11 +19,13 @@ BASIC IDEA
     `explain` is read for one entity of each kind on Space Exploration, and
     for a project's class. Its member count is bounded on a generated class
     of 10,050, by counting the triples read. Its kind is checked against
-    the graph's on every bundled example.
+    the graph's on every bundled example, and the list of standard terms
+    those examples show, which the glossary's test reads, is measured here.
 
 INPUTS / INPUT SOURCES
     - An inline Turtle string, uploaded through the API.
     - The bundled examples (app/examples, app/vocab/foaf.rdf).
+    - frontend/src/explain/exampleTerms.json, checked against the measure.
 
 EXPECTED OUTPUT
     - Pass/fail per assertion.
@@ -32,12 +34,13 @@ EXPECTED OUTPUT
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from rdflib import Graph, Literal, URIRef
-from rdflib.namespace import OWL, RDF, RDFS
+from rdflib.namespace import DC, DCTERMS, OWL, RDF, RDFS, SKOS, XSD
 
 from app.graph_builder import _description, build_viz_graph, explain, labeler, node_kind
 from app.main import app
@@ -113,11 +116,16 @@ def test_a_property_carries_no_rules(oid):
 
 SPACE = "http://example.org/space#"
 APP = Path(__file__).resolve().parents[1] / "app"
+ROOT = Path(__file__).resolve().parents[2]
+# The standard terms the bundled examples put in a panel, which the glossary
+# test reads (glossary.test.ts): measured here so the list cannot go stale.
+EXAMPLE_TERMS = ROOT / "frontend" / "src" / "explain" / "exampleTerms.json"
 BUNDLED = (
     ("examples/space-exploration.ttl", "turtle"),
     ("examples/middle-earth.ttl", "turtle"),
     ("vocab/foaf.rdf", "xml"),
 )
+STANDARD = tuple(str(ns) for ns in (RDF, RDFS, OWL, SKOS, DCTERMS, DC, XSD))
 
 
 def _bundled(path: str, fmt: str) -> Graph:
@@ -358,7 +366,7 @@ def test_a_class_with_three_members_names_them_in_label_order():
     assert [n["label"] for n in names] == ["Member 00001", "Member 00002", "Member 00003"]
 
 
-# --- node_kind ---------------------------------------------------------------
+# --- node_kind and the glossary's measure -----------------------------------------
 
 
 @pytest.mark.parametrize("path, fmt", BUNDLED)
@@ -369,3 +377,23 @@ def test_node_kind_is_the_kind_the_graph_draws(path, fmt):
     for node in nodes:
         assert node_kind(graph, URIRef(node["id"])) == node["kind"], node["id"]
 
+
+def _standard(term) -> bool:
+    return isinstance(term, URIRef) and str(term).startswith(STANDARD)
+
+
+def test_the_glossary_list_is_every_standard_term_an_example_panel_shows():
+    # A panel lists the statements of a named entity: their predicates and
+    # values, a literal's datatype, and a standard term named as a subject.
+    # A blank node's own statements show only inside its Turtle-like text.
+    measured: set[str] = set()
+    for path, fmt in BUNDLED:
+        for s, p, o in _bundled(path, fmt):
+            if not isinstance(s, URIRef):
+                continue
+            for term in (s, p, o, getattr(o, "datatype", None)):
+                if _standard(term):
+                    measured.add(str(term))
+    listed = json.loads(EXAMPLE_TERMS.read_text(encoding="utf-8"))["terms"]
+    assert len(listed) >= 45
+    assert sorted(measured) == listed

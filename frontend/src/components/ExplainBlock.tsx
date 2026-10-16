@@ -6,7 +6,9 @@ FILE: frontend/src/components/ExplainBlock.tsx
 SUMMARY
     The detail panel's In plain words block (explain-panel 5.1, 5.2, D-114):
     what kind of thing is selected, the facts its file states about it, and
-    its authors' own description, as sentences, above the statements.
+    its authors' own description, as sentences, above the statements. At
+    its end, What these words mean (5.3): each standard term the panel
+    shows, defined in one sentence from the app's fixed glossary.
 
 BASIC IDEA
     The server sends the structure (`explain`) and explain/explainSentences.ts
@@ -19,23 +21,35 @@ BASIC IDEA
     DetailPanel draws it only where there is no Edit section: that section
     already says the same things in its forms (5.1).
 
+    The definitions are one native `details` element, closed until opened:
+    one control, opened with Enter or Space and announced as expanded or
+    collapsed by the browser, rather than a button beside each of up to
+    thirty terms, or a tooltip a keyboard never reaches (5.3, Section 15).
+    With no defined term in the panel there is nothing to open, and it is
+    not drawn.
+
 INPUTS / INPUT SOURCES (props)
     - label: the entity's name, as the panel's heading shows it.
     - explain: the node response's `explain`.
     - onNavigate: select an entity named in a sentence.
+    - terms: the defined terms the panel shows, in first-appearance order
+      (explain/glossary.ts, panelTerms).
 
 EXPECTED OUTPUT
-    - A <section> with the heading and one paragraph per sentence.
+    - A <section> with the heading, one paragraph per sentence, and the
+      closed list of definitions when there is one.
 ================================================================================
 */
 
 import { explainSentences, type Sentence } from "../explain/explainSentences";
+import type { PanelTerm } from "../explain/glossary";
 import type { Explain } from "../types";
 
 interface Props {
   label: string;
   explain: Explain;
   onNavigate: (iri: string) => void;
+  terms: PanelTerm[];
 }
 
 function SentenceLine({ sentence, onNavigate }: { sentence: Sentence; onNavigate: (iri: string) => void }) {
@@ -55,7 +69,7 @@ function SentenceLine({ sentence, onNavigate }: { sentence: Sentence; onNavigate
   );
 }
 
-export default function ExplainBlock({ label, explain, onNavigate }: Props) {
+export default function ExplainBlock({ label, explain, onNavigate, terms }: Props) {
   const sentences = explainSentences(label, explain);
   return (
     <section className="explain-block">
@@ -63,6 +77,22 @@ export default function ExplainBlock({ label, explain, onNavigate }: Props) {
       {sentences.map((sentence, i) => (
         <SentenceLine key={i} sentence={sentence} onNavigate={onNavigate} />
       ))}
+      {terms.length > 0 && (
+        <details className="explain-terms">
+          <summary>What these words mean ({terms.length})</summary>
+          <ul>
+            {terms.map((term) => (
+              <li key={term.iri}>
+                {/* The name as the panel shows it, so a row is easy to
+                    match; the prefixed form beside it when that differs. */}
+                <span className="explain-term">{term.name}</span>
+                {term.name !== term.prefixed && <span className="explain-prefixed"> ({term.prefixed})</span>}
+                {`: ${term.definition}`}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </section>
   );
 }
