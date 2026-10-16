@@ -50,7 +50,8 @@ EXPECTED OUTPUT
     - parse_restriction / parse_defining -> the content, or None.
     - content_of(form, parsed, with_) -> a parsed rule as its Content.
     - draws_line(content) -> whether the canvas and Explore draw it as a line.
-    - class_rules(graph, cls, own, name) -> the form's items.
+    - class_rules(graph, cls, own, name) -> the form's items;
+      read_only_rules(graph, cls, name) the same, none editable.
     - find(graph, cls, key) -> the (predicate, node) pairs with that content.
     - restriction_triples(...) -> (node, triples) for a new restriction.
     - shacl_plain / shacl_triples -> what Check it in data too writes.
@@ -479,6 +480,13 @@ def class_rules(g: Graph, cls: URIRef, own: Graph, name: Name) -> list[dict]:
             outside.append({"type": "turtle", "turtle": turtle_of(g, _statements(g, node)), "editable": False})
     outside.sort(key=lambda i: i["turtle"])
     return items + outside
+
+
+def read_only_rules(g: Graph, cls: URIRef, name: Name) -> list[dict]:
+    """The same items for a class no one here may change, a library
+    ontology's (explore-rules 5.3): with no document of the person's, none
+    is editable."""
+    return class_rules(g, cls, Graph(), name)
 
 
 # --- writing --------------------------------------------------------------------------

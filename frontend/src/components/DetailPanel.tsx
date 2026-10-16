@@ -54,6 +54,13 @@ INPUTS / INPUT SOURCES (props)
     - inferred: a current reasoning result, while Show inferred is on: the
       Inferred block under the statements (axioms-and-reasoning 5.7).
 
+    A class's rules come with its details for every ontology (explore-rules
+    5.3, D-113). Without the Edit section they are a Rules block of their
+    own, one sentence each in the Edit page's words, read-only, a shape
+    outside the sentences as its Turtle; with it, its Rules block says them.
+    Either way the blank-node statements they came from are not listed
+    again.
+
     The IRI under the title is a link only when linkTarget allows it (D-088):
     http and https. Any other scheme is shown as text, with Copy beside it.
 
@@ -66,6 +73,7 @@ import { useEffect, useRef, useState } from "react";
 import { getNodeDetails } from "../api";
 import { linkTarget } from "../links";
 import { dataLabel } from "../modeling/dataSentences";
+import { itemKey, itemSentence } from "../modeling/ruleSentences";
 import type { CanvasSet, NodeDetails, TermRef, ProjectKind } from "../types";
 import EditSection from "./EditSection";
 import InferredBlock from "./InferredBlock";
@@ -99,6 +107,20 @@ interface Props {
   canvas?: CanvasSet | null;
   /** A current reasoning result to show under the statements (5.7). */
   inferred?: { projectId: string; resultKey: string; imports: boolean } | null;
+}
+
+/** The predicates a class's rules hang from (axioms.class_rules): with the
+ *  rules shown as sentences, a blank node under one of these is a rule
+ *  already said, and its raw row would say it twice (explore-rules 5.3). */
+const RULE_PREDICATES = new Set([
+  "http://www.w3.org/2000/01/rdf-schema#subClassOf",
+  "http://www.w3.org/2002/07/owl#equivalentClass",
+  "http://www.w3.org/2002/07/owl#disjointWith",
+  "http://www.w3.org/2002/07/owl#disjointUnionOf",
+]);
+
+function isRuleRow(row: NodeDetails["outgoing"][number]): boolean {
+  return row.object.type === "bnode" && row.predicate.type === "uri" && RULE_PREDICATES.has(row.predicate.value);
 }
 
 /** The heading id, so the panel can be named by it and focus can be sent to it. */
@@ -203,6 +225,9 @@ export default function DetailPanel({
 
   if (!iri) return null;
   const href = linkTarget(iri);
+  // A class's rules, when the server read them; its blank-node rows go.
+  const statements = details?.rules ? details.outgoing.filter((row) => !isRuleRow(row)) : (details?.outgoing ?? []);
+  const hiddenRows = (details?.outgoing.length ?? 0) - statements.length;
 
   return (
     <aside className="detail-panel" aria-labelledby={HEADING_ID}>
@@ -311,13 +336,37 @@ export default function DetailPanel({
               </dl>
             </section>
           )}
+          {details.rules && !editing && details.rules.items.length > 0 && (
+            // The Edit page's sentences, read-only (explore-rules 5.3): with
+            // `editing`, EditSection's Rules block already says them.
+            <section>
+              <h3>Rules</h3>
+              <ul className="detail-rules">
+                {details.rules.items.map((item) => {
+                  const sentence = itemSentence(details.label, item);
+                  return (
+                    <li key={itemKey(item)} className="rule-item">
+                      {item.type === "turtle" ? (
+                        <>
+                          <p className="detail-note">Written in Turtle, outside the sentences:</p>
+                          <pre className="rule-turtle">{item.turtle}</pre>
+                        </>
+                      ) : (
+                        <span className="rule-sentence">{sentence}</span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
           <section>
             <h3>
-              Statements <span className="count">{details.outgoingTotal}</span>
+              Statements <span className="count">{details.outgoingTotal - hiddenRows}</span>
             </h3>
             <table className="detail-table">
               <tbody>
-                {details.outgoing.map((row, i) => (
+                {statements.map((row, i) => (
                   <tr key={i}>
                     <td className="pred">
                       <Term term={row.predicate} onNavigate={onNavigate} />
@@ -331,7 +380,7 @@ export default function DetailPanel({
             </table>
             {details.outgoingTotal > details.outgoing.length && (
               <p className="detail-note">
-                Showing {details.outgoing.length} of {details.outgoingTotal} statements.
+                Showing {statements.length} of {details.outgoingTotal - hiddenRows} statements.
               </p>
             )}
           </section>
