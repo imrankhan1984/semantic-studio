@@ -490,6 +490,9 @@ export interface TermRef {
   label?: string;
   lang?: string | null;
   datatype?: string | null;
+  // A literal's type as a full IRI, which the glossary is keyed by: the
+  // prefixed form above is whatever the file bound (explain-panel 5.3).
+  datatypeIri?: string | null;
   // A project document's URI term: the kind its rdf:type gives, so the
   // editing form can tell an attribute from a relationship (visual-modeling).
   kind?: string;
@@ -525,6 +528,47 @@ export interface NodeDetails {
   // warnings, and what the sentence builder offers when the class is this
   // document's to change (null when it is not).
   rules?: ClassRules;
+  // Every ontology's entity: what the In plain words block is written from
+  // (explain-panel 5.2, D-114). Structure only; explainSentences.ts words it.
+  explain?: Explain;
+}
+
+/* --- the In plain words block (explain-panel 5.2) ------------------------ */
+
+export interface ExplainRef {
+  iri: string;
+  label: string;
+}
+
+/** A bounded count: it stops at 10,000 (`capped` past it), and names come
+ *  only with a count of 50 or fewer, three at most, in label order. */
+export interface ExplainCount {
+  count: number;
+  capped: boolean;
+  names?: ExplainRef[];
+}
+
+/** The facts the file states about one entity. A field its kind does not
+ *  use is absent. */
+export interface Explain {
+  kind: string;
+  description: { text: string; lang: string | null } | null;
+  parents?: ExplainRef[];
+  children?: ExplainCount;
+  members?: ExplainCount;
+  domains?: ExplainRef[];
+  ranges?: ExplainRef[];
+  // An end the file gives only as a blank node (a union, a restriction).
+  unnamedDomain?: boolean;
+  unnamedRange?: boolean;
+  // A datatype property's type of value, prefixed (xsd:date), as typeWord reads it.
+  datatype?: string | null;
+  inverse?: ExplainRef | null;
+  types?: ExplainRef[];
+  broader?: ExplainRef[];
+  schemes?: ExplainRef[];
+  narrower?: ExplainCount;
+  topConcepts?: ExplainCount;
 }
 
 /* --- rules on a class (axioms-and-reasoning Stage B) -------------------- */

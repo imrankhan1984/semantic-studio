@@ -49,7 +49,11 @@ EXPECTED OUTPUT
     - neighborhood_viz -> the same shape again, holding one entity and its
       highest-degree neighbours, so the browser can grow a budgeted graph
       outwards without refetching all of it.
-    - node_details -> every outgoing/incoming statement for one IRI (or None).
+    - node_details -> every outgoing/incoming statement for one IRI (or None),
+      and `explain` (explain-panel 5.2, D-114): its kind as the graph draws
+      it (node_kind), its authors' description, and the facts the file
+      states about it as structure, with every count bounded. The words are
+      the frontend's (explain/explainSentences.ts).
     - search_nodes -> ranked node matches for the search box.
     - pick_label / prefixed are imported by query_schema.py and sparql_exec.py.
     - labeler / lang_matches choose a project document's names in its display
@@ -737,6 +741,9 @@ def _term_json(graph: Graph, term) -> dict:
             "value": str(term),
             "lang": term.language,
             "datatype": prefixed(graph, term.datatype) if term.datatype else None,
+            # The full IRI as well: the glossary is keyed by it, and the
+            # prefix above is whatever the file bound (explain-panel 5.3).
+            "datatypeIri": str(term.datatype) if term.datatype else None,
         }
     if isinstance(term, BNode):
         # Render blank nodes inline as their own mini description.
@@ -794,15 +801,19 @@ def node_details(
     # Nothing references or is stated about this IRI -> not a real entity.
     if out_total == 0 and in_total == 0:
         return None
+    label = labeler(graph, langs)
     result = {
         "iri": iri,
         "prefixed": prefixed(graph, ref),
-        "label": labeler(graph, langs)(ref),
+        "label": label(ref),
         "outgoing": outgoing,
         "incoming": incoming,
         "outgoingTotal": out_total,
         "incomingTotal": in_total,
     }
+    # The structure the panel's In plain words block is written from
+    # (explain-panel 5.2, D-114), for every ontology: never its words.
+    result["explain"] = explain(graph, ref, label, langs)
     if languages:
         result["names"] = [
             {"lang": lang, "value": name_in(graph, ref, lang)} for lang in languages
@@ -823,6 +834,187 @@ def term_kind(graph: Graph, node: URIRef) -> str:
     """The node kind rdf:type gives, as the graph view would colour it."""
     kinds = {TYPE_TO_KIND[t] for t in graph.objects(node, RDF.type) if t in TYPE_TO_KIND}
     return _best_kind(kinds)
+
+
+def _kinds_stated(graph: Graph, node: URIRef) -> set[str]:
+    """build_viz_graph's passes 1 and 2 for one node: the kinds its rdf:type
+    gives, and those a subClassOf, subPropertyOf or SKOS link implies. Both
+    ends of a link are named or the graph draws no line, so neither is read."""
+    kinds = {TYPE_TO_KIND[t] for t in graph.objects(node, RDF.type) if t in TYPE_TO_KIND}
+    implied = (
+        (RDFS.subClassOf, KIND_CLASS),
+        (RDFS.subPropertyOf, KIND_PROPERTY),
+        (SKOS.broader, KIND_CONCEPT),
+        (SKOS.related, KIND_CONCEPT),
+        (SKOS.narrower, KIND_CONCEPT),
+    )
+    for predicate, kind in implied:
+        if kind in kinds:
+            continue
+        # any() stops at the first: a class with 10,000 subclasses is still
+        # one lookup.
+        if any(isinstance(o, URIRef) for o in graph.objects(node, predicate)) or any(
+            isinstance(s, URIRef) for s in graph.subjects(predicate, node)
+        ):
+            kinds.add(kind)
+    return kinds
+
+
+def node_kind(graph: Graph, node: URIRef) -> str:
+    """The kind the graph draws one node as, read without building the graph.
+
+    term_kind reads rdf:type alone, so Apollo 11, typed only as a Crewed
+    mission, would be "other" there and an individual on the graph; the panel
+    has to say what the graph shows (explain-panel 5.2). Pass 3's rule, then:
+    typed with a class, and not itself a class, scheme or concept, is an
+    individual. test_node_detail.py checks this against build_viz_graph on
+    every bundled example.
+    """
+    kinds = _kinds_stated(graph, node)
+    if not kinds & {KIND_CLASS, KIND_SCHEME, KIND_CONCEPT}:
+        for t in graph.objects(node, RDF.type):
+            if isinstance(t, URIRef) and KIND_CLASS in _kinds_stated(graph, t):
+                kinds.add(KIND_INDIVIDUAL)
+                break
+    return _best_kind(kinds)
+
+
+# --- explain (explain-panel 5.2, D-114) ---------------------------------------
+# The facts the In plain words block states, as structure. Every count stops
+# at EXPLAIN_COUNT_LIMIT, read through one more to know it stopped, and names
+# are sorted only for a count of EXPLAIN_SORT_LIMIT or fewer: a class with a
+# million individuals costs 10,001 reads and no sort.
+
+EXPLAIN_COUNT_LIMIT = 10_000
+EXPLAIN_SORT_LIMIT = 50
+# The sentence names three; sending more would be words the panel never says.
+EXPLAIN_NAMES = 3
+
+# The authors' description, first found wins (5.2).
+DESCRIPTION_PREDICATES = (SKOS.definition, RDFS.comment, DCTERMS.description)
+
+
+def _description(graph: Graph, node: URIRef, langs: Optional[Sequence[str]]) -> Optional[dict]:
+    """The first predicate's text, in the display language when it has one.
+
+    Predicate order dominates, as the spec reads: a comment in French is not
+    passed over for an English dcterms:description. Within a predicate the
+    display language wins, then English or untagged for the library (as
+    pick_label prefers), then the first by language tag and text, so a
+    reload shows the same one. Empty text is no description: it would hide
+    the next predicate's (code review).
+    """
+    wanted = list(langs or ("en",))
+    for predicate in DESCRIPTION_PREDICATES:
+        values = sorted(
+            (v for v in graph.objects(node, predicate) if isinstance(v, Literal) and str(v).strip()),
+            key=lambda v: (v.language or "", str(v)),
+        )
+        if not values:
+            continue
+        chosen = next(
+            (v for lang in wanted for v in values if lang_matches(v.language, lang)),
+            next((v for v in values if not v.language), values[0]),
+        )
+        return {"text": str(chosen), "lang": chosen.language}
+    return None
+
+
+def _refs(nodes, label: Callable[[URIRef], str]) -> list[dict]:
+    """Named terms as {iri, label}, in label order. For the short lists only:
+    parents, ends, types, schemes."""
+    named = {n for n in nodes if isinstance(n, URIRef)}
+    return sorted(({"iri": str(n), "label": label(n)} for n in named), key=lambda r: (r["label"].lower(), r["iri"]))
+
+
+def _counted(nodes, label: Callable[[URIRef], str], names: bool = True) -> dict:
+    """A bounded count: from one iterator, at most EXPLAIN_COUNT_LIMIT + 1 read.
+
+    A blank node counts, as it is a member the file states, though it has no
+    name to give; every term counts toward the bound, or a million anonymous
+    ones would all be read. `capped` says the count stopped; the names
+    (three, in label order) come only with a count small enough to sort.
+    """
+    seen: set = set()
+    for n in nodes:
+        seen.add(n)
+        if len(seen) > EXPLAIN_COUNT_LIMIT:
+            break
+    capped = len(seen) > EXPLAIN_COUNT_LIMIT
+    result = {"count": min(len(seen), EXPLAIN_COUNT_LIMIT), "capped": capped}
+    if names:
+        result["names"] = _refs(seen, label)[:EXPLAIN_NAMES] if len(seen) <= EXPLAIN_SORT_LIMIT else []
+    return result
+
+
+def _unnamed(nodes) -> bool:
+    return any(isinstance(n, BNode) for n in nodes)
+
+
+def _type_name(graph: Graph, iri: URIRef) -> str:
+    """A type of value as typeWord knows it: XML Schema's always as xsd:,
+    whatever prefix the file bound (xs:date is a date too); any other as
+    the file writes it."""
+    if str(iri).startswith(XSD_NS):
+        return "xsd:" + str(iri)[len(XSD_NS):]
+    if iri == RDF.langString:
+        return "rdf:langString"
+    return prefixed(graph, iri)
+
+
+def _chain(*iterables):
+    for iterable in iterables:
+        yield from iterable
+
+
+def explain(
+    graph: Graph,
+    node: URIRef,
+    label: Callable[[URIRef], str],
+    langs: Optional[Sequence[str]] = None,
+) -> dict:
+    """What one entity is and what the file states about it (explain-panel 5.2).
+
+    Only the fields its kind uses are present. Nothing here is inferred: a
+    class's members are those typed with it, not with its subclasses, and a
+    concept's narrower ones are those stated either way round.
+    """
+    kind = node_kind(graph, node)
+    result: dict = {"kind": kind, "description": _description(graph, node, langs)}
+    if kind == KIND_CLASS:
+        result["parents"] = _refs((p for p in graph.objects(node, RDFS.subClassOf) if p != node), label)
+        result["children"] = _counted((c for c in graph.subjects(RDFS.subClassOf, node) if c != node), label)
+        result["members"] = _counted(graph.subjects(RDF.type, node), label)
+    elif kind in (KIND_OBJECT_PROPERTY, KIND_PROPERTY, KIND_DATATYPE_PROPERTY):
+        result["domains"] = _refs(graph.objects(node, RDFS.domain), label)
+        # An end given only as a blank node (a union, a restriction) is not
+        # "a thing": the sentence says the statements describe it (code review).
+        if _unnamed(graph.objects(node, RDFS.domain)):
+            result["unnamedDomain"] = True
+        if kind == KIND_DATATYPE_PROPERTY:
+            ranges = sorted(str(r) for r in graph.objects(node, RDFS.range) if isinstance(r, URIRef))
+            result["datatype"] = _type_name(graph, URIRef(ranges[0])) if ranges else None
+        else:
+            result["ranges"] = _refs(graph.objects(node, RDFS.range), label)
+            if _unnamed(graph.objects(node, RDFS.range)):
+                result["unnamedRange"] = True
+            inverses = _refs(_chain(graph.objects(node, OWL.inverseOf), graph.subjects(OWL.inverseOf, node)), label)
+            result["inverse"] = next((r for r in inverses if r["iri"] != str(node)), None)
+    elif kind == KIND_INDIVIDUAL:
+        result["types"] = _refs((t for t in graph.objects(node, RDF.type) if t != OWL.NamedIndividual), label)
+    elif kind == KIND_CONCEPT:
+        result["broader"] = _refs(_chain(graph.objects(node, SKOS.broader), graph.subjects(SKOS.narrower, node)), label)
+        result["schemes"] = _refs(_chain(graph.objects(node, SKOS.inScheme), graph.objects(node, SKOS.topConceptOf)), label)
+        result["narrower"] = _counted(
+            _chain(graph.objects(node, SKOS.narrower), graph.subjects(SKOS.broader, node)), label, names=False
+        )
+    elif kind == KIND_SCHEME:
+        result["topConcepts"] = _counted(
+            _chain(graph.objects(node, SKOS.hasTopConcept), graph.subjects(SKOS.topConceptOf, node)), label, names=False
+        )
+    elif kind == KIND_COLLECTION:
+        result["members"] = _counted(graph.objects(node, SKOS.member), label)
+    return result
 
 
 def _with_kind(graph: Graph, term: dict) -> None:

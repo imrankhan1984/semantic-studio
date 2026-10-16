@@ -5892,6 +5892,48 @@ kbd {
   padding: 4px 0;
 }
 
+/* In plain words (explain-panel 5.2): sentences at body size, a little air
+   between them; the names in them are the panel's term links, inline. */
+.explain-sentence {
+  margin: 0 0 6px;
+  line-height: 1.45;
+}
+
+.explain-sentence .term-link {
+  display: inline;
+}
+
+/* What these words mean (5.3): a native disclosure, closed, the technical
+   details' look; each term's name in body weight, its prefixed form dim. */
+.explain-terms {
+  margin: 2px 0 4px;
+  font-size: var(--fs-sm);
+}
+
+.explain-terms summary {
+  cursor: pointer;
+  color: var(--accent-text);
+}
+
+.explain-terms ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  line-height: 1.45;
+}
+
+.explain-terms li {
+  margin-bottom: 4px;
+}
+
+.explain-term {
+  font-weight: 600;
+}
+
+.explain-prefixed {
+  color: var(--text-dim);
+  font-family: ui-monospace, Consolas, monospace;
+}
+
 /* Explore's read-only Rules block (explore-rules 5.3): the sentences alone. */
 .detail-rules {
   list-style: none;
