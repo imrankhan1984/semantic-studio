@@ -15,6 +15,11 @@ BASIC IDEA
     folded under 1440 px, and the person's own choice is kept for this
     browser after that (explore-and-query-layout 5.2).
 
+    Query starts it folded every time, whatever Explore kept, and keeps
+    nothing (load-and-shapes 5.4): open, it took 208 px of a 512 px graph
+    there. App remounts the legend when the mode changes, so opening it in
+    Query lasts until Query is left, and Explore reads its choice again.
+
     Every row that does something is a <button>, and that is the whole of this
     file's accessibility story. They were <div onClick> until 2026-07-31, which
     looked identical and was unreachable: the legend is the application's only
@@ -37,6 +42,7 @@ INPUTS / INPUT SOURCES (props)
     - rdfsClassCount: how many of the classes are RDFS-only (graph stats).
     - edgeKinds: which relation kinds are present.
     - hiddenKinds + onToggleKind: the show/hide filter state and its setter.
+    - inQuery: Query's legend, folded at first and remembered nowhere.
     - localStorage `semantic-studio-legend` and the window's width, read once
       on mount for whether it starts folded.
 
@@ -57,6 +63,7 @@ interface Props {
   edgeKinds: string[];
   hiddenKinds: Set<string>;
   onToggleKind: (kind: string) => void;
+  inQuery?: boolean;
 }
 
 const EDGE_LABELS: Record<string, string> = {
@@ -106,10 +113,19 @@ function startsFolded(): boolean {
   return window.innerWidth < LEGEND_OPEN_FROM;
 }
 
-export default function Legend({ theme, kindCounts, rdfsClassCount = 0, edgeKinds, hiddenKinds, onToggleKind }: Props) {
-  const [collapsed, setCollapsedState] = useState(startsFolded);
+export default function Legend({
+  theme,
+  kindCounts,
+  rdfsClassCount = 0,
+  edgeKinds,
+  hiddenKinds,
+  onToggleKind,
+  inQuery = false,
+}: Props) {
+  const [collapsed, setCollapsedState] = useState(() => inQuery || startsFolded());
   const setCollapsed = (folded: boolean) => {
     setCollapsedState(folded);
+    if (inQuery) return;
     try {
       localStorage.setItem(LEGEND_KEY, folded ? "folded" : "open");
     } catch {
