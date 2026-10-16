@@ -346,7 +346,10 @@ export default function LoadDialog({
                 secondary button; nothing is downloaded. */}
             {examplesMissing > 0 && onExamplesRestored && (
               <div className="examples-restore">
-                <button type="button" disabled={busy} onClick={() => void addExamplesBack()}>
+                {/* aria-disabled, never disabled, while it works: a disabled
+                    button drops focus, and a failure would leave it on the
+                    page (load-and-shapes 5.6). */}
+                <button type="button" aria-disabled={busy} onClick={() => !busy && void addExamplesBack()}>
                   Add the examples back
                 </button>
               </div>

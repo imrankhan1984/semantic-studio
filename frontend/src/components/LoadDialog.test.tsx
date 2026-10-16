@@ -15,7 +15,11 @@ SUMMARY
     (csv-data-import X4). Suggested lists schema.org, FIBO and UNESCO, and
     offers *Add the examples back* only while an example is missing, which
     calls the restore endpoint and keeps focus on the tab
-    (home-and-examples 5.8, AC-10).
+    (home-and-examples 5.8, AC-10), aria-disabled while it works and
+    keeping focus when it fails (load-and-shapes 5.6). A failed load shows
+    the server's sentence with the raw text under a closed Technical
+    details (5.1); the dialog is announced as one, Escape closes it or asks
+    past the wizard's step 3, and focus goes back to its opener (5.2).
 
 BASIC IDEA
     api.ts is mocked; the snapshot list reads the real project store, left
@@ -191,6 +195,31 @@ describe("LoadDialog suggestions (home-and-examples 5.8)", () => {
     expect(screen.getByText("The examples could not be added back.")).toBeTruthy();
     expect(onExamplesRestored).not.toHaveBeenCalled();
     expect((screen.getByRole("button", { name: "Add the examples back" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("is aria-disabled while it works, never disabled, and ignores a second click (load-and-shapes 5.6, AC-7)", async () => {
+    let fail!: (e: Error) => void;
+    restoreExamples.mockReturnValue(new Promise((_, reject) => (fail = reject)));
+    render(<LoadDialog onLoaded={() => {}} onClose={() => {}} examplesMissing={1} onExamplesRestored={() => {}} />);
+    const button = screen.getByRole("button", { name: "Add the examples back" }) as HTMLButtonElement;
+    button.focus();
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.disabled).toBe(false);
+    expect(document.activeElement).toBe(button);
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(restoreExamples).toHaveBeenCalledTimes(1);
+    // On failure focus stays on it, and the error shows.
+    await act(async () => {
+      fail(new Error("The examples could not be added back."));
+    });
+    expect(screen.getByText("The examples could not be added back.")).toBeTruthy();
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute("aria-disabled")).toBe("false");
   });
 });
 
