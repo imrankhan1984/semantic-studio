@@ -97,7 +97,14 @@ let props: {
   onError: ReturnType<typeof vi.fn<(message: string) => void>>;
 };
 
-async function setup(shapes: ShapeForm[], kind: ProjectKind = "ontology", documents = [doc("model"), doc("shapes")]) {
+// The first shape opens on arrival (load-and-shapes 5.3), so a test's own
+// suggestions must be in place before the view is drawn.
+async function setup(
+  shapes: ShapeForm[],
+  kind: ProjectKind = "ontology",
+  documents = [doc("model"), doc("shapes")],
+  suggestions: unknown = SUGGESTIONS,
+) {
   openProject.mockResolvedValue({
     project: {
       id: PID, name: "Shop", createdAt: "", updatedAt: "", baseIri: X, prefix: "x", primaryLanguage: "en",
@@ -108,7 +115,7 @@ async function setup(shapes: ShapeForm[], kind: ProjectKind = "ontology", docume
   });
   await projectStore.open(PID);
   getShapes.mockResolvedValue(listing(shapes, kind));
-  getShapeSuggestions.mockResolvedValue(SUGGESTIONS);
+  getShapeSuggestions.mockResolvedValue(suggestions);
   props = {
     onSelectEntity: vi.fn<(iri: string) => void>(),
     onEditInTurtle: vi.fn<(shape: ShapeForm) => void>(),
@@ -465,8 +472,7 @@ describe("ShapesView: Stage A follow-ups fixed in Stage B (5.9)", () => {
   });
 
   it("enters a date-and-time range in a date-and-time field, seconds added (item 1)", async () => {
-    await setup([PERSON]);
-    getShapeSuggestions.mockResolvedValue({
+    await setup([PERSON], undefined, undefined, {
       paths: [{ path: [`${X}startsAt`], label: "starts at", kind: "attribute", datatype: "xsd:dateTime", functional: false }],
       suggestions: [],
     });
@@ -487,8 +493,7 @@ describe("ShapesView: Stage A follow-ups fixed in Stage B (5.9)", () => {
   });
 
   it("offers a class picker for points to, and one when the relationship has no end class (item 2)", async () => {
-    await setup([PERSON]);
-    getShapeSuggestions.mockResolvedValue({
+    await setup([PERSON], undefined, undefined, {
       paths: [
         ...SUGGESTIONS.paths,
         { path: [`${X}knows`], label: "knows", kind: "relationship", range: null, rangeLabel: null, functional: false },
@@ -522,8 +527,7 @@ describe("ShapesView: Stage A follow-ups fixed in Stage B (5.9)", () => {
 
   it("lets the class follow the path when an existing rule moves to another relationship (found in review)", async () => {
     const worksFor = { path: [`${X}worksFor`], pathLabel: "works for", pathKind: "relationship" as const, class: `${X}Organization`, classLabel: "Organization" };
-    await setup([{ ...PERSON, rules: [worksFor] }]);
-    getShapeSuggestions.mockResolvedValue({
+    await setup([{ ...PERSON, rules: [worksFor] }], undefined, undefined, {
       paths: [
         ...SUGGESTIONS.paths,
         { path: [`${X}knows`], label: "knows", kind: "relationship", range: `${X}Person`, rangeLabel: "Person", functional: false },
@@ -556,5 +560,173 @@ describe("ShapesView: Stage A follow-ups fixed in Stage B (5.9)", () => {
     await settle();
     expect(screen.getByRole("heading", { name: "Unnamed shape" })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Unnamed shape/ }).getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+describe("ShapesView in two columns (load-and-shapes 5.3, AC-4)", () => {
+  const RESULT = (problemCount: number) => ({
+    stopped: false, statements: 9, shapeCount: 1, durationMs: 1, revisions: { model: 1, shapes: 1 },
+    shapes: [{ id: PERSON.id, name: "Person rules", state: problemCount ? "fails" : "passes", target: null,
+      focusCount: 2, failingCount: problemCount ? 1 : 0, problemCount, warningCount: 0, problems: [],
+      problemsTotal: problemCount, error: null }],
+  });
+
+  it("has the list and one panel with the Shape and Results tabs", async () => {
+    await setup([PERSON, CONTACT]);
+    const view = document.querySelector(".shapes-view")!;
+    expect([...view.children].map((c) => c.className)).toEqual(["shapes-list", "side-panel shapes-panel"]);
+    const panel = screen.getByRole("complementary", { name: "Shape and results" });
+    const tabs = within(panel).getAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(["Shape", "Results"]);
+    expect(tabs[0].getAttribute("aria-selected")).toBe("true");
+    expect(within(panel).getByRole("tabpanel")).toBeTruthy();
+    expect(document.querySelector(".shapes-results")).toBeNull();
+  });
+
+  it("puts Validate at the head of the list, beside +", async () => {
+    await setup([PERSON]);
+    const head = document.querySelector(".shapes-list-head")!;
+    const buttons = within(head as HTMLElement).getAllByRole("button");
+    expect(buttons.map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Validate", "Add a shape"]);
+    // On the Results tab too, the one Validate is the list's.
+    fireEvent.click(screen.getByRole("tab", { name: "Results" }));
+    expect(screen.getAllByRole("button", { name: "Validate" })).toHaveLength(1);
+  });
+
+  it("selects the first shape on arrival without moving focus", async () => {
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    outside.focus();
+    await setup([PERSON, CONTACT]);
+    expect(screen.getByRole("button", { name: /Person rules/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: /Contact rules/ }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("heading", { name: "Person rules" })).toBeTruthy();
+    expect(screen.queryByText("Choose a shape to see its rules.")).toBeNull();
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+  });
+
+  it("shows today's sentence in Shape for a project without shapes", async () => {
+    await setup([], "ontology", [doc("model")]);
+    const panel = screen.getByRole("tabpanel");
+    expect(within(panel).getByText("A shape says what good data looks like: every Person has a name, for example.")).toBeTruthy();
+  });
+
+  it("does not select again after a delete clears the selection", async () => {
+    await setup([PERSON, CONTACT]);
+    runCommand.mockResolvedValue(changed("Deleted the shape Person rules"));
+    getShapes.mockResolvedValue(listing([CONTACT]));
+    fireEvent.click(screen.getByRole("button", { name: "Delete this shape" }));
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }));
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(screen.getByRole("button", { name: /Contact rules/ }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByText("Choose a shape to see its rules.")).toBeTruthy();
+  });
+
+  it("shows Results when Validate is pressed: the run's progress, then its panels", async () => {
+    await setup([PERSON]);
+    let finish!: (value: unknown) => void;
+    validateProject.mockReturnValue(new Promise((r) => (finish = r)));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Validate" }));
+    });
+    expect(screen.getByRole("tab", { name: "Results" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByText("Checking the model against every shape…")).toBeTruthy();
+    await act(async () => {
+      finish(RESULT(3));
+    });
+    expect(screen.queryByText("Checking the model against every shape…")).toBeNull();
+    expect(screen.getByRole("button", { name: /Person rules: .*\(3 problems\)/ })).toBeTruthy();
+    // Ended on Results: nothing to mark.
+    expect(screen.getByRole("tab", { name: "Results" }).textContent).toBe("Results");
+  });
+
+  it("marks Results with the problems found, in words, when a run ends on Shape", async () => {
+    await setup([PERSON]);
+    let finish!: (value: unknown) => void;
+    validateProject.mockReturnValue(new Promise((r) => (finish = r)));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Validate" }));
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Shape" }));
+    await act(async () => {
+      finish(RESULT(3));
+    });
+    const results = screen.getByRole("tab", { name: "Results, 3 problems" });
+    expect(results.textContent).toBe("Results · 3 problems");
+    expect(results.getAttribute("aria-selected")).toBe("false");
+    // Seen once: choosing the tab clears it.
+    fireEvent.click(results);
+    expect(screen.getByRole("tab", { name: "Results" }).textContent).toBe("Results");
+  });
+
+  it("marks nothing when a run fails and leaves the old result", async () => {
+    await setup([PERSON]);
+    validateProject.mockResolvedValueOnce(RESULT(1));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Validate" }));
+    });
+    let fail!: (e: Error) => void;
+    validateProject.mockReturnValue(new Promise((_, reject) => (fail = reject)));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Validate" }));
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Shape" }));
+    await act(async () => {
+      fail(new Error("The server is not answering."));
+    });
+    expect(screen.getByRole("tab", { name: "Results" }).textContent).toBe("Results");
+  });
+
+  it("arrives at Results while a run is going, and marks nothing for a result that was there before", async () => {
+    // The data wizard's Validate starts a run as it opens Shapes.
+    openProject.mockResolvedValue({
+      project: { id: PID, name: "Shop", createdAt: "", updatedAt: "", baseIri: X, prefix: "x", primaryLanguage: "en",
+        languages: [], documents: [], counts: {}, kind: "ontology" },
+      documents: [doc("model"), doc("shapes")],
+      recovery: { available: false, draftTime: null },
+    });
+    await projectStore.open(PID);
+    getShapes.mockResolvedValue(listing([PERSON]));
+    getShapeSuggestions.mockResolvedValue(SUGGESTIONS);
+    let finish!: (value: unknown) => void;
+    validateProject.mockReturnValue(new Promise((r) => (finish = r)));
+    let running!: Promise<unknown>;
+    await act(async () => {
+      running = projectStore.validate();
+    });
+    await act(async () => {
+      render(<ShapesView projectId={PID} kind="ontology" languages={["en"]} modelOntologyId={`${PID}-model`}
+        onSelectEntity={vi.fn()} onEditInTurtle={vi.fn()} onError={vi.fn()} />);
+    });
+    expect(screen.getByRole("tab", { name: "Results" }).getAttribute("aria-selected")).toBe("true");
+    await act(async () => {
+      finish(RESULT(2));
+      await running;
+    });
+    cleanup();
+    // Back later, with that result in the store: Shape, unmarked.
+    await act(async () => {
+      render(<ShapesView projectId={PID} kind="ontology" languages={["en"]} modelOntologyId={`${PID}-model`}
+        onSelectEntity={vi.fn()} onEditInTurtle={vi.fn()} onError={vi.fn()} />);
+    });
+    expect(screen.getByRole("tab", { name: "Shape" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Results" }).textContent).toBe("Results");
+  });
+
+  it("moves between the tabs with the arrow keys, the selected one in the tab order", async () => {
+    await setup([PERSON]);
+    const shape = screen.getByRole("tab", { name: "Shape" });
+    shape.focus();
+    fireEvent.keyDown(shape, { key: "ArrowRight" });
+    const results = screen.getByRole("tab", { name: "Results" });
+    expect(document.activeElement).toBe(results);
+    expect(results.getAttribute("aria-selected")).toBe("true");
+    expect(results.tabIndex).toBe(0);
+    expect(shape.tabIndex).toBe(-1);
   });
 });

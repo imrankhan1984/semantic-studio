@@ -28,6 +28,7 @@ import {
   panelName,
   pathWords,
   plural,
+  problemsFound,
   rowSentence,
   ruleProblem,
   ruleSentence,
@@ -160,6 +161,19 @@ describe("validationSummary", () => {
     expect(validationSummary(result([], true))).toBe(
       "The check took too long and was stopped (3 shapes, 1,200 statements).",
     );
+  });
+});
+
+describe("problemsFound (load-and-shapes 5.3)", () => {
+  const result = (shapes: ValidationPanel[], stopped = false): ValidationResult => ({
+    stopped, statements: 1200, shapeCount: 3, shapes, durationMs: 4, revisions: { model: 1, shapes: 2 },
+  });
+
+  it("says the problems of every panel in words", () => {
+    expect(problemsFound(result([panel({}), panel({ problemCount: 1200 })]))).toBe("1,203 problems");
+    expect(problemsFound(result([panel({ problemCount: 1 })]))).toBe("1 problem");
+    expect(problemsFound(result([panel({ state: "passes", problemCount: 0 })]))).toBe("no problems");
+    expect(problemsFound(result([], true))).toBe("stopped");
   });
 });
 

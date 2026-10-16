@@ -282,3 +282,14 @@ describe("Query's layout (explore-and-query-layout 5.4, AC-6; 5.5, AC-7)", () =>
     expect(pinned).toMatch(/flex:\s*none;/);
   });
 });
+
+describe("Shapes in two columns (load-and-shapes 5.3, AC-4)", () => {
+  it("the view's grid has two columns: the list, then the panel", () => {
+    expect(CSS.length).toBeGreaterThan(1000);
+    const columns = block(".shapes-view").match(/grid-template-columns:\s*([^;]+);/);
+    expect(columns).toBeTruthy();
+    // Split on spaces outside parentheses: minmax(220px, 280px) is one column.
+    const tracks = columns![1].match(/(?:[^\s(]+\([^)]*\)|[^\s(]+)/g)!;
+    expect(tracks).toEqual(["minmax(220px, 280px)", "minmax(0, 1fr)"]);
+  });
+});

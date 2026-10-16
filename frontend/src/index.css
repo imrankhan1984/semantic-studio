@@ -5067,46 +5067,50 @@ kbd {
   --result-nothing-bg: #eef1f6;
 }
 
+/* Two columns (load-and-shapes 5.3): the list, and one panel with the
+   Shape and Results tabs, which scrolls inside its tab. */
 .shapes-view {
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(320px, 1fr) minmax(320px, 1fr);
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
   background: var(--bg);
 }
 
-.shapes-list,
-.shapes-form-column,
-.shapes-results {
+.shapes-list {
   min-height: 0;
   overflow-y: auto;
   padding: 14px;
-}
-
-.shapes-list {
   border-right: 1px solid var(--border);
   background: var(--bg-panel);
 }
 
-.shapes-results {
-  border-left: 1px solid var(--border);
-  background: var(--bg-panel);
+.shapes-panel {
+  border-left: none;
+  background: var(--bg);
 }
 
-.shapes-list-head,
-.shapes-results-head {
+.side-tabpanel > .shapes-form-column,
+.side-tabpanel > .shapes-results {
+  padding: 14px;
+}
+
+.shapes-list-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
 }
 
-.shapes-list-head h2,
-.shapes-results-head h3 {
-  margin: 0;
+/* Validate and + to the right of the heading. */
+.shapes-list-head h2 {
+  margin: 0 auto 0 0;
   font-size: var(--fs-lg);
+}
+
+.results-progress {
+  margin: 0 0 8px;
 }
 
 .shapes-add {
@@ -5505,8 +5509,7 @@ kbd {
     grid-template-columns: 1fr;
     overflow-y: auto;
   }
-  .shapes-list,
-  .shapes-results {
+  .shapes-list {
     border: none;
     border-bottom: 1px solid var(--border);
   }

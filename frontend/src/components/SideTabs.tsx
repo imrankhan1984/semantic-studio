@@ -4,22 +4,29 @@ FILE: frontend/src/components/SideTabs.tsx
 ================================================================================
 
 SUMMARY
-    The Edit page's side panel frame (edit-page-rework 5.4): a labelled
-    region with two tabs, **Details** and **Reasoning**, and the panel of
-    the one chosen. What goes in each panel is App's: the detail panel
-    stays in App.tsx (a load-bearing rule), so this draws only the frame.
+    A labelled region with tabs and the panel of the one chosen. The Edit
+    page's side panel (edit-page-rework 5.4) has **Details** and
+    **Reasoning**, the default; Shapes gives its own, **Shape** and
+    **Results** (load-and-shapes 5.3). What goes in each panel is the
+    caller's: the detail panel stays in App.tsx (a load-bearing rule), so
+    this draws only the frame.
 
 BASIC IDEA
     The WAI-ARIA tabs pattern with automatic activation: one tab stop, the
     arrow keys (and Home, End) move between the tabs and choose as they go.
-    The Reasoning tab can carry a badge, *Reasoning · 3*, when a run ended
-    while Details was showing; the count is in its accessible name too.
-    The panel is rendered for the chosen tab only, so a hidden panel holds
-    no focusable control.
+    A tab can carry a badge, *Reasoning · 3* or *Results · 3 problems*, when
+    a run ended while another tab was showing; the badge is in the tab's
+    accessible name too (*Reasoning, 3 new*, *Results, 3 problems*), so it
+    is never only seen. The panel is rendered for the chosen tab only, so a
+    hidden panel holds no focusable control.
 
 INPUTS / INPUT SOURCES (props)
-    - tab, onTab: the chosen tab, App's to keep.
-    - badge: the Reasoning tab's count, or null.
+    - tab, onTab: the chosen tab, the caller's to keep.
+    - tabs: each tab's id, name and badge; the Edit page's two by default.
+    - badge: the Edit page's Reasoning count, or null, when `tabs` is not
+      given.
+    - label, className: the region's name and class; *Side panel* and
+      `side-panel` by default.
     - wide: the canvas is hidden, so the panel fills the centre (5.10).
     - children: the chosen tab's content.
 
@@ -32,32 +39,63 @@ import { useId, useRef, type ReactNode } from "react";
 
 export type SideTab = "details" | "reasoning";
 
-interface Props {
-  tab: SideTab;
-  onTab: (tab: SideTab) => void;
+/** One tab: what it is called, and what it carries after a run, if anything. */
+export interface TabSpec<T extends string> {
+  id: T;
+  name: string;
+  badge?: { shown: string; spoken: string } | null;
+}
+
+interface Props<T extends string> {
+  tab: T;
+  onTab: (tab: T) => void;
+  tabs?: readonly TabSpec<T>[];
   badge?: number | null;
+  label?: string;
+  className?: string;
   children: ReactNode;
   wide?: boolean;
 }
 
-const TABS: SideTab[] = ["details", "reasoning"];
+/** The Edit page's two tabs, Reasoning's count as *3* and *3 new*. */
+function editTabs(badge: number | null): TabSpec<SideTab>[] {
+  return [
+    { id: "details", name: "Details" },
+    {
+      id: "reasoning",
+      name: "Reasoning",
+      badge: badge ? { shown: badge.toLocaleString("en-US"), spoken: `${badge} new` } : null,
+    },
+  ];
+}
 
-export default function SideTabs({ tab, onTab, badge = null, children, wide = false }: Props) {
+export default function SideTabs<T extends string = SideTab>({
+  tab,
+  onTab,
+  tabs,
+  badge = null,
+  label = "Side panel",
+  className = "side-panel",
+  children,
+  wide = false,
+}: Props<T>) {
   const id = useId();
-  const refs = useRef<Record<SideTab, HTMLButtonElement | null>>({ details: null, reasoning: null });
+  const list = tabs ?? (editTabs(badge) as unknown as TabSpec<T>[]);
+  const refs = useRef<Partial<Record<string, HTMLButtonElement | null>>>({});
 
-  const move = (to: SideTab) => {
+  const move = (to: T) => {
     onTab(to);
     refs.current[to]?.focus();
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    const at = TABS.indexOf(tab);
-    let to: SideTab | null = null;
-    if (e.key === "ArrowRight" || e.key === "ArrowDown") to = TABS[(at + 1) % TABS.length];
-    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") to = TABS[(at + TABS.length - 1) % TABS.length];
-    else if (e.key === "Home") to = TABS[0];
-    else if (e.key === "End") to = TABS[TABS.length - 1];
+    const ids = list.map((t) => t.id);
+    const at = ids.indexOf(tab);
+    let to: T | null = null;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") to = ids[(at + 1) % ids.length];
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") to = ids[(at + ids.length - 1) % ids.length];
+    else if (e.key === "Home") to = ids[0];
+    else if (e.key === "End") to = ids[ids.length - 1];
     if (to) {
       e.preventDefault();
       move(to);
@@ -65,9 +103,9 @@ export default function SideTabs({ tab, onTab, badge = null, children, wide = fa
   };
 
   return (
-    <aside className={wide ? "side-panel wide" : "side-panel"} aria-label="Side panel">
-      <div className="side-tabs" role="tablist" aria-label="Side panel" onKeyDown={onKeyDown}>
-        {TABS.map((name) => (
+    <aside className={wide ? `${className} wide` : className} aria-label={label}>
+      <div className="side-tabs" role="tablist" aria-label={label} onKeyDown={onKeyDown}>
+        {list.map(({ id: name, name: text, badge: note }) => (
           <button
             key={name}
             ref={(el) => {
@@ -81,13 +119,13 @@ export default function SideTabs({ tab, onTab, badge = null, children, wide = fa
             tabIndex={tab === name ? 0 : -1}
             className={tab === name ? "side-tab active" : "side-tab"}
             onClick={() => onTab(name)}
-            aria-label={name === "reasoning" && badge ? `Reasoning, ${badge} new` : undefined}
+            aria-label={note ? `${text}, ${note.spoken}` : undefined}
           >
-            {name === "details" ? "Details" : "Reasoning"}
-            {name === "reasoning" && badge ? (
+            {text}
+            {note ? (
               <span className="side-tab-badge" aria-hidden="true">
                 {" · "}
-                {badge.toLocaleString("en-US")}
+                {note.shown}
               </span>
             ) : null}
           </button>
