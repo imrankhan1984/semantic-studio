@@ -5,11 +5,13 @@ FILE: frontend/src/components/OntologyCard.test.tsx
 ================================================================================
 
 SUMMARY
-    The first test for OntologyCard. Covers what a card shows, that its counts
-    describe the whole ontology rather than the canvas, that its state is text
-    rather than colour, the three verbs, the "⋮" disclosure and its focus
-    contract, and that an ontology stored before the sketch existed renders
-    without a picture and without asking for one.
+    The first test for OntologyCard. Covers what a card shows -- since
+    home-and-examples 5.6 (AC-8), one sentence and two facts, the statements
+    and the date added or *Example*, and *Read-only* in words -- that its
+    count describes the whole ontology rather than the canvas, the three
+    verbs, the "⋮" disclosure and its focus contract, and that an ontology
+    stored before the sketch existed renders without a picture and without
+    asking for one.
 
 BASIC IDEA
     The card is presentational, so almost everything here is markup and focus,
@@ -100,6 +102,11 @@ function renderCard(over: Partial<OntologySummary> = {}, props = {}) {
   return { ...result, ...handlers };
 }
 
+/** The card's facts, as read. */
+function facts(container: HTMLElement): string[] {
+  return [...container.querySelectorAll(".onto-chips li")].map((li) => li.textContent ?? "");
+}
+
 function menuButton(): HTMLButtonElement {
   return screen.getByRole("button", { name: /more actions for/i }) as HTMLButtonElement;
 }
@@ -114,75 +121,64 @@ afterEach(() => {
 });
 
 describe("OntologyCard contents", () => {
-  it("shows the name, a generated description, and every metric chip", () => {
+  it("shows the name, the sentence, and two facts: statements and the date added (home-and-examples AC-8)", () => {
     // AC-3. The description is L-5's sentence rather than a filename: it says
     // more about an ontology than its name does, and reusing it is what keeps
     // the home screen and the Explore panel from wording the same fact twice.
-    const { container } = renderCard();
+    const { container } = renderCard({ addedAt: "2026-10-14T09:00:00Z" });
 
     expect(screen.getByRole("heading", { level: 3, name: "FIBO quickstart" })).toBeTruthy();
     expect(container.querySelector(".onto-summary")?.textContent).toBe(
       "This ontology describes 11,208 classes, 4,305 individuals and 3,204 object properties.",
     );
 
-    const chips = [...container.querySelectorAll(".onto-chips li")].map((li) => li.textContent);
-    expect(chips).toContain("132,001 triples");
-    expect(chips).toContain("18,717 entities");
-    expect(chips).toContain("51,446 relations");
-    expect(chips).toContain("turtle");
+    const added = new Date("2026-10-14T09:00:00Z").toLocaleDateString(undefined, {
+      day: "numeric",
+      month: "short",
+    });
+    expect(facts(container)).toEqual(["132,001 statements", `Added ${added}`, "Read-only"]);
+  });
+
+  it("drops the other chips: entities, relations, format, loaded and source (F-9)", () => {
+    const { container } = renderCard({ loaded: true, source: "https://example.org/f.ttl" });
+    const text = container.querySelector(".onto-chips")!.textContent ?? "";
+    for (const gone of ["entities", "relations", "turtle", "Loaded", "URL", "Upload", "triples"]) {
+      expect(text, gone).not.toContain(gone);
+    }
+  });
+
+  it("an example shows its purpose and Example, never a date", () => {
+    const { container } = renderCard({
+      source: "example",
+      addedAt: "2026-10-14T09:00:00Z",
+      example: { key: "space", purpose: "The Solar System and its missions." },
+    });
+    expect(container.querySelector(".onto-summary")?.textContent).toBe(
+      "The Solar System and its missions.",
+    );
+    expect(facts(container)).toEqual(["132,001 statements", "Example", "Read-only"]);
+  });
+
+  it("an undated file keeps its statements and Read-only and drops the date", () => {
+    const { container } = renderCard({ addedAt: undefined });
+    expect(facts(container)).toEqual(["132,001 statements", "Read-only"]);
+  });
+
+  it("says statement, singular, for one", () => {
+    const { container } = renderCard({ triples: 1 });
+    expect(facts(container)[0]).toBe("1 statement");
   });
 
   it("reports whole-ontology counts, not budgeted ones", () => {
     // AC-4. A card is a statement about the FILE, not about the current canvas.
-    // The distinction is real and has bitten before — D-017 drew it for
-    // kindCounts, and the summary's nodes/edges are build_viz_graph's stats
-    // taken before any budget is applied.
-    //
-    // Asserted as an inequality rather than against a literal, so it fails if
-    // anyone ever wires the drawn counts in here: 2,000 is what a budgeted
-    // graph response would say, and it is not what this card must show.
+    // The distinction is real and has bitten before: D-017 drew it for
+    // kindCounts. The statement count is the file's own, and the composition
+    // bar reads kindCounts, the whole ontology's.
     const { container } = renderCard();
-    const chips = [...container.querySelectorAll(".onto-chips li")].map((li) => li.textContent);
 
-    expect(chips).toContain("18,717 entities");
-    expect(chips).not.toContain("2,000 entities");
-    // And the composition bar sums to the whole ontology's entity count too,
-    // which is the same claim from the other direction.
+    expect(facts(container)).toContain("132,001 statements");
     const bands = [...container.querySelectorAll(".onto-bar-band")];
     expect(bands).toHaveLength(3);
-  });
-
-  it("conveys loaded state and source as text, not by colour alone", () => {
-    // AC-5. There is no connection to hold open here, so the wording says
-    // exactly what is true — parsed in server memory, or not.
-    const { container, rerender } = renderCard({ loaded: false });
-    expect(container.querySelector(".onto-chips")?.textContent).toContain("Not loaded");
-    expect(container.querySelector(".onto-chips")?.textContent).toContain("Upload");
-
-    rerender(
-      <OntologyCard
-        summary={summary({ loaded: true, source: "https://example.org/f.ttl" })}
-        theme="dark"
-        layout="card"
-        busy={false}
-        working={false}
-        onOpen={vi.fn()}
-        onEnterMode={vi.fn()}
-        onViewSource={vi.fn()}
-        onDownloadDocs={vi.fn()}
-        onRemove={vi.fn()}
-      />,
-    );
-    const chips = container.querySelector(".onto-chips")!;
-    expect(chips.textContent).toContain("Loaded");
-    expect(chips.textContent).not.toContain("Not loaded");
-    expect(chips.textContent).toContain("URL");
-    // The full address is still reachable, just not on the chip's face.
-    expect(
-      [...chips.querySelectorAll("li")].some(
-        (li) => li.getAttribute("title") === "https://example.org/f.ttl",
-      ),
-    ).toBe(true);
   });
 
   it("draws the miniature from the stored sketch, without a Sigma renderer", () => {
@@ -209,7 +205,7 @@ describe("OntologyCard contents", () => {
 
     expect(container.querySelector(".onto-mini svg")).toBeNull();
     expect(container.querySelector(".onto-mini-absent")).toBeTruthy();
-    expect(container.querySelector(".onto-chips")?.textContent).toContain("132,001 triples");
+    expect(container.querySelector(".onto-chips")?.textContent).toContain("132,001 statements");
     expect(screen.getByRole("button", { name: /^Explore /i })).toBeTruthy();
     for (const [name, fn] of Object.entries(api)) {
       expect(fn, `${name} was called to draw a card`).not.toHaveBeenCalled();
@@ -403,7 +399,7 @@ describe("OntologyCard menu", () => {
 describe("OntologyCard row layout", () => {
   it("renders the same controls in the dense layout", () => {
     // The row is the card rearranged, not a second component: the same verbs,
-    // the same menu, the same chips. What changes is CSS, which jsdom cannot
+    // the same menu, the same facts. What changes is CSS, which jsdom cannot
     // see — the 44px glyph and the 80px composition strip were measured in a
     // browser.
     const { container } = renderCard({}, { layout: "row" });

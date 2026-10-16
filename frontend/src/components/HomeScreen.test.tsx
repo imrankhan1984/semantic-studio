@@ -192,42 +192,17 @@ describe("HomeScreen library", () => {
     expect(screen.getByRole("heading", { level: 3, name: "Ontology 1" })).toBeTruthy();
   });
 
-  it("each card shows triples, entities, relations and format", () => {
-    // AC-3. Asserted here as well as in OntologyCard.test.tsx, and on purpose:
-    // that file proves one card renders them, this one proves the screen hands
-    // over the summary that carries them rather than a subset of it.
+  it("each card shows its statements and when it was added (home-and-examples 5.6)", () => {
+    // Asserted here as well as in OntologyCard.test.tsx, and on purpose: that
+    // file proves one card renders them, this one proves the screen hands over
+    // the summary that carries them rather than a subset of it.
     renderScreen();
     const chips = cards()[0].querySelector(".onto-chips")!.textContent ?? "";
 
-    expect(chips).toContain("132,001 triples");
-    expect(chips).toContain("18,717 entities");
-    expect(chips).toContain("51,446 relations");
-    expect(chips).toContain("turtle");
-  });
-
-  it("cards show whole-ontology counts, not budgeted ones", () => {
-    // AC-4. The summary's nodes and edges are build_viz_graph's stats, taken
-    // before any budget is applied — the same distinction D-017 drew for
-    // kindCounts. Asserted against a summary whose entity count is far above
-    // any node budget, so a card wired to the drawn figure could not pass.
-    renderScreen({ ontologies: summaries(1) });
-    const chips = cards()[0].querySelector(".onto-chips")!.textContent ?? "";
-
-    expect(chips).toContain("18,717 entities");
-    expect(chips).not.toContain("2,000 entities");
-  });
-
-  it("loaded and not-loaded state is text, not colour alone", () => {
-    // AC-5.
-    renderScreen({
-      ontologies: [
-        { ...summaries(1)[0], id: "a", name: "Open one", loaded: true },
-        { ...summaries(1)[0], id: "b", name: "Stored one", loaded: false },
-      ],
-    });
-
-    expect(cards()[0].textContent).toContain("Loaded");
-    expect(cards()[1].textContent).toContain("Not loaded");
+    expect(chips).toContain("132,001 statements");
+    expect(chips).toContain("Added ");
+    expect(chips).toContain("Read-only");
+    expect(chips).not.toContain("entities");
   });
 
   it("empty library shows the message and keeps the other routes", () => {

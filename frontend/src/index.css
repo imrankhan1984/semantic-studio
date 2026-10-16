@@ -951,14 +951,6 @@ select:focus {
   font-family: ui-monospace, Consolas, monospace;
 }
 
-/* Loaded is the one chip that is not neutral. It still carries its own word, so
-   the colour is a second channel rather than the only one — G-2's principle
-   applied before G-2 exists. */
-.onto-chips .chip-on {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  color: var(--accent-text);
-}
-
 .onto-verbs {
   display: flex;
   align-items: center;
