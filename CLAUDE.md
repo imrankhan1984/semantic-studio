@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1336 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1566 tests, vitest
+cd backend  && python -m pytest tests    # 1351 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1576 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -62,7 +62,7 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Thirty-one backend tests carry
+**Timing budgets are separated, not deleted.** Thirty-two backend tests carry
 `@pytest.mark.perf`; ten frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
@@ -316,6 +316,8 @@ leaves one behind.
 - Node-reducer performance tests are counts, not timings. [pastel]
 - Zoom's disabled state is a three-value edge; the camera listener is removed on cleanup. [zoom controls]
 - The label boxes are cleared on `beforeRender`, and `explore/labelBoxes.ts` is the only overlap rule (D-110). [Explore and Query layout]
+- `graph_builder.py` reads restrictions only through `axioms.py`, once per blank node; `axioms.draws_line` is the canvas's test too (D-113). [Explore rules]
+- A rule edge is keyed by its `key`: two rules can join the same two classes. [Explore rules]
 
 **Modeling canvas**
 - Only `canvas/` imports `@xyflow/react`, and App reaches `canvas/` only through `React.lazy` (D-086). [modeling canvas]
