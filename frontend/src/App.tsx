@@ -2064,6 +2064,8 @@ export default function App() {
       ) : mode === "shapes" && openProjectSummary ? (
         <main className="main">
           <ShapesView
+            // Another project is a new list: its arrival selects its own first shape.
+            key={openProjectSummary.id}
             projectId={openProjectSummary.id}
             kind={openProjectSummary.kind}
             languages={[openProjectSummary.primaryLanguage, ...openProjectSummary.languages]}
@@ -2226,6 +2228,10 @@ export default function App() {
               leftRail={
                 graphData ? (
                   <Legend
+                    // A mode change is a new legend: Query starts folded and
+                    // keeps nothing; Explore reads its kept choice again (5.4).
+                    key={mode === "query" ? "query" : "explore"}
+                    inQuery={mode === "query"}
                     theme={theme}
                     kindCounts={graphData.stats.kindCounts}
                     rdfsClassCount={graphData.stats.rdfsClassCount}

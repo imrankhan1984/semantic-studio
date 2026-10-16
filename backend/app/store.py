@@ -64,8 +64,9 @@ EXPECTED OUTPUT
       imports.py fills it and it never mixes with the file-only one. A
       third, `data_cache`, holds a project model's views with its data
       snapshots joined (csv-data-import 5.6).
-    - Raises ParseError for unparseable input and ParseTimeout when a bounded
-      parse runs out of time; the router maps them to HTTP 422 and 504.
+    - Raises ParseError for unparseable input, carrying every attempt's
+      message, and ParseTimeout when a bounded parse runs out of time; the
+      router maps them to HTTP 422 (explained by parse_errors.py) and 504.
       The broker's decisions (ApprovalRequired, Offline, HostBlocked) pass
       through unchanged and main.py maps them to 409, 503 and 403.
     - Two module-level singletons imported across the app: `store` (the
@@ -152,7 +153,23 @@ def contexts_path_for(data_path: Path) -> Path:
 
 
 class ParseError(Exception):
-    """Raised when the payload cannot be parsed as RDF in any known format."""
+    """Raised when the payload cannot be parsed as RDF in any known format.
+
+    `str()` is the full text of every attempt, as it always was; `attempts`
+    keeps the same messages as (format, message) and `suggested` the format
+    the name pointed to, so parse_errors.py can explain the failure in one
+    sentence without parsing that text back apart (load-and-shapes 5.1).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        attempts: Optional[list[tuple[str, str]]] = None,
+        suggested: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.attempts: list[tuple[str, str]] = list(attempts or [])
+        self.suggested = suggested
 
 
 class ParseTimeout(Exception):
@@ -219,7 +236,7 @@ def _parse_rdf_blocking(data: bytes, fmt: Optional[str]) -> tuple[Graph, str]:
     # Try the hinted format first (if any), then the remaining sniff formats.
     attempts = [fmt] if fmt else []
     attempts += [f for f in SNIFF_ORDER if f not in attempts]
-    errors: list[str] = []
+    errors: list[tuple[str, str]] = []
     for candidate in attempts:
         graph = Graph()
         try:
@@ -238,10 +255,14 @@ def _parse_rdf_blocking(data: bytes, fmt: Optional[str]) -> tuple[Graph, str]:
             raise ParseError(str(exc)) from exc
         except Exception as exc:  # rdflib raises many parser-specific errors
             # Record why this candidate failed and keep trying the next one.
-            errors.append(f"{candidate}: {exc}")
-    # Every candidate failed; surface all the reasons so the user can tell why.
+            errors.append((candidate, str(exc)))
+    # Every candidate failed; keep all the reasons, for the sentence
+    # parse_errors.py writes and for the technical details under it.
     raise ParseError(
-        "Could not parse the file as RDF. Attempts:\n" + "\n".join(errors)
+        "Could not parse the file as RDF. Attempts:\n"
+        + "\n".join(f"{candidate}: {message}" for candidate, message in errors),
+        attempts=errors,
+        suggested=fmt,
     )
 
 

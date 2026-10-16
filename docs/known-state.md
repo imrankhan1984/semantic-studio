@@ -1944,3 +1944,79 @@ EXPECTED OUTPUT
   opened each example; a project started from Space Exploration came first;
   a removed example stayed removed across a restart and came back from the
   Load dialog, focus on the Suggested tab.
+- **A failed load is one plain sentence; Shapes is two columns** (2026-10-16,
+  spec `load-and-shapes`, backlog U-13b with U-2, decision D-112). A file no
+  parser reads answers `422` with `detail` `{code: "parse_error", message,
+  line, format, technical}` on both the upload and the URL route;
+  `technical` is the old *Could not parse the file as RDF. Attempts:* text,
+  unchanged. `store.py`'s `ParseError` keeps its attempts as (format,
+  message) and the format the name suggested; `backend/app/parse_errors.py`
+  is the one place a message becomes a sentence.
+
+  **The sentence explains one attempt, chosen from what the file claims to
+  be**: the suggested format's, else the attempt that got furthest (the
+  highest line it reports), else Turtle's. A Turtle file missing a full stop
+  also fails as RDF/XML at line 1 and as JSON at column 1; those messages are
+  true and say nothing, and quoting them was the defect. A message the table
+  does not know is named by format and line, never quoted. **A known message
+  counts as a sign of RDF**: a Turtle file whose only fault is a missing
+  `@prefix` has no `<` in it, and was first told it did not look like RDF. A
+  NUL byte in the first kilobyte means a binary file, whatever its bytes
+  contain. On a URL load the name wins and a server's `Content-Type`
+  explains a nameless address; it never chooses the parser. The Load dialog
+  shows `technical` in a `<pre>` under a closed `<details>`, as React text;
+  a test puts markup in it and finds characters.
+
+  **The Load dialog is a dialog**: `role="dialog"`, `aria-modal`,
+  `aria-labelledby` its heading, focus in on open and back to the opener on
+  close. **Escape's handler is on `document`**, as `useDialogTrap`'s is, and
+  leaves a key pressed inside another dialog over this one (an approval) to
+  that dialog; past the wizard's third step it asks, as Cancel does.
+
+  **Shapes is the list and one panel** with *Shape* and *Results*;
+  `SideTabs` takes its tabs as a prop and the Edit page keeps *Details* and
+  *Reasoning* by default. Validate sits at the list's head and shows
+  *Results*. **Results is shown, and its tab marked (*Results, 3 problems*),
+  by watching the result, not the running flag**: App's test found a quick
+  run that started and ended within one render, so the flag never looked
+  true. A failed run marks nothing. The first shape is selected on arrival
+  without moving focus.
+
+  **The legend in Query starts folded and writes nothing**: open, it took
+  208 px of a 512 px graph. App keys `Legend` on the mode, so opening it in
+  Query lasts until Query is left, and Explore remounts and reads
+  `semantic-studio-legend` again.
+
+  The example files take US spelling outside proper names (*Indian Space
+  Research Organisation* stays), and the mission is *Rosetta mission*, the
+  spacecraft *Rosetta*. Their hashes changed with them, so a library already
+  holding the examples is updated in place at its next start, under the
+  same ids; a test seeds the older text and starts again. *Add the examples
+  back* is `aria-disabled` while it works and ignores clicks; on failure
+  focus stays on it.
+
+  **Found in code review, fixed.** The Load dialog took its opener in its
+  effect, after the URL field's `autoFocus` and the wizard's own effect had
+  moved focus inside, so closing gave focus to nothing: it is taken at the
+  first render now. A key from `<body>` while the approval dialog stood over
+  it closed both, so any other `aria-modal` dialog open takes every key. It
+  declared `aria-modal` without keeping Tab inside: `useDialogTrap`'s Tab
+  wrap is exported as `wrapTab` and both use it. In Chrome that wrap let
+  focus out at once: its last item was the dialog's `hidden` file input,
+  which Tab never stops on, so focus passed the real last control and
+  Shift+Tab stuck on the first. `wrapTab` now skips anything under
+  `[hidden]` and, where the browser has it, anything `checkVisibility`
+  calls hidden; jsdom has no layout and only the first is tested. In Shapes, choosing a row
+  or making a shape while *Results* showed changed nothing visible (and a
+  new shape's focus never landed), so both show *Shape*; and Validate
+  unmounted the form, losing a rule being edited, so the form stays mounted
+  and `hidden`. `ShapesView` is keyed on the project, so another project's
+  arrival selects its own first shape.
+
+  **Found in review, left as the spec writes them.** The name's format wins
+  over the furthest attempt, so a Turtle file named `.owl` is explained as
+  XML at line 1 (5.1's order); `<` is a sign of RDF, so an HTML page gets the
+  XML sentence, not *does not look like RDF* (5.1's list); a missing full
+  stop reported at line 1 still says *the statement before this line*
+  (5.1's table); the Results badge's number uses the browser's locale like
+  every other count in `shapeSentences.ts`.

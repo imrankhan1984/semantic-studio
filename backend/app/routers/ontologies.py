@@ -56,7 +56,8 @@ EXPECTED OUTPUT
       file, source text, SPARQL results)
       and appropriate HTTP errors:
       400 for a blocked address or refused query, 413 for a body over the cap,
-      504 for a parse that ran out of time. The broker's policy decisions are
+      422 for a file no parser reads, with one plain sentence and the raw
+      text apart (load-and-shapes 5.1), 504 for a parse that ran out of time. The broker's policy decisions are
       mapped once, in main.py: 409 approval required, 403 blocked, 503 offline.
 ================================================================================
 """
@@ -79,7 +80,7 @@ from rdflib import URIRef
 from starlette.concurrency import run_in_threadpool
 
 # Delegate the real work to the domain modules.
-from .. import provenance
+from .. import parse_errors, provenance
 from ..docs_export import DocsExportError, build_zip
 from ..embedded_queries import MAX_TEXT_CHARS as MAX_QUERY_CHARS
 from ..embedded_queries import list_embedded_queries
@@ -418,8 +419,22 @@ async def upload_ontology(
     except ParseTimeout as exc:
         raise HTTPException(status_code=504, detail=str(exc)) from exc
     except ParseError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=422, detail=_load_failure(exc, data, file.filename)
+        ) from exc
     return ontology.summary()
+
+
+def _load_failure(exc: ParseError, data: bytes, filename: Optional[str],
+                  suggested: Optional[str] = None) -> dict:
+    """The 422 detail for a load no parser read: the sentence, the raw apart."""
+    return parse_errors.explain(
+        exc.attempts,
+        exc.suggested or suggested,
+        head=data[:1024],
+        filename=filename,
+        technical=str(exc),
+    )
 
 
 def to_raw_url(url: str) -> str:
@@ -511,7 +526,11 @@ async def fetch_ontology(request: FetchRequest) -> dict:
     except ParseTimeout as exc:
         raise HTTPException(status_code=504, detail=str(exc)) from exc
     except ParseError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # The name wins; a server's content type explains a nameless address.
+        suggested = parse_errors.format_from_content_type(response.headers.get("content-type"))
+        raise HTTPException(
+            status_code=422, detail=_load_failure(exc, data, filename, suggested)
+        ) from exc
     return ontology.summary()
 
 

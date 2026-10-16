@@ -20,6 +20,10 @@ BASIC IDEA
     the dialog stays open on its tab, focus on the tab, saying what came back. Busy/error state gives feedback while a large file downloads or
     parses. The GHE limitation is explained inline on the URL tab.
 
+    A file no parser could read comes back as one sentence the server wrote
+    (parse_errors.py, load-and-shapes 5.1); the parsers' own text, when the
+    server sends it, sits under a closed *Technical details*, as text.
+
     The Data tab adds data to the open project rather than an ontology to
     the library. It shows the snapshot list, and the wizard in its place
     while one runs -- a new import, Change the mapping, or a refresh whose
@@ -33,6 +37,12 @@ BASIC IDEA
     nothing while a wizard runs. When the wizard closes, the Data section's
     heading takes focus, which the unmounted wizard would otherwise drop to
     the page; a later tab switch does not take it again (X4).
+
+    It is a dialog like the others (load-and-shapes 5.2): role, aria-modal,
+    labelled by its heading, Tab kept inside (useDialogTrap's wrapTab).
+    Escape is the ✕, asking first past the wizard's third step, and closing
+    gives focus back to what opened it. While another modal dialog is open
+    over it (an approval), every key is that dialog's.
 
 INPUTS / INPUT SOURCES (props)
     - onLoaded: called with the new ontology's summary on success.
@@ -53,12 +63,13 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useRef, useState } from "react";
-import { fetchOntology, restoreExamples, uploadOntology, type ExamplesRestored } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { ApiError, fetchOntology, restoreExamples, uploadOntology, type ExamplesRestored } from "../api";
 import type { CatalogueEntry } from "../catalogue";
 import CatalogueList from "./CatalogueList";
 import DataWizard, { type WizardStart } from "./DataWizard";
 import SnapshotList from "./SnapshotList";
+import { wrapTab } from "./useDialogTrap";
 import type { OntologySummary } from "../types";
 
 export type LoadTab = "file" | "url" | "suggested" | "data";
@@ -82,6 +93,24 @@ interface Props {
   /** Bundled examples not in the library (home-and-examples 5.8). */
   examplesMissing?: number;
   onExamplesRestored?: (result: ExamplesRestored) => void;
+}
+
+/** What went wrong, and for a file no parser read, the parsers' own text. */
+interface LoadError {
+  message: string;
+  technical: string | null;
+}
+
+/** A failed load's `parse_error` carries the raw text apart from its
+ *  sentence (load-and-shapes 5.1); anything else is its message alone. */
+function loadError(e: unknown): LoadError {
+  const message = e instanceof Error ? e.message : String(e);
+  const detail = e instanceof ApiError ? e.detail : null;
+  if (detail && typeof detail === "object") {
+    const { code, technical } = detail as { code?: unknown; technical?: unknown };
+    if (code === "parse_error" && typeof technical === "string" && technical) return { message, technical };
+  }
+  return { message, technical: null };
 }
 
 export default function LoadDialog({
@@ -120,12 +149,28 @@ export default function LoadDialog({
   const [fetching, setFetching] = useState<string | null>(null);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<LoadError | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   // The Suggested tab, where focus goes once the examples are back: the
   // button that was pressed goes with them, and focus would fall to the page.
   const suggestedTab = useRef<HTMLButtonElement>(null);
   const [restoredNote, setRestoredNote] = useState("");
+  const panelRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  // Into the dialog on open, unless a control in it took focus already (the
+  // URL field's autoFocus); back to whatever opened it on close -- the
+  // header's Load, Home's two buttons, the project's data button -- if it is
+  // still in the document (load-and-shapes 5.2). Taken at the first render,
+  // not in the effect: by then the URL field's autoFocus and the wizard's own
+  // effect have already moved focus into the dialog.
+  const [opener] = useState(() => document.activeElement as HTMLElement | null);
+  useEffect(() => {
+    if (!panelRef.current?.contains(document.activeElement)) headingRef.current?.focus();
+    return () => {
+      if (opener && opener !== document.body && opener.isConnected) opener.focus();
+    };
+  }, []);
   const [dragOver, setDragOver] = useState(false);
 
   const submitFile = async (file: File) => {
@@ -134,7 +179,7 @@ export default function LoadDialog({
     try {
       onLoaded(await uploadOntology(file));
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(loadError(e));
     } finally {
       setBusy(false);
     }
@@ -147,7 +192,7 @@ export default function LoadDialog({
     try {
       onLoaded(await fetchOntology(url.trim()));
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(loadError(e));
     } finally {
       setBusy(false);
     }
@@ -160,7 +205,7 @@ export default function LoadDialog({
     try {
       onLoaded(await fetchOntology(entry.url));
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(loadError(e));
     } finally {
       setBusy(false);
       setFetching(null);
@@ -180,18 +225,58 @@ export default function LoadDialog({
       setRestoredNote(names.length ? `Added back: ${names.join(", ")}.` : "The examples are all in your library.");
       suggestedTab.current?.focus();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(loadError(e));
     } finally {
       setBusy(false);
     }
   };
 
+  // Escape is the ✕: it asks first while the wizard has a mapping, and with
+  // the question showing it keeps going. On `document`, as useDialogTrap's
+  // is, since a click on the dialog's prose blurs focus to <body>; a key
+  // pressed while another dialog is open over this one (an approval) is that
+  // dialog's, even from <body>. Tab stays inside, as aria-modal promises.
+  const onEscape = useRef<() => void>(() => {});
+  onEscape.current = () => {
+    if (leaving) setLeaving(null);
+    else guard(onClose);
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const panel = panelRef.current;
+      if (!panel || e.defaultPrevented) return;
+      const target = e.target as Node | null;
+      if (target && target !== document.body && !panel.contains(target)) return;
+      const over = [...document.querySelectorAll('[aria-modal="true"]')].some((d) => d !== panel);
+      if (over) return;
+      if (e.key !== "Escape") {
+        wrapTab(panel, e);
+        return;
+      }
+      e.preventDefault();
+      onEscape.current();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  const title = tab === "data" && project ? `Data for ${project.name}` : "Load ontology";
+
   return (
     // A click outside does not drop a wizard half way: Cancel does, and asks.
     <div className="modal-backdrop" onClick={() => !(tab === "data" && wizard) && onClose()}>
-      <div className={tab === "data" ? "modal modal-wide" : "modal"} onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={panelRef}
+        className={tab === "data" ? "modal modal-wide" : "modal"}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="load-dialog-title"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-header">
-          <h2>{tab === "data" && project ? `Data for ${project.name}` : "Load ontology"}</h2>
+          <h2 id="load-dialog-title" ref={headingRef} tabIndex={-1}>
+            {title}
+          </h2>
           <button className="icon-btn" onClick={() => guard(onClose)} title="Close" aria-label="Close">
             ✕
           </button>
@@ -273,7 +358,10 @@ export default function LoadDialog({
                 secondary button; nothing is downloaded. */}
             {examplesMissing > 0 && onExamplesRestored && (
               <div className="examples-restore">
-                <button type="button" disabled={busy} onClick={() => void addExamplesBack()}>
+                {/* aria-disabled, never disabled, while it works: a disabled
+                    button drops focus, and a failure would leave it on the
+                    page (load-and-shapes 5.6). */}
+                <button type="button" aria-disabled={busy} onClick={() => !busy && void addExamplesBack()}>
                   Add the examples back
                 </button>
               </div>
@@ -354,7 +442,18 @@ export default function LoadDialog({
         )}
 
         {busy && <p className="detail-note">Parsing ontology…</p>}
-        {error && <p className="detail-error">{error}</p>}
+        {error && (
+          <div className="load-error">
+            <p className="detail-error">{error.message}</p>
+            {/* Closed by default; the parsers' text is text, never markup. */}
+            {error.technical && (
+              <details className="technical-details">
+                <summary>Technical details</summary>
+                <pre>{error.technical}</pre>
+              </details>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

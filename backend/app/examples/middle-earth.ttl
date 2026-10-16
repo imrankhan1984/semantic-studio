@@ -105,7 +105,7 @@ me:Settlement a owl:Class ;
 me:Fortress a owl:Class ;
     rdfs:subClassOf me:Place ;
     rdfs:label "Fortress"@en ;
-    rdfs:comment "A stronghold built for defence."@en .
+    rdfs:comment "A stronghold built for defense."@en .
 
 me:Artifact a owl:Class ;
     rdfs:label "Artifact"@en ;

@@ -2268,6 +2268,47 @@ describe("App keyboard route past the graph", () => {
   });
 });
 
+describe("App: the legend in Query (load-and-shapes 5.4, AC-5)", () => {
+  const legendOpen = () =>
+    screen.getByRole("button", { name: "Legend and filters" }).getAttribute("aria-expanded");
+  const toMode = async (name: string) => {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name }));
+    });
+  };
+
+  it("folds it each time Query opens, keeps nothing there, and Explore keeps its choice", async () => {
+    localStorage.setItem("semantic-studio-legend", "open");
+    try {
+      await renderAppOpened();
+      expect(legendOpen()).toBe("true");
+      await toMode("Query");
+      expect(legendOpen()).toBe("false");
+      // Opened, then folded, in Query: neither is remembered.
+      fireEvent.click(screen.getByRole("button", { name: "Legend and filters" }));
+      expect(legendOpen()).toBe("true");
+      fireEvent.click(screen.getByRole("button", { name: "Legend and filters" }));
+      expect(localStorage.getItem("semantic-studio-legend")).toBe("open");
+      fireEvent.click(screen.getByRole("button", { name: "Legend and filters" }));
+      expect(legendOpen()).toBe("true");
+      await toMode("Explore");
+      expect(legendOpen()).toBe("true");
+      // Folded in Explore is remembered; Query starts folded again either way.
+      fireEvent.click(screen.getByRole("button", { name: "Legend and filters" }));
+      expect(localStorage.getItem("semantic-studio-legend")).toBe("folded");
+      await toMode("Query");
+      expect(legendOpen()).toBe("false");
+      fireEvent.click(screen.getByRole("button", { name: "Legend and filters" }));
+      await toMode("Explore");
+      expect(legendOpen()).toBe("false");
+      await toMode("Query");
+      expect(legendOpen()).toBe("false");
+    } finally {
+      localStorage.removeItem("semantic-studio-legend");
+    }
+  });
+});
+
 describe("App Hierarchy mode", () => {
   /** Open FIBO, then switch to the Hierarchy tab and wait for its tree. */
   async function openHierarchy() {

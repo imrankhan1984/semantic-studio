@@ -11,6 +11,7 @@ SUMMARY
     real control, that its pressed state is announced, that the rows that do
     nothing are not controls, and that collapsing takes the filters out of the
     tab order rather than leaving them reachable behind a closed panel.
+    Query's legend starts folded and keeps nothing (load-and-shapes 5.4).
 
 BASIC IDEA
     Legend is a pure function of its props plus one piece of local state, so
@@ -375,6 +376,51 @@ describe("Legend folded by default on smaller screens (explore-and-query-layout 
     renderLegend();
     setWidth(1000);
     fireEvent(window, new Event("resize"));
+    expect(header().getAttribute("aria-expanded")).toBe("true");
+  });
+});
+
+describe("Legend in Query (load-and-shapes 5.4, AC-5)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  function renderQueryLegend() {
+    return render(
+      <Legend
+        theme="dark"
+        kindCounts={COUNTS}
+        edgeKinds={EDGE_KINDS}
+        hiddenKinds={new Set()}
+        onToggleKind={vi.fn()}
+        inQuery
+      />,
+    );
+  }
+
+  it("starts folded in Query with open remembered, and at any width", () => {
+    localStorage.setItem(LEGEND_KEY, "open");
+    setWidth(1920);
+    renderQueryLegend();
+    expect(header().getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("toggling it in Query writes nothing", () => {
+    localStorage.setItem(LEGEND_KEY, "open");
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    renderQueryLegend();
+    fireEvent.click(header()); // open
+    expect(header().getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(header()); // fold
+    expect(setItem).not.toHaveBeenCalled();
+    expect(localStorage.getItem(LEGEND_KEY)).toBe("open");
+  });
+
+  it("Explore reads the remembered choice", () => {
+    localStorage.setItem(LEGEND_KEY, "open");
+    setWidth(1280);
+    renderLegend();
     expect(header().getAttribute("aria-expanded")).toBe("true");
   });
 });

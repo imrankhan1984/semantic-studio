@@ -86,13 +86,15 @@ interface ButtonProps {
   onError: (message: string) => void;
   /** Why it cannot run now (the editor's text is not applied), or null. */
   blocked?: string | null;
+  /** A run is starting from this button: Shapes shows its Results tab. */
+  onStart?: () => void;
 }
 
 /** The one way to validate (5.6). aria-disabled while a check runs, so the
  *  focus it holds is never dropped. Why it cannot run is said in text beside
  *  it and tied to it with aria-describedby: a tooltip alone reaches neither
  *  a keyboard nor a screen reader (Stage A follow-up 7). */
-export function ValidateButton({ onError, blocked = null }: ButtonProps) {
+export function ValidateButton({ onError, blocked = null, onStart }: ButtonProps) {
   const validating = useProjectSelector((s) => s.validating);
   const reasonId = useId();
   return (
@@ -105,6 +107,7 @@ export function ValidateButton({ onError, blocked = null }: ButtonProps) {
         title={blocked ?? "Check the model, unsaved changes included, against every shape"}
         onClick={() => {
           if (validating || blocked !== null) return;
+          onStart?.();
           projectStore.validate().catch((e: unknown) => onError(e instanceof Error ? e.message : String(e)));
         }}
       >

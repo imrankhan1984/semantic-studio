@@ -368,7 +368,7 @@ def test_upload_of_a_file_with_a_blocked_context_is_refused(context_server):
     )
     assert context_server.requests == []
     assert response.status_code == 422
-    assert url in response.json()["detail"]
+    assert url in response.json()["detail"]["message"]
 
 
 def test_blocked_context_is_refused_through_content_sniffing(context_server):
@@ -384,7 +384,7 @@ def test_blocked_context_is_refused_through_content_sniffing(context_server):
     )
     assert context_server.requests == []
     assert response.status_code == 422
-    assert url in response.json()["detail"]
+    assert url in response.json()["detail"]["message"]
 
 
 def test_oversized_context_is_refused_while_reading(context_server, monkeypatch, loopback_is_public):

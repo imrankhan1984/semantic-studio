@@ -7,7 +7,7 @@
       "format": "turtle",
       "name": "Space Exploration",
       "purpose": "The Solar System, the agencies that explore it and their missions: something to try in every tab.",
-      "sha256": "839f2e1c406d0fc469311bc586b5eee3d99356bbedcb09eb67e03d0d20318ce5"
+      "sha256": "1edb0156834b1ae9b734b3ffd62dfe082016d5b89520419428aeb1b02abf7d30"
     },
     {
       "key": "middle-earth",
@@ -15,7 +15,7 @@
       "format": "turtle",
       "name": "The Lord of the Rings",
       "purpose": "People, places and the links between them, from a story many people already know.",
-      "sha256": "906762e5171f53ba631fa9ffcc27ad2d4168ac16b16db33850ce205a83aebd94"
+      "sha256": "be43b1cf20234e7168e191bc8e2c3226fae61c3244034d4cd4e78ffc2756f0f1"
     },
     {
       "key": "foaf",

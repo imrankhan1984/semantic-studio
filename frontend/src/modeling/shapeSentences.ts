@@ -33,7 +33,8 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - ruleSentence, shapeSentence, rowSentence, panelHeader, panelName,
-      validationSummary, ruleProblem, languageName, plural; and pathWords
+      validationSummary, problemsFound (the Results tab's words,
+      load-and-shapes 5.3), ruleProblem, languageName, plural; and pathWords
       and dateTimeBound, Stage B's follow-ups 1 and 5: a relationship read
       after *must* (*must work for*, *must be member of*, by sentences.ts's
       verb rule since X-12), a minimum of 0 left unsaid, a type and its
@@ -275,6 +276,15 @@ export function panelHeader(panel: ValidationPanel): string {
 /** A panel's accessible name: the state word, then the header with counts. */
 export function panelName(panel: ValidationPanel): string {
   return `${STATE_WORDS[panel.state]}. ${panelHeader(panel)}`;
+}
+
+/** What the Results tab carries when a run ends while Shape is showing
+ *  (load-and-shapes 5.3): the problems found, in words, never a bare number. */
+export function problemsFound(result: ValidationResult): string {
+  if (result.stopped) return "stopped";
+  const n = result.shapes.reduce((sum, p) => sum + p.problemCount, 0);
+  if (n === 0) return "no problems";
+  return n === 1 ? "1 problem" : `${n.toLocaleString()} problems`;
 }
 
 /** What the live region says after a run (Section 6). */

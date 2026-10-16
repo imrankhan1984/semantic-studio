@@ -15,7 +15,11 @@ SUMMARY
     (csv-data-import X4). Suggested lists schema.org, FIBO and UNESCO, and
     offers *Add the examples back* only while an example is missing, which
     calls the restore endpoint and keeps focus on the tab
-    (home-and-examples 5.8, AC-10).
+    (home-and-examples 5.8, AC-10), aria-disabled while it works and
+    keeping focus when it fails (load-and-shapes 5.6). A failed load shows
+    the server's sentence with the raw text under a closed Technical
+    details (5.1); the dialog is announced as one, Escape closes it or asks
+    past the wizard's step 3, and focus goes back to its opener (5.2).
 
 BASIC IDEA
     api.ts is mocked; the snapshot list reads the real project store, left
@@ -31,15 +35,17 @@ EXPECTED OUTPUT
 */
 
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { fetchHierarchy, inspectData, previewData, openProject, listData, restoreExamples } = vi.hoisted(() => ({
+const { fetchHierarchy, inspectData, previewData, openProject, listData, restoreExamples, uploadOntology } = vi.hoisted(() => ({
   fetchHierarchy: vi.fn(() => new Promise(() => {})),
   inspectData: vi.fn(),
   previewData: vi.fn(),
   openProject: vi.fn(),
   listData: vi.fn(),
   restoreExamples: vi.fn(),
+  uploadOntology: vi.fn(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -50,8 +56,10 @@ vi.mock("../api", async (importOriginal) => ({
   openProject,
   listData,
   restoreExamples,
+  uploadOntology,
 }));
 
+import { ApiError } from "../api";
 import { projectStore } from "../state/projectStore";
 import LoadDialog from "./LoadDialog";
 
@@ -61,6 +69,54 @@ afterEach(() => {
   cleanup();
   projectStore._reset();
   restoreExamples.mockReset();
+  uploadOntology.mockReset();
+});
+
+describe("a failed load (load-and-shapes 5.1, AC-2)", () => {
+  const SENTENCE =
+    "Line 3: the statement before this line is not finished. It probably needs a full stop (.) at its end.";
+  // Markup in the raw text must arrive as characters, not elements.
+  const TECHNICAL = "Could not parse the file as RDF. Attempts:\nturtle: at line 3 of <>:\n<b>Bad syntax</b>";
+
+  async function failWith(error: Error) {
+    uploadOntology.mockRejectedValue(error);
+    render(<LoadDialog onLoaded={() => {}} onClose={() => {}} initialTab="file" />);
+    await act(async () => {
+      fireEvent.change(document.querySelector(".dropzone input[type=file]")!, {
+        target: { files: [new File(["x"], "missing-dot.ttl")] },
+      });
+    });
+  }
+
+  it("shows the sentence, and the raw text as text under a closed Technical details", async () => {
+    await failWith(
+      new ApiError(SENTENCE, 422, { code: "parse_error", message: SENTENCE, line: 3, format: "Turtle", technical: TECHNICAL }),
+    );
+    expect(screen.getByText(SENTENCE).className).toBe("detail-error");
+    const details = document.querySelector("details.technical-details") as HTMLDetailsElement;
+    expect(details).toBeTruthy();
+    expect(details.open).toBe(false);
+    expect(details.querySelector("summary")!.textContent).toBe("Technical details");
+    const pre = details.querySelector("pre")!;
+    expect(pre.textContent).toBe(TECHNICAL);
+    expect(pre.querySelector("b")).toBeNull();
+    // The sentence above it carries none of the raw text.
+    expect(screen.getByText(SENTENCE).textContent).not.toContain("Attempts");
+  });
+
+  it("has no disclosure without technical text", async () => {
+    await failWith(new ApiError("The uploaded file is empty.", 400, "The uploaded file is empty."));
+    expect(screen.getByText("The uploaded file is empty.")).toBeTruthy();
+    expect(document.querySelector("details")).toBeNull();
+  });
+
+  it("has no disclosure for a parse_error whose technical text is null", async () => {
+    await failWith(
+      new ApiError("Refused.", 422, { code: "parse_error", message: "Refused.", line: null, format: null, technical: null }),
+    );
+    expect(screen.getByText("Refused.")).toBeTruthy();
+    expect(document.querySelector("details")).toBeNull();
+  });
 });
 
 describe("LoadDialog suggestions (home-and-examples 5.8)", () => {
@@ -139,6 +195,153 @@ describe("LoadDialog suggestions (home-and-examples 5.8)", () => {
     expect(screen.getByText("The examples could not be added back.")).toBeTruthy();
     expect(onExamplesRestored).not.toHaveBeenCalled();
     expect((screen.getByRole("button", { name: "Add the examples back" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("is aria-disabled while it works, never disabled, and ignores a second click (load-and-shapes 5.6, AC-7)", async () => {
+    let fail!: (e: Error) => void;
+    restoreExamples.mockReturnValue(new Promise((_, reject) => (fail = reject)));
+    render(<LoadDialog onLoaded={() => {}} onClose={() => {}} examplesMissing={1} onExamplesRestored={() => {}} />);
+    const button = screen.getByRole("button", { name: "Add the examples back" }) as HTMLButtonElement;
+    button.focus();
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.disabled).toBe(false);
+    expect(document.activeElement).toBe(button);
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(restoreExamples).toHaveBeenCalledTimes(1);
+    // On failure focus stays on it, and the error shows.
+    await act(async () => {
+      fail(new Error("The examples could not be added back."));
+    });
+    expect(screen.getByText("The examples could not be added back.")).toBeTruthy();
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute("aria-disabled")).toBe("false");
+  });
+});
+
+describe("the Load dialog is a dialog (load-and-shapes 5.2, AC-3)", () => {
+  it("is announced as a modal dialog, labelled by its heading", () => {
+    const { rerender } = render(<LoadDialog onLoaded={() => {}} onClose={() => {}} project={PROJECT} />);
+    const dialog = screen.getByRole("dialog", { name: "Load ontology" });
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+    const heading = document.getElementById(dialog.getAttribute("aria-labelledby")!)!;
+    expect(heading.tagName).toBe("H2");
+    fireEvent.click(screen.getByRole("button", { name: "Data for this project" }));
+    rerender(<LoadDialog onLoaded={() => {}} onClose={() => {}} project={PROJECT} />);
+    expect(screen.getByRole("dialog", { name: "Data for Shop" })).toBeTruthy();
+  });
+
+  it("closes on Escape, wherever focus is in it or on the page's body", () => {
+    const onClose = vi.fn();
+    render(<LoadDialog onLoaded={() => {}} onClose={onClose} />);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Local file" }), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Local file" }), { key: "Enter" });
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves an Escape pressed in another dialog over it to that dialog", () => {
+    const onClose = vi.fn();
+    render(
+      <>
+        <LoadDialog onLoaded={() => {}} onClose={onClose} />
+        <div role="dialog" aria-label="Approval">
+          <button type="button">Don't allow</button>
+        </div>
+      </>,
+    );
+    fireEvent.keyDown(screen.getByRole("button", { name: "Don't allow" }), { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("takes focus on open, and gives it back to what opened it on close", () => {
+    function Host() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open a file
+          </button>
+          {open && <LoadDialog onLoaded={() => {}} onClose={() => setOpen(false)} initialTab="file" />}
+        </>
+      );
+    }
+    render(<Host />);
+    const opener = screen.getByRole("button", { name: "Open a file" });
+    opener.focus();
+    fireEvent.click(opener);
+    const dialog = screen.getByRole("dialog", { name: "Load ontology" });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("leaves an Escape from the page's body to a modal dialog open over it (found in review)", () => {
+    const onClose = vi.fn();
+    render(
+      <>
+        <LoadDialog onLoaded={() => {}} onClose={onClose} />
+        <div role="dialog" aria-modal="true" aria-label="Approval">
+          <button type="button">Don't allow</button>
+        </div>
+      </>,
+    );
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("gives focus back to the opener when it opened on the URL tab, the field already focused (found in review)", () => {
+    function Host() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Load from a URL
+          </button>
+          {open && <LoadDialog onLoaded={() => {}} onClose={() => setOpen(false)} initialTab="url" />}
+        </>
+      );
+    }
+    render(<Host />);
+    const opener = screen.getByRole("button", { name: "Load from a URL" });
+    opener.focus();
+    fireEvent.click(opener);
+    expect(document.activeElement).toBe(screen.getByRole("textbox"));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("keeps Tab inside: past the last control to the first, and back (found in review)", () => {
+    render(
+      <>
+        <button type="button">Behind</button>
+        <LoadDialog onLoaded={() => {}} onClose={() => {}} initialTab="file" />
+      </>,
+    );
+    const dialog = screen.getByRole("dialog");
+    // The file input is `hidden` and Tab never stops on it: it is not an end.
+    expect(dialog.querySelector('input[type="file"][hidden]')).not.toBeNull();
+    const items = [...dialog.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), summary, a[href]")]
+      .filter((el) => !el.closest("[hidden]"));
+    expect(items.length).toBeGreaterThan(1);
+    items[items.length - 1].focus();
+    fireEvent.keyDown(document.activeElement!, { key: "Tab" });
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(document.activeElement!, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(items[items.length - 1]);
+  });
+
+  it("keeps the URL field's own focus when it opens on the URL tab", () => {
+    render(<LoadDialog onLoaded={() => {}} onClose={() => {}} initialTab="url" />);
+    expect(document.activeElement).toBe(screen.getByRole("textbox"));
   });
 });
 
@@ -269,6 +472,20 @@ describe("LoadDialog", () => {
       expect(screen.getByText(/Well-known public ontologies/)).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: "Data for this project" }));
       expect(screen.queryByRole("heading", { name: "Step 3 of 4: the columns" })).toBeNull();
+    });
+
+    it("past step 3 Escape asks, Escape again keeps going, and Leave closes (load-and-shapes 5.2)", async () => {
+      const onClose = await toStep3();
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByRole("group", { name: "Leave the wizard?" })).toBeTruthy();
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+      expect(screen.queryByRole("group", { name: "Leave the wizard?" })).toBeNull();
+      expect(screen.getByRole("heading", { name: "Step 3 of 4: the columns" })).toBeTruthy();
+      expect(onClose).not.toHaveBeenCalled();
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      fireEvent.click(within(screen.getByRole("group", { name: "Leave the wizard?" })).getByRole("button", { name: "Leave" }));
+      expect(onClose).toHaveBeenCalledTimes(1);
     });
 
     it("does not ask before step 3, where there is nothing to lose", async () => {

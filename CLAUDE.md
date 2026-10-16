@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1286 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1534 tests, vitest
+cd backend  && python -m pytest tests    # 1336 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1566 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -159,6 +159,8 @@ backend/app/
                      in the data folder makes a removal stick; restore
   store.py           In-memory ontology store, disk persistence, lazy parsing;
                      every derived view keyed on the revision (D-081)
+  parse_errors.py    A failed load in one plain sentence (D-112): the line,
+                     the format, the raw parser text kept apart
   projects.py        Project folders and manifests: create, list, rename,
                      duplicate, trash, export; per-project saved queries
   editing.py         The only mutator of a project document: commands, undo,
@@ -277,6 +279,8 @@ leaves one behind.
 - `.query-pinned` keeps `flex: none` and a background; `.next-steps-panel` is bounded in `vh`. [keeps the query]
 - A search answer is applied only if it is the latest; the request it replaces is aborted (CF-4). [latest search]
 - Query's four switches are independent toggles with `aria-pressed`, never a single-choice control. [Explore and Query layout]
+- A parser's message reaches a person only through `parse_errors.py`; the raw text is shown only as text, under *Technical details* (D-112). [Load and Shapes]
+- The sentence explains the attempt of the format the file claims to be, else the furthest; a message the table knows counts as a sign of RDF. [Load and Shapes]
 - A timed-out query is stopped from outside, on a thread of its own, and only while armed in its query, never inside a SERVICE call, and resent, as a finaliser can swallow one; its end is its thread's end; the worker holds the read lock, and the timeout starts once it has it (D-108). [stopped from outside]
 
 **Sentences**
@@ -348,6 +352,8 @@ leaves one behind.
 - A shape command takes the shapes document's lock, then the model's; every reader of both takes them in that order. [SHACL validation]
 - In Shapes mode `activeId` stays the model's and only the store's `activeDoc` is `shapes.ttl`. [SHACL validation]
 - The Shapes list keeps its selection by id while the list does not hold it: undo and redo of a create, a list still on its way. [SHACL validation]
+- Shapes shows *Results* and marks its tab by watching the result, never the running flag: a quick run starts and ends within one render. [Load and Shapes]
+- The Shape tab's form stays mounted, `hidden`, under *Results*: unmounting it lost a rule's edits to Validate. [Load and Shapes]
 - The rule editor sends back every field it does not show, and an untouched `sh:in` list exactly. [SHACL validation]
 - What counts as an example is `examples.py`'s alone: an individual of a model class, `owl:NamedIndividual` or not; the form, the tree and the commands ask it. [example data]
 - The tree's Examples section keeps its own expansion: a class IRI is in two forests, and sharing the set opened both. [example data]
@@ -406,6 +412,8 @@ leaves one behind.
 - An example is told by `source === "example"` and its `example` record, never its name, and always follows the person's work (`home/libraryOrder.ts`). [Home and examples]
 - A person reads *statements*, never *triples*; `wording.test.ts` scans the source, and code names keep `triples`. [Home and examples]
 - `.onto-card` never clips: its "⋮" menu is longer than a card, and the miniature clips its own corners. [Home and examples]
+- The Load dialog's key handler is on `document`, wraps Tab with `wrapTab`, and leaves every key to a modal open over it; past the wizard's step 3 Escape asks. Its opener is taken at the first render, before autoFocus moves focus. [Load and Shapes]
+- In Query the legend starts folded and writes nothing; App keys it on the mode, so Explore reads its kept choice again. [Load and Shapes]
 - Explore's ranking and sentence stay behind `useMemo`; the ranking never sorts every node. [starting panel]
 - `describeContents` interpolates nothing from the ontology. [starting panel]
 - `removalPrompt`: `null` is not `0`, and the zero case keeps its exact sentence. [saved queries go]

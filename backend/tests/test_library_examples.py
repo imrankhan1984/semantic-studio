@@ -244,6 +244,85 @@ def test_a_changed_file_does_not_bring_back_a_removed_example(tmp_path, parses, 
     assert restarted.get(oid) is None
 
 
+# --- US spelling and the Rosetta mission (load-and-shapes 5.5) ----------------
+
+# The British forms 5.5 replaced, and the US form each became. A proper name
+# keeps its own spelling: the Indian Space Research Organisation is one.
+BRITISH = {
+    "programme": "program", "programmes": "programs", "travelled": "traveled",
+    "travelling": "traveling", "kilometres": "kilometers", "recognised": "recognized",
+    "defence": "defense", "colour": "color",
+}
+PROPER_NAMES = ("Indian Space Research Organisation",)
+
+
+@pytest.mark.parametrize("key", ["space", "middle-earth"])
+def test_english_text_uses_us_spelling(key):
+    text = (APP / _entry(key)["file"]).read_text(encoding="utf-8")
+    assert len(text) > 10_000, "the example file did not load"
+    for name in PROPER_NAMES:
+        text = text.replace(name, "")
+    graph = _graph(key)
+    english = [str(o) for o in graph.objects() if isinstance(o, Literal) and (o.language or "").startswith("en")]
+    assert english, "no English text was read"
+    # The English literals, and the file's own comments, which are English too.
+    comments = [line for line in text.splitlines() if line.lstrip().startswith("#")]
+    for words in english + comments:
+        if any(name in words for name in PROPER_NAMES):
+            continue
+        for british in BRITISH:
+            assert not re.search(rf"\b{british}\b", words, re.IGNORECASE), (british, words)
+
+
+def test_the_rosetta_mission_is_called_a_mission(space):
+    assert space.value(SPACE.Rosetta, RDFS.label) == Literal("Rosetta mission", lang="en")
+    # The spacecraft keeps its name.
+    assert space.value(SPACE.RosettaOrbiter, RDFS.label) == Literal("Rosetta", lang="en")
+    assert space.value(SPACE.ISRO, RDFS.comment) == Literal("The Indian Space Research Organisation.", lang="en")
+    assert Literal("Soviet space program", lang="en") in set(space.objects(None, RDFS.label))
+
+
+def _older(key: str, tmp_path) -> dict:
+    """The manifest entry a library seeded before 5.5 holds: the British text."""
+    entry = dict(_entry(key))
+    data = (APP / entry["file"]).read_bytes()
+    us_to_british = [(us, gb) for gb, us in BRITISH.items()]
+    # Longest first, so "programs" is not read as "program" + "s".
+    for us, gb in sorted(us_to_british, key=lambda pair: -len(pair[0])):
+        data = re.sub(rb"\b" + us.encode() + rb"\b", gb.encode(), data)
+    data = data.replace(b'rdfs:label "Rosetta mission"@en', b'rdfs:label "Rosetta"@en')
+    assert data != (APP / entry["file"]).read_bytes()
+    older = tmp_path / f"older-{key}.ttl"
+    older.write_bytes(data)
+    entry["file"] = str(older)
+    entry["sha256"] = hashlib.sha256(data).hexdigest()
+    return entry
+
+
+def test_an_older_library_gets_the_new_words_under_the_same_ids(tmp_path, parses, monkeypatch):
+    data_dir = tmp_path / "data"
+    older = [_older(e["key"], tmp_path) if e["key"] != "foaf" else e for e in MANIFEST["examples"]]
+    monkeypatch.setattr(library_examples, "load_manifest", lambda: older)
+    store = OntologyStore(data_dir)
+    library_examples.seed(store)
+    space_id, me_id = library_examples.example_id("space"), library_examples.example_id("middle-earth")
+    labels = set(store.get(space_id).ensure_loaded().objects(SPACE.Rosetta, RDFS.label))
+    assert labels == {Literal("Rosetta", lang="en")}
+
+    # The next start ships this release's manifest.
+    monkeypatch.setattr(library_examples, "load_manifest", lambda: MANIFEST["examples"])
+    parses.clear()
+    restarted = OntologyStore(data_dir)
+    assert sorted(library_examples.seed(restarted)) == sorted([space_id, me_id])
+    assert len(parses) == 2
+    assert sorted(o.id for o in restarted.list()) == sorted(library_examples.example_id(k) for k in KEYS)
+    graph = OntologyStore(data_dir).get(space_id).ensure_loaded()
+    assert set(graph.objects(SPACE.Rosetta, RDFS.label)) == {Literal("Rosetta mission", lang="en")}
+    assert "kilometers" in str(graph.value(SPACE.diameterKm, RDFS.comment))
+    defense = [str(o) for o in OntologyStore(data_dir).get(me_id).ensure_loaded().objects(None, RDFS.comment)]
+    assert any("defense" in c for c in defense) and not any("defence" in c for c in defense)
+
+
 def test_restore_adds_back_only_the_missing_ones(tmp_path, parses):
     store = OntologyStore(tmp_path)
     library_examples.seed(store)
