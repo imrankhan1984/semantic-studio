@@ -28,3 +28,7 @@
 # check, so their bytes are never touched.
 backend/app/vocab/*.ttl binary
 backend/app/vocab/*.rdf binary
+
+# The library's bundled examples (home-and-examples 5.1) are pinned the same
+# way, in backend/app/examples/manifest.json; FOAF is read from vocab/ above.
+backend/app/examples/*.ttl binary

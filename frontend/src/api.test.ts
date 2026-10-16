@@ -105,6 +105,8 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   mapImport: () => api.mapImport("ont-1", "http://example.org/i", "ont-2"),
   chooseImportFiles: () => api.chooseImportFiles("ont-1", [new File(["x"], "x.ttl")]),
   // authoring-foundations: projects and editing.
+  // home-and-examples: the examples added back.
+  restoreExamples: () => api.restoreExamples(),
   listProjects: () => api.listProjects(),
   createProject: () => api.createProject({ name: "p", template: "small" }),
   updateProject: () => api.updateProject("prj-1", { name: "q" }),
@@ -175,12 +177,12 @@ describe("api client header (S-6)", () => {
     // the editing form adds one POST (the delete's dry run); the canvas one
     // PUT (its layout); validation one POST (shacl-authoring 5.6); the data
     // wizard four POSTs, a PATCH and a DELETE (csv-data-import); reasoning
-    // a POST (Reason) and a DELETE (Stop).
+    // a POST (Reason) and a DELETE (Stop); the examples one POST (restore).
     const expected = [
       ...Array(6).fill("DELETE"),
       "PATCH",
       "PATCH",
-      ...Array(27).fill("POST"),
+      ...Array(28).fill("POST"),
       "PUT",
       "PUT",
       "PUT",

@@ -5,9 +5,11 @@ FILE: frontend/src/components/OntologyCard.tsx
 
 SUMMARY
     One entry in the home screen's library: a picture of the ontology's own
-    graph, the sentence saying what it contains, chips carrying its metrics and
-    status, a composition bar, three verbs, and a "⋮" menu. Renders as a card or
-    as a dense row from the same markup.
+    graph, the sentence saying what it contains (an example's purpose instead),
+    a composition bar, two facts -- how many statements, and when it was
+    added or *Example* -- and *Read-only*, three verbs, and a "⋮" menu
+    (home-and-examples 5.6). Renders as a card or as a dense row from the
+    same markup.
 
 BASIC IDEA
     The reference this design borrows from puts a stock icon on each card — a
@@ -29,6 +31,13 @@ BASIC IDEA
     trigger a parse to backfill one, which is why there is no fallback path that
     asks for a graph.
 
+    **One sentence and two facts.** The card carried seven chips -- triples,
+    entities, relations, format, loaded, source, date -- which a learner had
+    to decode before choosing (design review F-9). What tells two entries
+    apart is what they are about, how big they are and how new: the sentence,
+    the statement count and the date. The rest is in the status bar once the
+    file is open.
+
     The card is NOT one large target. Open is a button, the three verbs are
     buttons, the menu is a disclosure — because a card-sized button would
     announce as one unreadable run of text and offer one action where there are
@@ -46,14 +55,16 @@ INPUTS / INPUT SOURCES (props)
       Omitted, the menu item is absent.
 
 EXPECTED OUTPUT
-    - One <article> with a heading, a picture, chips, a composition bar, three
-      mode buttons and a menu, and the side effects of pressing any of them.
+    - One <article> with a heading, a picture, a sentence, a composition bar,
+      the facts, three mode buttons and a menu, and the side effects of
+      pressing any of them.
 ================================================================================
 */
 
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { describeKindCounts } from "../explore/suggestions";
 import { CARD_MINIATURE, ROW_MINIATURE, compositionSegments, layoutSketch } from "../home/miniature";
+import { statementCount } from "../statusWords";
 import type { AppMode, OntologySummary, Theme } from "../types";
 import { PALETTES, kindColor } from "../types";
 
@@ -83,20 +94,13 @@ const VERBS: { mode: AppMode; label: string; hint: string }[] = [
 ];
 
 /** "26 Jul", or null when the ontology predates addedAt being persisted.
- *  Undated is normal for an older library, so the card drops the chip rather
+ *  Undated is normal for an older library, so the card drops the fact rather
  *  than showing a placeholder. */
 function addedOn(iso: string | undefined): string | null {
   if (!iso) return null;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
   return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
-}
-
-/** Where it came from, as a word. `source` is either "upload" or the URL it was
- *  fetched from, and a whole URL on a chip is unreadable — so it becomes URL,
- *  and the full address stays in the title for anyone who wants it. */
-function sourceWord(source: string): string {
-  return source === "upload" ? "Upload" : "URL";
 }
 
 function OntologyCard({
@@ -158,6 +162,10 @@ function OntologyCard({
   );
   const palette = PALETTES[theme];
   const added = addedOn(summary.addedAt);
+  // A bundled example (home-and-examples 5.5) says so where other cards show
+  // their date, and its purpose stands for the counted sentence: what it is
+  // for says more to a first visitor than what it holds.
+  const example = summary.source === "example" ? summary.example ?? null : null;
   const disabled = busy || working;
 
   return (
@@ -316,11 +324,15 @@ function OntologyCard({
 
         {/* L-5's sentence, reused rather than a filename. It says more about an
             ontology than its name does, and it is already tested. */}
-        <p className="onto-summary">{describeKindCounts(summary.kindCounts)}</p>
+        <p className="onto-summary">
+          {example ? example.purpose : describeKindCounts(summary.kindCounts)}
+        </p>
 
-        {/* The composition bar. Every band also appears in the counts below it
-            and in the sentence above it, so nothing here is conveyed by colour
-            alone — it is aria-hidden for that reason rather than despite it. */}
+        {/* The composition bar, a picture of the sentence above it: for a file
+            that sentence names the same kinds and counts in words. An example
+            says its purpose instead, and its counts are the status bar's once
+            it is open, so the bar carries no fact a person needs to choose. It
+            is aria-hidden for that reason, and each band's title names it. */}
         {segments.length > 0 && (
           <div className="onto-bar" aria-hidden="true">
             {segments.map((segment) => (
@@ -337,25 +349,18 @@ function OntologyCard({
           </div>
         )}
 
-        {/* Metrics and status, every one of them text. The chip vocabulary is
-            deliberately extensible: V-3's reasoner and Q-3's endpoint badges
-            belong in this row when they exist, and inventing them now would put
-            a badge on a card for something that does not run. */}
+        {/* The two facts, and Read-only, every one of them text. Counts are the
+            whole file's (summary.triples), never what a canvas drew. */}
         <ul className="onto-chips">
-          <li className="chip-metric">{summary.triples.toLocaleString()} triples</li>
-          <li className="chip-metric">{summary.nodes.toLocaleString()} entities</li>
-          <li className="chip-metric">{summary.edges.toLocaleString()} relations</li>
-          <li className="chip-metric">{summary.format}</li>
-          {/* Loaded state as a word, never as a green dot. There is no
-              connection to hold open here — an ontology is either parsed in
-              server memory or not — so the wording says exactly that. */}
-          <li className={summary.loaded ? "chip-state chip-on" : "chip-state"}>
-            {summary.loaded ? "Loaded" : "Not loaded"}
-          </li>
-          <li className="chip-state" title={summary.source}>
-            {sourceWord(summary.source)}
-          </li>
-          {added && <li className="chip-state">Added {added}</li>}
+          <li className="chip-metric">{statementCount(summary.triples)}</li>
+          {example ? (
+            <li className="chip-state">Example</li>
+          ) : (
+            added && <li className="chip-state">Added {added}</li>
+          )}
+          {/* In words, on the card: the section heading that said
+              "(read-only)" went when projects joined the library. */}
+          <li className="chip-state">Read-only</li>
         </ul>
 
         <div className="onto-verbs">

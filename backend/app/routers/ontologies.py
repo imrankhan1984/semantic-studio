@@ -649,7 +649,7 @@ def get_node(
             if example is not None:
                 details["example"] = example
     if details is None:
-        raise HTTPException(status_code=404, detail=f"No triples found for {iri}")
+        raise HTTPException(status_code=404, detail=f"No statements found for {iri}")
     if imports:
         source = imports_service.merged(ontology)["importedFrom"].get(iri)
         if source is not None:

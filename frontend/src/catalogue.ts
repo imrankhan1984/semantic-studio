@@ -5,9 +5,11 @@ FILE: frontend/src/catalogue.ts
 
 SUMMARY
     A static list of well-known ontologies offered as suggestions, in the order
-    a newcomer should meet them: FOAF, schema.org, FIBO, then a multilingual
-    SKOS thesaurus. Rendered by CatalogueList, which appears both on the start
-    screen and on the Load dialog's "Suggested" tab.
+    a newcomer should meet them: schema.org, FIBO, then a multilingual SKOS
+    thesaurus. Rendered by CatalogueList, on the Load dialog's "Suggested"
+    tab. FOAF led the list until it became one of the library's bundled
+    examples (home-and-examples 5.8): it is in every library from the first
+    start, with no download, and picking it here as well would add it twice.
 
 BASIC IDEA
     A newcomer with no ontology of their own needs a starting point. This gives
@@ -43,10 +45,13 @@ export interface CatalogueEntry {
 }
 
 // The suggestions, in the order shown. The rule is ascending by how much the
-// user has to cope with. It used to be enough to read that off one number,
-// because size, triple count and conceptual difficulty agreed across the four
+// user has to cope with. FOAF, the gentlest, led until 2026-10-16, when it
+// became a bundled example (home-and-examples 5.8, D-111): a newcomer meets it
+// in the library without asking, and offering it here too would only make a
+// duplicate. The three that remain keep their order, for the reasons below. It used to be enough to read that off one number,
+// because size, statement count and conceptual difficulty agreed across the
 // entries. Since 2026-07-31 they do not: UNESCO is the smaller download of the
-// last two — 3.8 MB against FIBO's 5 MB, 100k triples against 132k — and is
+// last two — 3.8 MB against FIBO's 5 MB, 100k statements against 132k — and is
 // still placed after it. It is the only entry whose labels are in five scripts,
 // Arabic among them, which is real cognitive load on a first encounter, and a
 // thesaurus asks the reader to hold a hierarchy in their head where FIBO asks
@@ -60,24 +65,15 @@ export interface CatalogueEntry {
 // reason and a good one. It is not a newcomer's reason: FIBO is ~5 MB and
 // 18,717 nodes, and it was the first thing a first-time user was offered.
 // Reordering follows D-002, learner first when learner and expert needs
-// conflict, and costs the expert two places in a list of four that needs no
+// conflict, and costs the expert a place in a short list that needs no
 // scrolling. Do not restore FIBO to the top without reading that decision.
 export const CATALOGUE: CatalogueEntry[] = [
-  {
-    id: "foaf",
-    name: "FOAF — Friend of a Friend",
-    description:
-      "A small, classic vocabulary describing people, their links and the things they make. A good first ontology.",
-    size: "~150 KB · 600 triples",
-    audience: "Start here if you are new to ontologies.",
-    url: "http://xmlns.com/foaf/spec/index.rdf",
-  },
   {
     id: "schemaorg",
     name: "schema.org",
     description:
       "The vocabulary behind structured data on the web — around 900 classes covering people, places, products, events and creative works.",
-    size: "~3 MB · 17k triples",
+    size: "~3 MB · 17k statements",
     audience: "A good second step: familiar subjects, real scale.",
     url: "https://github.com/schemaorg/schemaorg/blob/main/data/releases/28.1/schemaorg-current-https.ttl",
   },
@@ -86,7 +82,7 @@ export const CATALOGUE: CatalogueEntry[] = [
     name: "FIBO — Financial Industry Business Ontology",
     description:
       "The EDM Council's production release: financial entities, instruments, markets and legal structures. Relationships are stated as OWL restrictions, which the query builder reads.",
-    size: "~5 MB · 132k triples · ~15s",
+    size: "~5 MB · 132k statements · ~15s",
     audience: "Best for testing OWL restrictions and the query builder.",
     url: "https://spec.edmcouncil.org/fibo/ontology/master/latest/prod.fibo-quickstart.ttl",
   },
@@ -100,7 +96,7 @@ export const CATALOGUE: CatalogueEntry[] = [
     // parsed in 3.5 seconds. No warning word, because there is nothing to warn
     // about — the entry this replaced ended in the word "slow" and that was the
     // most useful word in it.
-    size: "~3.8 MB · 100k triples · ~4s",
+    size: "~3.8 MB · 100k statements · ~4s",
     audience: "Start here for SKOS: taxonomies, concept schemes and broader/narrower.",
     url: "https://vocabularies.unesco.org/exports/thesaurus/latest/unesco-thesaurus.ttl",
   },

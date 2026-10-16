@@ -111,6 +111,7 @@ const {
   runCommand,
   reasonProject,
   listData,
+  restoreExamples,
 } = vi.hoisted(() => ({
   listOntologies: vi.fn(),
   getGraph: vi.fn(),
@@ -160,6 +161,8 @@ const {
   reasonProject: vi.fn(),
   // X-12: an open project's snapshot list, which a failed read now says.
   listData: vi.fn(),
+  // home-and-examples 5.8: the Load dialog's Add the examples back.
+  restoreExamples: vi.fn(),
 }));
 
 // importOriginal rather than a bare factory, so ApiError stays the real class.
@@ -204,10 +207,12 @@ vi.mock("./api", async (importOriginal) => ({
   runCommand,
   reasonProject,
   listData,
+  restoreExamples,
 }));
 
 /** Every mocked client function, so a test can count what mount actually did. */
 const ALL_API = {
+  restoreExamples,
   listData,
   listImports,
   listOntologies,
@@ -533,8 +538,14 @@ describe("App startup chooser", () => {
   it("requests only the ontology list and the project list on mount", async () => {
     // AC-13, and authoring-foundations' "mount still one request plus the
     // projects list": two lists, both built from metadata files, and nothing
-    // that parses.
+    // that parses. The library holds a bundled example as well
+    // (home-and-examples 5.5), and still nothing more is asked for.
+    listOntologies.mockResolvedValue([
+      SUMMARY,
+      { ...SUMMARY, id: "ont-example", name: "Space Exploration", source: "example", example: { key: "space", purpose: "Every feature, one ontology." } },
+    ]);
     await renderApp();
+    expect(libraryCard("Space Exploration")).toBeTruthy();
 
     expect(listOntologies).toHaveBeenCalledTimes(1);
     expect(listProjects).toHaveBeenCalledTimes(1);
@@ -1942,6 +1953,53 @@ describe("App About control", () => {
   });
 });
 
+describe("App examples (home-and-examples 5.8)", () => {
+  const EXAMPLE = {
+    ...SUMMARY,
+    id: "ont-space",
+    name: "Space Exploration",
+    source: "example",
+    example: { key: "space", purpose: "Every feature, one ontology." },
+  };
+  const LOTR = { ...EXAMPLE, id: "ont-me", name: "The Lord of the Rings", example: { key: "middle-earth", purpose: "p" } };
+  const FOAF = { ...EXAMPLE, id: "ont-foaf", name: "FOAF (Friend of a Friend)", example: { key: "foaf", purpose: "p" } };
+
+  it("the Load dialog adds the examples back, and Home shows them after the person's file", async () => {
+    // FOAF stayed; the other two come back.
+    listOntologies.mockResolvedValue([SUMMARY, FOAF]);
+    restoreExamples.mockResolvedValue({
+      restored: ["ont-space", "ont-me"],
+      ontologies: [SUMMARY, FOAF, EXAMPLE, LOTR],
+    });
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add the examples back" }));
+    });
+    expect(restoreExamples).toHaveBeenCalledTimes(1);
+    expect(document.querySelector(".examples-restored")!.textContent).toBe("Added back: Space Exploration, The Lord of the Rings.");
+    // The dialog stays, focus on its tab, and the button has gone: App's
+    // list holds the example now.
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Suggested" }));
+    expect(screen.queryByRole("button", { name: "Add the examples back" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    const names = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    expect(names).toEqual([SUMMARY.name, "Space Exploration", "The Lord of the Rings", FOAF.name]);
+  });
+
+  it("does not offer it while every example is in the library", async () => {
+    listOntologies.mockResolvedValue([SUMMARY, EXAMPLE, LOTR, FOAF]);
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    });
+    expect(screen.getByRole("button", { name: "Suggested" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add the examples back" })).toBeNull();
+  });
+});
+
 describe("App home screen", () => {
   it("the Home control appears before Load", async () => {
     // AC-1. Position, not merely presence: Home is where the application starts
@@ -2659,12 +2717,14 @@ function tab(name: string): HTMLElement {
 }
 
 describe("App projects (authoring-foundations)", () => {
-  it("lists projects above the read-only library", async () => {
-    listProjects.mockResolvedValue([PROJECT]);
+  it("lists projects in the one library, before the files (home-and-examples 5.5)", async () => {
+    listProjects.mockResolvedValue([{ ...PROJECT, updatedAt: "2099-01-01T00:00:00Z" }]);
     await renderApp();
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings.indexOf("My projects")).toBeLessThan(headings.indexOf("Library (read-only)"));
-    expect(screen.getByRole("heading", { level: 3, name: "Invoices" })).toBeTruthy();
+    expect(headings).toEqual(["Your library", "Or"]);
+    const names = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    expect(names[0]).toBe("Invoices");
+    expect(names).toContain(SUMMARY.name);
     expect(getGraph).not.toHaveBeenCalled();
   });
 
@@ -3546,5 +3606,31 @@ describe("App status bar (portal-foundations 5.6, AC-9)", () => {
     const parts = [...document.querySelectorAll(".status-bar span")].map((s) => s.textContent);
     expect(parts).toContain("Turtle");
     expect(parts).not.toContain("turtle");
+  });
+
+  it("says Example for an open bundled example, and a fetched file's address as it is (home-and-examples 5.6)", async () => {
+    listOntologies.mockResolvedValue([
+      { ...SUMMARY, source: "example", example: { key: "space", purpose: "p" } },
+    ]);
+    await renderAppOpened();
+    const parts = [...document.querySelectorAll(".status-bar span")].map((s) => s.textContent);
+    expect(parts).toContain("Example");
+    expect(parts).not.toContain("example");
+
+    cleanup();
+    listOntologies.mockResolvedValue([{ ...SUMMARY, source: "https://example.org/fibo.ttl" }]);
+    await renderAppOpened();
+    expect([...document.querySelectorAll(".status-bar span")].map((s) => s.textContent)).toContain(
+      "https://example.org/fibo.ttl",
+    );
+  });
+
+  it("counts statements, not triples, in the bar and the picker (home-and-examples 5.7)", async () => {
+    await renderAppOpened();
+    const parts = [...document.querySelectorAll(".status-bar span")].map((s) => s.textContent);
+    expect(parts).toContain(`${SUMMARY.triples.toLocaleString()} statements`);
+    const options = [...document.querySelectorAll("#ontology-select option")].map((o) => o.textContent);
+    expect(options).toContain(`${SUMMARY.name} (${SUMMARY.triples.toLocaleString()} statements)`);
+    expect(document.body.textContent).not.toMatch(/\btriples?\b/i);
   });
 });

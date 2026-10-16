@@ -1,0 +1,29 @@
+{
+  "description": "The examples added to the library once, on first start, with no download (home-and-examples 5.1, D-111). In this order on Home, after the person's own work. Each file is the application's own and is pinned by SHA-256; test_library_examples.py fails on a mismatch. 'file' is relative to backend/app; FOAF is the bundled vocabulary itself, not a copy. Change a file and its hash together: a changed hash is what replaces an example already in a library.",
+  "examples": [
+    {
+      "key": "space",
+      "file": "examples/space-exploration.ttl",
+      "format": "turtle",
+      "name": "Space Exploration",
+      "purpose": "The Solar System, the agencies that explore it and their missions: something to try in every tab.",
+      "sha256": "839f2e1c406d0fc469311bc586b5eee3d99356bbedcb09eb67e03d0d20318ce5"
+    },
+    {
+      "key": "middle-earth",
+      "file": "examples/middle-earth.ttl",
+      "format": "turtle",
+      "name": "The Lord of the Rings",
+      "purpose": "People, places and the links between them, from a story many people already know.",
+      "sha256": "906762e5171f53ba631fa9ffcc27ad2d4168ac16b16db33850ce205a83aebd94"
+    },
+    {
+      "key": "foaf",
+      "file": "vocab/foaf.rdf",
+      "format": "xml",
+      "name": "FOAF (Friend of a Friend)",
+      "purpose": "A real, published vocabulary for people and their links. By Dan Brickley and Libby Miller, CC BY 1.0.",
+      "sha256": "3d859b5d92a2c3d041545d014fa826f682ca06d056af8c7b31e32d930abf2bc5"
+    }
+  ]
+}

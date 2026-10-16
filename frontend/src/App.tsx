@@ -170,7 +170,6 @@ import {
 import ConfirmDialog from "./components/ConfirmDialog";
 import NewProjectDialog, { type NewProjectRequest } from "./components/NewProjectDialog";
 import ProjectHeader from "./components/ProjectHeader";
-import ProjectsSection from "./components/ProjectsSection";
 import TurtleEditor from "./components/TurtleEditor";
 import { triggerDownload } from "./download";
 import {
@@ -218,7 +217,8 @@ import {
   IconView,
 } from "./components/icons";
 import { removalConfirmation, removalPrompt } from "./removalPrompt";
-import { formatName, homeStatus } from "./statusWords";
+import { formatName, homeStatus, statementCount } from "./statusWords";
+import { missingExamples } from "./home/libraryOrder";
 import type { SourceTarget } from "./sourceTarget";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type {
@@ -1904,7 +1904,7 @@ export default function App() {
               >
                 {ontologies.map((o) => (
                   <option key={o.id} value={o.id}>
-                    {o.name} ({o.triples.toLocaleString()} triples)
+                    {o.name} ({statementCount(o.triples)})
                   </option>
                 ))}
               </select>
@@ -2045,24 +2045,21 @@ export default function App() {
           onEnterMode={enterLibrary}
           onViewSource={(id) => enterLibrary(id, "view")}
           onRemove={(id) => void onRemove(id)}
-          onLoaded={onLoaded}
           onOpenDialog={openDialog}
           onStartProject={(id) => setNewProject({ source: id })}
-          projects={
-            <ProjectsSection
-              projects={projects}
-              loading={projectsLoading}
-              error={projectsError}
-              busyId={projectBusyId}
-              onNew={() => setNewProject({})}
-              onOpen={openProjectById}
-              onRename={onRenameProject}
-              onChangeKind={(pid) => setChangingKind(projects.find((p) => p.id === pid) ?? null)}
-              onDuplicate={onDuplicateProject}
-              onExport={onExportProject}
-              onDelete={onDeleteProject}
-            />
-          }
+          projects={{
+            list: projects,
+            loading: projectsLoading,
+            error: projectsError,
+            busyId: projectBusyId,
+            onNew: () => setNewProject({}),
+            onOpen: openProjectById,
+            onRename: onRenameProject,
+            onChangeKind: (pid) => setChangingKind(projects.find((p) => p.id === pid) ?? null),
+            onDuplicate: onDuplicateProject,
+            onExport: onExportProject,
+            onDelete: onDeleteProject,
+          }}
         />
       ) : mode === "shapes" && openProjectSummary ? (
         <main className="main">
@@ -2324,15 +2321,18 @@ export default function App() {
         {active ? (
           <>
             <span>{active.name}</span>
-            <span>{active.triples.toLocaleString()} triples</span>
+            <span>{statementCount(active.triples)}</span>
             {/* Under a budget these read "2,000 of 18,717". The status bar
                 keeps saying so after the notice is dismissed, so the fact that
                 the view is partial is never fully hidden. */}
             <span>{countOf(graphData, "node", expanded)} nodes</span>
             <span>{countOf(graphData, "edge", expanded)} edges</span>
             <span className="dim">{formatName(active.format)}</span>
+            {/* A fetched file names where it came from; a bundled example
+                says so in a word, not the code's "example" (home-and-examples
+                5.6: the card's facts are the status bar's once it is open). */}
             {active.source !== "upload" && active.source !== "project" && (
-              <span className="dim src">{active.source}</span>
+              <span className="dim src">{active.source === "example" ? "Example" : active.source}</span>
             )}
           </>
         ) : (
@@ -2349,6 +2349,8 @@ export default function App() {
           onLoaded={onLoaded}
           onClose={() => setDialogOpen(false)}
           initialTab={dialogTab}
+          examplesMissing={missingExamples(ontologies).length}
+          onExamplesRestored={(result) => setOntologies(result.ontologies)}
           project={
             openProjectSummary && modelOntologyId
               ? {

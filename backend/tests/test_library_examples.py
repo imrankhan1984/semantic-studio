@@ -1,0 +1,626 @@
+"""
+================================================================================
+FILE: backend/tests/test_library_examples.py
+================================================================================
+
+SUMMARY
+    The library's three bundled examples (home-and-examples, U-13a, D-111):
+    seeding on a first start and never again, a removal that stays removed,
+    a changed file replacing its entry under the same id, the restore
+    endpoint; the manifest and its hashes; and what each new file must hold
+    -- every floor of 5.2 for Space Exploration, the content of 5.3 for The
+    Lord of the Rings; and the one server sentence that said *triples*, now
+    *statements* (5.7). (test_examples.py is a project's example data,
+    shacl-authoring 5.8: a different thing that had the name first.)
+
+BASIC IDEA
+    Seeding runs against a store on a temporary data folder, a fresh
+    OntologyStore on the same folder standing for a restart, and the parse
+    count is a count of calls to store.parse_rdf -- Section 10's budget is a
+    count, not a timing. The broker's request is replaced with one that fails
+    the test, so "no network" does not lean on the sandbox.
+
+    The files are read straight from backend/app/examples/ with rdflib, the
+    way the seeding reads them, and each floor is asserted as a count or as
+    named statements rather than by eye. A floor is a minimum: the test says
+    "at least", so the file can grow without the test moving, and a floor
+    that slips fails by name.
+
+INPUTS / INPUT SOURCES
+    - backend/app/examples/manifest.json, the two Turtle files beside it, and
+      backend/app/vocab/foaf.rdf.
+    - library_examples, OntologyStore and SavedQueryStore on pytest's
+      tmp_path; the FastAPI app through TestClient for the endpoint.
+
+EXPECTED OUTPUT
+    - Pass/fail for AC-1 to AC-6, the backend half of AC-10, and the
+      server's part of AC-9.
+================================================================================
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from pathlib import Path
+
+import pytest
+from rdflib import OWL, RDF, RDFS, SKOS, XSD, Graph, Literal, Namespace, URIRef
+from rdflib.namespace import DCTERMS
+from fastapi.testclient import TestClient
+
+from app import library_examples
+from app import store as store_mod
+from app.main import app
+from app.network_broker import broker
+from app.queries_store import SavedQueryStore
+from app.store import OntologyStore, store as app_store
+
+APP = Path(__file__).resolve().parent.parent / "app"
+MANIFEST = json.loads((APP / "examples" / "manifest.json").read_text(encoding="utf-8"))
+SPACE = Namespace("http://example.org/space#")
+ME = Namespace("http://example.org/middle-earth#")
+CC_BY_4 = URIRef("https://creativecommons.org/licenses/by/4.0/")
+
+
+def _entry(key: str) -> dict:
+    return next(e for e in MANIFEST["examples"] if e["key"] == key)
+
+
+def _graph(key: str) -> Graph:
+    entry = _entry(key)
+    return Graph().parse(data=(APP / entry["file"]).read_bytes(), format=entry["format"])
+
+
+@pytest.fixture(scope="module")
+def space() -> Graph:
+    return _graph("space")
+
+
+@pytest.fixture(scope="module")
+def middle_earth() -> Graph:
+    return _graph("middle-earth")
+
+
+# --- the manifest -----------------------------------------------------------
+
+
+def test_manifest_lists_the_three_examples_in_their_order():
+    assert [e["key"] for e in MANIFEST["examples"]] == ["space", "middle-earth", "foaf"]
+    assert [e["name"] for e in MANIFEST["examples"]] == [
+        "Space Exploration",
+        "The Lord of the Rings",
+        "FOAF (Friend of a Friend)",
+    ]
+    for entry in MANIFEST["examples"]:
+        assert entry["purpose"].strip(), entry["key"]
+
+
+@pytest.mark.parametrize("entry", MANIFEST["examples"], ids=lambda e: e["key"])
+def test_each_file_matches_its_hash_and_is_at_most_1_mb(entry):
+    data = (APP / entry["file"]).read_bytes()
+    assert hashlib.sha256(data).hexdigest() == entry["sha256"]
+    # Section 10: three small parses at the first start, bounded here.
+    assert len(data) <= 1024 * 1024
+
+
+def test_foaf_is_the_bundled_vocabulary_not_a_copy():
+    entry = _entry("foaf")
+    assert entry["file"] == "vocab/foaf.rdf"
+    vocab = json.loads((APP / "vocab" / "manifest.json").read_text(encoding="utf-8"))
+    foaf = next(v for v in vocab["vocabularies"] if v["file"] == "foaf.rdf")
+    assert entry["sha256"] == foaf["sha256"]
+    assert "Dan Brickley and Libby Miller, CC BY 1.0" in entry["purpose"]
+    # Nothing in examples/ shadows the vocabulary.
+    assert not list((APP / "examples").glob("foaf*"))
+
+
+def test_the_new_files_are_binary_in_gitattributes():
+    attributes = (APP.parent.parent / ".gitattributes").read_text(encoding="utf-8")
+    assert "backend/app/examples/*.ttl binary" in attributes
+
+
+# --- seeding: once, under fixed ids, and a removal stays removed -----------
+
+KEYS = ["space", "middle-earth", "foaf"]
+
+
+@pytest.fixture
+def parses(monkeypatch):
+    """Every parse the store makes, counted; and no connection allowed."""
+    calls: list = []
+    real = store_mod.parse_rdf
+
+    def counting(*args, **kwargs):
+        calls.append(args[1] if len(args) > 1 else kwargs.get("fmt"))
+        return real(*args, **kwargs)
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("seeding the examples opened a connection")
+
+    monkeypatch.setattr(store_mod, "parse_rdf", counting)
+    monkeypatch.setattr(broker, "request", refuse)
+    return calls
+
+
+def test_example_ids_are_fixed_and_shaped_like_any_library_id():
+    for key in KEYS:
+        oid = library_examples.example_id(key)
+        assert re.fullmatch(r"ont-[0-9a-f]{12}", oid)
+        assert oid == "ont-" + hashlib.sha256(f"example:{key}".encode()).hexdigest()[:12]
+    assert len({library_examples.example_id(k) for k in KEYS}) == 3
+
+
+def test_a_first_start_adds_the_three_examples(tmp_path, parses):
+    store = OntologyStore(tmp_path)
+    added = library_examples.seed(store)
+    assert added == [library_examples.example_id(k) for k in KEYS]
+    entries = {o.id: o.summary() for o in store.list()}
+    for entry in MANIFEST["examples"]:
+        summary = entries[library_examples.example_id(entry["key"])]
+        assert summary["source"] == "example"
+        assert summary["name"] == entry["name"]
+        assert summary["example"] == {"key": entry["key"], "purpose": entry["purpose"]}
+        # The card's sketch is computed in the same parse, as for an upload.
+        assert summary["card"]["sketch"]["nodes"]
+    assert len(parses) == 3
+    state = json.loads((tmp_path / "examples.json").read_text(encoding="utf-8"))
+    assert state == {"seeded": {e["key"]: e["sha256"] for e in MANIFEST["examples"]}}
+
+
+def test_a_later_start_parses_nothing_and_keeps_the_ids(tmp_path, parses):
+    library_examples.seed(OntologyStore(tmp_path))
+    first = [o.id for o in OntologyStore(tmp_path).list()]
+    parses.clear()
+    restarted = OntologyStore(tmp_path)
+    assert library_examples.seed(restarted) == []
+    assert parses == []
+    assert sorted(o.id for o in restarted.list()) == sorted(first)
+    # Nothing was parsed to list them either: the lazy start-up holds.
+    assert all(not o.summary()["loaded"] for o in restarted.list())
+
+
+def test_a_removed_example_stays_removed_after_a_restart(tmp_path, parses):
+    store = OntologyStore(tmp_path)
+    library_examples.seed(store)
+    gone = library_examples.example_id("middle-earth")
+    assert store.remove(gone)
+    parses.clear()
+    restarted = OntologyStore(tmp_path)
+    assert library_examples.seed(restarted) == []
+    assert restarted.get(gone) is None
+    assert parses == []
+
+
+def _changed_manifest(tmp_path, key: str, extra: bytes):
+    """The manifest as a release with a changed file would ship it."""
+    entries = json.loads(json.dumps(MANIFEST["examples"]))
+    entry = next(e for e in entries if e["key"] == key)
+    data = (APP / entry["file"]).read_bytes() + extra
+    changed = tmp_path / "changed.ttl"
+    changed.write_bytes(data)
+    # An absolute path wins over APP_DIR in the join seeding makes.
+    entry["file"] = str(changed)
+    entry["sha256"] = hashlib.sha256(data).hexdigest()
+    return entries
+
+
+SOL = b'\n<http://example.org/space#Sun> <http://www.w3.org/2000/01/rdf-schema#label> "Sol"@es .\n'
+
+
+def test_a_changed_file_replaces_its_entry_under_the_same_id(tmp_path, parses, monkeypatch):
+    data_dir = tmp_path / "data"
+    store = OntologyStore(data_dir)
+    library_examples.seed(store)
+    oid = library_examples.example_id("space")
+    before = store.get(oid).summary()["triples"]
+    queries = SavedQueryStore(data_dir)
+    saved = queries.save(name="Missions to Mars", ontology_id=oid, ontology_name="Space Exploration",
+                         state=None, sparql="SELECT * WHERE { ?s ?p ?o }", mode="text")
+
+    entries = _changed_manifest(tmp_path, "space", SOL)
+    monkeypatch.setattr(library_examples, "load_manifest", lambda: entries)
+    parses.clear()
+    restarted = OntologyStore(data_dir)
+    assert library_examples.seed(restarted) == [oid]
+    assert len(parses) == 1
+    assert [o.id for o in restarted.list()].count(oid) == 1
+    assert restarted.get(oid).summary()["triples"] == before + 1
+    # The replacement is on disk, so the start after that serves it too.
+    assert OntologyStore(data_dir).get(oid).summary()["triples"] == before + 1
+    assert [q["id"] for q in SavedQueryStore(data_dir).list(ontology_id=oid)] == [saved["id"]]
+
+
+def test_a_changed_file_does_not_bring_back_a_removed_example(tmp_path, parses, monkeypatch):
+    store = OntologyStore(tmp_path / "data")
+    library_examples.seed(store)
+    oid = library_examples.example_id("space")
+    store.remove(oid)
+    entries = _changed_manifest(tmp_path, "space", SOL)
+    monkeypatch.setattr(library_examples, "load_manifest", lambda: entries)
+    restarted = OntologyStore(tmp_path / "data")
+    assert library_examples.seed(restarted) == []
+    assert restarted.get(oid) is None
+
+
+def test_restore_adds_back_only_the_missing_ones(tmp_path, parses):
+    store = OntologyStore(tmp_path)
+    library_examples.seed(store)
+    gone = library_examples.example_id("foaf")
+    store.remove(gone)
+    kept = store.get(library_examples.example_id("space"))
+    parses.clear()
+    assert library_examples.restore(store) == [gone]
+    assert len(parses) == 1
+    assert store.get(library_examples.example_id("space")) is kept
+    assert library_examples.restore(store) == []
+    # And the next start leaves the restored one where it is.
+    assert library_examples.seed(OntologyStore(tmp_path)) == []
+
+
+# --- the endpoint and the start-up -------------------------------------------
+
+HEADERS = {"X-Semantic-Studio": "1"}
+
+
+@pytest.fixture
+def no_examples_after():
+    """The app's own store is shared by every test file: leave it as found."""
+    yield
+    for key in KEYS:
+        app_store.remove(library_examples.example_id(key))
+    (app_store.data_dir / "examples.json").unlink(missing_ok=True)
+
+
+def test_the_server_start_seeds_the_library(no_examples_after, parses):
+    with TestClient(app, base_url="http://localhost", headers=HEADERS) as client:
+        listed = {o["id"]: o for o in client.get("/api/ontologies").json()}
+    for key in KEYS:
+        assert listed[library_examples.example_id(key)]["source"] == "example"
+
+
+def test_a_failed_seed_does_not_stop_the_server(no_examples_after, monkeypatch):
+    def broken(_store):
+        raise OSError("the data folder is read-only")
+
+    monkeypatch.setattr(library_examples, "seed", broken)
+    with TestClient(app, base_url="http://localhost", headers=HEADERS) as client:
+        assert client.get("/api/health").status_code == 200
+        assert client.get("/api/ontologies").status_code == 200
+
+
+def test_restore_endpoint_brings_back_only_the_missing_ones(no_examples_after, parses):
+    library_examples.seed(app_store)
+    client = TestClient(app, base_url="http://localhost", headers=HEADERS)
+    gone = library_examples.example_id("middle-earth")
+    assert client.delete(f"/api/ontologies/{gone}").status_code == 200
+    parses.clear()
+    response = client.post("/api/examples/restore")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["restored"] == [gone]
+    assert len(parses) == 1
+    ids = [o["id"] for o in body["ontologies"]]
+    assert all(library_examples.example_id(k) in ids for k in KEYS)
+    assert body["ontologies"] == client.get("/api/ontologies").json()
+    assert client.post("/api/examples/restore").json()["restored"] == []
+
+
+def test_restore_endpoint_goes_through_local_guard(no_examples_after, parses):
+    library_examples.seed(app_store)
+    gone = library_examples.example_id("foaf")
+    app_store.remove(gone)
+    bare = TestClient(app, base_url="http://localhost")
+    assert bare.post("/api/examples/restore").status_code == 403
+    foreign = TestClient(app, base_url="http://localhost",
+                         headers={**HEADERS, "Origin": "http://evil.example"})
+    assert foreign.post("/api/examples/restore").status_code == 403
+    assert app_store.get(gone) is None
+
+
+def test_an_unknown_entity_is_said_in_statements_not_triples(no_examples_after, parses):
+    # 5.7: the detail panel shows this 404's words as they come.
+    library_examples.seed(app_store)
+    client = TestClient(app, base_url="http://localhost", headers=HEADERS)
+    oid = library_examples.example_id("space")
+    response = client.get(f"/api/ontologies/{oid}/node", params={"iri": "http://example.org/space#Nothing"})
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No statements found for http://example.org/space#Nothing"
+
+
+# --- Space Exploration: every floor of 5.2 ------------------------------------
+
+
+def _named(graph: Graph, kind) -> set:
+    return {s for s in graph.subjects(RDF.type, kind) if isinstance(s, URIRef)}
+
+
+def _classes(graph: Graph) -> set:
+    return _named(graph, OWL.Class) | _named(graph, RDFS.Class)
+
+
+def _properties(graph: Graph) -> set:
+    return (
+        _named(graph, OWL.ObjectProperty)
+        | _named(graph, OWL.DatatypeProperty)
+        | _named(graph, OWL.AnnotationProperty)
+    )
+
+
+def test_space_has_twenty_classes_three_levels_deep(space):
+    classes = _classes(space)
+    assert len(classes) >= 20
+
+    def depth(cls, seen=()) -> int:
+        parents = [p for p in space.objects(cls, RDFS.subClassOf) if p in classes and p not in seen]
+        return 1 + max((depth(p, seen + (cls,)) for p in parents), default=0)
+
+    assert max(depth(c) for c in classes) >= 3
+    # The examples 5.2 names.
+    assert (SPACE.TerrestrialPlanet, RDFS.subClassOf, SPACE.Planet) in space
+    assert (SPACE.Planet, RDFS.subClassOf, SPACE.CelestialBody) in space
+    for craft in ("Probe", "CrewedSpacecraft", "Rover"):
+        assert (SPACE[craft], RDFS.subClassOf, SPACE.Spacecraft) in space
+    assert (SPACE.CrewedMission, RDFS.subClassOf, SPACE.Mission) in space
+    assert (SPACE.SpaceAgency, RDFS.subClassOf, SPACE.Organization) in space
+
+
+def test_space_labels_every_class_and_property_in_english_and_french(space):
+    for term in _classes(space) | _properties(space):
+        langs = {o.language for o in space.objects(term, RDFS.label) if isinstance(o, Literal)}
+        assert {"en", "fr"} <= langs, term
+        comments = [o for o in space.objects(term, RDFS.comment) if o.language == "en"]
+        assert comments, term
+
+
+def test_space_has_every_graph_kind(space):
+    assert _named(space, OWL.ObjectProperty)
+    assert _named(space, OWL.DatatypeProperty)
+    assert _named(space, OWL.AnnotationProperty)
+    assert _named(space, SKOS.ConceptScheme)
+    assert _named(space, SKOS.Concept)
+    assert _named(space, SKOS.Collection)
+    assert _named(space, OWL.Ontology)
+    # One class declared with RDFS alone, for the RDFS class colour.
+    assert _named(space, RDFS.Class) - _named(space, OWL.Class)
+
+
+def _individuals(graph: Graph) -> set:
+    classes = _classes(graph)
+    return {s for s, o in graph.subject_objects(RDF.type) if o in classes and isinstance(s, URIRef)}
+
+
+def test_space_has_thirty_linked_individuals(space):
+    individuals = _individuals(space)
+    assert len(individuals) >= 30
+    assert (SPACE.Sun, RDF.type, SPACE.Star) in space
+    planets = {s for s in individuals if any(
+        space.query("ASK { ?s rdf:type/rdfs:subClassOf* ?c }", initBindings={"s": s, "c": SPACE.Planet})
+    )}
+    assert {SPACE[p] for p in ("Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune")} == planets
+    assert (SPACE.Pluto, RDF.type, SPACE.DwarfPlanet) in space
+    assert (SPACE.Ceres, RDF.type, SPACE.DwarfPlanet) in space
+    assert len(set(space.subjects(RDF.type, SPACE.Moon))) >= 5
+    assert len(set(space.subjects(RDF.type, SPACE.SpaceAgency))) >= 6
+
+    missions = {s for s in space.subjects(SPACE.usedSpacecraft, None)}
+    complete = {
+        m for m in missions
+        if (m, SPACE.operatedBy, None) in space
+        and ((m, SPACE.target, None) in space or (m, SPACE.landedOn, None) in space)
+    }
+    assert len(complete) >= 8
+
+
+def test_space_has_data_values_of_every_common_type(space):
+    typed = {o.datatype for o in space.objects() if isinstance(o, Literal) and o.datatype}
+    for datatype in (XSD.integer, XSD.decimal, XSD.date, XSD.gYear, XSD.boolean):
+        assert datatype in typed, datatype
+    # A string-valued property: its range says xsd:string, and Turtle writes
+    # its plain values without the type, as RDF 1.1 reads them.
+    strings = [p for p in space.subjects(RDFS.range, XSD.string)]
+    assert strings and any(
+        isinstance(o, Literal) and o.datatype in (None, XSD.string) and not o.language
+        for p in strings for o in space.objects(None, p)
+    )
+
+
+def test_space_has_what_the_reasoner_works_on(space):
+    assert (SPACE.orbits, OWL.inverseOf, SPACE.isOrbitedBy) in space
+    assert (SPACE.partOf, RDF.type, OWL.TransitiveProperty) in space
+    assert _named(space, OWL.SymmetricProperty)
+    assert any(p in _properties(space) for p in space.objects(None, RDFS.subPropertyOf))
+    assert (SPACE.Luna, OWL.sameAs, SPACE.EarthsMoon) in space
+    # A domain or range that places an individual with no stated type.
+    typed = set(space.subjects(RDF.type, None))
+    placed = False
+    for prop, _ in space.subject_objects(RDFS.domain):
+        placed |= any(s not in typed for s in space.subjects(prop, None))
+    for prop, _ in space.subject_objects(RDFS.range):
+        placed |= any(isinstance(o, URIRef) and o not in typed for o in space.objects(None, prop))
+    assert placed
+
+
+def _restrictions(graph: Graph, predicate) -> list:
+    return [r for r in graph.subjects(RDF.type, OWL.Restriction) if (r, predicate, None) in graph]
+
+
+def test_space_has_rules_on_classes_and_a_defined_class(space):
+    assert _restrictions(space, OWL.someValuesFrom)
+    assert _restrictions(space, OWL.allValuesFrom)
+    qualified = [OWL.qualifiedCardinality, OWL.minQualifiedCardinality, OWL.maxQualifiedCardinality]
+    assert any(_restrictions(space, q) for q in qualified)
+    assert [c for c, _ in space.subject_objects(OWL.equivalentClass) if isinstance(c, URIRef)]
+
+
+def test_space_has_both_kinds_of_disjointness(space):
+    assert list(space.subject_objects(OWL.disjointWith))
+    assert list(space.subjects(RDF.type, OWL.AllDisjointClasses))
+
+
+def test_space_has_the_mission_types_scheme(space):
+    scheme = SPACE.MissionTypes
+    concepts = set(space.subjects(SKOS.inScheme, scheme))
+    assert len(concepts) >= 8
+    assert len(set(space.objects(scheme, SKOS.hasTopConcept))) == 1
+    # Two levels below the top: a concept whose broader has a broader.
+    assert any(
+        (b, SKOS.broader, None) in space for c in concepts for b in space.objects(c, SKOS.broader)
+    )
+    for predicate in (SKOS.broader, SKOS.narrower, SKOS.related, SKOS.altLabel, SKOS.definition, SKOS.notation):
+        assert any((c, predicate, None) in space for c in concepts), predicate
+    assert len(_named(space, SKOS.Collection)) == 1
+
+
+def test_space_carries_what_the_documentation_export_reads(space):
+    ontology = next(iter(_named(space, OWL.Ontology)))
+    for predicate in (DCTERMS.title, DCTERMS.description, DCTERMS.creator, DCTERMS.created, OWL.versionInfo):
+        assert (ontology, predicate, None) in space, predicate
+    assert (ontology, DCTERMS.license, CC_BY_4) in space
+
+
+def test_space_is_about_six_to_nine_hundred_statements(space):
+    assert 600 <= len(space) <= 900
+
+
+# --- The Lord of the Rings: the content of 5.3 ------------------------------
+
+CHARACTERS = {
+    "Hobbit": ["Frodo", "Bilbo", "Samwise", "Merry", "Pippin", "RosieCotton", "Gollum"],
+    "Wizard": ["Gandalf", "Saruman"],
+    "Man": ["Aragorn", "Boromir", "Faramir", "Denethor", "Theoden", "Eomer", "Eowyn"],
+    "Elf": ["Legolas", "Elrond", "Arwen", "Galadriel"],
+    "Dwarf": ["Gimli", "Gloin"],
+    "Maia": ["Sauron"],
+    "Ent": ["Treebeard"],
+}
+
+
+def _is_a(graph: Graph, term, cls) -> bool:
+    return bool(graph.query(
+        "ASK { ?t rdf:type/rdfs:subClassOf* ?c }", initBindings={"t": term, "c": cls}
+    ))
+
+
+def test_lotr_model(middle_earth):
+    g = middle_earth
+    for kind in ("Hobbit", "Elf", "Dwarf", "Man", "Wizard", "Ent", "Maia"):
+        assert _is_a(g, ME[kind], OWL.Class)
+        assert (ME[kind], RDFS.subClassOf, ME.Character) in g or (
+            ME[kind], RDFS.subClassOf, ME.Maia
+        ) in g, kind
+    disjoint = next(g.subjects(RDF.type, OWL.AllDisjointClasses))
+    members = set(g.items(g.value(disjoint, OWL.members)))
+    assert members == {ME.Hobbit, ME.Elf, ME.Dwarf, ME.Man}
+    for sub, sup in [("Region", "Place"), ("Realm", "Place"), ("Settlement", "Place"),
+                     ("Fortress", "Place"), ("Ring", "Artifact"), ("Weapon", "Artifact"),
+                     ("Battle", "Event"), ("Council", "Event")]:
+        assert (ME[sub], RDFS.subClassOf, ME[sup]) in g
+    assert (ME.Group, RDF.type, OWL.Class) in g and (ME.Book, RDF.type, OWL.Class) in g
+    assert (ME.parentOf, OWL.inverseOf, ME.childOf) in g
+    assert (ME.spouseOf, RDF.type, OWL.SymmetricProperty) in g
+    assert (ME.siblingOf, RDF.type, OWL.SymmetricProperty) in g
+    assert (ME.locatedIn, RDF.type, OWL.TransitiveProperty) in g
+    for prop in ("memberOf", "livesIn", "bears", "wields", "madeBy", "takesPartIn",
+                 "takesPlaceIn", "appearsIn", "leaderOf"):
+        assert (ME[prop], RDF.type, OWL.ObjectProperty) in g, prop
+    assert (ME.bornInYear, RDFS.range, XSD.integer) in g
+    assert (ME.publishedIn, RDFS.range, XSD.gYear) in g
+
+
+def test_lotr_characters_and_aliases(middle_earth):
+    g = middle_earth
+    for kind, names in CHARACTERS.items():
+        for name in names:
+            assert (ME[name], RDF.type, ME[kind]) in g, name
+    for who, alias in [("Aragorn", "Strider"), ("Gandalf", "Mithrandir"), ("Gollum", "Sméagol"),
+                       ("Aragorn", "Elessar")]:
+        assert alias in {str(o) for o in g.objects(ME[who], SKOS.altLabel)}, alias
+
+
+def test_lotr_fellowship_and_family(middle_earth):
+    g = middle_earth
+    nine = {"Frodo", "Samwise", "Merry", "Pippin", "Gandalf", "Aragorn", "Legolas", "Gimli", "Boromir"}
+    assert set(g.subjects(ME.memberOf, ME.TheFellowship)) == {ME[n] for n in nine}
+    assert (ME.TheFellowship, RDF.type, ME.Group) in g
+    for parent, child in [("Denethor", "Boromir"), ("Denethor", "Faramir"),
+                          ("Elrond", "Arwen"), ("Gloin", "Gimli")]:
+        assert (ME[parent], ME.parentOf, ME[child]) in g
+    assert (ME.Eomer, ME.siblingOf, ME.Eowyn) in g
+    assert (ME.Aragorn, ME.spouseOf, ME.Arwen) in g
+    assert (ME.Samwise, ME.spouseOf, ME.RosieCotton) in g
+
+
+def test_lotr_rings_and_weapons(middle_earth):
+    g = middle_earth
+    assert (ME.TheOneRing, ME.madeBy, ME.Sauron) in g
+    bearers = set(g.subjects(ME.bears, ME.TheOneRing))
+    assert bearers == {ME.Bilbo, ME.Frodo, ME.Gollum, ME.Samwise}
+    for who, ring in [("Gandalf", "Narya"), ("Galadriel", "Nenya"), ("Elrond", "Vilya")]:
+        assert (ME[who], ME.bears, ME[ring]) in g
+    for who, weapon in [("Bilbo", "Sting"), ("Frodo", "Sting"), ("Aragorn", "Anduril"),
+                        ("Gandalf", "Glamdring")]:
+        assert (ME[who], ME.wields, ME[weapon]) in g
+
+
+def test_lotr_places_nest(middle_earth):
+    g = middle_earth
+    nesting = [("Eriador", "MiddleEarth"), ("TheShire", "Eriador"), ("Hobbiton", "TheShire"),
+               ("Rivendell", "Eriador"), ("Rohan", "MiddleEarth"), ("Edoras", "Rohan"),
+               ("HelmsDeep", "Rohan"), ("Gondor", "MiddleEarth"), ("MinasTirith", "Gondor"),
+               ("Mordor", "MiddleEarth"), ("MountDoom", "Mordor"), ("Lothlorien", "MiddleEarth"),
+               ("Moria", "MiddleEarth"), ("Isengard", "MiddleEarth")]
+    for inner, outer in nesting:
+        assert (ME[inner], ME.locatedIn, ME[outer]) in g, inner
+        assert _is_a(g, ME[inner], ME.Place), inner
+
+
+def test_lotr_books_and_events(middle_earth):
+    g = middle_earth
+    for book, year in [("FellowshipOfTheRing", "1954"), ("TheTwoTowers", "1954"),
+                       ("TheReturnOfTheKing", "1955")]:
+        assert (ME[book], ME.publishedIn, Literal(year, datatype=XSD.gYear)) in g
+        assert (ME[book], DCTERMS.creator, Literal("J. R. R. Tolkien")) in g
+    for name in ("Frodo", "Samwise", "Gandalf", "Aragorn"):
+        assert len(set(g.objects(ME[name], ME.appearsIn))) == 3, name
+    events = [("CouncilOfElrond", "Rivendell", "Council"), ("BattleOfHelmsDeep", "HelmsDeep", "Battle"),
+              ("BattleOfThePelennorFields", "MinasTirith", "Battle"),
+              ("DestructionOfTheRing", "MountDoom", "Event")]
+    for event, place, kind in events:
+        assert (ME[event], RDF.type, ME[kind]) in g
+        assert (ME[event], ME.takesPlaceIn, ME[place]) in g
+        assert list(g.subjects(ME.takesPartIn, ME[event])), event
+
+
+def test_lotr_birth_years(middle_earth):
+    g = middle_earth
+    for who, year in [("Bilbo", 2890), ("Frodo", 2968), ("Samwise", 2980), ("Merry", 2982),
+                      ("Pippin", 2990), ("Aragorn", 2931)]:
+        assert (ME[who], ME.bornInYear, Literal(year, datatype=XSD.integer)) in g, who
+
+
+def test_lotr_says_what_it_is_and_is_not(middle_earth):
+    g = middle_earth
+    ontology = next(iter(_named(g, OWL.Ontology)))
+    assert str(g.value(ontology, DCTERMS.description)) == (
+        "An unofficial teaching dataset of facts from The Lord of the Rings. "
+        "Not affiliated with or endorsed by the Tolkien Estate."
+    )
+    assert (ontology, DCTERMS.license, CC_BY_4) in g
+
+
+# A sentence ends at . ! or ? followed by a space or the end; an initial
+# such as "J. R. R." would count, which is why it is never in a comment.
+_SENTENCE_END = re.compile(r"[.!?](\s|$)")
+
+
+def test_lotr_comments_are_one_plain_sentence_at_most(middle_earth):
+    comments = list(middle_earth.objects(None, RDFS.comment))
+    assert comments
+    for comment in comments:
+        assert len(_SENTENCE_END.findall(str(comment).strip())) == 1, str(comment)
+
+
+def test_lotr_is_about_five_to_eight_hundred_statements(middle_earth):
+    assert 500 <= len(middle_earth) <= 800

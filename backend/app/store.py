@@ -294,7 +294,7 @@ class Ontology:
 
     id: str                    # stable "ont-<hex>" id used in URLs and filenames
     name: str                  # display name (file name or user-supplied)
-    source: str                # "upload" or the URL it was fetched from
+    source: str                # "upload", "example", or the URL it was fetched from
     format: str                # rdflib parser name that parsed it
     meta: dict                 # persisted summary: triples, stats, namespaces, addedAt
     data_path: Path            # where the original bytes are stored on disk
@@ -492,6 +492,10 @@ class Ontology:
             # and nothing parses to backfill one — backfilling here would put a
             # parse per stored ontology back on the startup path.
             "card": self.meta.get("card"),
+            # A bundled example's key and one-line purpose (home-and-examples
+            # 5.1), which the card shows in place of its counts and its date.
+            # None for everything else.
+            "example": self.meta.get("example"),
         }
 
 
@@ -564,11 +568,16 @@ class OntologyStore:
         fmt: Optional[str],
         *,
         parse_timeout: Optional[float] = None,
+        oid: Optional[str] = None,
     ) -> Ontology:
         """Parse, persist and register a new ontology; return it (graph loaded).
 
         ``parse_timeout`` bounds the parse only. Nothing is written to disk
         until it succeeds, so a timed-out upload leaves no trace in the library.
+
+        ``oid`` is for the bundled examples alone (library_examples.py), whose
+        ids are fixed so a link to one survives a reinstall; an entry already
+        under that id is replaced in place.
         """
         # Parse now so we can fail fast on bad input and compute the summary.
         # Any remote JSON-LD context the parse fetches is recorded, so the lazy
@@ -577,7 +586,7 @@ class OntologyStore:
             graph, used_format = parse_rdf(data, fmt, timeout=parse_timeout)
         viz = build_viz_graph(graph)
         # A short random id keeps URLs and filenames stable across restarts.
-        oid = "ont-" + uuid.uuid4().hex[:12]
+        oid = oid or "ont-" + uuid.uuid4().hex[:12]
         # The metadata summary is everything the dropdown needs without a parse.
         meta = {
             "id": oid,

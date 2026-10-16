@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1246 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1503 tests, vitest
+cd backend  && python -m pytest tests    # 1286 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1534 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -153,6 +153,10 @@ backend/app/
   imports.py         owl:imports: resolution chain, closure, cache, MergedView
   sparql_service.py  SERVICE blocks found, approved, and sent through the broker
   vocab/             Bundled vocabularies, pinned by SHA-256 in manifest.json
+  examples/          The library's bundled examples (D-111): two Turtle files
+                     and manifest.json; FOAF is vocab/foaf.rdf itself
+  library_examples.py  Seeds the examples once, under fixed ids; examples.json
+                     in the data folder makes a removal stick; restore
   store.py           In-memory ontology store, disk persistence, lazy parsing;
                      every derived view keyed on the revision (D-081)
   projects.py        Project folders and manifests: create, list, rename,
@@ -198,8 +202,10 @@ frontend/src/
                      overlap rule (labelBoxes.ts, D-110)
   reasoning/         Pure reasoning words: status lines, headings, endings and
                      when a result is stale (reasonSentences.ts)
-  home/              Pure home-screen logic: the card thumbnail's layout and
-                     the composition bar's bands
+  home/              Pure home-screen logic: the card thumbnail's layout,
+                     the composition bar's bands, and the one library's
+                     order, your work first and the examples last
+                     (libraryOrder.ts)
   projects/          Pure New project form logic: the two kinds, defaults
                      and validation
   modeling/          Pure editing-form logic: an entity's blocks read out of
@@ -210,7 +216,8 @@ frontend/src/
   links.ts           linkTarget: the one gate an IRI passes to become a link
   theme/             kinds.ts, the one kind palette every tab draws from
                      (D-109), and contrast.ts, the WCAG ratio its tests use
-  statusWords.ts     The status bar's words: Home's count, format names
+  statusWords.ts     The status bar's words: Home's count, format names,
+                     and statementCount, the one place *statements* is said
   canvas/            The modeling canvas (D-086): ModelCanvas on React Flow,
                      its boxes and relate menu, its legend and tip card
                      (CanvasAids.tsx), the colour tokens by kind
@@ -257,6 +264,8 @@ leaves one behind.
 **Queries and imports**
 - `MergedView` deduplicates and prunes by subject. [owl:imports]
 - Vocabulary files stay `binary` in `.gitattributes`, or their hashes fail. [owl:imports]
+- The example files are `binary` too and pinned in `examples/manifest.json`; change a file and its hash together, and a changed hash replaces the entry under its fixed id. [Home and examples]
+- Examples are seeded in the app's lifespan, never at import, and a failure there never stops the server; `examples.json` makes a removal stick, and only `POST /api/examples/restore` brings one back. [Home and examples]
 - An import needing approval never stops the closure; one 409 names every host. [owl:imports]
 - Builder state is never written while the query is text; the live text is in `textRef`. [written as text]
 - The editor's key is `editorSession`, the same across the fork. [written as text]
@@ -392,8 +401,11 @@ leaves one behind.
 - Removal starts only in a Home card's menu; its ⋮ is `aria-disabled` while counting, and Home refocuses when the card goes. [Portal foundations]
 - Home's start focus is `focus({ preventScroll: true })`. [Portal foundations]
 - Mount makes two requests, the ontology list and the project list; the home screen makes none to `/graph`. [card grid, authoring foundations]
-- `CatalogueList` is shared by Home and the Load dialog; its `memo` sits at Home's import. [card grid]
-- The catalogue order is deliberate; read the comment above `CATALOGUE`. [leads with FOAF]
+- Home shows no catalogue and downloads nothing: the examples are library entries (D-111); `CatalogueList` is the Load dialog's alone. [Home and examples]
+- The catalogue order is deliberate, and FOAF is not in it because it is a bundled example; read the comment above `CATALOGUE`. [leads with FOAF, Home and examples]
+- An example is told by `source === "example"` and its `example` record, never its name, and always follows the person's work (`home/libraryOrder.ts`). [Home and examples]
+- A person reads *statements*, never *triples*; `wording.test.ts` scans the source, and code names keep `triples`. [Home and examples]
+- `.onto-card` never clips: its "⋮" menu is longer than a card, and the miniature clips its own corners. [Home and examples]
 - Explore's ranking and sentence stay behind `useMemo`; the ranking never sorts every node. [starting panel]
 - `describeContents` interpolates nothing from the ontology. [starting panel]
 - `removalPrompt`: `null` is not `0`, and the zero case keeps its exact sentence. [saved queries go]

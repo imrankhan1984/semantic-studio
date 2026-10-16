@@ -5,7 +5,9 @@ FILE: frontend/src/catalogue.test.ts
 
 SUMMARY
     Locks the order of the suggested-ontology catalogue, and the properties of
-    each entry that the reordering must not have disturbed.
+    each entry that the reordering must not have disturbed. Since
+    home-and-examples 5.8 (AC-10) FOAF is not in it: it is a bundled example,
+    and the catalogue is schema.org, FIBO and UNESCO, in that order.
 
 BASIC IDEA
     The order of CATALOGUE is a product decision, not an implementation detail:
@@ -39,8 +41,9 @@ INPUTS / INPUT SOURCES
       subject.
 
 EXPECTED OUTPUT
-    - Pass/fail per assertion, covering `catalogue-order` AC-1 to AC-6 and
-      `catalogue-skos-replacement` AC-1 to AC-5.
+    - Pass/fail per assertion, covering `catalogue-order` AC-1 to AC-6,
+      `catalogue-skos-replacement` AC-1 to AC-5 and `home-and-examples`
+      AC-10.
 ================================================================================
 */
 
@@ -52,7 +55,7 @@ import { CATALOGUE } from "./catalogue";
  * list is the specification restated as code: if it and the array disagree,
  * one of them is wrong and a human has to decide which.
  */
-const EXPECTED_ORDER = ["foaf", "schemaorg", "fibo", "unesco"];
+const EXPECTED_ORDER = ["schemaorg", "fibo", "unesco"];
 
 /**
  * Every entry's url. The first three stood at commit 33d35c7, the commit
@@ -70,19 +73,23 @@ const EXPECTED_URLS: Record<string, string> = {
   fibo: "https://spec.edmcouncil.org/fibo/ontology/master/latest/prod.fibo-quickstart.ttl",
   schemaorg:
     "https://github.com/schemaorg/schemaorg/blob/main/data/releases/28.1/schemaorg-current-https.ttl",
-  foaf: "http://xmlns.com/foaf/spec/index.rdf",
   unesco:
     "https://vocabularies.unesco.org/exports/thesaurus/latest/unesco-thesaurus.ttl",
 };
 
 describe("CATALOGUE", () => {
-  it("lists FOAF first", () => {
-    // AC-1. The whole point of the item: the first thing offered is the 150 KB
-    // vocabulary, not the 5 MB one.
-    expect(CATALOGUE[0].id).toBe("foaf");
+  it("does not offer FOAF, which the library holds as an example (home-and-examples 5.8)", () => {
+    // Picking it here would add the bundled example a second time.
+    expect(CATALOGUE.some((e) => e.id === "foaf" || /foaf/i.test(e.url))).toBe(false);
   });
 
-  it("lists foaf, schemaorg, fibo, unesco in that order", () => {
+  it("lists the smallest left first: schema.org, not FIBO", () => {
+    // catalogue-order AC-1, after FOAF left: the first thing offered is still
+    // not the 5 MB one.
+    expect(CATALOGUE[0].id).toBe("schemaorg");
+  });
+
+  it("lists schemaorg, fibo, unesco in that order", () => {
     // catalogue-order AC-2, and catalogue-skos-replacement AC-1. Asserted as
     // ids rather than parsed from `size`; see the header. The name no longer
     // says "by ascending triple count" because since the UNESCO swap that is
@@ -91,10 +98,10 @@ describe("CATALOGUE", () => {
     expect(CATALOGUE.map((e) => e.id)).toEqual(EXPECTED_ORDER);
   });
 
-  it("still contains exactly four entries", () => {
+  it("contains exactly three entries", () => {
     // catalogue-order AC-3. A reorder that quietly drops an entry would satisfy
     // the prefix of the assertion above.
-    expect(CATALOGUE).toHaveLength(4);
+    expect(CATALOGUE).toHaveLength(3);
     expect([...CATALOGUE.map((e) => e.id)].sort()).toEqual(
       [...EXPECTED_ORDER].sort(),
     );
