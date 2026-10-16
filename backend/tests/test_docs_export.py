@@ -518,6 +518,41 @@ def test_hostile_edge_label_is_escaped():
     assert "\\u003cscript\\u003e" in inline
 
 
+def test_rule_lines_stay_out_of_the_site():
+    """explore-rules (D-113): Explore's rule lines are worded by the app's
+    frontend; the published site keeps the lines it had."""
+    viz = {
+        "nodes": [
+            {"id": "a", "label": "A", "kind": "class", "degree": 2},
+            {"id": "b", "label": "B", "kind": "class", "degree": 2},
+        ],
+        "edges": [
+            {"source": "a", "target": "b", "kind": "subClassOf", "label": ""},
+            {"source": "a", "target": "b", "kind": "rule", "label": "", "rule": {}, "key": {}},
+        ],
+    }
+    assert [e["kind"] for e in build_graph_data(viz, {})["edges"]] == ["subClassOf"]
+
+
+def test_an_entity_only_a_rule_reached_stays_off_the_site():
+    """Code review: an untyped filler is a node only for its rule line; with
+    the line gone it would be a dot joined to nothing. One that another line
+    reaches stays."""
+    viz = {
+        "nodes": [
+            {"id": "a", "label": "A", "kind": "class", "degree": 3},
+            {"id": "lone", "label": "Lone", "kind": "other", "degree": 1},
+            {"id": "seen", "label": "Seen", "kind": "other", "degree": 2},
+        ],
+        "edges": [
+            {"source": "a", "target": "lone", "kind": "rule", "label": "", "rule": {}, "key": {}},
+            {"source": "a", "target": "seen", "kind": "rule", "label": "", "rule": {}, "key": {}},
+            {"source": "a", "target": "seen", "kind": "subClassOf", "label": ""},
+        ],
+    }
+    assert [n["id"] for n in build_graph_data(viz, {})["nodes"]] == ["a", "seen"]
+
+
 # --- AC-18: the original source bytes are preserved -------------------------
 
 

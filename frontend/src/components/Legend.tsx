@@ -31,7 +31,9 @@ BASIC IDEA
     The Relations rows do nothing and stay non-interactive, as a plain list. A
     control that does nothing is worse than text. So is the RDFS class line
     under Class (portal-foundations 5.3): it explains the graph's second class
-    colour, and Class stays the one filter for both.
+    colour, and Class stays the one filter for both. A class's rules have
+    a *rule* row when the graph draws one (explore-rules 5.2), after
+    *disjoint with*, whose colour it shares.
 
     Every lookup by kind is own-key (kindLabel, kindColor, edgeColor): a kind
     is a string from a loaded file (X-6).
@@ -85,6 +87,16 @@ const EDGE_LABELS: Record<string, string> = {
   seeAlso: "see also",
 };
 
+/** The relation rows in the order given, except that *rule* stands right
+ *  after *disjoint with* (explore-rules 5.2): the two share the rule colour,
+ *  and side by side the words tell them apart. */
+function relationOrder(edgeKinds: string[]): string[] {
+  if (!edgeKinds.includes("rule") || !edgeKinds.includes("disjointWith")) return edgeKinds;
+  const rest = edgeKinds.filter((kind) => kind !== "rule");
+  rest.splice(rest.indexOf("disjointWith") + 1, 0, "rule");
+  return rest;
+}
+
 /** What the collapse header controls, named so aria-controls can point at it. */
 const PANEL_ID = "legend-panel";
 
@@ -133,6 +145,7 @@ export default function Legend({
     }
   };
   const kinds = Object.entries(kindCounts).sort((a, b) => b[1] - a[1]);
+  const relations = relationOrder(edgeKinds);
   if (kinds.length === 0) return null;
   const palette = PALETTES[theme];
 
@@ -214,7 +227,7 @@ export default function Legend({
                 never have; making them buttons to match the ones above would
                 put a dozen dead stops in the tab order. */}
             <ul className="legend-list">
-              {edgeKinds.map((kind) => (
+              {relations.map((kind) => (
                 <li key={kind} className="legend-row static">
                   <span
                     className="line"

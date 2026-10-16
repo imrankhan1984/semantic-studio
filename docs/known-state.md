@@ -2020,3 +2020,70 @@ EXPECTED OUTPUT
   stop reported at line 1 still says *the statement before this line*
   (5.1's table); the Results badge's number uses the browser's locale like
   every other count in `shapeSentences.ts`.
+
+- **Explore rules: restrictions are lines and sentences in Explore**
+  (2026-10-16, spec `explore-rules`, backlog G-7, decision D-113). A class's
+  restriction that the Edit canvas draws is a `rule` edge on `/graph`, from
+  the class to the named class it reaches, carrying `rule` and `key` as the
+  canvas's edge does; a library class's `/node` carries `rules.items`, every
+  one read-only, and Explore's detail panel says them under **Rules**.
+
+  **`graph_builder.py` reads restrictions only through `axioms.py`.**
+  `rule_edges` scans `rdfs:subClassOf` and `owl:equivalentClass` once each
+  and hands each blank-node object on a typed class to
+  `axioms.parse_restriction` or `axioms.parse_defining`, once; whether it is
+  a line is `axioms.draws_line`, which `canvas.py` asks too. A second reader
+  would draw a different set than the canvas sooner or later, and the two
+  pages would disagree about one file. `test_graph_builder.py` scans the file
+  for the restriction predicates, compares the two pages' sets (source,
+  target, key) on two files, and counts the parse calls: asking
+  `axioms.contents` per class instead cost about half as much again on
+  10,000 restrictions, and the test makes `contents` raise. `axioms` is
+  imported inside `rule_edges`: it reaches back to `graph_builder` through
+  `examples` and `shapes_form`, and a top-level import is a cycle.
+
+  **A rule edge is keyed by its `key`**, `rule|source|key` in `GraphView`:
+  two rules can join the same two classes (*some* and *at most 3* on one
+  property), both with an empty label, and the old `kind|label|source|target`
+  key dropped the second as a duplicate. The server sends one edge per
+  (class, key), however often the same rule is written: two would share a
+  key, and graphology refuses the second.
+
+  The line is solid, `EDGES.rule` (the Edit page's rule colour, shared with
+  *disjoint with*; the legend lists *rule* right after it), through Sigma's
+  own arrow program (Section 15 of the spec). Its words go through D-110's
+  overlap rule like every link name, so at 1280 px *at least 1 · crew member*
+  is skipped where it would cross the *crew member* node's name and drawn at
+  1920 px; the detail panel always says it. Where the read-only **Rules**
+  block is drawn, the blank-node rows under the four rule predicates are
+  left out of the statements and out of their count. With the Edit section
+  on screen (a project's model, in Explore too) the block is not drawn and
+  the rows stay. The documentation site leaves rule edges out, since its
+  viewer has no words for them, and with them any untyped entity only a
+  rule reached.
+
+  **Found in code review, fixed.** The rows were first hidden whenever
+  `rules` came back, but the Edit section says rules only in some of its
+  forms (not for an imported class, an example, or a class of the other
+  kind), so there they vanished; they stay now. When the server cuts the
+  statement list, only the page it sent is known to hold rule rows, so the
+  heading keeps the true total and the note says how many of the page went
+  to Rules. The same rule written twice is two items in the block, keyed by
+  their place as well. `draws_line` first left out every rule to
+  `owl:Thing`, which changed the canvas for a document that declares
+  `owl:Thing` a class (it drew that line before); it takes the boxes now.
+  On the docs site, an untyped node only a rule reached became a dot
+  joined to nothing; it is left out.
+
+  **Found in code review, left.** A rule whose filler is its own class is a
+  loop, which Sigma's straight arrow does not draw: the edge is there (one
+  set with the canvas, two more degree), the line and its words are not,
+  and the detail panel says it. Parallel lines between the same two classes
+  overlap, and D-110 skips the second name. Both want an edge program of our
+  own, which Section 15 of the spec decided against. Card miniatures made
+  before this change ranked by the old degree; nothing backfills them.
+
+  Measured on the generated 5,000-class, 10,000-restriction file (69,119
+  statements, 2,000 of them definitions), median of five: `build_viz_graph`
+  118 ms before, 553 ms after, against a 1,000 ms budget. Each term is named
+  once per build: labels were a fifth of the rule pass.

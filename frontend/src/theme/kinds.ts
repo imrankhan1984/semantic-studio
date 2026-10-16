@@ -104,6 +104,9 @@ const edges = (t: Theme, related: string, rule: string): Record<string, string> 
     subPropertyOf: k.objectProperty.accent,
     inverseOf: k.objectProperty.accent,
     disjointWith: rule,
+    // A class's restriction (D-113): the Edit page's rule colour, which
+    // disjointness shares there too; the legend tells the two apart in words.
+    rule,
     equivalentClass: k.rdfsClass.accent,
     equivalentProperty: k.rdfsClass.accent,
     sameAs: k.rdfsClass.accent,

@@ -50,7 +50,8 @@ INPUTS / INPUT SOURCES
 EXPECTED OUTPUT
     - JSON responses (ontology summaries, graph, one entity's neighbourhood,
       node details -- for a project's class, its rules, their warnings and
-      the sentence builder's choices (axioms-and-reasoning 5.9); for a
+      the sentence builder's choices (axioms-and-reasoning 5.9); for any
+      other ontology's class, its rules read-only (explore-rules 5.3); for a
       project's example, its classes and fields
       (shacl-authoring 5.8) --, search results, query schema, the queries stored in the
       file, source text, SPARQL results)
@@ -85,6 +86,7 @@ from ..docs_export import DocsExportError, build_zip
 from ..embedded_queries import MAX_TEXT_CHARS as MAX_QUERY_CHARS
 from ..embedded_queries import list_embedded_queries
 from ..graph_builder import (
+    KIND_CLASS,
     KIND_DATATYPE_PROPERTY,
     KIND_OBJECT_PROPERTY,
     budget_viz,
@@ -92,6 +94,7 @@ from ..graph_builder import (
     neighborhood_viz,
     node_details,
     search_nodes,
+    term_kind,
 )
 from .. import axioms, examples, modeling_checks
 from .. import imports as imports_mod
@@ -650,6 +653,16 @@ def get_node(
                 "warnings": modeling_checks.never_members(graph, cls, name),
                 "choices": _rule_choices(ontology, graph, imports, lang, name)
                 if examples.is_class(ontology.graph, cls) else None,
+            }
+        # Any other ontology's class carries its rules too (explore-rules
+        # 5.3, D-113), as the same sentences and read-only: the document is
+        # not the person's to change. No warnings and no builder here.
+        if details is not None and not ontology.editable and term_kind(graph, URIRef(iri)) == KIND_CLASS:
+            name = labeler(graph, ontology.label_langs(lang))
+            details["rules"] = {
+                "items": axioms.read_only_rules(graph, URIRef(iri), name),
+                "warnings": [],
+                "choices": None,
             }
         # A snapshot's individual is read-only data (csv-data-import 5.6):
         # where it came from, never an example's form.

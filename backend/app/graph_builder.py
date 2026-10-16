@@ -22,6 +22,11 @@ BASIC IDEA
     from the visual graph (they clutter it) but still appear in a node's
     detail view.
 
+    A class's restrictions are the exception (explore-rules 5.1, D-113): each
+    one the Edit canvas draws is a `rule` edge from the class to the named
+    class it reaches, read by axioms.py's parsers and nothing here. A shape
+    they do not read is not drawn, and stays in the detail panel as Turtle.
+
 INPUTS / INPUT SOURCES
     - An rdflib.Graph produced by store.parse_rdf (build_viz_graph, node_details).
     - The pre-built viz dict for label/IRI search (search_nodes), for the node
@@ -33,7 +38,9 @@ EXPECTED OUTPUT
     - build_viz_graph -> {"nodes": [...], "edges": [...], "stats": {...}} as
       JSON-ready dicts consumed by frontend/src/components/GraphView.tsx.
       A class typed only rdfs:Class carries `classType: "rdfs"` beside its
-      `kind`, which stays "class": a colour, not a kind.
+      `kind`, which stays "class": a colour, not a kind. A `rule` edge
+      carries `rule` (its form, kind, count and labels) and `key`
+      (axioms.key_json), as the canvas's rule edge does.
     - budget_viz -> the same shape reduced to the highest-degree nodes, with
       the true totals and a truncation flag added to stats.
     - build_card_sketch -> a twenty-node thumbnail of the same ranking, small
@@ -311,6 +318,65 @@ def subclass_parents(graph: Graph) -> dict[URIRef, set[URIRef]]:
     return parents
 
 
+def rule_edges(graph: Graph, classes: set, label: Callable[[URIRef], str]) -> list[dict]:
+    """A `rule` edge per restriction the Edit canvas draws (explore-rules 5.1,
+    D-113): from a typed class to the named class its rule reaches.
+
+    The shapes are read by axioms.py alone, once per blank node under
+    rdfs:subClassOf or owl:equivalentClass, never by asking every class for
+    its rules: that cost about half as much again on 10,000 restrictions.
+    Which rules are lines is axioms.draws_line, the canvas's own test, so the
+    two pages draw one set. The same rule written twice on a class is one
+    edge, as every edge here is: two would share a key.
+    """
+    # Here, not at the top: axioms reaches back to this module through
+    # examples and shapes_form, and the cycle must close after we are loaded.
+    from . import axioms
+
+    found: list[dict] = []
+    seen: set[tuple] = set()
+    # Many rules, few properties: each term is named once, not once per rule.
+    names: dict = {}
+
+    def name(term) -> str:
+        if term not in names:
+            names[term] = label(term)
+        return names[term]
+
+    for predicate in (RDFS.subClassOf, OWL.equivalentClass):
+        for cls, node in graph.subject_objects(predicate):
+            if not isinstance(node, BNode) or cls not in classes:
+                continue
+            if predicate == RDFS.subClassOf:
+                parsed = axioms.parse_restriction(graph, node)
+                content = axioms.content_of("every", parsed) if parsed is not None else None
+            else:
+                defining = axioms.parse_defining(graph, node)
+                content = axioms.content_of("defines", defining[1], defining[0]) if defining is not None else None
+            if content is None or not axioms.draws_line(content, classes):
+                continue
+            key = axioms.key_json(content)
+            identity = (cls, repr(key))  # key_json writes its fields in one order
+            if identity in seen:
+                continue
+            seen.add(identity)
+            found.append({
+                "source": str(cls),
+                "target": str(content.filler),
+                "kind": "rule",
+                # The words are the frontend's, from `rule` (ruleSentences).
+                "label": "",
+                "rule": {
+                    "form": content.form, "kind": content.kind, "n": content.n,
+                    "property": str(content.property), "propertyLabel": name(content.property),
+                    "fillerLabel": name(content.filler),
+                    "withLabel": name(content.with_) if content.with_ is not None else None,
+                },
+                "key": key,
+            })
+    return found
+
+
 def build_viz_graph(graph: Graph, langs: Optional[Sequence[str]] = None) -> dict:
     """Extract nodes and edges for visualization from an rdflib graph.
 
@@ -398,15 +464,22 @@ def build_viz_graph(graph: Graph, langs: Optional[Sequence[str]] = None) -> dict
             if isinstance(s, URIRef) and isinstance(o, URIRef):
                 edges.add((s, "assertion", o, prop_label))
 
+    # Pass 4: a class's rules, the lines the Edit canvas draws (D-113).
+    rules = rule_edges(graph, owl_typed | rdfs_typed, label)
+
     # An edge might reference an entity we never typed; make sure both ends of
     # every edge exist as a node (kind OTHER if nothing more specific is known).
-    for src, _, dst, _ in edges:
+    ends = [(src, dst) for src, _, dst, _ in edges]
+    ends += [(URIRef(e["source"]), URIRef(e["target"])) for e in rules]
+    for src, dst in ends:
         kinds.setdefault(src, set()).add(KIND_OTHER)
         kinds.setdefault(dst, set()).add(KIND_OTHER)
 
     # Degree = number of edges touching a node; used by the frontend to size nodes.
+    # A rule counts like any line: a class that constrains many others ranks
+    # higher in the node budget, which is what a FIBO reader wants first.
     degree: dict[URIRef, int] = defaultdict(int)
-    for src, _, dst, _ in edges:
+    for src, dst in ends:
         degree[src] += 1
         degree[dst] += 1
 
@@ -433,7 +506,7 @@ def build_viz_graph(graph: Graph, langs: Optional[Sequence[str]] = None) -> dict
     edge_list = [
         {"source": str(src), "target": str(dst), "kind": kind, "label": label}
         for src, kind, dst, label in edges
-    ]
+    ] + rules
 
     # Tally how many nodes of each kind exist, for the legend counts.
     kind_counts: dict[str, int] = defaultdict(int)

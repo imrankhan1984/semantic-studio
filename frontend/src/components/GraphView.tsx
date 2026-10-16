@@ -34,6 +34,11 @@ BASIC IDEA
     afresh. Link names are drawn only for the hovered or selected node's links,
     which the edge reducer forces, and go through the same rule.
 
+    A class's rules are links too (explore-rules 5.1, D-113): a solid line in
+    the rule colour, worded by ruleSentences.shortLabel as the Edit canvas
+    words it, and stored under its rule's key, since two rules can join the
+    same two classes. No edge program of our own: Sigma's arrow draws it.
+
     Two things here are for people who are not using a mouse or who have asked
     the machine to stop moving. The container carries role="img" and a label
     saying how much of the ontology is drawn and where the keyboard route is,
@@ -80,7 +85,8 @@ import type {
   NodeLabelDrawingFunction,
 } from "sigma/rendering";
 import { downloadAsPNG } from "@sigma/export-image";   // PNG export
-import type { MergeResult, Theme, VizGraph, VizNeighborhood } from "../types";
+import type { MergeResult, Theme, VizEdge, VizGraph, VizNeighborhood } from "../types";
+import { shortLabel } from "../modeling/ruleSentences";
 import { PALETTES, edgeColor, nodeColor } from "../types";
 import {
   LabelBoxes,
@@ -457,9 +463,19 @@ function drawnSize(node: { degree: number; importedFrom?: string }): number {
 }
 
 /** The key an edge is stored under. Shared by the initial build and the merge,
- *  because the merge's whole duplicate check is that these agree. */
-function edgeKey(edge: { kind: string; label: string; source: string; target: string }) {
+ *  because the merge's whole duplicate check is that these agree. A rule edge
+ *  is keyed by its rule's key (D-113): two rules can join the same two
+ *  classes, and both have an empty label. */
+function edgeKey(edge: VizEdge): string {
+  if (edge.kind === "rule" && edge.key) return `rule|${edge.source}|${JSON.stringify(edge.key)}`;
   return `${edge.kind}|${edge.label}|${edge.source}|${edge.target}`;
+}
+
+/** What a link says on focus: a rule's short form (ruleSentences, the Edit
+ *  canvas's words), else its label, else its kind. */
+function edgeWords(edge: VizEdge): string {
+  if (edge.kind === "rule" && edge.rule) return shortLabel(edge.rule);
+  return edge.label || edge.kind;
 }
 
 const EMPTY_SET: Set<string> = new Set();
@@ -719,7 +735,7 @@ export default function GraphView({
         (labelLength.get(edge.source) ?? 8) + (labelLength.get(edge.target) ?? 8);
       graph.addEdgeWithKey(key, edge.source, edge.target, {
         kind: edge.kind,
-        label: edge.label || edge.kind,
+        label: edgeWords(edge),
         size: 1,
         type: "arrow",
         weight: 1 / Math.max(1, nameSpan / 18),
@@ -1104,7 +1120,7 @@ export default function GraphView({
       if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) continue;
       graph.addEdgeWithKey(key, edge.source, edge.target, {
         kind: edge.kind,
-        label: edge.label || edge.kind,
+        label: edgeWords(edge),
         size: 1,
         type: "arrow",
         weight: 1,

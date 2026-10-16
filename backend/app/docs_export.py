@@ -90,6 +90,7 @@ from .graph_builder import (
     KIND_DATATYPE_PROPERTY,
     KIND_INDIVIDUAL,
     KIND_OBJECT_PROPERTY,
+    KIND_OTHER,
     KIND_PROPERTY,
     KIND_SCHEME,
     _local_name,
@@ -754,8 +755,22 @@ def build_graph_data(viz: dict, anchors: dict[str, str], include_individuals: bo
     else:
         excluded_ids = {n["id"] for n in viz["nodes"] if n["kind"] == KIND_INDIVIDUAL}
 
+    # Explore's rule lines (D-113) are worded by the app's frontend, which the
+    # published site does not carry: the site keeps the lines it had, and an
+    # untyped entity only a rule reached stays off it too (code review), or
+    # it would be drawn as a dot joined to nothing.
+    ruled: set[str] = set()
+    joined: set[str] = set()
+    for e in viz["edges"]:
+        (ruled if e["kind"] == "rule" else joined).update((e["source"], e["target"]))
+    excluded_ids = excluded_ids | {
+        n["id"] for n in viz["nodes"] if n["kind"] == KIND_OTHER and n["id"] in ruled - joined
+    }
+
     edges = []
     for e in viz["edges"]:
+        if e["kind"] == "rule":
+            continue
         if not include_individuals:
             if e["kind"] in _ABOX_EDGE_KINDS:
                 continue

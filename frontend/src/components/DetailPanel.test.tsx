@@ -517,3 +517,144 @@ describe("DetailPanel: the Inferred block (axioms-and-reasoning 5.7)", () => {
   });
 });
 
+
+/* --- rules as sentences (explore-rules 5.3, D-113) ------------------------ */
+
+const RDFS_SUBCLASS = { type: "uri" as const, value: "http://www.w3.org/2000/01/rdf-schema#subClassOf", prefixed: "rdfs:subClassOf" };
+const OWL_EQUIVALENT = { type: "uri" as const, value: "http://www.w3.org/2002/07/owl#equivalentClass", prefixed: "owl:equivalentClass" };
+const SPACE = "http://example.org/space#";
+
+const CREWED_RULES: NonNullable<NodeDetails["rules"]>["items"] = [
+  {
+    type: "restriction",
+    form: "every",
+    property: { iri: `${SPACE}crewMember`, label: "crew member", kind: "relationship" },
+    kind: "atLeast",
+    filler: { iri: `${SPACE}Astronaut`, label: "Astronaut" },
+    n: 1,
+    with: null,
+    key: { form: "every", property: `${SPACE}crewMember`, kind: "atLeast", filler: `${SPACE}Astronaut`, n: 1 },
+    editable: false,
+  },
+  {
+    type: "turtle",
+    turtle: "space:CrewedMission owl:equivalentClass [ owl:intersectionOf ( space:Mission [ owl:hasValue true ] ) ] .",
+    editable: false,
+  },
+];
+
+function crewed(items = CREWED_RULES, rules = true): NodeDetails {
+  const outgoing = [
+    {
+      predicate: { type: "uri" as const, value: "http://www.w3.org/1999/02/22-rdf-syntax-ns#type", prefixed: "rdf:type" },
+      object: { type: "uri" as const, value: "http://www.w3.org/2002/07/owl#Class", prefixed: "owl:Class" },
+    },
+    { predicate: RDFS_SUBCLASS, object: { type: "uri" as const, value: `${SPACE}Mission`, prefixed: "space:Mission" } },
+    { predicate: RDFS_SUBCLASS, object: { type: "bnode" as const, value: "[owl:onProperty space:crewMember; …]" } },
+    { predicate: OWL_EQUIVALENT, object: { type: "bnode" as const, value: "[owl:intersectionOf …]" } },
+  ];
+  return {
+    iri: `${SPACE}CrewedMission`,
+    prefixed: "space:CrewedMission",
+    label: "Crewed mission",
+    outgoing,
+    incoming: [],
+    outgoingTotal: outgoing.length,
+    incomingTotal: 0,
+    ...(rules ? { rules: { items, warnings: [], choices: null } } : {}),
+  };
+}
+
+describe("DetailPanel: a class's rules (explore-rules 5.3, AC-3, AC-4)", () => {
+  it("shows the rules under Rules, one sentence each, a Turtle item read-only", async () => {
+    await renderPanel(crewed());
+    const heading = screen.getByRole("heading", { level: 3, name: "Rules" });
+    const block = heading.closest("section") as HTMLElement;
+    const items = within(block).getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(items[0].textContent).toBe("Every Crewed mission has at least one crew member that is an Astronaut");
+    const turtle = items[1].querySelector("pre") as HTMLElement;
+    expect(turtle.textContent).toBe(CREWED_RULES[1].type === "turtle" ? CREWED_RULES[1].turtle : "");
+    // Read-only: nothing in the block to press or type in.
+    expect(within(block).queryAllByRole("button")).toHaveLength(0);
+    expect(within(block).queryAllByRole("textbox")).toHaveLength(0);
+    // Before the statements, in the panel's heading order.
+    const statements = screen.getByRole("heading", { name: /Statements/ });
+    expect(heading.compareDocumentPosition(statements) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("lists no blank-node row a rule came from, and counts what it lists (AC-4)", async () => {
+    await renderPanel(crewed());
+    const rows = document.querySelectorAll("table.detail-table tbody tr");
+    expect(rows).toHaveLength(2);
+    expect(document.querySelector(".term-bnode")).toBeNull();
+    expect(screen.getByRole("heading", { name: /Statements/ }).textContent).toBe("Statements 2");
+  });
+
+  it("shows no Rules heading for a class without rules", async () => {
+    await renderPanel(crewed([]));
+    expect(screen.getByRole("heading", { level: 2, name: "Crewed mission" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Rules" })).toBeNull();
+  });
+
+  it("leaves the rules to the Edit section's own block when the panel edits", async () => {
+    getNodeDetails.mockResolvedValue({ ...crewed(), kind: "class", names: [{ lang: "en", value: "Crewed mission" }] });
+    await act(async () => {
+      render(
+        <DetailPanel
+          ontologyId="o1"
+          iri={`${SPACE}CrewedMission`}
+          onNavigate={vi.fn()}
+          onClose={vi.fn()}
+          editing={{ primaryLanguage: "en", languages: ["en"] }}
+        />,
+      );
+    });
+    expect(screen.getByRole("region", { name: "Edit" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 3, name: "Rules" })).toBeNull();
+    expect(screen.getAllByText("Every Crewed mission has at least one crew member that is an Astronaut")).toHaveLength(1);
+    // The rows stay: the Edit section says rules only in some of its forms,
+    // and hiding the rows behind one that does not lost them (code review).
+    expect(document.querySelectorAll(".term-bnode")).toHaveLength(2);
+  });
+
+  it("keeps an imported class's rule rows, which its read-only Edit section does not say", async () => {
+    getNodeDetails.mockResolvedValue({ ...crewed(), kind: "class", importedFrom: "Space", names: [{ lang: "en", value: "Crewed mission" }] });
+    await act(async () => {
+      render(
+        <DetailPanel
+          ontologyId="o1"
+          iri={`${SPACE}CrewedMission`}
+          onNavigate={vi.fn()}
+          onClose={vi.fn()}
+          editing={{ primaryLanguage: "en", languages: ["en"] }}
+          imports
+        />,
+      );
+    });
+    expect(screen.getByRole("heading", { level: 2, name: "Crewed mission" })).toBeTruthy();
+    expect(document.querySelectorAll(".term-bnode")).toHaveLength(2);
+  });
+
+  it("keeps the true total when the server cut the list, and says where the rules went", async () => {
+    await renderPanel({ ...crewed(), outgoingTotal: 600 });
+    expect(screen.getByRole("heading", { name: /Statements/ }).textContent).toBe("Statements 600");
+    expect(screen.getByText("Showing 2 of 600 statements; 2 more are the rules above.")).toBeTruthy();
+  });
+
+  it("lists the same rule written twice twice, without a key collision", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    await renderPanel(crewed([CREWED_RULES[0], CREWED_RULES[0]]));
+    const block = screen.getByRole("heading", { level: 3, name: "Rules" }).closest("section") as HTMLElement;
+    expect(within(block).getAllByRole("listitem")).toHaveLength(2);
+    expect(errors.mock.calls.some((call) => String(call[0]).includes("same key"))).toBe(false);
+    errors.mockRestore();
+  });
+
+  it("shows no Rules heading for a property, and keeps its blank-node rows", async () => {
+    await renderPanel({ ...crewed(undefined, false), label: "crew member" });
+    expect(screen.getByRole("heading", { level: 2, name: "crew member" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Rules" })).toBeNull();
+    expect(document.querySelectorAll("table.detail-table tbody tr")).toHaveLength(4);
+  });
+});

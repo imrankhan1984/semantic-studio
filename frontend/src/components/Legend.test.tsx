@@ -42,6 +42,7 @@ EXPECTED OUTPUT
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Legend, { LEGEND_KEY } from "./Legend";
+import { EDGES } from "../theme/kinds";
 
 /** jsdom's window is 1024 px wide, where the legend starts folded (5.2). */
 function setWidth(px: number) {
@@ -424,3 +425,40 @@ describe("Legend in Query (load-and-shapes 5.4, AC-5)", () => {
     expect(header().getAttribute("aria-expanded")).toBe("true");
   });
 });
+
+describe("Legend rule row (explore-rules 5.2, AC-2)", () => {
+  function relationRows(edgeKinds: string[]) {
+    render(
+      <Legend theme="light" kindCounts={COUNTS} edgeKinds={edgeKinds} hiddenKinds={new Set()} onToggleKind={() => {}} />,
+    );
+    return screen.queryAllByRole("listitem");
+  }
+
+  it("names rule, after disjoint with, when the graph has rule lines", () => {
+    const rows = relationRows(["disjointWith", "domain", "related", "rule", "subClassOf"]);
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "disjoint with",
+      "rule",
+      "domain",
+      "related",
+      "subclass of",
+    ]);
+    const rule = rows[1];
+    // A word and a line in the rule colour, not a control.
+    expect(rule.tagName).toBe("LI");
+    expect(rule.querySelector("button")).toBeNull();
+    expect(rule.getAttribute("tabindex")).toBeNull();
+    expect((rule.querySelector(".line") as HTMLElement).style.background).toBe(hexToRgb(EDGES.light.rule));
+  });
+
+  it("has no rule row when the graph has no rule line", () => {
+    const rows = relationRows(["disjointWith", "subClassOf"]);
+    expect(rows.length).toBe(2);
+    expect(rows.map((row) => row.textContent)).not.toContain("rule");
+  });
+});
+
+function hexToRgb(hex: string): string {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  return `rgb(${r}, ${g}, ${b})`;
+}

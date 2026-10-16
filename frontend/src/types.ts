@@ -285,6 +285,23 @@ export interface VizEdge {
   target: string;
   kind: string;   // colours the edge (subClassOf, assertion, ...)
   label: string;  // shown on the edge (e.g. the property name)
+  // A "rule" edge (explore-rules 5.1, D-113): the restriction's parts, which
+  // ruleSentences.shortLabel words, and its key, which names the edge: two
+  // rules can join the same two classes. The canvas's rule edge, the same.
+  rule?: RuleLine;
+  key?: RuleKey;
+}
+
+/** A rule line's parts, as the server reads them (axioms.py). */
+export interface RuleLine {
+  form: RuleForm;
+  kind: RuleKind;
+  n: number | null;
+  property: string;
+  propertyLabel: string;
+  fillerLabel: string;
+  // A defining form's named class: *A Manager is exactly a Person that ...*
+  withLabel: string | null;
 }
 
 // The whole graph plus summary counts (the /graph response).
@@ -922,16 +939,7 @@ export interface CanvasEdge {
   // A *kind of* a current reasoning result concluded (5.7): drawn dashed and
   // labelled inferred, never changed from the canvas.
   inferred?: boolean;
-  rule?: {
-    form: RuleForm;
-    kind: RuleKind;
-    n: number | null;
-    property: string;
-    propertyLabel: string;
-    fillerLabel: string;
-    // A defining form's named class: *A Manager is exactly a Person that ...*
-    withLabel: string | null;
-  };
+  rule?: RuleLine;
   key?: RuleKey;
 }
 

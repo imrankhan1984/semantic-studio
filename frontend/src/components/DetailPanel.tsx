@@ -54,6 +54,15 @@ INPUTS / INPUT SOURCES (props)
     - inferred: a current reasoning result, while Show inferred is on: the
       Inferred block under the statements (axioms-and-reasoning 5.7).
 
+    A class's rules come with its details for every ontology (explore-rules
+    5.3, D-113). Without the Edit section they are a Rules block of their
+    own, one sentence each in the Edit page's words, read-only, a shape
+    outside the sentences as its Turtle, and the blank-node statements they
+    came from are not listed again. With the Edit section the panel leaves
+    rules and rows as they were: that section says them only in some of its
+    forms (not for an imported class, an example, a class of the other
+    kind), and hiding the rows there lost them (code review).
+
     The IRI under the title is a link only when linkTarget allows it (D-088):
     http and https. Any other scheme is shown as text, with Copy beside it.
 
@@ -66,6 +75,7 @@ import { useEffect, useRef, useState } from "react";
 import { getNodeDetails } from "../api";
 import { linkTarget } from "../links";
 import { dataLabel } from "../modeling/dataSentences";
+import { itemKey, itemSentence } from "../modeling/ruleSentences";
 import type { CanvasSet, NodeDetails, TermRef, ProjectKind } from "../types";
 import EditSection from "./EditSection";
 import InferredBlock from "./InferredBlock";
@@ -99,6 +109,20 @@ interface Props {
   canvas?: CanvasSet | null;
   /** A current reasoning result to show under the statements (5.7). */
   inferred?: { projectId: string; resultKey: string; imports: boolean } | null;
+}
+
+/** The predicates a class's rules hang from (axioms.class_rules): with the
+ *  rules shown as sentences, a blank node under one of these is a rule
+ *  already said, and its raw row would say it twice (explore-rules 5.3). */
+const RULE_PREDICATES = new Set([
+  "http://www.w3.org/2000/01/rdf-schema#subClassOf",
+  "http://www.w3.org/2002/07/owl#equivalentClass",
+  "http://www.w3.org/2002/07/owl#disjointWith",
+  "http://www.w3.org/2002/07/owl#disjointUnionOf",
+]);
+
+function isRuleRow(row: NodeDetails["outgoing"][number]): boolean {
+  return row.object.type === "bnode" && row.predicate.type === "uri" && RULE_PREDICATES.has(row.predicate.value);
 }
 
 /** The heading id, so the panel can be named by it and focus can be sent to it. */
@@ -203,6 +227,14 @@ export default function DetailPanel({
 
   if (!iri) return null;
   const href = linkTarget(iri);
+  // A class's rules as sentences, when the server read some and no Edit
+  // section is here to say them; only then do their blank-node rows go.
+  const showRules = !editing && (details?.rules?.items.length ?? 0) > 0;
+  const statements = details && showRules ? details.outgoing.filter((row) => !isRuleRow(row)) : (details?.outgoing ?? []);
+  const hiddenRows = (details?.outgoing.length ?? 0) - statements.length;
+  // Only what this page holds is known to be a rule: when the server cut the
+  // list, the true total stays the heading's number (CLAUDE.md, limits).
+  const truncated = details !== null && details.outgoingTotal > details.outgoing.length;
 
   return (
     <aside className="detail-panel" aria-labelledby={HEADING_ID}>
@@ -311,13 +343,38 @@ export default function DetailPanel({
               </dl>
             </section>
           )}
+          {showRules && details.rules && (
+            // The Edit page's sentences, read-only (explore-rules 5.3); with
+            // `editing`, the Edit section is their place.
+            <section>
+              <h3>Rules</h3>
+              <ul className="detail-rules">
+                {details.rules.items.map((item, index) => {
+                  const sentence = itemSentence(details.label, item);
+                  return (
+                    // The same rule written twice is two items with one key.
+                    <li key={`${itemKey(item)}|${index}`} className="rule-item">
+                      {item.type === "turtle" ? (
+                        <>
+                          <p className="detail-note">Written in Turtle, outside the sentences:</p>
+                          <pre className="rule-turtle">{item.turtle}</pre>
+                        </>
+                      ) : (
+                        <span className="rule-sentence">{sentence}</span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
           <section>
             <h3>
-              Statements <span className="count">{details.outgoingTotal}</span>
+              Statements <span className="count">{truncated ? details.outgoingTotal : statements.length}</span>
             </h3>
             <table className="detail-table">
               <tbody>
-                {details.outgoing.map((row, i) => (
+                {statements.map((row, i) => (
                   <tr key={i}>
                     <td className="pred">
                       <Term term={row.predicate} onNavigate={onNavigate} />
@@ -329,9 +386,10 @@ export default function DetailPanel({
                 ))}
               </tbody>
             </table>
-            {details.outgoingTotal > details.outgoing.length && (
+            {truncated && (
               <p className="detail-note">
-                Showing {details.outgoing.length} of {details.outgoingTotal} statements.
+                Showing {statements.length} of {details.outgoingTotal} statements
+                {hiddenRows > 0 ? `; ${hiddenRows} more are the rules above` : ""}.
               </p>
             )}
           </section>

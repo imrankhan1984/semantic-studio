@@ -48,7 +48,10 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - parse_restriction / parse_defining -> the content, or None.
-    - class_rules(graph, cls, own, name) -> the form's items.
+    - content_of(form, parsed, with_) -> a parsed rule as its Content.
+    - draws_line(content, boxes) -> whether the canvas and Explore draw it as a line.
+    - class_rules(graph, cls, own, name) -> the form's items;
+      read_only_rules(graph, cls, name) the same, none editable.
     - find(graph, cls, key) -> the (predicate, node) pairs with that content.
     - restriction_triples(...) -> (node, triples) for a new restriction.
     - shacl_plain / shacl_triples -> what Check it in data too writes.
@@ -234,7 +237,7 @@ def parse_defining(g: Graph, node) -> Optional[tuple]:
     return (named[0], inner) if inner is not None else None
 
 
-def _content(form: str, parsed: tuple, with_=None) -> Content:
+def content_of(form: str, parsed: tuple, with_=None) -> Content:
     prop, kind, filler, n = parsed
     return Content(form, prop, kind, filler, n, with_)
 
@@ -245,13 +248,26 @@ def contents(g: Graph, cls) -> list[tuple]:
     for node in g.objects(cls, RDFS.subClassOf):
         parsed = parse_restriction(g, node)
         if parsed is not None:
-            found.append((RDFS.subClassOf, node, _content("every", parsed)))
+            found.append((RDFS.subClassOf, node, content_of("every", parsed)))
     for node in g.objects(cls, OWL.equivalentClass):
         if isinstance(node, BNode):
             defining = parse_defining(g, node)
             if defining is not None:
-                found.append((OWL.equivalentClass, node, _content("defines", defining[1], defining[0])))
+                found.append((OWL.equivalentClass, node, content_of("defines", defining[1], defining[0])))
     return found
+
+
+def draws_line(content: Content, boxes) -> bool:
+    """Whether a rule is a line between two classes: its filler a named class,
+    never a value or a datatype, and owl:Thing or rdfs:Resource only when the
+    document makes it one of `boxes`, as the canvas always has. The Edit
+    canvas and Explore's graph both ask this, so the two pages draw one set
+    (D-113)."""
+    filler = content.filler
+    return (
+        content.kind != "value" and isinstance(filler, URIRef) and not is_datatype(filler)
+        and (filler not in (OWL.Thing, RDFS.Resource) or filler in boxes)
+    )
 
 
 def find(g: Graph, cls, key: Content) -> list[tuple]:
@@ -466,6 +482,13 @@ def class_rules(g: Graph, cls: URIRef, own: Graph, name: Name) -> list[dict]:
             outside.append({"type": "turtle", "turtle": turtle_of(g, _statements(g, node)), "editable": False})
     outside.sort(key=lambda i: i["turtle"])
     return items + outside
+
+
+def read_only_rules(g: Graph, cls: URIRef, name: Name) -> list[dict]:
+    """The same items for a class no one here may change, a library
+    ontology's (explore-rules 5.3): with no document of the person's, none
+    is editable."""
+    return class_rules(g, cls, Graph(), name)
 
 
 # --- writing --------------------------------------------------------------------------
