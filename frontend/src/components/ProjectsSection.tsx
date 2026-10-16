@@ -4,19 +4,22 @@ FILE: frontend/src/components/ProjectsSection.tsx
 ================================================================================
 
 SUMMARY
-    "My projects", the first section of the Home screen (authoring-foundations
-    5.1): the user's own work, above the read-only library. Each project card
-    shows its name, its kind (*Ontology* or *Taxonomy*, relationships 5.1),
-    when it last changed, its documents and its counts, a line for each of
-    its data snapshots with its label (csv-data-import 5.7: *from
-    people.csv, imported 2 October 2026*, a sample's words included, and
-    *off* when switched off), an Open button, and a menu with Rename, Change
-    to taxonomy… (or ontology…), Duplicate, Export as zip and Delete.
+    A project's card in Home's one library (home-and-examples 5.5; it was
+    the "My projects" section of authoring-foundations 5.1 until the
+    person's projects and files joined one grid). Each project card shows
+    its name, its kind (*Ontology* or *Taxonomy*, relationships 5.1), when
+    it last changed, its documents and its counts, a line for each of its
+    data snapshots with its label (csv-data-import 5.7: *from people.csv,
+    imported 2 October 2026*, a sample's words included, and *off* when
+    switched off), an Open button, and a menu with Rename, Change to
+    taxonomy… (or ontology…), Duplicate, Export as zip and Delete.
 
 BASIC IDEA
     Everything on a card comes from the project list App fetched on mount,
-    which the server builds from manifests alone, so this section, like the
-    rest of the Home screen, costs no request of its own and parses nothing.
+    which the server builds from manifests alone, so a project card, like
+    the rest of the Home screen, costs no request of its own and parses
+    nothing. HomeScreen places the cards among the library's; the heading,
+    New project and the empty sentence are its.
 
     The menu is a disclosure of plain buttons, OntologyCard's pattern and for
     its reason: role="menu" would promise arrow keys and typeahead. Rename
@@ -27,12 +30,15 @@ BASIC IDEA
     sentence of what changes: the tools, never the model (D-089).
 
 INPUTS / INPUT SOURCES (props)
-    - projects, loading, error: the list and its state.
-    - busyId: the project an action is running on, which then says so.
-    - onNew, onOpen, onRename, onChangeKind, onDuplicate, onExport, onDelete.
+    - project: the project's summary.
+    - busy: an action is running on this project, which then says so;
+      disabled: one is running on some project.
+    - layout: "card" or "row", as the library around it is laid out.
+    - openRef: set on the library's first entry, for Home's start focus.
+    - onOpen, onRename, onChangeKind, onDuplicate, onExport, onDelete.
 
 EXPECTED OUTPUT
-    - The section, and one callback per action.
+    - The card, and one callback per action.
 ================================================================================
 */
 
@@ -40,18 +46,22 @@ import { useEffect, useId, useRef, useState } from "react";
 import { dataLabel } from "../modeling/dataSentences";
 import type { ProjectSummary } from "../types";
 
-interface Props {
-  projects: ProjectSummary[];
-  loading: boolean;
-  error: string | null;
-  busyId: string | null;
-  onNew: () => void;
+/** What a project card's controls do; App owns every one of them. */
+export interface ProjectActions {
   onOpen: (pid: string) => void;
   onRename: (pid: string, name: string) => Promise<void>;
   onChangeKind: (pid: string) => void;
   onDuplicate: (pid: string) => void;
   onExport: (pid: string) => void;
   onDelete: (pid: string) => void;
+}
+
+interface Props extends ProjectActions {
+  project: ProjectSummary;
+  busy: boolean;
+  disabled: boolean;
+  layout?: "card" | "row";
+  openRef?: React.RefObject<HTMLButtonElement>;
 }
 
 /** "Changed 28 Sep 2026", in the reader's locale. */
@@ -66,21 +76,19 @@ function plural(n: number | undefined, one: string, many: string): string {
   return `${count.toLocaleString()} ${count === 1 ? one : many}`;
 }
 
-function ProjectCard({
+export default function ProjectCard({
   project,
   busy,
   disabled,
+  layout = "card",
+  openRef,
   onOpen,
   onRename,
   onChangeKind,
   onDuplicate,
   onExport,
   onDelete,
-}: {
-  project: ProjectSummary;
-  busy: boolean;
-  disabled: boolean;
-} & Pick<Props, "onOpen" | "onRename" | "onChangeKind" | "onDuplicate" | "onExport" | "onDelete">) {
+}: Props) {
   const headingId = useId();
   const menuId = useId();
   const renameId = useId();
@@ -128,7 +136,7 @@ function ProjectCard({
 
   return (
     <article
-      className="onto-card project-card"
+      className={layout === "row" ? "onto-card onto-row project-card" : "onto-card project-card"}
       aria-labelledby={headingId}
       aria-busy={busy}
       onKeyDown={(event) => {
@@ -233,6 +241,7 @@ function ProjectCard({
         </p>
         <div className="onto-verbs">
           <button
+            ref={openRef}
             className="primary"
             aria-disabled={disabled}
             aria-label={`Open ${project.name}`}
@@ -243,58 +252,5 @@ function ProjectCard({
         </div>
       </div>
     </article>
-  );
-}
-
-export default function ProjectsSection({
-  projects,
-  loading,
-  error,
-  busyId,
-  onNew,
-  onOpen,
-  onRename,
-  onChangeKind,
-  onDuplicate,
-  onExport,
-  onDelete,
-}: Props) {
-  return (
-    <section className="start-section" aria-labelledby="home-projects-heading">
-      <div className="home-library-head">
-        <h2 id="home-projects-heading">My projects</h2>
-        <div className="home-controls">
-          <button className="primary large" onClick={onNew} disabled={busyId !== null}>
-            New project
-          </button>
-        </div>
-      </div>
-      {loading ? (
-        <p className="start-empty">Loading your projects…</p>
-      ) : error ? (
-        <p className="detail-error">{error}</p>
-      ) : projects.length === 0 ? (
-        <p className="start-empty">
-          No projects yet. Start one from a template or from any ontology in your library.
-        </p>
-      ) : (
-        <div className="onto-grid">
-          {projects.map((project) => (
-            <ProjectCard
-              key={project.id}
-              project={project}
-              busy={busyId === project.id}
-              disabled={busyId !== null}
-              onOpen={onOpen}
-              onRename={onRename}
-              onChangeKind={onChangeKind}
-              onDuplicate={onDuplicate}
-              onExport={onExport}
-              onDelete={onDelete}
-            />
-          ))}
-        </div>
-      )}
-    </section>
   );
 }

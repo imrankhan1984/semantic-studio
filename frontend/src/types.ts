@@ -379,6 +379,10 @@ export interface OntologySummary {
    *  stored before this field existed; such a card renders without a miniature
    *  rather than triggering a parse to backfill one. */
   card?: { sketch: CardSketch } | null;
+  /** A bundled example's key and one-line purpose (home-and-examples 5.1),
+   *  which its card shows in place of the counted sentence and the date.
+   *  Null for everything else, absent from a server that predates it. */
+  example?: { key: string; purpose: string } | null;
 }
 
 /* --- hierarchy view ------------------------------------------------------ */

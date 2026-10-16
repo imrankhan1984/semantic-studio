@@ -3971,6 +3971,13 @@ button.legend-row:hover {
   width: 90px;
 }
 
+/* A project has no miniature, so in the one library's rows its name would sit
+   44px left of every file's name (home-and-examples 5.5). The padding is the
+   row's own 6px, the glyph's 44 and the gap's 12. */
+.onto-row.project-card {
+  padding-left: 62px;
+}
+
 .project-card .project-meta {
   display: flex;
   justify-content: space-between;

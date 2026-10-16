@@ -5,9 +5,10 @@ FILE: frontend/src/components/HomeScreen.tsx
 
 SUMMARY
     The screen the application opens on, and the screen the Home control returns
-    to from anywhere. It shows the saved library as cards or as dense rows, with
-    a search box and a view toggle above it, then the suggested catalogue, then
-    the two file-loading routes.
+    to from anywhere. It shows one library -- the person's projects and loaded
+    files, most recent first, then the three bundled examples -- as cards or as
+    dense rows, headed with New project, a search box and a view toggle, then
+    the two file-loading routes (home-and-examples 5.5).
 
 BASIC IDEA
     This is StartScreen's successor. That screen was a list, and three things
@@ -20,30 +21,40 @@ BASIC IDEA
 
     **The property that makes it worth having is StartScreen's, and it survives
     intact: opening this screen is FREE.** It fetches nothing and parses
-    nothing. Every number comes from the ontology list App has already
-    requested, and every thumbnail comes from a sketch the server computed
-    during the parse that happened at ingest. Any later change that fetches a
-    graph to populate a card breaks that property and should be refused — a home
+    nothing. Every number comes from the two lists App has already requested,
+    and every thumbnail comes from a sketch the server computed during the
+    parse that happened at ingest. Any later change that fetches a graph to
+    populate a card breaks that property and should be refused — a home
     screen that parses six ontologies to draw six thumbnails is the FIBO freeze
     again in a nicer coat.
 
+    **One library, the person's work first** (home-and-examples 5.5, D-111).
+    Projects and loaded files used to sit in two sections, and a suggested
+    catalogue below them downloaded from the internet, which fails behind a
+    corporate proxy. The examples are now in the library itself, seeded by the
+    server with no download, and always after what the person made, so they
+    move down as that work grows; the catalogue lives on in the Load dialog.
+    The order is home/libraryOrder.ts's. A file or an example card says
+    *Read-only* in words, which the old section heading used to say.
+
     **Two layouts, and the count is a default rather than a rule.** Nine or
-    fewer renders cards, ten or more renders rows, and a toggle overrides that
-    and is remembered. The toggle is the one addition to what was asked for, and
-    the reason is that a layout which reorganises itself the moment a tenth
-    ontology is added is a surprise the user cannot undo. Adding a file is not a
-    request to rearrange the screen.
+    fewer entries render cards, ten or more render rows, and a toggle
+    overrides that and is remembered. The toggle is the one addition to what
+    was asked for, and the reason is that a layout which reorganises itself
+    the moment a tenth entry is added is a surprise the user cannot undo.
+    Adding a file is not a request to rearrange the screen.
 
     **Searching does not change the layout.** The automatic choice reads the
-    whole library, never the filtered subset: switching on the filtered count
-    would flip the screen back and forth while typing, which is worse than
-    either layout. Search filters by NAME only, and the placeholder says so —
-    "What are you looking for?" would invite a concept name, return nothing, and
-    teach the user the feature is broken rather than absent.
+    whole library, examples and projects included, never the filtered subset:
+    switching on the filtered count would flip the screen back and forth while
+    typing, which is worse than either layout. Search filters by NAME only, and
+    the placeholder says so — "What are you looking for?" would invite a
+    concept name, return nothing, and teach the user the feature is broken
+    rather than absent.
 
-    The library section fails on its own. A backend that cannot list should not
-    stop somebody uploading a file, so an error replaces that section and leaves
-    the rest of the screen working.
+    Each list fails on its own. A backend that cannot list should not stop
+    somebody uploading a file, so an error is said in the library and the rest
+    of the screen keeps working.
 
 INPUTS / INPUT SOURCES (props)
     - ontologies / loading / error / onRetry: the ontology list App owns, and
@@ -52,40 +63,35 @@ INPUTS / INPUT SOURCES (props)
     - pendingMode: a mode chosen from the header with nothing open, so the
       library heading can ask which ontology it should act on.
     - onOpen / onEnterMode / onViewSource / onRemove: what a card's controls do.
-    - onLoaded: a catalogue entry finished downloading (the same callback the
-      Load dialog uses).
     - onOpenDialog: hand the file and URL routes to the existing Load dialog.
-    - projects: the "My projects" section, rendered first; the library below
-      it is headed "Library (read-only)" (authoring-foundations 5.1).
+    - projects: the project list, its state, New project and every project
+      card's action, all App's.
     - onStartProject: "Start a project from this" on each library card.
-    Plus fetchOntology from api.ts for a catalogue pick, and CATALOGUE through
-    CatalogueList.
 
 EXPECTED OUTPUT
     - The rendered home screen, and the side effects of a pick: onOpen,
-      onEnterMode, onLoaded, or the Load dialog opening on the right tab.
+      onEnterMode, a project action, or the Load dialog opening on the right
+      tab.
 ================================================================================
 */
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { downloadDocumentation, fetchOntology } from "../api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { downloadDocumentation } from "../api";
 import { triggerDownload } from "../download";
-import type { CatalogueEntry } from "../catalogue";
-import CatalogueList from "./CatalogueList";
+import { libraryEntries } from "../home/libraryOrder";
 import OntologyCard from "./OntologyCard";
-import type { AppMode, OntologySummary, Theme } from "../types";
+import ProjectCard, { type ProjectActions } from "./ProjectsSection";
+import type { AppMode, OntologySummary, ProjectSummary, Theme } from "../types";
 
-/**
- * The catalogue does not depend on the search text, and typing must not
- * re-render it: that is this screen's one stated render budget.
- *
- * The memo lives here rather than on CatalogueList itself, so the component the
- * Load dialog renders is untouched and the two callers stay identical — which
- * is the whole reason CatalogueList exists. Its three props are all stable:
- * `busy` and `fetchingId` change only when a download starts or ends, and
- * `onPick` is a useCallback below.
- */
-const MemoisedCatalogue = memo(CatalogueList);
+/** The projects half of the library: App's list and every action on it. */
+export interface HomeProjects extends ProjectActions {
+  list: ProjectSummary[];
+  loading: boolean;
+  error: string | null;
+  /** The project an action is running on, or null. */
+  busyId: string | null;
+  onNew: () => void;
+}
 
 /**
  * Where the automatic layout changes over.
@@ -113,7 +119,7 @@ const PENDING_HEADING: Record<AppMode, string> = {
   hierarchy: "Choose an ontology to see its hierarchy",
   // Never pending in practice: the Shapes tab shows only with a project open.
   shapes: "Open a project to work on its shapes",
-  home: "Library (read-only)",
+  home: "Your library",
 };
 
 interface Props {
@@ -132,12 +138,10 @@ interface Props {
   onEnterMode: (id: string, mode: AppMode) => void;
   onViewSource: (id: string) => void;
   onRemove: (id: string) => void;
-  onLoaded: (summary: OntologySummary) => void;
   onOpenDialog: (tab: "file" | "url") => void;
-  /** "My projects" (authoring-foundations), rendered first, above the
-   *  library. A slot rather than props here, because App owns the projects
-   *  and every action on them. */
-  projects?: ReactNode;
+  /** The person's projects, in the library beside their files. Omitted, the
+   *  library holds ontologies only and offers no New project. */
+  projects?: HomeProjects;
   /** "Start a project from this" on each library card. */
   onStartProject?: (id: string) => void;
 }
@@ -154,7 +158,7 @@ const FOCUSABLE =
  *  uploaded file is the user's own and exports without a prompt; a URL-sourced
  *  one probably has a publisher who already documents it, so the interface
  *  confirms first and names the host. A source that does not parse as a URL is
- *  treated as needing no host, which cannot happen for a real fetch. */
+ *  treated as needing no host: a bundled example's "example" is one. */
 function confirmationHost(source: string): string | null {
   if (source === "upload") return null;
   try {
@@ -188,16 +192,10 @@ export default function HomeScreen({
   onEnterMode,
   onViewSource,
   onRemove,
-  onLoaded,
   onOpenDialog,
   projects,
   onStartProject,
 }: Props) {
-  // Which catalogue entry is downloading, and what went wrong last time. Both
-  // are local: nothing above this component needs to know about a download that
-  // has not produced an ontology yet.
-  const [fetching, setFetching] = useState<CatalogueEntry | null>(null);
-  const [fetchError, setFetchError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   // DOC-1. The ontology whose documentation is being generated, the one waiting
   // on a fetch-source confirmation, the last error, and where the progress
@@ -215,12 +213,13 @@ export default function HomeScreen({
   const [override, setOverride] = useState<HomeLayout | null>(storedLayout);
 
   const firstControl = useRef<HTMLButtonElement>(null);
-  // The catalogue's own first row, reached through its container rather than
-  // through a ref prop, so CatalogueList stays purely presentational and both
-  // callers of it render identically.
-  const catalogueRef = useRef<HTMLDivElement>(null);
-  // Focus is taken once per mount, not on every render, or re-rendering while a
-  // download is in flight would drag focus back out of wherever the user put it.
+  // Where focus starts when the library is empty: New project, or with no
+  // projects to make, the first file route.
+  const newProjectRef = useRef<HTMLButtonElement>(null);
+  const openFileRef = useRef<HTMLButtonElement>(null);
+  // Focus is taken once per mount, not on every render, or re-rendering while
+  // an action is in flight would drag focus back out of wherever the user put
+  // it.
   const focusTaken = useRef(false);
   // The confirm button of the docs dialog, focused when it opens; the dialog
   // itself, whose focusables the trap wraps across; and the control that opened
@@ -251,14 +250,14 @@ export default function HomeScreen({
   // Take focus once the library has resolved, because until then there is no
   // card to take it. This screen is the only thing on screen whenever it is
   // shown — on startup and on every press of Home — so taking focus interrupts
-  // nothing.
+  // nothing. On a first visit the first card is the first example's, so focus
+  // starts on its Explore.
   const startTarget = () =>
-    firstControl.current ??
-    catalogueRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)") ??
-    null;
+    firstControl.current ?? newProjectRef.current ?? openFileRef.current ?? null;
 
+  const listsLoading = loading || (projects?.loading ?? false);
   useEffect(() => {
-    if (loading || focusTaken.current) return;
+    if (listsLoading || focusTaken.current) return;
     focusTaken.current = true;
     const target = startTarget();
     if (!target) return;
@@ -276,10 +275,10 @@ export default function HomeScreen({
     target.dataset.startFocus = "";
     target.addEventListener("blur", () => delete target.dataset.startFocus, { once: true });
     // Without preventScroll the browser scrolled to the target, and at
-    // 1280x720 Home opened past My projects (portal-foundations 5.8).
+    // 1280x720 Home opened past its top (portal-foundations 5.8).
     target.focus({ preventScroll: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading]);
+  }, [listsLoading]);
 
   // A card removed from its ⋮ menu takes its focused ⋮ button with it, and
   // focus would fall to the page (portal-foundations 5.7: removal lives only
@@ -294,25 +293,6 @@ export default function HomeScreen({
     startTarget()?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ontologies]);
-
-  const pickCatalogue = useCallback(
-    async (entry: CatalogueEntry) => {
-      setFetching(entry);
-      setFetchError(null);
-      try {
-        // The same client function the Load dialog calls, so this reaches the
-        // same guarded POST /fetch and introduces no new outbound path.
-        onLoaded(await fetchOntology(entry.url));
-      } catch (e: unknown) {
-        setFetchError(e instanceof Error ? e.message : String(e));
-      } finally {
-        // Restores the row: a failure leaves the catalogue exactly as it was,
-        // with the error beneath it.
-        setFetching(null);
-      }
-    },
-    [onLoaded],
-  );
 
   // Generate and download the documentation zip, excluding instance data unless
   // `includeIndividuals` is set (DOC-1 D-038). The screen goes busy so a second
@@ -408,22 +388,29 @@ export default function HomeScreen({
     return () => document.removeEventListener("keydown", onKey);
   }, [docsConfirm, cancelDocs]);
 
-  const busy = fetching !== null || workingId !== null || docsBusyId !== null;
+  const busy = workingId !== null || docsBusyId !== null;
+  const projectBusyId = projects?.busyId ?? null;
+
+  const projectList = projects?.list;
+  const entries = useMemo(
+    () => libraryEntries(projectList ?? [], ontologies),
+    [projectList, ontologies],
+  );
 
   // Filtered by NAME only. Case-insensitive and a substring rather than a
   // prefix, because a user who remembers "quickstart" should not have to
   // remember what came before it.
   const needle = query.trim().toLowerCase();
   const matching = useMemo(
-    () =>
-      needle ? ontologies.filter((o) => o.name.toLowerCase().includes(needle)) : ontologies,
-    [ontologies, needle],
+    () => (needle ? entries.filter((e) => e.name.toLowerCase().includes(needle)) : entries),
+    [entries, needle],
   );
 
-  // The automatic choice reads the WHOLE library, never `matching`. Switching
-  // on the filtered count would flip the screen between layouts while the user
-  // types, which is worse than either layout — AC-19.
-  const automatic: HomeLayout = ontologies.length > CARD_LAYOUT_MAX ? "rows" : "cards";
+  // The automatic choice reads the WHOLE library, examples and projects
+  // included, never `matching`. Switching on the filtered count would flip the
+  // screen between layouts while the user types, which is worse than either
+  // layout — AC-19.
+  const automatic: HomeLayout = entries.length > CARD_LAYOUT_MAX ? "rows" : "cards";
   const layout = override ?? automatic;
 
   const chooseLayout = (next: HomeLayout) => {
@@ -435,27 +422,22 @@ export default function HomeScreen({
     }
   };
 
-  // One live region, and what it says depends on what just happened. A download
-  // is transient and more urgent than a result count, so it wins while it runs.
-  // Documentation generation is the most urgent of all — it is a deliberate
-  // action the user is waiting on — so it leads, and its "ready" holds until the
-  // next search keystroke clears it (see the search onChange).
+  // One live region, and what it says depends on what just happened.
+  // Documentation generation leads — it is a deliberate action the user is
+  // waiting on — and its "ready" holds until the next search keystroke clears
+  // it (see the search onChange).
   const announcement =
     docsStatus === "preparing"
       ? "Preparing documentation…"
       : docsStatus === "ready"
         ? "Documentation ready."
-        : fetching
-          ? `Downloading ${fetching.name}…`
-          : needle
-            ? matching.length === 1
-              ? "1 ontology matches"
-              : `${matching.length} ontologies match`
-            : "";
+        : needle
+          ? matching.length === 1
+            ? "1 entry matches"
+            : `${matching.length} entries match`
+          : "";
 
-  // "Read-only" is in the heading because the library is where exploring FIBO
-  // can never change it; a project is where things change (Section 7).
-  const heading = pendingMode ? PENDING_HEADING[pendingMode] : "Library (read-only)";
+  const heading = pendingMode ? PENDING_HEADING[pendingMode] : "Your library";
 
   return (
     // Both class names on purpose. `start-screen` is what carries the layout
@@ -476,97 +458,125 @@ export default function HomeScreen({
           {announcement}
         </div>
 
-        {projects}
-
         <section className="start-section" aria-labelledby="home-library-heading">
           <div className="home-library-head">
             <h2 id="home-library-heading">{heading}</h2>
-            {/* The controls sit above the library and are absent while it is
-                empty: a search box over "nothing saved yet" is a control that
-                cannot do anything. */}
-            {!loading && !error && ontologies.length > 0 && (
-              <div className="home-controls">
-                <label className="visually-hidden" htmlFor="home-search">
-                  Search your library by name
-                </label>
-                <input
-                  id="home-search"
-                  type="search"
-                  className="home-search"
-                  value={query}
-                  onChange={(e) => {
-                    setQuery(e.target.value);
-                    // A finished-documentation announcement has had its moment;
-                    // let the region go back to reporting search matches.
-                    if (docsStatus === "ready") setDocsStatus("");
-                  }}
-                  // Honest about what it does. Searching the CONTENTS of every
-                  // saved ontology is real future work and is parked; a
-                  // placeholder that invited a concept name would return
-                  // nothing and teach the user the feature is broken rather
-                  // than absent.
-                  placeholder="Search your library by name"
-                />
-                <div
-                  className="home-view-toggle"
-                  role="group"
-                  aria-label="Library view"
+            <div className="home-controls">
+              {projects && (
+                <button
+                  ref={newProjectRef}
+                  className="primary large"
+                  onClick={projects.onNew}
+                  disabled={projectBusyId !== null}
                 >
-                  <button
-                    className={layout === "cards" ? "active" : undefined}
-                    aria-pressed={layout === "cards"}
-                    onClick={() => chooseLayout("cards")}
-                  >
-                    Cards
-                  </button>
-                  <button
-                    className={layout === "rows" ? "active" : undefined}
-                    aria-pressed={layout === "rows"}
-                    onClick={() => chooseLayout("rows")}
-                  >
-                    Rows
-                  </button>
-                </div>
-              </div>
-            )}
+                  New project
+                </button>
+              )}
+              {/* Search and the view toggle are absent while the library is
+                  empty: a search box over nothing is a control that cannot do
+                  anything. */}
+              {!listsLoading && entries.length > 0 && (
+                <>
+                  <label className="visually-hidden" htmlFor="home-search">
+                    Search your library by name
+                  </label>
+                  <input
+                    id="home-search"
+                    type="search"
+                    className="home-search"
+                    value={query}
+                    onChange={(e) => {
+                      setQuery(e.target.value);
+                      // A finished-documentation announcement has had its
+                      // moment; let the region go back to reporting matches.
+                      if (docsStatus === "ready") setDocsStatus("");
+                    }}
+                    // Honest about what it does. Searching the CONTENTS of
+                    // every saved ontology is real future work and is parked;
+                    // a placeholder that invited a concept name would return
+                    // nothing and teach the user the feature is broken rather
+                    // than absent.
+                    placeholder="Search your library by name"
+                  />
+                  <div className="home-view-toggle" role="group" aria-label="Library view">
+                    <button
+                      className={layout === "cards" ? "active" : undefined}
+                      aria-pressed={layout === "cards"}
+                      onClick={() => chooseLayout("cards")}
+                    >
+                      Cards
+                    </button>
+                    <button
+                      className={layout === "rows" ? "active" : undefined}
+                      aria-pressed={layout === "rows"}
+                      onClick={() => chooseLayout("rows")}
+                    >
+                      Rows
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
-          {loading ? (
-            <p className="start-empty">Loading your library…</p>
-          ) : error ? (
-            // The library section fails alone; the catalogue and both file
-            // routes below stay usable.
+          {/* Each list fails alone: what did load is still shown, and the file
+              routes below stay usable. */}
+          {error && (
             <div className="start-error">
               <p className="detail-error">{error}</p>
               <button className="ghost" onClick={onRetry}>
                 Try again
               </button>
             </div>
-          ) : ontologies.length === 0 ? (
-            <p className="start-empty">Nothing saved yet. Pick one below, or open a file.</p>
+          )}
+          {projects?.error && <p className="detail-error">{projects.error}</p>}
+
+          {listsLoading ? (
+            <p className="start-empty">Loading your library…</p>
+          ) : entries.length === 0 ? (
+            !error && !projects?.error && (
+              <p className="start-empty">
+                Nothing here yet. Start a project, or open a file below.
+              </p>
+            )
           ) : matching.length === 0 ? (
-            // The catalogue below is deliberately unaffected: it is not what was
-            // searched, and emptying it would look like a broken screen.
-            <p className="start-empty">No saved ontology matches “{query.trim()}”.</p>
+            <p className="start-empty">Nothing in your library matches “{query.trim()}”.</p>
           ) : (
             <div className={layout === "rows" ? "onto-grid onto-grid-rows" : "onto-grid"}>
-              {matching.map((summary, i) => (
-                <OntologyCard
-                  key={summary.id}
-                  summary={summary}
-                  theme={theme}
-                  layout={layout === "rows" ? "row" : "card"}
-                  busy={busy}
-                  working={workingId === summary.id}
-                  firstVerbRef={i === 0 ? firstControl : undefined}
-                  onOpen={onOpen}
-                  onEnterMode={onEnterMode}
-                  onViewSource={onViewSource}
-                  onDownloadDocs={requestDocs}
-                  onRemove={onRemove}
-                  onStartProject={onStartProject}
-                />
-              ))}
+              {matching.map((entry, i) =>
+                entry.kind === "project" && projects ? (
+                  <ProjectCard
+                    key={entry.id}
+                    project={entry.project}
+                    layout={layout === "rows" ? "row" : "card"}
+                    busy={projectBusyId === entry.id}
+                    disabled={projectBusyId !== null}
+                    openRef={i === 0 ? firstControl : undefined}
+                    onOpen={projects.onOpen}
+                    onRename={projects.onRename}
+                    onChangeKind={projects.onChangeKind}
+                    onDuplicate={projects.onDuplicate}
+                    onExport={projects.onExport}
+                    onDelete={projects.onDelete}
+                  />
+                ) : entry.kind === "ontology" ? (
+                  <OntologyCard
+                    key={entry.id}
+                    summary={entry.ontology}
+                    theme={theme}
+                    layout={layout === "rows" ? "row" : "card"}
+                    busy={busy}
+                    working={workingId === entry.id}
+                    firstVerbRef={i === 0 ? firstControl : undefined}
+                    onOpen={onOpen}
+                    onEnterMode={onEnterMode}
+                    onViewSource={onViewSource}
+                    onDownloadDocs={requestDocs}
+                    onRemove={onRemove}
+                    onStartProject={onStartProject}
+                  />
+                ) : null,
+              )}
             </div>
           )}
           {/* A refusal (the graph is over the embed guard) or a generation
@@ -575,27 +585,10 @@ export default function HomeScreen({
           {docsError && <p className="detail-error">{docsError}</p>}
         </section>
 
-        <section className="start-section" aria-labelledby="home-catalogue-heading">
-          <h2 id="home-catalogue-heading">Try one</h2>
-          <p className="hint">
-            {ontologies.length === 0
-              ? "Pick one and see what an ontology looks like — nothing is downloaded until you do."
-              : "Well-known public ontologies — nothing is downloaded until you pick one."}
-          </p>
-          <div ref={catalogueRef}>
-            <MemoisedCatalogue
-              fetchingId={fetching?.id ?? null}
-              busy={busy}
-              onPick={pickCatalogue}
-            />
-          </div>
-          {fetchError && <p className="detail-error">{fetchError}</p>}
-        </section>
-
         <section className="start-section" aria-labelledby="home-or-heading">
           <h2 id="home-or-heading">Or</h2>
           <div className="start-routes">
-            <button disabled={busy} onClick={() => onOpenDialog("file")}>
+            <button ref={openFileRef} disabled={busy} onClick={() => onOpenDialog("file")}>
               Open a file
             </button>
             <button disabled={busy} onClick={() => onOpenDialog("url")}>

@@ -533,8 +533,14 @@ describe("App startup chooser", () => {
   it("requests only the ontology list and the project list on mount", async () => {
     // AC-13, and authoring-foundations' "mount still one request plus the
     // projects list": two lists, both built from metadata files, and nothing
-    // that parses.
+    // that parses. The library holds a bundled example as well
+    // (home-and-examples 5.5), and still nothing more is asked for.
+    listOntologies.mockResolvedValue([
+      SUMMARY,
+      { ...SUMMARY, id: "ont-example", name: "Space Exploration", source: "example", example: { key: "space", purpose: "Every feature, one ontology." } },
+    ]);
     await renderApp();
+    expect(libraryCard("Space Exploration")).toBeTruthy();
 
     expect(listOntologies).toHaveBeenCalledTimes(1);
     expect(listProjects).toHaveBeenCalledTimes(1);
@@ -2659,12 +2665,14 @@ function tab(name: string): HTMLElement {
 }
 
 describe("App projects (authoring-foundations)", () => {
-  it("lists projects above the read-only library", async () => {
-    listProjects.mockResolvedValue([PROJECT]);
+  it("lists projects in the one library, before the files (home-and-examples 5.5)", async () => {
+    listProjects.mockResolvedValue([{ ...PROJECT, updatedAt: "2099-01-01T00:00:00Z" }]);
     await renderApp();
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings.indexOf("My projects")).toBeLessThan(headings.indexOf("Library (read-only)"));
-    expect(screen.getByRole("heading", { level: 3, name: "Invoices" })).toBeTruthy();
+    expect(headings).toEqual(["Your library", "Or"]);
+    const names = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    expect(names[0]).toBe("Invoices");
+    expect(names).toContain(SUMMARY.name);
     expect(getGraph).not.toHaveBeenCalled();
   });
 

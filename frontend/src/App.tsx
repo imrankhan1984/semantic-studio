@@ -170,7 +170,6 @@ import {
 import ConfirmDialog from "./components/ConfirmDialog";
 import NewProjectDialog, { type NewProjectRequest } from "./components/NewProjectDialog";
 import ProjectHeader from "./components/ProjectHeader";
-import ProjectsSection from "./components/ProjectsSection";
 import TurtleEditor from "./components/TurtleEditor";
 import { triggerDownload } from "./download";
 import {
@@ -2045,24 +2044,21 @@ export default function App() {
           onEnterMode={enterLibrary}
           onViewSource={(id) => enterLibrary(id, "view")}
           onRemove={(id) => void onRemove(id)}
-          onLoaded={onLoaded}
           onOpenDialog={openDialog}
           onStartProject={(id) => setNewProject({ source: id })}
-          projects={
-            <ProjectsSection
-              projects={projects}
-              loading={projectsLoading}
-              error={projectsError}
-              busyId={projectBusyId}
-              onNew={() => setNewProject({})}
-              onOpen={openProjectById}
-              onRename={onRenameProject}
-              onChangeKind={(pid) => setChangingKind(projects.find((p) => p.id === pid) ?? null)}
-              onDuplicate={onDuplicateProject}
-              onExport={onExportProject}
-              onDelete={onDeleteProject}
-            />
-          }
+          projects={{
+            list: projects,
+            loading: projectsLoading,
+            error: projectsError,
+            busyId: projectBusyId,
+            onNew: () => setNewProject({}),
+            onOpen: openProjectById,
+            onRename: onRenameProject,
+            onChangeKind: (pid) => setChangingKind(projects.find((p) => p.id === pid) ?? null),
+            onDuplicate: onDuplicateProject,
+            onExport: onExportProject,
+            onDelete: onDeleteProject,
+          }}
         />
       ) : mode === "shapes" && openProjectSummary ? (
         <main className="main">

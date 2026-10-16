@@ -5,17 +5,18 @@ FILE: frontend/src/components/CatalogueList.tsx
 
 SUMMARY
     The list of suggested public ontologies, rendered as one button per
-    CATALOGUE entry. Used by both the Load dialog's "Suggested" tab and the
-    home screen's "Try one" section.
+    CATALOGUE entry, in the Load dialog's "Suggested" tab. The home screen's
+    "Try one" section used it too, until the bundled examples took that
+    section's place (home-and-examples 5.5): Home no longer downloads anything.
 
 BASIC IDEA
-    Two screens offer the same four ontologies, and two separate renderings of
-    the same constant would drift: a change to the ordering (backlog L-1, built
-    2026-07-30) or to an entry's wording would land on one screen and not the
-    other. So the markup lives here once and both callers pass in their own
-    busy state and their own pick handler. L-1 was the anticipated case and it
-    behaved: reordering CATALOGUE and giving each entry an audience line reached
-    both screens through this one component.
+    Two screens offered the same ontologies, and two separate renderings of
+    the same constant would have drifted: a change to the ordering (backlog
+    L-1, built 2026-07-30) or to an entry's wording would have landed on one
+    screen and not the other. So the markup lives here once and the caller
+    passes in its own busy state and its own pick handler. It stays a
+    component of its own with one caller, which keeps the dialog's file short
+    and this list testable alone.
 
     It is deliberately presentational. It does not fetch, does not hold the
     in-flight id, and does not know what happens after a pick — the caller owns

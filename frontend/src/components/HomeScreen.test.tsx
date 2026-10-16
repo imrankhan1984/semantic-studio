@@ -7,72 +7,103 @@ FILE: frontend/src/components/HomeScreen.test.tsx
 SUMMARY
     The first test for HomeScreen. Covers the library's states, the search box
     and what it does and does not filter, the two layouts and the toggle that
-    overrides them, the empty state, and the two render budgets.
+    overrides them, the empty state, and the two render budgets; since
+    home-and-examples 5.5 (AC-7), the one library: the person's projects and
+    files first, newest first, then the three examples in their fixed order,
+    and no *Try one* catalogue.
 
 BASIC IDEA
-    This is StartScreen.test.tsx's successor and inherits its shape, including
-    the trap that made it worth having: api.ts is mocked so a catalogue pick
-    resolves or rejects on command, and the CATALOGUE constant is deliberately
-    NOT mocked, because which entries appear and in what order is
-    CatalogueList.test.tsx's subject and mocking it here would let the two
-    disagree.
-
-    Two of the budgets are negative, which is the shape that matters. "The
-    catalogue does not re-render when you type" is asserted by mocking
-    ./CatalogueList with a spy and letting HomeScreen's own `memo` wrap it — so
-    what is under test is the production memo, and deleting that line turns this
-    file red. That mutation was run.
+    This is StartScreen.test.tsx's successor and inherits its shape. api.ts is
+    mocked whole, and every function in the mock is a spy, so "opening Home
+    makes no request" is asserted as no call to any of them: the screen reads
+    the two lists it is handed and nothing else.
 
     localStorage is cleared between tests. The layout choice is persisted, and
     a test that inherited the previous one's preference would pass or fail on
     execution order.
 
 INPUTS / INPUT SOURCES
-    - A mocked fetchOntology from ../api.
-    - Ontology summaries built by `summaries()` below.
+    - A mocked ../api.
+    - Ontology summaries built by `summaries()`, examples by `example()`, and
+      projects by `project()` below.
 
 EXPECTED OUTPUT
-    - Pass/fail per assertion, covering AC-3, AC-7, AC-8, AC-11, AC-16, AC-17,
-      AC-18, AC-19 and AC-20.
+    - Pass/fail per assertion, covering AC-3, AC-7, AC-8, AC-16, AC-17, AC-18,
+      AC-19 and AC-20 of the home screen's spec, and AC-7 of
+      home-and-examples.
 ================================================================================
 */
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import HomeScreen, { CARD_LAYOUT_MAX } from "./HomeScreen";
+import HomeScreen, { CARD_LAYOUT_MAX, type HomeProjects } from "./HomeScreen";
 import { CATALOGUE } from "../catalogue";
-import type { OntologySummary } from "../types";
+import type { OntologySummary, ProjectSummary } from "../types";
 
-const { fetchOntology, downloadDocumentation } = vi.hoisted(() => ({
+// Every api function a Home render could reach, each a spy, so "no request"
+// is the absence of a call to any of them.
+const API = vi.hoisted(() => ({
   fetchOntology: vi.fn(),
   downloadDocumentation: vi.fn(),
+  listOntologies: vi.fn(),
+  listProjects: vi.fn(),
+  getGraph: vi.fn(),
+  uploadOntology: vi.fn(),
+  restoreExamples: vi.fn(),
 }));
-vi.mock("../api", () => ({ fetchOntology, downloadDocumentation }));
+const { downloadDocumentation } = API;
+vi.mock("../api", () => API);
 
-// A spy standing in for the catalogue, so its renders can be counted. The memo
-// under test is HomeScreen's own, applied at the import site, so it still wraps
-// this stub — which is the only arrangement that tests the shipped line rather
-// than a copy of it declared here.
-const { catalogueRenders } = vi.hoisted(() => ({ catalogueRenders: { count: 0 } }));
-vi.mock("./CatalogueList", () => ({
-  default: ({ busy, onPick }: { busy: boolean; onPick: (e: unknown) => void }) => {
-    catalogueRenders.count += 1;
-    return (
-      <div className="catalogue">
-        {CATALOGUE.map((entry) => (
-          <button
-            key={entry.id}
-            className="catalogue-entry"
-            disabled={busy}
-            onClick={() => onPick(entry)}
-          >
-            {entry.name}
-          </button>
-        ))}
-      </div>
-    );
-  },
-}));
+/** A bundled example as the list serves it (home-and-examples 5.1). */
+function example(key: string, name: string, purpose = `What ${name} is for.`): OntologySummary {
+  return {
+    ...summaries(1)[0],
+    id: `ont-${key}`,
+    name,
+    source: "example",
+    triples: 800,
+    example: { key, purpose },
+  };
+}
+
+const EXAMPLES = [
+  example("space", "Space Exploration"),
+  example("middle-earth", "The Lord of the Rings"),
+  example("foaf", "FOAF (Friend of a Friend)"),
+];
+
+function project(id: string, name: string, updatedAt: string): ProjectSummary {
+  return {
+    id,
+    name,
+    createdAt: updatedAt,
+    updatedAt,
+    baseIri: `http://example.org/${id}#`,
+    prefix: "p",
+    primaryLanguage: "en",
+    languages: [],
+    documents: [{ file: "model.ttl", role: "model" }],
+    counts: { classes: 1, properties: 0, concepts: 0 },
+    kind: "ontology",
+  };
+}
+
+function projects(list: ProjectSummary[], extra: Partial<HomeProjects> = {}): HomeProjects {
+  return {
+    list,
+    loading: false,
+    error: null,
+    busyId: null,
+    onNew: vi.fn(),
+    onOpen: vi.fn(),
+    onRename: vi.fn(async () => undefined),
+    onChangeKind: vi.fn(),
+    onDuplicate: vi.fn(),
+    onExport: vi.fn(),
+    onDelete: vi.fn(),
+    ...extra,
+  };
+}
 
 /** `n` stored ontologies, named so a search has something to discriminate on
  *  and sized so the digits in the assertions are readable. */
@@ -99,7 +130,6 @@ function renderScreen(props: Partial<React.ComponentProps<typeof HomeScreen>> = 
     onEnterMode: vi.fn(),
     onViewSource: vi.fn(),
     onRemove: vi.fn(),
-    onLoaded: vi.fn(),
     onOpenDialog: vi.fn(),
   };
   const result = render(
@@ -125,6 +155,18 @@ function catalogueRows(): HTMLButtonElement[] {
   return [...document.querySelectorAll<HTMLButtonElement>("button.catalogue-entry")];
 }
 
+/** The library's entries by name, in the order they are shown. */
+function shownNames(): string[] {
+  return cards().map((c) => c.querySelector("h3")!.textContent ?? "");
+}
+
+function fileRoutes(): HTMLButtonElement[] {
+  return [
+    screen.getByRole("button", { name: /open a file/i }) as HTMLButtonElement,
+    screen.getByRole("button", { name: /load from a url/i }) as HTMLButtonElement,
+  ];
+}
+
 function searchBox(): HTMLInputElement {
   return screen.getByLabelText(/search your library/i) as HTMLInputElement;
 }
@@ -134,9 +176,7 @@ function type(text: string) {
 }
 
 beforeEach(() => {
-  fetchOntology.mockReset();
-  downloadDocumentation.mockReset();
-  catalogueRenders.count = 0;
+  for (const fn of Object.values(API)) fn.mockReset();
   localStorage.clear();
 });
 
@@ -191,36 +231,49 @@ describe("HomeScreen library", () => {
   });
 
   it("empty library shows the message and keeps the other routes", () => {
-    // AC-8. First run decides whether a newcomer continues, so the catalogue
-    // and both file routes have to carry the screen on their own.
-    renderScreen({ ontologies: [] });
+    // AC-8. With the examples removed and nothing made yet, New project and
+    // both file routes carry the screen on their own.
+    renderScreen({ ontologies: [], projects: projects([]) });
 
-    expect(screen.getByText(/nothing saved yet/i)).toBeTruthy();
+    expect(
+      screen.getByText("Nothing here yet. Start a project, or open a file below."),
+    ).toBeTruthy();
     expect(cards()).toHaveLength(0);
-    expect(catalogueRows()).toHaveLength(CATALOGUE.length);
-    expect(screen.getByRole("button", { name: /open a file/i })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /load from a url/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New project" })).toBeTruthy();
+    expect(fileRoutes()).toHaveLength(2);
     // No search box and no toggle over an empty library: controls that cannot
     // do anything.
     expect(screen.queryByLabelText(/search your library/i)).toBeNull();
   });
 
-  it("list failure keeps the catalogue and file routes usable", () => {
+  it("list failure keeps the file routes usable", () => {
     // The library section fails alone. A backend that cannot list should not
     // stop somebody uploading a file.
     const { onRetry } = renderScreen({ error: "Failed to fetch", ontologies: [] });
 
     expect(screen.getByText("Failed to fetch")).toBeTruthy();
-    expect(catalogueRows()).toHaveLength(CATALOGUE.length);
+    expect(fileRoutes().every((b) => !b.disabled)).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /try again/i }));
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("a project list failure is said in the library, and the files still show", () => {
+    renderScreen({ projects: projects([], { error: "Projects could not be listed." }) });
+    expect(screen.getByText("Projects could not be listed.")).toBeTruthy();
+    expect(cards()).toHaveLength(3);
   });
 
   it("says the library is loading without disabling the rest", () => {
     renderScreen({ loading: true, ontologies: [] });
 
     expect(screen.getByText(/loading your library/i)).toBeTruthy();
-    expect(catalogueRows().every((b) => !b.disabled)).toBe(true);
+    expect(fileRoutes().every((b) => !b.disabled)).toBe(true);
+  });
+
+  it("waits for the project list as well as the ontology list", () => {
+    renderScreen({ projects: projects([], { loading: true }) });
+    expect(screen.getByText(/loading your library/i)).toBeTruthy();
+    expect(cards()).toHaveLength(0);
   });
 
   it("the library heading asks which ontology when a mode is pending", () => {
@@ -230,16 +283,90 @@ describe("HomeScreen library", () => {
 
     document.body.innerHTML = "";
     renderScreen();
-    // authoring-foundations: the library is marked read-only, because a
-    // project is now where things change (Section 7).
-    expect(screen.getByRole("heading", { name: "Library (read-only)" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Your library" })).toBeTruthy();
   });
 
-  it("puts the projects section first, above the library (AC-3)", () => {
-    renderScreen({ projects: <section aria-label="My projects stand-in"><h2>My projects</h2></section> });
+  it("is one library and the file routes: no Try one, no catalogue (home-and-examples AC-7)", () => {
+    renderScreen({ ontologies: [...summaries(2), ...EXAMPLES], projects: projects([]) });
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings.indexOf("My projects")).toBeGreaterThanOrEqual(0);
-    expect(headings.indexOf("My projects")).toBeLessThan(headings.indexOf("Library (read-only)"));
+    expect(headings).toEqual(["Your library", "Or"]);
+    expect(catalogueRows()).toHaveLength(0);
+    expect(screen.queryByText("Try one")).toBeNull();
+    // None of the downloaded catalogue's names is offered on Home.
+    for (const entry of CATALOGUE) expect(screen.queryByText(entry.name)).toBeNull();
+  });
+
+  it("New project heads the library and calls App's handler", () => {
+    const list = projects([]);
+    renderScreen({ projects: list });
+    const head = document.querySelector(".home-library-head")!;
+    const button = screen.getByRole("button", { name: "New project" });
+    expect(head.contains(button)).toBe(true);
+    expect(button.className).toContain("primary");
+    fireEvent.click(button);
+    expect(list.onNew).toHaveBeenCalledTimes(1);
+  });
+
+  it("puts the person's projects and files first, newest first, then the examples (AC-7)", () => {
+    const files: OntologySummary[] = [
+      { ...summaries(1)[0], id: "f-old", name: "Old file", addedAt: "2026-01-05T09:00:00Z" },
+      { ...summaries(1)[0], id: "f-new", name: "New file", addedAt: "2026-10-10T09:00:00Z" },
+    ];
+    renderScreen({
+      // The list order is scrambled on purpose: the examples come first from
+      // the server, and the screen still puts them last.
+      ontologies: [EXAMPLES[2], EXAMPLES[0], ...files, EXAMPLES[1]],
+      projects: projects([
+        project("prj-a", "Mid project", "2026-06-01T09:00:00Z"),
+        project("prj-b", "Newest project", "2026-10-12T09:00:00Z"),
+      ]),
+    });
+    expect(shownNames()).toEqual([
+      "Newest project",
+      "New file",
+      "Mid project",
+      "Old file",
+      "Space Exploration",
+      "The Lord of the Rings",
+      "FOAF (Friend of a Friend)",
+    ]);
+  });
+
+  it("an example card says Example and its purpose, and every library card says Read-only", () => {
+    renderScreen({ ontologies: [summaries(1)[0], EXAMPLES[0]] });
+    const [file, space] = cards();
+    expect(space.textContent).toContain("Example");
+    expect(space.querySelector(".onto-summary")!.textContent).toBe("What Space Exploration is for.");
+    expect(space.textContent).not.toContain("Added");
+    expect(file.textContent).not.toContain("Example");
+    for (const card of [file, space]) expect(card.textContent).toContain("Read-only");
+  });
+
+  it("ten entries give rows, examples and projects counted", () => {
+    // Four files, three examples and three projects: ten in all, so rows,
+    // though no one list holds more than four.
+    renderScreen({
+      ontologies: [...summaries(4), ...EXAMPLES],
+      projects: projects([
+        project("prj-1", "P1", "2026-10-01T09:00:00Z"),
+        project("prj-2", "P2", "2026-10-02T09:00:00Z"),
+        project("prj-3", "P3", "2026-10-03T09:00:00Z"),
+      ]),
+    });
+    expect(cards()).toHaveLength(10);
+    expect(document.querySelector(".onto-grid-rows")).toBeTruthy();
+    expect(cards().every((c) => c.classList.contains("onto-row"))).toBe(true);
+  });
+
+  it("opening Home makes no request, examples included (AC-7, Section 10)", () => {
+    renderScreen({
+      ontologies: [...summaries(2), ...EXAMPLES],
+      projects: projects([project("prj-1", "P1", "2026-10-01T09:00:00Z")]),
+    });
+    expect(cards()).toHaveLength(6);
+    for (const [name, fn] of Object.entries(API)) {
+      expect(fn, `${name} was called by a Home render`).not.toHaveBeenCalled();
+    }
   });
 
   it("offers Start a project from this on a library card, and hands over its id (AC-2)", async () => {
@@ -265,26 +392,26 @@ describe("HomeScreen search", () => {
     expect(screen.getByRole("heading", { level: 3, name: "Ontology 3" })).toBeTruthy();
   });
 
-  it("search does not filter the catalogue", () => {
-    // AC-7. The catalogue is not what was searched, and emptying it would look
-    // like a broken screen rather than like a search with no results.
-    renderScreen({ ontologies: summaries(5) });
+  it("search filters projects, files and examples alike, by name", () => {
+    renderScreen({
+      ontologies: [...summaries(2), ...EXAMPLES],
+      projects: projects([project("prj-1", "Space notes", "2026-10-01T09:00:00Z")]),
+    });
 
-    type("nothing matches this");
+    type("space");
 
-    expect(cards()).toHaveLength(0);
-    expect(catalogueRows()).toHaveLength(CATALOGUE.length);
+    expect(shownNames()).toEqual(["Space notes", "Space Exploration"]);
   });
 
-  it("no match shows a message and leaves the catalogue", () => {
+  it("no match shows a message and leaves the file routes", () => {
     // AC-7. It quotes what was typed, so the user can see they searched for
     // what they think they searched for.
     renderScreen({ ontologies: summaries(5) });
 
     type("zzz");
 
-    expect(screen.getByText(/no saved ontology matches/i).textContent).toContain("zzz");
-    expect(catalogueRows()).toHaveLength(CATALOGUE.length);
+    expect(screen.getByText(/nothing in your library matches/i).textContent).toContain("zzz");
+    expect(fileRoutes()).toHaveLength(2);
   });
 
   it("the result count is announced politely", () => {
@@ -296,16 +423,17 @@ describe("HomeScreen search", () => {
     expect(live.getAttribute("aria-live")).toBe("polite");
     expect(live.textContent).toBe("");
 
+    // "entries", not "ontologies": a project is in the library too.
     type("ontology");
-    expect(screen.getByRole("status").textContent).toBe("5 ontologies match");
+    expect(screen.getByRole("status").textContent).toBe("5 entries match");
 
     type("ontology 2");
-    // Singular has its own wording. "1 ontologies match" is the kind of thing
+    // Singular has its own wording. "1 entries match" is the kind of thing
     // nobody notices in review and everybody notices in use.
-    expect(screen.getByRole("status").textContent).toBe("1 ontology matches");
+    expect(screen.getByRole("status").textContent).toBe("1 entry matches");
 
     type("zzz");
-    expect(screen.getByRole("status").textContent).toBe("0 ontologies match");
+    expect(screen.getByRole("status").textContent).toBe("0 entries match");
   });
 
   it("the placeholder does not imply concept search", () => {
@@ -393,18 +521,11 @@ describe("HomeScreen layout", () => {
   });
 });
 
-describe("HomeScreen catalogue", () => {
-  it("catalogue rows are disabled while one is downloading", async () => {
-    fetchOntology.mockReturnValue(new Promise(() => {}));
-    renderScreen();
-
-    await act(async () => {
-      fireEvent.click(catalogueRows()[0]);
-    });
-
-    expect(catalogueRows().every((b) => b.disabled)).toBe(true);
-    // The library cards too: starting a second ontology underneath a download
-    // in flight would leave the finished download overriding the later choice.
+describe("HomeScreen working state", () => {
+  it("while an entry is being worked on, every library card is inert", () => {
+    // Removal counts saved queries first (portal-foundations 5.7); starting
+    // something else underneath would race it.
+    renderScreen({ ontologies: [...summaries(2), EXAMPLES[0]], workingId: "o0" });
     for (const card of cards()) {
       // The ⋮ button by aria-disabled, so it keeps focus (5.7).
       for (const button of card.querySelectorAll("button")) {
@@ -412,48 +533,6 @@ describe("HomeScreen catalogue", () => {
         expect(inert).toBe(true);
       }
     }
-  });
-
-  it("a failed catalogue fetch shows an error and restores the rows", async () => {
-    fetchOntology.mockRejectedValue(new Error("That URL could not be reached."));
-    const { onLoaded } = renderScreen();
-
-    await act(async () => {
-      fireEvent.click(catalogueRows()[0]);
-    });
-
-    expect(screen.getByText("That URL could not be reached.")).toBeTruthy();
-    expect(catalogueRows().every((b) => !b.disabled)).toBe(true);
-    expect(onLoaded).not.toHaveBeenCalled();
-  });
-
-  it("a successful catalogue fetch reports the summary upward", async () => {
-    const summary = summaries(1)[0];
-    fetchOntology.mockResolvedValue(summary);
-    const { onLoaded } = renderScreen();
-
-    await act(async () => {
-      fireEvent.click(catalogueRows()[0]);
-    });
-
-    expect(fetchOntology).toHaveBeenCalledWith(CATALOGUE[0].url);
-    expect(onLoaded).toHaveBeenCalledWith(summary);
-  });
-
-  it("catalogue cards keep their audience lines", async () => {
-    // AC-13, asserted against the REAL CatalogueList rather than the spy this
-    // file otherwise uses, because the audience line is exactly what a stub
-    // would quietly drop. CatalogueList.test.tsx owns this claim in full; the
-    // row here is that the home screen renders the component that carries it.
-    const real = await vi.importActual<typeof import("./CatalogueList")>("./CatalogueList");
-    const { container } = render(
-      <real.default fetchingId={null} busy={false} onPick={vi.fn()} />,
-    );
-
-    const audiences = [...container.querySelectorAll(".catalogue-audience")].map(
-      (n) => n.textContent,
-    );
-    expect(audiences).toEqual(CATALOGUE.map((e) => e.audience));
   });
 });
 
@@ -504,15 +583,39 @@ describe("HomeScreen keyboard and screen reader", () => {
     expect(document.querySelectorAll("[data-start-focus]")).toHaveLength(0);
   });
 
-  it("focus starts on the first catalogue row when the library is empty", () => {
+  it("on a first visit focus starts on the first example's Explore (home-and-examples 5.5)", () => {
+    renderScreen({ ontologies: EXAMPLES, projects: projects([]) });
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Explore Space Exploration" }),
+    );
+  });
+
+  it("with a project newest, focus starts on its Open", () => {
+    renderScreen({
+      ontologies: EXAMPLES,
+      projects: projects([project("prj-1", "Invoices", "2026-10-01T09:00:00Z")]),
+    });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Open Invoices" }));
+  });
+
+  it("focus starts on New project when the library is empty", () => {
+    renderScreen({ ontologies: [], projects: projects([]) });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "New project" }));
+  });
+
+  it("focus starts on Open a file when the library is empty and there are no projects to make", () => {
     renderScreen({ ontologies: [] });
-    expect(document.activeElement).toBe(catalogueRows()[0]);
+    expect(document.activeElement).toBe(fileRoutes()[0]);
   });
 
   it("does not take focus while the library is still loading", () => {
-    // Taking focus before the cards exist would land it on a catalogue row and
-    // leave it there once the library arrived, which is the wrong row.
+    // Taking focus before the cards exist would land it on a file route and
+    // leave it there once the library arrived, which is the wrong control.
     renderScreen({ loading: true, ontologies: [] });
+    expect(document.activeElement).toBe(document.body);
+
+    document.body.innerHTML = "";
+    renderScreen({ projects: projects([], { loading: true }) });
     expect(document.activeElement).toBe(document.body);
   });
 
@@ -523,43 +626,28 @@ describe("HomeScreen keyboard and screen reader", () => {
 
     expect(main.getAttribute("aria-labelledby")).toBe(heading.id);
     expect(heading.textContent).toBe("Semantic Studio");
-    expect(screen.getAllByRole("heading", { level: 2 }).length).toBeGreaterThanOrEqual(3);
+    expect(screen.getAllByRole("heading", { level: 2 }).length).toBe(2);
   });
 
-  it("tab order runs search, then cards, then catalogue, then the file routes", () => {
+  it("tab order runs New project, search, then cards, then the file routes", () => {
     // Section 6's stated order. Asserted as document order and the absence of
     // tabindex, because jsdom implements neither layout nor sequential focus
     // navigation and a userEvent.tab() loop would test the polyfill. The real
     // order was walked with Tab in Chrome.
-    const { container } = renderScreen();
+    const { container } = renderScreen({ projects: projects([]) });
     const focusable = [...container.querySelectorAll("button, input, select, a[href]")];
 
     for (const node of focusable) {
       expect(Number(node.getAttribute("tabindex") ?? 0)).toBeLessThanOrEqual(0);
     }
     const at = (node: Element | null) => focusable.indexOf(node!);
+    expect(at(screen.getByRole("button", { name: "New project" }))).toBeLessThan(at(searchBox()));
     expect(at(searchBox())).toBeLessThan(at(cards()[0].querySelector("button")));
-    expect(at(cards()[2].querySelector("button"))).toBeLessThan(at(catalogueRows()[0]));
-    expect(at(catalogueRows()[catalogueRows().length - 1])).toBeLessThan(
-      at(screen.getByRole("button", { name: /open a file/i })),
-    );
+    expect(at(cards()[2].querySelector("button"))).toBeLessThan(at(fileRoutes()[0]));
   });
 });
 
 describe("HomeScreen render budget", () => {
-  it("search does not re-render the catalogue", () => {
-    // AC-11, and the one row the spec asks for a mutation test on. Removing
-    // `memo` from HomeScreen.tsx makes this go red — checked by deleting it,
-    // not assumed.
-    renderScreen({ ontologies: summaries(5) });
-    const before = catalogueRenders.count;
-
-    type("o");
-
-    expect(cards().length).toBe(5);
-    expect(catalogueRenders.count).toBe(before);
-  });
-
   it("[budget] card grid cost per card does not grow with the library", () => {
     // AC-11, and **the specification's Section 10 row 3 asks for something this
     // build does not do**. It sets 50 cards at no more than 3x the cost of 5.

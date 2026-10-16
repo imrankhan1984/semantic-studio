@@ -4,10 +4,12 @@ FILE: frontend/src/components/ProjectsSection.test.tsx
 ================================================================================
 
 SUMMARY
-    "My projects" (authoring-foundations 5.1, AC-3, AC-4, AC-19): the empty
-    state's sentence, a card per project with its counts, documents and date,
-    Open, and the menu's four actions -- Rename in place, Duplicate, Export as
-    zip, Delete -- each reached by keyboard and named for its project.
+    A project's card (authoring-foundations 5.1, AC-3, AC-4, AC-19): its
+    counts, documents and date, Open, and the menu's four actions -- Rename in
+    place, Duplicate, Export as zip, Delete -- each reached by keyboard and
+    named for its project. Since home-and-examples 5.5 the card stands in
+    Home's one library; the heading, New project and the empty sentence are
+    HomeScreen's and tested there.
 
 BASIC IDEA
     Rendered alone with spies for every callback; the actions themselves are
@@ -26,7 +28,7 @@ EXPECTED OUTPUT
 
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import ProjectsSection from "./ProjectsSection";
+import ProjectCard from "./ProjectsSection";
 import type { ProjectSummary } from "../types";
 
 const PROJECT: ProjectSummary = {
@@ -46,9 +48,8 @@ const PROJECT: ProjectSummary = {
   kind: "ontology",
 };
 
-function renderSection(props: Partial<React.ComponentProps<typeof ProjectsSection>> = {}) {
+function renderSection(props: Partial<React.ComponentProps<typeof ProjectCard>> = {}) {
   const handlers = {
-    onNew: vi.fn(),
     onOpen: vi.fn(),
     onRename: vi.fn(async () => undefined),
     onChangeKind: vi.fn(),
@@ -56,31 +57,25 @@ function renderSection(props: Partial<React.ComponentProps<typeof ProjectsSectio
     onExport: vi.fn(),
     onDelete: vi.fn(),
   };
-  render(
-    <ProjectsSection
-      projects={[PROJECT]}
-      loading={false}
-      error={null}
-      busyId={null}
-      {...handlers}
-      {...props}
-    />,
-  );
+  render(<ProjectCard project={PROJECT} busy={false} disabled={false} {...handlers} {...props} />);
   return handlers;
 }
 
 afterEach(() => cleanup());
 
-describe("ProjectsSection", () => {
-  it("says what to do when there are no projects, beside New project", () => {
-    const { onNew } = renderSection({ projects: [] });
-    expect(
-      screen.getByText(
-        "No projects yet. Start one from a template or from any ontology in your library.",
-      ),
-    ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "New project" }));
-    expect(onNew).toHaveBeenCalledTimes(1);
+describe("ProjectCard", () => {
+  it("is laid out as a row when the library around it is (home-and-examples 5.5)", () => {
+    renderSection({ layout: "row" });
+    expect(screen.getByRole("article").className).toContain("onto-row");
+    cleanup();
+    renderSection();
+    expect(screen.getByRole("article").className).not.toContain("onto-row");
+  });
+
+  it("hands Home its Open button for the start focus", () => {
+    const openRef = { current: null as HTMLButtonElement | null };
+    renderSection({ openRef });
+    expect(openRef.current).toBe(screen.getByRole("button", { name: "Open Invoices" }));
   });
 
   it("shows each project's name, counts, documents and when it changed", () => {
@@ -92,7 +87,7 @@ describe("ProjectsSection", () => {
   });
 
   it("gives each data snapshot a line on the card, a sample's words included (csv-data-import 5.7)", () => {
-    renderSection({ projects: [{ ...PROJECT, data: [{ ...{ id: "people-abc123", source: "people.csv", importedAt: "2026-10-02T12:00:00Z", rows: 2000, total: 12480, sample: true }, enabled: false }] }] });
+    renderSection({ project: { ...PROJECT, data: [{ ...{ id: "people-abc123", source: "people.csv", importedAt: "2026-10-02T12:00:00Z", rows: 2000, total: 12480, sample: true }, enabled: false }] } });
     expect(screen.getByText("Data from people.csv, imported 2 October 2026; sample: first 2,000 of 12,480 rows (off)")).toBeTruthy();
   });
 
@@ -162,7 +157,7 @@ describe("ProjectsSection", () => {
   });
 
   it("while one project is busy the controls say so and do nothing, keeping focus", () => {
-    const { onOpen } = renderSection({ busyId: PROJECT.id });
+    const { onOpen } = renderSection({ busy: true, disabled: true });
     const open = screen.getByRole("button", { name: "Open Invoices" });
     expect(open.getAttribute("aria-disabled")).toBe("true");
     expect(open.hasAttribute("disabled")).toBe(false);
@@ -172,7 +167,20 @@ describe("ProjectsSection", () => {
   });
 
   it("says the project's kind, and offers to change it from its menu (relationships AC-1)", () => {
-    const { onChangeKind } = renderSection({ projects: [PROJECT, { ...PROJECT, id: "prj-bbbbbbbbbbbb", name: "Fruit", kind: "taxonomy" }] });
+    const { onChangeKind } = renderSection();
+    render(
+      <ProjectCard
+        project={{ ...PROJECT, id: "prj-bbbbbbbbbbbb", name: "Fruit", kind: "taxonomy" }}
+        busy={false}
+        disabled={false}
+        onOpen={vi.fn()}
+        onRename={vi.fn(async () => undefined)}
+        onChangeKind={vi.fn()}
+        onDuplicate={vi.fn()}
+        onExport={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
     const [invoices, fruit] = screen.getAllByRole("article");
     expect(invoices.querySelector(".project-kind")!.textContent).toBe("Ontology");
     expect(fruit.querySelector(".project-kind")!.textContent).toBe("Taxonomy");
@@ -184,7 +192,7 @@ describe("ProjectsSection", () => {
   });
 
   it("a project from before kinds names none and offers no change until it is opened", () => {
-    renderSection({ projects: [{ ...PROJECT, kind: null }] });
+    renderSection({ project: { ...PROJECT, kind: null } });
     expect(document.querySelector(".project-kind")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "More actions for Invoices" }));
     expect(screen.queryByRole("button", { name: /Change to/ })).toBeNull();

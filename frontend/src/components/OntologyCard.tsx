@@ -158,6 +158,10 @@ function OntologyCard({
   );
   const palette = PALETTES[theme];
   const added = addedOn(summary.addedAt);
+  // A bundled example (home-and-examples 5.5) says so where other cards show
+  // their date, and its purpose stands for the counted sentence: what it is
+  // for says more to a first visitor than what it holds.
+  const example = summary.source === "example" ? summary.example ?? null : null;
   const disabled = busy || working;
 
   return (
@@ -316,7 +320,9 @@ function OntologyCard({
 
         {/* L-5's sentence, reused rather than a filename. It says more about an
             ontology than its name does, and it is already tested. */}
-        <p className="onto-summary">{describeKindCounts(summary.kindCounts)}</p>
+        <p className="onto-summary">
+          {example ? example.purpose : describeKindCounts(summary.kindCounts)}
+        </p>
 
         {/* The composition bar. Every band also appears in the counts below it
             and in the sentence above it, so nothing here is conveyed by colour
@@ -352,10 +358,19 @@ function OntologyCard({
           <li className={summary.loaded ? "chip-state chip-on" : "chip-state"}>
             {summary.loaded ? "Loaded" : "Not loaded"}
           </li>
-          <li className="chip-state" title={summary.source}>
-            {sourceWord(summary.source)}
-          </li>
-          {added && <li className="chip-state">Added {added}</li>}
+          {!example && (
+            <li className="chip-state" title={summary.source}>
+              {sourceWord(summary.source)}
+            </li>
+          )}
+          {example ? (
+            <li className="chip-state">Example</li>
+          ) : (
+            added && <li className="chip-state">Added {added}</li>
+          )}
+          {/* In words, on the card: the section heading that said
+              "(read-only)" went when projects joined the library. */}
+          <li className="chip-state">Read-only</li>
         </ul>
 
         <div className="onto-verbs">

@@ -5,9 +5,10 @@ FILE: frontend/src/components/CatalogueList.test.tsx
 ================================================================================
 
 SUMMARY
-    Proves the catalogue renders identically wherever it appears: the home
-    screen's "Try one" section and the Load dialog's "Suggested" tab must show
-    the same entries in the same order, because they are the same component.
+    Proves the catalogue renders as CATALOGUE says, in the Load dialog's
+    "Suggested" tab, and only there: the home screen's "Try one" section went
+    when the bundled examples came (home-and-examples 5.5), and a test holds
+    Home to showing none of it.
 
 BASIC IDEA
     The reason this file exists is drift, not rendering. Before CatalogueList
@@ -15,9 +16,10 @@ BASIC IDEA
     same constant, and backlog L-1 is about to reorder that constant. A test
     that only checked one screen would let the other fall behind silently.
 
-    So the assertion is a comparison, not a snapshot: render both callers and
-    check the button names match, element for element, in order. It fails the
-    moment either screen grows its own copy.
+    So the assertion was a comparison, not a snapshot: render both callers
+    and check the button names match, element for element, in order. With
+    one caller left, the dialog is compared with the constant, and Home with
+    nothing.
 
     Since 2026-07-30 it also covers backlog L-1's rendering half: that the
     audience line reaches the screen, that it reaches the accessible name, and
@@ -77,27 +79,23 @@ function renderChooser() {
       onEnterMode={vi.fn()}
       onViewSource={vi.fn()}
       onRemove={vi.fn()}
-      onLoaded={vi.fn()}
       onOpenDialog={vi.fn()}
     />,
   ).container;
 }
 
 describe("CatalogueList", () => {
-  it("catalogue list renders identically in the chooser and the dialog", () => {
-    // AC-15. Same entries, same order, from the same component.
+  it("the dialog lists the catalogue in its order, and Home lists none of it (home-and-examples 5.5)", () => {
+    // AC-15, with one caller left: Home's catalogue went with Try one.
     const chooser = renderChooser();
-    const fromChooser = entryNames(chooser);
+    expect(entryNames(chooser)).toEqual([]);
     document.body.innerHTML = "";
 
     const dialog = render(<LoadDialog onLoaded={vi.fn()} onClose={vi.fn()} />).container;
     const fromDialog = entryNames(dialog);
 
-    expect(fromChooser).toHaveLength(CATALOGUE.length);
-    expect(fromChooser).toEqual(fromDialog);
-    // Anchored to the constant as well as to each other, so two screens that
-    // agreed on the same wrong list would still fail.
-    CATALOGUE.forEach((entry, i) => expect(fromChooser[i]).toContain(entry.name));
+    expect(fromDialog).toHaveLength(CATALOGUE.length);
+    CATALOGUE.forEach((entry, i) => expect(fromDialog[i]).toContain(entry.name));
   });
 
   it("renders every catalogue entry as a button, in CATALOGUE order", () => {
