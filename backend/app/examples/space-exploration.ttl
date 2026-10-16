@@ -87,7 +87,7 @@ space:PlanetarySystem a owl:Class ;
     rdfs:comment "A star and everything bound to it by gravity."@en .
 
 # The one class declared with RDFS alone, so the graph shows the RDFS class
-# colour beside the OWL one.
+# color beside the OWL one.
 space:Galaxy a rdfs:Class ;
     rdfs:label "Galaxy"@en, "Galaxie"@fr ;
     rdfs:comment "A system of stars, gas and dust held together by gravity."@en .
@@ -159,7 +159,7 @@ space:RoboticMission a owl:Class ;
 
 space:Organization a owl:Class ;
     rdfs:label "Organization"@en, "Organisation"@fr ;
-    rdfs:comment "A body of people with a shared purpose, such as an agency or a programme."@en .
+    rdfs:comment "A body of people with a shared purpose, such as an agency or a program."@en .
 
 space:SpaceAgency a owl:Class ;
     rdfs:subClassOf space:Organization ;
@@ -173,7 +173,7 @@ space:Person a owl:Class ;
 space:Astronaut a owl:Class ;
     rdfs:subClassOf space:Person ;
     rdfs:label "Astronaut"@en, "Astronaute"@fr ;
-    rdfs:comment "A person who has travelled into space, called a cosmonaut in the Soviet and Russian programmes."@en .
+    rdfs:comment "A person who has traveled into space, called a cosmonaut in the Soviet and Russian programs."@en .
 
 # ---------------------------------------------------------------------------
 # Disjointness
@@ -199,7 +199,7 @@ space:isOrbitedBy a owl:ObjectProperty ;
     owl:inverseOf space:orbits ;
     rdfs:domain space:CelestialBody ;
     rdfs:label "is orbited by"@en, "a pour satellite"@fr ;
-    rdfs:comment "Has the other body travelling around it."@en .
+    rdfs:comment "Has the other body traveling around it."@en .
 
 space:partOf a owl:ObjectProperty, owl:TransitiveProperty ;
     rdfs:label "part of"@en, "fait partie de"@fr ;
@@ -264,13 +264,13 @@ space:diameterKm a owl:DatatypeProperty ;
     rdfs:domain space:CelestialBody ;
     rdfs:range xsd:decimal ;
     rdfs:label "diameter (km)"@en, "diamètre (km)"@fr ;
-    rdfs:comment "The body's approximate diameter in kilometres."@en .
+    rdfs:comment "The body's approximate diameter in kilometers."@en .
 
 space:discoveryYear a owl:DatatypeProperty ;
     rdfs:domain space:CelestialBody ;
     rdfs:range xsd:gYear ;
     rdfs:label "year of discovery"@en, "année de découverte"@fr ;
-    rdfs:comment "The year the body was first observed or recognised."@en .
+    rdfs:comment "The year the body was first observed or recognized."@en .
 
 space:foundedYear a owl:DatatypeProperty ;
     rdfs:domain space:Organization ;
@@ -625,7 +625,7 @@ space:CSA a space:SpaceAgency ;
     space:foundedYear "1989"^^xsd:gYear .
 
 space:SovietSpaceProgram a space:Organization ;
-    rdfs:label "Soviet space programme"@en, "Programme spatial soviétique"@fr .
+    rdfs:label "Soviet space program"@en, "Programme spatial soviétique"@fr .
 
 # ---------------------------------------------------------------------------
 # Launch vehicles and crew: deliberately untyped. launchedOn's range and
@@ -772,7 +772,7 @@ space:CassiniHuygens a space:RoboticMission ;
     space:missionType space:mt-orbiter, space:mt-lander .
 
 space:Rosetta a space:RoboticMission ;
-    rdfs:label "Rosetta"@en ;
+    rdfs:label "Rosetta mission"@en ;
     rdfs:comment "The first mission to orbit a comet and land on one."@en ;
     space:operatedBy space:ESA ;
     space:launchedOn space:Ariane5 ;
