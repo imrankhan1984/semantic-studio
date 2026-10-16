@@ -159,9 +159,9 @@ describe("CatalogueList", () => {
       (b) => b.querySelector(".catalogue-name")?.textContent?.trim() ?? "",
     );
 
-    expect(rendered[0]).toContain("FOAF");
+    // FOAF left the list for the library's examples (home-and-examples 5.8).
+    expect(rendered[0]).toContain("schema.org");
     expect(rendered.map((name) => name.split(" —")[0])).toEqual([
-      "FOAF",
       "schema.org",
       "FIBO",
       "UNESCO Thesaurus",

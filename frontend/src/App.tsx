@@ -218,6 +218,7 @@ import {
 } from "./components/icons";
 import { removalConfirmation, removalPrompt } from "./removalPrompt";
 import { formatName, homeStatus, statementCount } from "./statusWords";
+import { missingExamples } from "./home/libraryOrder";
 import type { SourceTarget } from "./sourceTarget";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type {
@@ -2345,6 +2346,8 @@ export default function App() {
           onLoaded={onLoaded}
           onClose={() => setDialogOpen(false)}
           initialTab={dialogTab}
+          examplesMissing={missingExamples(ontologies).length}
+          onExamplesRestored={(result) => setOntologies(result.ontologies)}
           project={
             openProjectSummary && modelOntologyId
               ? {

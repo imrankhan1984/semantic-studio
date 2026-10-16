@@ -111,6 +111,7 @@ const {
   runCommand,
   reasonProject,
   listData,
+  restoreExamples,
 } = vi.hoisted(() => ({
   listOntologies: vi.fn(),
   getGraph: vi.fn(),
@@ -160,6 +161,8 @@ const {
   reasonProject: vi.fn(),
   // X-12: an open project's snapshot list, which a failed read now says.
   listData: vi.fn(),
+  // home-and-examples 5.8: the Load dialog's Add the examples back.
+  restoreExamples: vi.fn(),
 }));
 
 // importOriginal rather than a bare factory, so ApiError stays the real class.
@@ -204,10 +207,12 @@ vi.mock("./api", async (importOriginal) => ({
   runCommand,
   reasonProject,
   listData,
+  restoreExamples,
 }));
 
 /** Every mocked client function, so a test can count what mount actually did. */
 const ALL_API = {
+  restoreExamples,
   listData,
   listImports,
   listOntologies,
@@ -1945,6 +1950,53 @@ describe("App About control", () => {
     for (const [name, fn] of Object.entries(ALL_API)) {
       expect(fn, `${name} was called by About`).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe("App examples (home-and-examples 5.8)", () => {
+  const EXAMPLE = {
+    ...SUMMARY,
+    id: "ont-space",
+    name: "Space Exploration",
+    source: "example",
+    example: { key: "space", purpose: "Every feature, one ontology." },
+  };
+  const LOTR = { ...EXAMPLE, id: "ont-me", name: "The Lord of the Rings", example: { key: "middle-earth", purpose: "p" } };
+  const FOAF = { ...EXAMPLE, id: "ont-foaf", name: "FOAF (Friend of a Friend)", example: { key: "foaf", purpose: "p" } };
+
+  it("the Load dialog adds the examples back, and Home shows them after the person's file", async () => {
+    // FOAF stayed; the other two come back.
+    listOntologies.mockResolvedValue([SUMMARY, FOAF]);
+    restoreExamples.mockResolvedValue({
+      restored: ["ont-space", "ont-me"],
+      ontologies: [SUMMARY, FOAF, EXAMPLE, LOTR],
+    });
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add the examples back" }));
+    });
+    expect(restoreExamples).toHaveBeenCalledTimes(1);
+    expect(document.querySelector(".examples-restored")!.textContent).toBe("Added back: Space Exploration, The Lord of the Rings.");
+    // The dialog stays, focus on its tab, and the button has gone: App's
+    // list holds the example now.
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Suggested" }));
+    expect(screen.queryByRole("button", { name: "Add the examples back" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    const names = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    expect(names).toEqual([SUMMARY.name, "Space Exploration", "The Lord of the Rings", FOAF.name]);
+  });
+
+  it("does not offer it while every example is in the library", async () => {
+    listOntologies.mockResolvedValue([SUMMARY, EXAMPLE, LOTR, FOAF]);
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    });
+    expect(screen.getByRole("button", { name: "Suggested" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add the examples back" })).toBeNull();
   });
 });
 

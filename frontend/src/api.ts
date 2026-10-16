@@ -290,6 +290,24 @@ export function fetchOntology(url: string): Promise<OntologySummary> {
   }).then((r) => handle<OntologySummary>(r));
 }
 
+/** What POST /api/examples/restore answers (home-and-examples 5.1): the
+ *  examples added back, by id, none when nothing was missing, and the library
+ *  as it now stands, as listOntologies would give it. */
+export interface ExamplesRestored {
+  restored: string[];
+  ontologies: OntologySummary[];
+}
+
+// Add back the bundled examples missing from the library, the only way a
+// removed example returns (home-and-examples 5.1). No body; a write, so it
+// carries the client header like every other.
+export function restoreExamples(): Promise<ExamplesRestored> {
+  return send("/api/examples/restore", {
+    method: "POST",
+    headers: { ...CLIENT_HEADER },
+  }).then((r) => handle<ExamplesRestored>(r));
+}
+
 // Remove an ontology (and its saved queries) from the server. The body is
 // returned rather than discarded because `deletedQueries` is the only place the
 // count of destroyed work exists — the client's own count was taken before the

@@ -12,7 +12,10 @@ SUMMARY
     while the wizard runs. Past step 3 the ✕ and a tab switch ask "Leave the
     wizard?" as Cancel does (PR #53 review), driven through the real wizard.
     Focus goes to the Data heading when the wizard closes, and only then
-    (csv-data-import X4).
+    (csv-data-import X4). Suggested lists schema.org, FIBO and UNESCO, and
+    offers *Add the examples back* only while an example is missing, which
+    calls the restore endpoint and keeps focus on the tab
+    (home-and-examples 5.8, AC-10).
 
 BASIC IDEA
     api.ts is mocked; the snapshot list reads the real project store, left
@@ -30,12 +33,13 @@ EXPECTED OUTPUT
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { fetchHierarchy, inspectData, previewData, openProject, listData } = vi.hoisted(() => ({
+const { fetchHierarchy, inspectData, previewData, openProject, listData, restoreExamples } = vi.hoisted(() => ({
   fetchHierarchy: vi.fn(() => new Promise(() => {})),
   inspectData: vi.fn(),
   previewData: vi.fn(),
   openProject: vi.fn(),
   listData: vi.fn(),
+  restoreExamples: vi.fn(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -45,6 +49,7 @@ vi.mock("../api", async (importOriginal) => ({
   previewData,
   openProject,
   listData,
+  restoreExamples,
 }));
 
 import { projectStore } from "../state/projectStore";
@@ -55,6 +60,86 @@ const PROJECT = { id: "prj-0123456789ab", name: "Shop", modelOntologyId: "prj-01
 afterEach(() => {
   cleanup();
   projectStore._reset();
+  restoreExamples.mockReset();
+});
+
+describe("LoadDialog suggestions (home-and-examples 5.8)", () => {
+  const SUMMARY = {
+    source: "example",
+    format: "turtle",
+    triples: 1,
+    nodes: 1,
+    edges: 0,
+    kindCounts: {},
+    namespaces: {},
+  };
+
+  it("suggests schema.org, FIBO and UNESCO, in that order, and not FOAF", () => {
+    render(<LoadDialog onLoaded={() => {}} onClose={() => {}} />);
+    const names = [...document.querySelectorAll(".catalogue-entry")].map((b) => b.textContent ?? "");
+    expect(names).toHaveLength(3);
+    expect(names[0]).toContain("schema.org");
+    expect(names[1]).toContain("FIBO");
+    expect(names[2]).toContain("UNESCO");
+    expect(names.join(" ")).not.toMatch(/FOAF/);
+  });
+
+  it("offers Add the examples back only while an example is missing", () => {
+    const { rerender } = render(
+      <LoadDialog onLoaded={() => {}} onClose={() => {}} examplesMissing={0} onExamplesRestored={() => {}} />,
+    );
+    expect(screen.queryByRole("button", { name: "Add the examples back" })).toBeNull();
+    rerender(<LoadDialog onLoaded={() => {}} onClose={() => {}} examplesMissing={1} onExamplesRestored={() => {}} />);
+    const button = screen.getByRole("button", { name: "Add the examples back" });
+    // Above the list.
+    const first = document.querySelector(".catalogue-entry")!;
+    expect(button.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Secondary, not primary.
+    expect(button.className).not.toContain("primary");
+  });
+
+  it("calls the restore endpoint, hands App the library, says what came back and keeps focus on the tab", async () => {
+    const result = {
+      restored: ["ont-a", "ont-b"],
+      ontologies: [
+        { ...SUMMARY, id: "ont-a", name: "Space Exploration" },
+        { ...SUMMARY, id: "ont-keep", name: "Mine" },
+        { ...SUMMARY, id: "ont-b", name: "FOAF (Friend of a Friend)" },
+      ],
+    };
+    restoreExamples.mockResolvedValue(result);
+    const onExamplesRestored = vi.fn();
+    const { rerender } = render(
+      <LoadDialog onLoaded={() => {}} onClose={() => {}} examplesMissing={2} onExamplesRestored={onExamplesRestored} />,
+    );
+    const status = screen.getByRole("status");
+    expect(status.textContent).toBe("");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add the examples back" }));
+    });
+    expect(restoreExamples).toHaveBeenCalledTimes(1);
+    expect(onExamplesRestored).toHaveBeenCalledWith(result);
+    expect(status.textContent).toBe("Added back: Space Exploration, FOAF (Friend of a Friend).");
+    // App's list now has every example, so the button goes; focus is on the
+    // tab, never the page.
+    rerender(
+      <LoadDialog onLoaded={() => {}} onClose={() => {}} examplesMissing={0} onExamplesRestored={onExamplesRestored} />,
+    );
+    expect(screen.queryByRole("button", { name: "Add the examples back" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Suggested" }));
+  });
+
+  it("a failed restore says why and keeps the button", async () => {
+    restoreExamples.mockRejectedValue(new Error("The examples could not be added back."));
+    const onExamplesRestored = vi.fn();
+    render(<LoadDialog onLoaded={() => {}} onClose={() => {}} examplesMissing={1} onExamplesRestored={onExamplesRestored} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add the examples back" }));
+    });
+    expect(screen.getByText("The examples could not be added back.")).toBeTruthy();
+    expect(onExamplesRestored).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: "Add the examples back" }) as HTMLButtonElement).disabled).toBe(false);
+  });
 });
 
 describe("LoadDialog", () => {

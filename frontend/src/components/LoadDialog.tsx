@@ -5,7 +5,9 @@ FILE: frontend/src/components/LoadDialog.tsx
 
 SUMMARY
     The modal for adding an ontology, with three tabs: Suggested (the built-in
-    catalogue), Local file (drag/drop or picker), and URL / GitHub. While a
+    catalogue, and *Add the examples back* when a bundled example has been
+    removed, home-and-examples 5.8), Local file (drag/drop or picker), and
+    URL / GitHub. While a
     project is open it is also the project's Load area, with a fourth tab,
     Data (csv-data-import 5.1, 5.7): the project's snapshots and the import
     wizard.
@@ -13,7 +15,9 @@ SUMMARY
 BASIC IDEA
     Each tab is a different way to obtain an ontology; all three end by calling
     uploadOntology or fetchOntology and then onLoaded with the resulting
-    summary. Busy/error state gives feedback while a large file downloads or
+    summary. *Add the examples back* is the one exception: it opens nothing
+    and downloads nothing, the server adds its own bundled files again, and
+    the dialog stays open on its tab, focus on the tab, saying what came back. Busy/error state gives feedback while a large file downloads or
     parses. The GHE limitation is explained inline on the URL tab.
 
     The Data tab adds data to the open project rather than an ontology to
@@ -36,6 +40,9 @@ INPUTS / INPUT SOURCES (props)
     - initialTab: which tab to open on, so the home screen's "Open a file"
       and "Load from a URL" land on the right one. Defaults to "suggested",
       which is how the Load button in the header still opens it.
+    - examplesMissing / onExamplesRestored: how many bundled examples are
+      not in the library, and what to do with the library the restore
+      answers; with none missing, or no handler, the button is absent.
     - project: the open project, which adds the Data tab; startImport opens
       it with the wizard started; onValidate and onShowData are the import
       report's next steps.
@@ -47,7 +54,7 @@ EXPECTED OUTPUT
 */
 
 import { useRef, useState } from "react";
-import { fetchOntology, uploadOntology } from "../api";
+import { fetchOntology, restoreExamples, uploadOntology, type ExamplesRestored } from "../api";
 import type { CatalogueEntry } from "../catalogue";
 import CatalogueList from "./CatalogueList";
 import DataWizard, { type WizardStart } from "./DataWizard";
@@ -72,6 +79,9 @@ interface Props {
   startImport?: boolean;
   onValidate?: () => void;
   onShowData?: () => void;
+  /** Bundled examples not in the library (home-and-examples 5.8). */
+  examplesMissing?: number;
+  onExamplesRestored?: (result: ExamplesRestored) => void;
 }
 
 export default function LoadDialog({
@@ -82,6 +92,8 @@ export default function LoadDialog({
   startImport = false,
   onValidate,
   onShowData,
+  examplesMissing = 0,
+  onExamplesRestored,
 }: Props) {
   const [tab, setTab] = useState<LoadTab>(initialTab === "data" && !project ? "suggested" : initialTab);
   const [wizard, setWizard] = useState<WizardStart | null>(startImport && project ? { kind: "new" } : null);
@@ -110,6 +122,10 @@ export default function LoadDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  // The Suggested tab, where focus goes once the examples are back: the
+  // button that was pressed goes with them, and focus would fall to the page.
+  const suggestedTab = useRef<HTMLButtonElement>(null);
+  const [restoredNote, setRestoredNote] = useState("");
   const [dragOver, setDragOver] = useState(false);
 
   const submitFile = async (file: File) => {
@@ -151,6 +167,25 @@ export default function LoadDialog({
     }
   };
 
+  const addExamplesBack = async () => {
+    if (!onExamplesRestored) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await restoreExamples();
+      const names = result.ontologies
+        .filter((o) => result.restored.includes(o.id))
+        .map((o) => o.name);
+      onExamplesRestored(result);
+      setRestoredNote(names.length ? `Added back: ${names.join(", ")}.` : "The examples are all in your library.");
+      suggestedTab.current?.focus();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     // A click outside does not drop a wizard half way: Cancel does, and asks.
     <div className="modal-backdrop" onClick={() => !(tab === "data" && wizard) && onClose()}>
@@ -164,6 +199,7 @@ export default function LoadDialog({
 
         <div className="tabs">
           <button
+            ref={suggestedTab}
             className={tab === "suggested" ? "tab active" : "tab"}
             onClick={() => switchTab("suggested")}
           >
@@ -232,12 +268,26 @@ export default function LoadDialog({
 
         {tab === "suggested" && (
           <>
+            {/* Above the list, and only while an example is missing: the
+                only way one comes back (home-and-examples 5.1, 5.8). A
+                secondary button; nothing is downloaded. */}
+            {examplesMissing > 0 && onExamplesRestored && (
+              <div className="examples-restore">
+                <button type="button" disabled={busy} onClick={() => void addExamplesBack()}>
+                  Add the examples back
+                </button>
+              </div>
+            )}
+            {/* Rendered whether or not it has anything to say: a live region
+                added with its text is unreliably announced. */}
+            <p className="hint examples-restored" role="status">
+              {restoredNote}
+            </p>
             <p className="hint">
               Well-known public ontologies — nothing is downloaded until you pick one.
             </p>
-            {/* The same component the home screen renders. Two copies of this
-                markup would drift the moment either screen's wording or the
-                catalogue's order changed. */}
+            {/* CatalogueList, a component of its own since Home and this tab
+                both showed it; this tab is its one caller now. */}
             <CatalogueList
               fetchingId={fetching}
               busy={busy}

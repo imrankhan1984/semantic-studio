@@ -1375,6 +1375,17 @@ select:focus {
   color: var(--text-dim);
 }
 
+/* The Load dialog's Add the examples back (home-and-examples 5.8), above the
+   suggestions. The status line under it stays in the page while empty, as a
+   live region must, and takes no room then. */
+.examples-restore {
+  margin: 4px 0 8px;
+}
+
+.examples-restored:empty {
+  margin: 0;
+}
+
 .loading-overlay {
   position: absolute;
   inset: 0;
