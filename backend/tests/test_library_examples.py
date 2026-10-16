@@ -280,6 +280,16 @@ def test_the_server_start_seeds_the_library(no_examples_after, parses):
         assert listed[library_examples.example_id(key)]["source"] == "example"
 
 
+def test_a_failed_seed_does_not_stop_the_server(no_examples_after, monkeypatch):
+    def broken(_store):
+        raise OSError("the data folder is read-only")
+
+    monkeypatch.setattr(library_examples, "seed", broken)
+    with TestClient(app, base_url="http://localhost", headers=HEADERS) as client:
+        assert client.get("/api/health").status_code == 200
+        assert client.get("/api/ontologies").status_code == 200
+
+
 def test_restore_endpoint_brings_back_only_the_missing_ones(no_examples_after, parses):
     library_examples.seed(app_store)
     client = TestClient(app, base_url="http://localhost", headers=HEADERS)

@@ -54,6 +54,7 @@ EXPECTED OUTPUT
 from __future__ import annotations
 
 # `os` is used to read the optional STATIC_DIR environment variable.
+import logging
 import os
 import re
 from contextlib import asynccontextmanager
@@ -83,8 +84,16 @@ async def lifespan(_app: FastAPI):
     """Seed the library's examples once the server is up (home-and-examples
     5.1). Here rather than at import, so a test that builds a TestClient
     without starting the app gets the library it set up and nothing else; a
-    first start parses three small files, every later one parses nothing."""
-    library_examples.seed(store)
+    first start parses three small files, every later one parses nothing.
+
+    A failure is said in the server's log and the server starts anyway: the
+    examples are a convenience, and a data folder that cannot take
+    examples.json should not cost the person their own library. What did not
+    come in can be added back from the Load dialog."""
+    try:
+        library_examples.seed(store)
+    except Exception:  # noqa: BLE001 -- any failure here must not stop the server
+        logging.getLogger("uvicorn.error").exception("The bundled examples were not added to the library")
     yield
 
 
