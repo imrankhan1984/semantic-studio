@@ -3608,6 +3608,23 @@ describe("App status bar (portal-foundations 5.6, AC-9)", () => {
     expect(parts).not.toContain("turtle");
   });
 
+  it("says Example for an open bundled example, and a fetched file's address as it is (home-and-examples 5.6)", async () => {
+    listOntologies.mockResolvedValue([
+      { ...SUMMARY, source: "example", example: { key: "space", purpose: "p" } },
+    ]);
+    await renderAppOpened();
+    const parts = [...document.querySelectorAll(".status-bar span")].map((s) => s.textContent);
+    expect(parts).toContain("Example");
+    expect(parts).not.toContain("example");
+
+    cleanup();
+    listOntologies.mockResolvedValue([{ ...SUMMARY, source: "https://example.org/fibo.ttl" }]);
+    await renderAppOpened();
+    expect([...document.querySelectorAll(".status-bar span")].map((s) => s.textContent)).toContain(
+      "https://example.org/fibo.ttl",
+    );
+  });
+
   it("counts statements, not triples, in the bar and the picker (home-and-examples 5.7)", async () => {
     await renderAppOpened();
     const parts = [...document.querySelectorAll(".status-bar span")].map((s) => s.textContent);

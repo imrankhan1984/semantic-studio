@@ -2328,8 +2328,11 @@ export default function App() {
             <span>{countOf(graphData, "node", expanded)} nodes</span>
             <span>{countOf(graphData, "edge", expanded)} edges</span>
             <span className="dim">{formatName(active.format)}</span>
+            {/* A fetched file names where it came from; a bundled example
+                says so in a word, not the code's "example" (home-and-examples
+                5.6: the card's facts are the status bar's once it is open). */}
             {active.source !== "upload" && active.source !== "project" && (
-              <span className="dim src">{active.source}</span>
+              <span className="dim src">{active.source === "example" ? "Example" : active.source}</span>
             )}
           </>
         ) : (

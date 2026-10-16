@@ -242,6 +242,15 @@ describe("one button set (portal-foundations 5.5, AC-8)", () => {
   });
 });
 
+describe("the library card (home-and-examples 5.6)", () => {
+  it("does not clip its menu: the card has no overflow, the miniature clips itself", () => {
+    // Chrome showed Remove cut off below a card of one sentence and two facts.
+    expect(block(".onto-card")).not.toMatch(/overflow\s*:/);
+    expect(block(".onto-mini")).toMatch(/overflow:\s*hidden;/);
+    expect(block(".onto-menu")).toMatch(/position:\s*absolute;/);
+  });
+});
+
 describe("Query's layout (explore-and-query-layout 5.4, AC-6; 5.5, AC-7)", () => {
   /** Every rule as [selector, body]. */
   const rules = [...RULES.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => [m[1].trim(), m[2]] as const);

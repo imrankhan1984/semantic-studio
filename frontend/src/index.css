@@ -853,19 +853,24 @@ select:focus {
   gap: 6px;
 }
 
+/* No overflow: hidden here. The card's "⋮" menu opens below the name and
+   is longer than a card of one sentence and two facts, or than a row
+   (home-and-examples 5.6): a clipping card cut Remove off. The miniature is
+   what needs its corners clipped, so it clips itself. */
 .onto-card {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-raised);
-  overflow: hidden;
 }
 
 .onto-mini {
   height: 76px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
+  border-radius: 9px 9px 0 0;
+  overflow: hidden;
 }
 
 .onto-mini svg {
