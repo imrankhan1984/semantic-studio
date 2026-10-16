@@ -20,6 +20,10 @@ BASIC IDEA
     the dialog stays open on its tab, focus on the tab, saying what came back. Busy/error state gives feedback while a large file downloads or
     parses. The GHE limitation is explained inline on the URL tab.
 
+    A file no parser could read comes back as one sentence the server wrote
+    (parse_errors.py, load-and-shapes 5.1); the parsers' own text, when the
+    server sends it, sits under a closed *Technical details*, as text.
+
     The Data tab adds data to the open project rather than an ontology to
     the library. It shows the snapshot list, and the wizard in its place
     while one runs -- a new import, Change the mapping, or a refresh whose
@@ -54,7 +58,7 @@ EXPECTED OUTPUT
 */
 
 import { useRef, useState } from "react";
-import { fetchOntology, restoreExamples, uploadOntology, type ExamplesRestored } from "../api";
+import { ApiError, fetchOntology, restoreExamples, uploadOntology, type ExamplesRestored } from "../api";
 import type { CatalogueEntry } from "../catalogue";
 import CatalogueList from "./CatalogueList";
 import DataWizard, { type WizardStart } from "./DataWizard";
@@ -82,6 +86,24 @@ interface Props {
   /** Bundled examples not in the library (home-and-examples 5.8). */
   examplesMissing?: number;
   onExamplesRestored?: (result: ExamplesRestored) => void;
+}
+
+/** What went wrong, and for a file no parser read, the parsers' own text. */
+interface LoadError {
+  message: string;
+  technical: string | null;
+}
+
+/** A failed load's `parse_error` carries the raw text apart from its
+ *  sentence (load-and-shapes 5.1); anything else is its message alone. */
+function loadError(e: unknown): LoadError {
+  const message = e instanceof Error ? e.message : String(e);
+  const detail = e instanceof ApiError ? e.detail : null;
+  if (detail && typeof detail === "object") {
+    const { code, technical } = detail as { code?: unknown; technical?: unknown };
+    if (code === "parse_error" && typeof technical === "string" && technical) return { message, technical };
+  }
+  return { message, technical: null };
 }
 
 export default function LoadDialog({
@@ -120,7 +142,7 @@ export default function LoadDialog({
   const [fetching, setFetching] = useState<string | null>(null);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<LoadError | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   // The Suggested tab, where focus goes once the examples are back: the
   // button that was pressed goes with them, and focus would fall to the page.
@@ -134,7 +156,7 @@ export default function LoadDialog({
     try {
       onLoaded(await uploadOntology(file));
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(loadError(e));
     } finally {
       setBusy(false);
     }
@@ -147,7 +169,7 @@ export default function LoadDialog({
     try {
       onLoaded(await fetchOntology(url.trim()));
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(loadError(e));
     } finally {
       setBusy(false);
     }
@@ -160,7 +182,7 @@ export default function LoadDialog({
     try {
       onLoaded(await fetchOntology(entry.url));
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(loadError(e));
     } finally {
       setBusy(false);
       setFetching(null);
@@ -180,7 +202,7 @@ export default function LoadDialog({
       setRestoredNote(names.length ? `Added back: ${names.join(", ")}.` : "The examples are all in your library.");
       suggestedTab.current?.focus();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(loadError(e));
     } finally {
       setBusy(false);
     }
@@ -354,7 +376,18 @@ export default function LoadDialog({
         )}
 
         {busy && <p className="detail-note">Parsing ontology…</p>}
-        {error && <p className="detail-error">{error}</p>}
+        {error && (
+          <div className="load-error">
+            <p className="detail-error">{error.message}</p>
+            {/* Closed by default; the parsers' text is text, never markup. */}
+            {error.technical && (
+              <details className="technical-details">
+                <summary>Technical details</summary>
+                <pre>{error.technical}</pre>
+              </details>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

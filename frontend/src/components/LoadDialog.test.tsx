@@ -33,13 +33,14 @@ EXPECTED OUTPUT
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { fetchHierarchy, inspectData, previewData, openProject, listData, restoreExamples } = vi.hoisted(() => ({
+const { fetchHierarchy, inspectData, previewData, openProject, listData, restoreExamples, uploadOntology } = vi.hoisted(() => ({
   fetchHierarchy: vi.fn(() => new Promise(() => {})),
   inspectData: vi.fn(),
   previewData: vi.fn(),
   openProject: vi.fn(),
   listData: vi.fn(),
   restoreExamples: vi.fn(),
+  uploadOntology: vi.fn(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -50,8 +51,10 @@ vi.mock("../api", async (importOriginal) => ({
   openProject,
   listData,
   restoreExamples,
+  uploadOntology,
 }));
 
+import { ApiError } from "../api";
 import { projectStore } from "../state/projectStore";
 import LoadDialog from "./LoadDialog";
 
@@ -61,6 +64,54 @@ afterEach(() => {
   cleanup();
   projectStore._reset();
   restoreExamples.mockReset();
+  uploadOntology.mockReset();
+});
+
+describe("a failed load (load-and-shapes 5.1, AC-2)", () => {
+  const SENTENCE =
+    "Line 3: the statement before this line is not finished. It probably needs a full stop (.) at its end.";
+  // Markup in the raw text must arrive as characters, not elements.
+  const TECHNICAL = "Could not parse the file as RDF. Attempts:\nturtle: at line 3 of <>:\n<b>Bad syntax</b>";
+
+  async function failWith(error: Error) {
+    uploadOntology.mockRejectedValue(error);
+    render(<LoadDialog onLoaded={() => {}} onClose={() => {}} initialTab="file" />);
+    await act(async () => {
+      fireEvent.change(document.querySelector(".dropzone input[type=file]")!, {
+        target: { files: [new File(["x"], "missing-dot.ttl")] },
+      });
+    });
+  }
+
+  it("shows the sentence, and the raw text as text under a closed Technical details", async () => {
+    await failWith(
+      new ApiError(SENTENCE, 422, { code: "parse_error", message: SENTENCE, line: 3, format: "Turtle", technical: TECHNICAL }),
+    );
+    expect(screen.getByText(SENTENCE).className).toBe("detail-error");
+    const details = document.querySelector("details.technical-details") as HTMLDetailsElement;
+    expect(details).toBeTruthy();
+    expect(details.open).toBe(false);
+    expect(details.querySelector("summary")!.textContent).toBe("Technical details");
+    const pre = details.querySelector("pre")!;
+    expect(pre.textContent).toBe(TECHNICAL);
+    expect(pre.querySelector("b")).toBeNull();
+    // The sentence above it carries none of the raw text.
+    expect(screen.getByText(SENTENCE).textContent).not.toContain("Attempts");
+  });
+
+  it("has no disclosure without technical text", async () => {
+    await failWith(new ApiError("The uploaded file is empty.", 400, "The uploaded file is empty."));
+    expect(screen.getByText("The uploaded file is empty.")).toBeTruthy();
+    expect(document.querySelector("details")).toBeNull();
+  });
+
+  it("has no disclosure for a parse_error whose technical text is null", async () => {
+    await failWith(
+      new ApiError("Refused.", 422, { code: "parse_error", message: "Refused.", line: null, format: null, technical: null }),
+    );
+    expect(screen.getByText("Refused.")).toBeTruthy();
+    expect(document.querySelector("details")).toBeNull();
+  });
 });
 
 describe("LoadDialog suggestions (home-and-examples 5.8)", () => {
