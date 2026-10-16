@@ -327,6 +327,7 @@ export default function DetailPanel({
             <ExplainBlock
               label={details.label}
               explain={details.explain}
+              language={language}
               onNavigate={onNavigate}
               terms={panelTerms(statements, details.incoming)}
             />

@@ -741,6 +741,9 @@ def _term_json(graph: Graph, term) -> dict:
             "value": str(term),
             "lang": term.language,
             "datatype": prefixed(graph, term.datatype) if term.datatype else None,
+            # The full IRI as well: the glossary is keyed by it, and the
+            # prefix above is whatever the file bound (explain-panel 5.3).
+            "datatypeIri": str(term.datatype) if term.datatype else None,
         }
     if isinstance(term, BNode):
         # Render blank nodes inline as their own mini description.
@@ -798,10 +801,11 @@ def node_details(
     # Nothing references or is stated about this IRI -> not a real entity.
     if out_total == 0 and in_total == 0:
         return None
+    label = labeler(graph, langs)
     result = {
         "iri": iri,
         "prefixed": prefixed(graph, ref),
-        "label": labeler(graph, langs)(ref),
+        "label": label(ref),
         "outgoing": outgoing,
         "incoming": incoming,
         "outgoingTotal": out_total,
@@ -809,7 +813,7 @@ def node_details(
     }
     # The structure the panel's In plain words block is written from
     # (explain-panel 5.2, D-114), for every ontology: never its words.
-    result["explain"] = explain(graph, ref, labeler(graph, langs), langs)
+    result["explain"] = explain(graph, ref, label, langs)
     if languages:
         result["names"] = [
             {"lang": lang, "value": name_in(graph, ref, lang)} for lang in languages
@@ -896,11 +900,16 @@ def _description(graph: Graph, node: URIRef, langs: Optional[Sequence[str]]) -> 
     Predicate order dominates, as the spec reads: a comment in French is not
     passed over for an English dcterms:description. Within a predicate the
     display language wins, then English or untagged for the library (as
-    pick_label prefers), then the first text there is.
+    pick_label prefers), then the first by language tag and text, so a
+    reload shows the same one. Empty text is no description: it would hide
+    the next predicate's (code review).
     """
     wanted = list(langs or ("en",))
     for predicate in DESCRIPTION_PREDICATES:
-        values = [v for v in graph.objects(node, predicate) if isinstance(v, Literal)]
+        values = sorted(
+            (v for v in graph.objects(node, predicate) if isinstance(v, Literal) and str(v).strip()),
+            key=lambda v: (v.language or "", str(v)),
+        )
         if not values:
             continue
         chosen = next(
@@ -918,7 +927,7 @@ def _refs(nodes, label: Callable[[URIRef], str]) -> list[dict]:
     return sorted(({"iri": str(n), "label": label(n)} for n in named), key=lambda r: (r["label"].lower(), r["iri"]))
 
 
-def _counted(nodes, label: Callable[[URIRef], str]) -> dict:
+def _counted(nodes, label: Callable[[URIRef], str], names: bool = True) -> dict:
     """A bounded count: from one iterator, at most EXPLAIN_COUNT_LIMIT + 1 read.
 
     A blank node counts, as it is a member the file states, though it has no
@@ -932,8 +941,25 @@ def _counted(nodes, label: Callable[[URIRef], str]) -> dict:
         if len(seen) > EXPLAIN_COUNT_LIMIT:
             break
     capped = len(seen) > EXPLAIN_COUNT_LIMIT
-    names = _refs(seen, label)[:EXPLAIN_NAMES] if len(seen) <= EXPLAIN_SORT_LIMIT else []
-    return {"count": min(len(seen), EXPLAIN_COUNT_LIMIT), "capped": capped, "names": names}
+    result = {"count": min(len(seen), EXPLAIN_COUNT_LIMIT), "capped": capped}
+    if names:
+        result["names"] = _refs(seen, label)[:EXPLAIN_NAMES] if len(seen) <= EXPLAIN_SORT_LIMIT else []
+    return result
+
+
+def _unnamed(nodes) -> bool:
+    return any(isinstance(n, BNode) for n in nodes)
+
+
+def _type_name(graph: Graph, iri: URIRef) -> str:
+    """A type of value as typeWord knows it: XML Schema's always as xsd:,
+    whatever prefix the file bound (xs:date is a date too); any other as
+    the file writes it."""
+    if str(iri).startswith(XSD_NS):
+        return "xsd:" + str(iri)[len(XSD_NS):]
+    if iri == RDF.langString:
+        return "rdf:langString"
+    return prefixed(graph, iri)
 
 
 def _chain(*iterables):
@@ -961,12 +987,17 @@ def explain(
         result["members"] = _counted(graph.subjects(RDF.type, node), label)
     elif kind in (KIND_OBJECT_PROPERTY, KIND_PROPERTY, KIND_DATATYPE_PROPERTY):
         result["domains"] = _refs(graph.objects(node, RDFS.domain), label)
+        # An end given only as a blank node (a union, a restriction) is not
+        # "a thing": the sentence says the statements describe it (code review).
+        if _unnamed(graph.objects(node, RDFS.domain)):
+            result["unnamedDomain"] = True
         if kind == KIND_DATATYPE_PROPERTY:
-            # The type of value as prefixed, which is how typeWord knows it.
             ranges = sorted(str(r) for r in graph.objects(node, RDFS.range) if isinstance(r, URIRef))
-            result["datatype"] = prefixed(graph, URIRef(ranges[0])) if ranges else None
+            result["datatype"] = _type_name(graph, URIRef(ranges[0])) if ranges else None
         else:
             result["ranges"] = _refs(graph.objects(node, RDFS.range), label)
+            if _unnamed(graph.objects(node, RDFS.range)):
+                result["unnamedRange"] = True
             inverses = _refs(_chain(graph.objects(node, OWL.inverseOf), graph.subjects(OWL.inverseOf, node)), label)
             result["inverse"] = next((r for r in inverses if r["iri"] != str(node)), None)
     elif kind == KIND_INDIVIDUAL:
@@ -974,11 +1005,13 @@ def explain(
     elif kind == KIND_CONCEPT:
         result["broader"] = _refs(_chain(graph.objects(node, SKOS.broader), graph.subjects(SKOS.narrower, node)), label)
         result["schemes"] = _refs(_chain(graph.objects(node, SKOS.inScheme), graph.objects(node, SKOS.topConceptOf)), label)
-        narrower = _counted(_chain(graph.objects(node, SKOS.narrower), graph.subjects(SKOS.broader, node)), label)
-        result["narrower"] = {"count": narrower["count"], "capped": narrower["capped"]}
+        result["narrower"] = _counted(
+            _chain(graph.objects(node, SKOS.narrower), graph.subjects(SKOS.broader, node)), label, names=False
+        )
     elif kind == KIND_SCHEME:
-        top = _counted(_chain(graph.objects(node, SKOS.hasTopConcept), graph.subjects(SKOS.topConceptOf, node)), label)
-        result["topConcepts"] = {"count": top["count"], "capped": top["capped"]}
+        result["topConcepts"] = _counted(
+            _chain(graph.objects(node, SKOS.hasTopConcept), graph.subjects(SKOS.topConceptOf, node)), label, names=False
+        )
     elif kind == KIND_COLLECTION:
         result["members"] = _counted(graph.objects(node, SKOS.member), label)
     return result

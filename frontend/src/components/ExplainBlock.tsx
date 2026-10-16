@@ -31,6 +31,8 @@ BASIC IDEA
 INPUTS / INPUT SOURCES (props)
     - label: the entity's name, as the panel's heading shows it.
     - explain: the node response's `explain`.
+    - language: the display language names are shown in (null: English),
+      so a description in another says which.
     - onNavigate: select an entity named in a sentence.
     - terms: the defined terms the panel shows, in first-appearance order
       (explain/glossary.ts, panelTerms).
@@ -48,6 +50,7 @@ import type { Explain } from "../types";
 interface Props {
   label: string;
   explain: Explain;
+  language?: string | null;
   onNavigate: (iri: string) => void;
   terms: PanelTerm[];
 }
@@ -69,8 +72,8 @@ function SentenceLine({ sentence, onNavigate }: { sentence: Sentence; onNavigate
   );
 }
 
-export default function ExplainBlock({ label, explain, onNavigate, terms }: Props) {
-  const sentences = explainSentences(label, explain);
+export default function ExplainBlock({ label, explain, language = null, onNavigate, terms }: Props) {
+  const sentences = explainSentences(label, explain, language);
   return (
     <section className="explain-block">
       <h3>In plain words</h3>

@@ -102,8 +102,10 @@ function list(items: Part[][]): Part[] {
 
 /** One end of a property: *a Mission*, *a thing*, or *a thing that is a
  *  Person and an Agent* when the file names several, which RDFS reads as
- *  all of them at once. */
-function end(refs: ExplainRef[] | undefined): Part[] {
+ *  all of them at once. An end given only as a blank node is not *a
+ *  thing*: the statements below say what it is. */
+function end(refs: ExplainRef[] | undefined, unnamed = false): Part[] {
+  if ((!refs || refs.length === 0) && unnamed) return ["something the statements below describe"];
   if (!refs || refs.length === 0) return ["a thing"];
   if (refs.length === 1) return articled(refs[0]);
   return ["a thing that is ", ...list(refs.map(articled))];
@@ -170,13 +172,19 @@ export function factSentences(label: string, explain: Explain): Sentence[] {
     }
     case "objectProperty":
     case "property": {
-      out.push([`${label} links `, ...end(explain.domains), " to ", ...end(explain.ranges), "."]);
+      out.push([
+        `${label} links `,
+        ...end(explain.domains, explain.unnamedDomain),
+        " to ",
+        ...end(explain.ranges, explain.unnamedRange),
+        ".",
+      ]);
       if (explain.inverse) out.push(['Its other way round is "', explain.inverse, '".']);
       break;
     }
     case "datatypeProperty": {
       const value = explain.datatype ? `a value: ${asType(explain.datatype)}.` : "a value.";
-      out.push([`${label} gives `, ...end(explain.domains), ` ${value}`]);
+      out.push([`${label} gives `, ...end(explain.domains, explain.unnamedDomain), ` ${value}`]);
       break;
     }
     case "individual": {
@@ -206,18 +214,30 @@ export function factSentences(label: string, explain: Explain): Sentence[] {
   return out;
 }
 
-/** The authors' own words, quoted, or nothing when they wrote none. */
-export function descriptionSentence(explain: Explain): Sentence | null {
-  const text = explain.description?.text.trim();
-  if (!text) return null;
-  // The authors' full stop stays inside their quotation; one is added only
-  // when they wrote none.
-  return [`Its authors describe it: "${text}"${/[.!?]$/.test(text) ? "" : "."}`];
+/** Whether a language tag is the one wanted, by prefix: en-GB is en. */
+function sameLanguage(tag: string, wanted: string): boolean {
+  const t = tag.toLowerCase();
+  const w = wanted.toLowerCase();
+  return t === w || t.startsWith(`${w}-`);
 }
 
-/** The block, in order: kind, facts, description. */
-export function explainSentences(label: string, explain: Explain): Sentence[] {
-  const description = descriptionSentence(explain);
+/** The authors' own words, quoted, or nothing when they wrote none. Text
+ *  in another language than the one shown says which, as a name shown in
+ *  its fallback language does (D-085): *Its authors describe it (de):*. */
+export function descriptionSentence(explain: Explain, language: string | null = null): Sentence | null {
+  const text = explain.description?.text.trim();
+  if (!text) return null;
+  const tag = explain.description?.lang;
+  const marked = tag && !sameLanguage(tag, language ?? "en") ? ` (${tag})` : "";
+  // The authors' full stop stays inside their quotation; one is added only
+  // when they wrote none.
+  return [`Its authors describe it${marked}: "${text}"${/[.!?]$/.test(text) ? "" : "."}`];
+}
+
+/** The block, in order: kind, facts, description. `language` is the one
+ *  names are shown in; null is the library's English. */
+export function explainSentences(label: string, explain: Explain, language: string | null = null): Sentence[] {
+  const description = descriptionSentence(explain, language);
   return [
     kindSentence(label, explain.kind),
     ...factSentences(label, explain),

@@ -156,6 +156,15 @@ describe("a property's facts", () => {
     ]);
   });
 
+  it("an end given only as a blank node is not a thing", () => {
+    expect(
+      texts("has part", { kind: "objectProperty", description: null, domains: [], unnamedDomain: true, ranges: [ref("Part")] }),
+    ).toEqual(["has part links something the statements below describe to a Part."]);
+    expect(texts("size", { kind: "datatypeProperty", description: null, domains: [], unnamedDomain: true, datatype: null })).toEqual([
+      "size gives something the statements below describe a value.",
+    ]);
+  });
+
   it("several ends are all of them at once", () => {
     expect(
       texts("p", { kind: "objectProperty", description: null, domains: [ref("Person"), ref("Agent")], ranges: [ref("Item")] }),
@@ -254,6 +263,20 @@ describe("names and the description", () => {
       'Its authors describe it: "No stop".',
     );
     expect(descriptionSentence({ kind: "class", description: null })).toBeNull();
+  });
+
+  it("marks a description in another language than the one shown", () => {
+    const german = { kind: "class", description: { text: "Ein Ding.", lang: "de" } };
+    expect(sentenceText(descriptionSentence(german)!)).toBe('Its authors describe it (de): "Ein Ding."');
+    const english = { kind: "class", description: { text: "A thing.", lang: "en-GB" } };
+    expect(sentenceText(descriptionSentence(english)!)).toBe('Its authors describe it: "A thing."');
+    // A project shown in French: its English comment says so.
+    expect(sentenceText(descriptionSentence({ kind: "class", description: { text: "A thing.", lang: "en" } }, "fr")!)).toBe(
+      'Its authors describe it (en): "A thing."',
+    );
+    expect(sentenceText(descriptionSentence({ kind: "class", description: { text: "Une chose.", lang: "fr" } }, "fr")!)).toBe(
+      'Its authors describe it: "Une chose."',
+    );
   });
 
   it("the block's order: kind, facts, description", () => {

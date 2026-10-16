@@ -24,10 +24,11 @@ BASIC IDEA
     standard term the bundled examples show is here (exampleTerms.json).
 
     A panel shows a term as a predicate, as a value, as a subject that
-    references the entity, or as a literal's type (^^xsd:date). The server
-    sends a literal's type prefixed only, so it is expanded here by the
-    standard prefixes alone; a file binding xsd: elsewhere is not one a
-    literal's type is looked up for.
+    references the entity, or as a literal's type (^^xsd:date). A literal's
+    type is looked up by the full IRI the server sends beside its prefixed
+    form, never by the prefix, which is whatever the file bound: xs:date is
+    XML Schema's date, and a dc: bound to Dublin Core terms is not the
+    original set (code review).
 
 INPUTS / INPUT SOURCES
     - The rows the panel lists: its statements and its references.
@@ -51,9 +52,6 @@ const SKOS = "http://www.w3.org/2004/02/skos/core#";
 const DCTERMS = "http://purl.org/dc/terms/";
 const DC = "http://purl.org/dc/elements/1.1/";
 const XSD = "http://www.w3.org/2001/XMLSchema#";
-
-/** A literal's prefixed type back to its IRI: only these standard ones. */
-const STANDARD_PREFIXES: Record<string, string> = { rdf: RDF, rdfs: RDFS, owl: OWL, skos: SKOS, dcterms: DCTERMS, dc: DC, xsd: XSD };
 
 /** MAPPINGS' sentence after the term's name and a colon: lower case first. */
 function mapping(id: string): string {
@@ -217,9 +215,10 @@ export interface PanelTerm {
   definition: string;
 }
 
-function local(prefixedName: string): string {
-  const colon = prefixedName.indexOf(":");
-  return colon >= 0 ? prefixedName.slice(colon + 1) : prefixedName;
+/** An IRI's last name, after its # or last /. */
+function local(iri: string): string {
+  const cut = Math.max(iri.lastIndexOf("#"), iri.lastIndexOf("/"));
+  return iri.slice(cut + 1);
 }
 
 /** A term as the panel shows it, or null for one with nothing to define:
@@ -230,11 +229,9 @@ function shown(term: TermRef): { iri: string; name: string; prefixed: string } |
     const name = term.label && term.label !== prefixed ? term.label : prefixed;
     return { iri: term.value, name, prefixed };
   }
-  if (term.type === "literal" && term.datatype) {
-    const colon = term.datatype.indexOf(":");
-    const namespace = colon >= 0 ? own(STANDARD_PREFIXES, term.datatype.slice(0, colon)) : undefined;
-    if (!namespace) return null;
-    return { iri: `${namespace}${local(term.datatype)}`, name: local(term.datatype), prefixed: term.datatype };
+  if (term.type === "literal" && term.datatypeIri) {
+    const iri = term.datatypeIri;
+    return { iri, name: local(iri), prefixed: term.datatype ?? iri };
   }
   return null;
 }

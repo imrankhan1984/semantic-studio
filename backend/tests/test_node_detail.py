@@ -42,7 +42,7 @@ from fastapi.testclient import TestClient
 from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import DC, DCTERMS, OWL, RDF, RDFS, SKOS, XSD
 
-from app.graph_builder import _description, build_viz_graph, explain, labeler, node_kind
+from app.graph_builder import _description, build_viz_graph, explain, labeler, node_details, node_kind
 from app.main import app
 
 client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
@@ -227,6 +227,7 @@ def test_a_concept_scheme_and_collection_explain_their_skos(space):
     assert crewed["kind"] == "concept"
     assert crewed["broader"] == [_ref("mt-mission", "Space mission")]
     assert crewed["schemes"] == [_ref("MissionTypes", "Mission types")]
+    # A count only: the sentence names no narrower concept.
     assert crewed["narrower"] == {"count": 2, "capped": False}
     scheme = _explain(space, SPACE + "MissionTypes")
     assert scheme["kind"] == "conceptScheme"
@@ -291,6 +292,36 @@ def test_fields_that_do_not_apply_are_absent(space, local, present):
     assert set(_explain(space, SPACE + local)) & EVERY_FIELD == present
 
 
+def test_an_end_given_as_a_blank_node_is_said_to_be_there():
+    graph = Graph()
+    graph.parse(data=(
+        "@prefix ex: <http://example.org/u#> .\n"
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+        "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
+        "ex:hasPart a owl:ObjectProperty ; rdfs:domain [ owl:unionOf ( ex:Car ex:Boat ) ] ; rdfs:range ex:Part .\n"
+    ), format="turtle")
+    result = explain(graph, URIRef("http://example.org/u#hasPart"), labeler(graph, None))
+    assert result["domains"] == [] and result["unnamedDomain"] is True
+    assert "unnamedRange" not in result
+
+
+def test_a_type_of_value_is_named_by_its_standard_prefix():
+    # xs:date is XML Schema's date whatever the file calls it, so typeWord
+    # can say "a date"; a literal carries its full type for the glossary.
+    graph = Graph()
+    graph.parse(data=(
+        "@prefix ex: <http://example.org/t#> .\n"
+        "@prefix xs: <http://www.w3.org/2001/XMLSchema#> .\n"
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+        "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
+        "ex:when a owl:DatatypeProperty ; rdfs:range xs:date .\n"
+        "ex:x ex:when \"1969-07-16\"^^xs:date .\n"
+    ), format="turtle")
+    assert explain(graph, URIRef("http://example.org/t#when"), labeler(graph, None))["datatype"] == "xsd:date"
+    (row,) = node_details(graph, "http://example.org/t#x")["outgoing"]
+    assert row["object"]["datatypeIri"] == "http://www.w3.org/2001/XMLSchema#date"
+
+
 def test_a_plain_property_with_no_ends_has_empty_lists():
     graph = Graph()
     graph.parse(data=(
@@ -312,11 +343,16 @@ def test_a_description_prefers_the_predicate_then_the_display_language():
         "@prefix dcterms: <http://purl.org/dc/terms/> .\n"
         "ex:A rdfs:comment \"Une chose\"@fr, \"A thing\"@en ; dcterms:description \"Ignored\" .\n"
         "ex:B dcterms:description \"Described\" ; skos:definition \"Defined\" .\n"
+        "ex:C skos:definition \"  \" ; rdfs:comment \"Commented\" .\n"
+        "ex:D rdfs:comment \"Zwei\"@de, \"Deux\"@fr .\n"
     ), format="turtle")
     a, b = URIRef("http://example.org/d#A"), URIRef("http://example.org/d#B")
     assert _description(graph, a, None) == {"text": "A thing", "lang": "en"}
     assert _description(graph, a, ("fr", "en")) == {"text": "Une chose", "lang": "fr"}
     assert _description(graph, b, None) == {"text": "Defined", "lang": None}
+    # Empty text hides nothing; with no match the first by tag is chosen.
+    assert _description(graph, URIRef("http://example.org/d#C"), None)["text"] == "Commented"
+    assert _description(graph, URIRef("http://example.org/d#D"), None) == {"text": "Zwei", "lang": "de"}
 
 
 def test_a_project_document_carries_explain_too():

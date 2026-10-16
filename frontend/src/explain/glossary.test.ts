@@ -100,7 +100,14 @@ describe("the glossary", () => {
 });
 
 const uri = (value: string, prefixed: string, label?: string): TermRef => ({ type: "uri", value, prefixed, label });
-const literal = (value: string, datatype: string | null): TermRef => ({ type: "literal", value, lang: null, datatype });
+const XSD = "http://www.w3.org/2001/XMLSchema#";
+const literal = (value: string, datatype: string | null, datatypeIri: string | null = null): TermRef => ({
+  type: "literal",
+  value,
+  lang: null,
+  datatype,
+  datatypeIri: datatypeIri ?? (datatype?.startsWith("xsd:") ? `${XSD}${datatype.slice(4)}` : null),
+});
 const SPACE = "http://example.org/space#";
 
 describe("panelTerms", () => {
@@ -138,8 +145,12 @@ describe("panelTerms", () => {
     expect(panelTerms([], [])).toEqual([]);
   });
 
-  it("expands a literal's type by the standard prefixes alone", () => {
-    const odd = [{ predicate: uri(`${SPACE}p`, "space:p"), object: literal("1", "ex:date") }];
+  it("looks a literal's type up by its full IRI, never its prefix", () => {
+    // The file bound XML Schema as xs: — still its date.
+    const xs = [{ predicate: uri(`${SPACE}p`, "space:p"), object: literal("1969-07-16", "xs:date", `${XSD}date`) }];
+    expect(panelTerms(xs, [])).toMatchObject([{ iri: `${XSD}date`, name: "date", prefixed: "xs:date" }]);
+    // A prefix that looks standard but names something else defines nothing.
+    const odd = [{ predicate: uri(`${SPACE}p`, "space:p"), object: literal("1", "xsd:date", "http://example.org/x#date") }];
     expect(panelTerms(odd, [])).toEqual([]);
   });
 

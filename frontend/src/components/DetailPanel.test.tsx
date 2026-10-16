@@ -796,6 +796,16 @@ describe("DetailPanel: In plain words (explain-panel 5.1, 5.2, AC-1, AC-2, AC-5)
     expect(screen.queryByText(/What these words mean/)).toBeNull();
   });
 
+  it("says a description is in another language than the one shown", async () => {
+    getNodeDetails.mockResolvedValue(explained());
+    await act(async () => {
+      render(
+        <DetailPanel ontologyId="o1" iri={`${SPACE}CrewedMission`} onNavigate={vi.fn()} onClose={vi.fn()} language="fr" />,
+      );
+    });
+    expect(within(plainWords()).getByText('Its authors describe it (en): "A mission that carries people into space."')).toBeTruthy();
+  });
+
   it("is not shown for a response without explain", async () => {
     await renderPanel(crewed());
     expect(screen.getByRole("heading", { level: 2, name: "Crewed mission" })).toBeTruthy();

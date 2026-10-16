@@ -2131,6 +2131,16 @@ EXPECTED OUTPUT
   narrower ones, a scheme's top concepts and a collection's members stop at
   10,000, reading at most 10,001 from one iterator; names are sorted and
   sent, three of them, only for a count of 50 or fewer. A class with ten
-  thousand individuals costs the same as one with 10,001. A literal's type
-  reaches the panel prefixed only (`^^xsd:date`), so the glossary looks it
-  up by the standard prefixes alone.
+  thousand individuals costs the same as one with 10,001.
+
+  **Found in code review, fixed.** A literal's type reached the panel only
+  in the file's own prefixed form, so a file binding XML Schema as `xs:` got
+  no definition, and one binding `dc:` to Dublin Core terms would have got
+  the original set's; a literal now carries `datatypeIri` and the glossary
+  looks that up. A datatype property's type of value is named `xsd:` by its
+  namespace, whatever the file's prefix, so `typeWord` says *a date*. A
+  domain or range given only as a blank node (a union) read as *a thing*;
+  it reads *something the statements below describe*. A description in
+  another language than the one shown says which, as a fallback name does
+  (D-085). An empty description no longer hides the next predicate's, and
+  the fallback among other languages is the first by tag, not store order.

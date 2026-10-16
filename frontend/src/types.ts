@@ -490,6 +490,9 @@ export interface TermRef {
   label?: string;
   lang?: string | null;
   datatype?: string | null;
+  // A literal's type as a full IRI, which the glossary is keyed by: the
+  // prefixed form above is whatever the file bound (explain-panel 5.3).
+  datatypeIri?: string | null;
   // A project document's URI term: the kind its rdf:type gives, so the
   // editing form can tell an attribute from a relationship (visual-modeling).
   kind?: string;
@@ -555,6 +558,9 @@ export interface Explain {
   members?: ExplainCount;
   domains?: ExplainRef[];
   ranges?: ExplainRef[];
+  // An end the file gives only as a blank node (a union, a restriction).
+  unnamedDomain?: boolean;
+  unnamedRange?: boolean;
   // A datatype property's type of value, prefixed (xsd:date), as typeWord reads it.
   datatype?: string | null;
   inverse?: ExplainRef | null;
