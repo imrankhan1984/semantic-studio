@@ -166,6 +166,9 @@ def test_a_class_explains_its_parents_children_and_individuals(space):
         _ref("CrewedMission", "Crewed mission"),
         _ref("RoboticMission", "Robotic mission"),
     ]
+    # Members are those typed with the class itself: Mission's subclasses
+    # hold thirteen more, and counting them would say 14.
+    assert mission["members"] == {"count": 1, "capped": False, "names": [_ref("Vostok1", "Vostok 1")]}
 
 
 def test_an_object_property_explains_its_ends_and_inverse(space):
@@ -353,6 +356,18 @@ def test_a_description_prefers_the_predicate_then_the_display_language():
     # Empty text hides nothing; with no match the first by tag is chosen.
     assert _description(graph, URIRef("http://example.org/d#C"), None)["text"] == "Commented"
     assert _description(graph, URIRef("http://example.org/d#D"), None) == {"text": "Zwei", "lang": "de"}
+
+
+def test_a_definition_wins_over_a_comment_on_the_same_entity():
+    # Both untagged, so only the predicate order can choose between them.
+    graph = Graph()
+    graph.parse(data=(
+        "@prefix ex: <http://example.org/d#> .\n"
+        "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
+        "@prefix skos: <http://www.w3.org/2004/02/skos/core#> .\n"
+        "ex:E rdfs:comment \"Commented\" ; skos:definition \"Defined\" .\n"
+    ), format="turtle")
+    assert _description(graph, URIRef("http://example.org/d#E"), None) == {"text": "Defined", "lang": None}
 
 
 def test_a_project_document_carries_explain_too():

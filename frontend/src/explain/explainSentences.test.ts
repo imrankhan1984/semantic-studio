@@ -191,6 +191,34 @@ describe("a property's facts", () => {
   });
 });
 
+describe("names whose letter and sound disagree", () => {
+  // The article is sentences.ts's: a vowel-letter rule written here would
+  // say "an University", "a hour" and "a XML file".
+  it("an individual's classes", () => {
+    const types = [ref("University"), ref("Hour"), ref("XML file")];
+    expect(texts("Doc", { kind: "individual", description: null, types })).toEqual([
+      "Doc is a University, an Hour and an XML file.",
+    ]);
+  });
+
+  it("a property's ends", () => {
+    const p = { kind: "objectProperty", description: null, domains: [ref("University")], ranges: [ref("XML file")] };
+    expect(texts("publishes", p)).toEqual(["publishes links a University to an XML file."]);
+    const several = { kind: "objectProperty", description: null, domains: [ref("Hour"), ref("University")], ranges: [] };
+    expect(texts("lasts", several)).toEqual(["lasts links a thing that is an Hour and a University to a thing."]);
+    const value = { kind: "datatypeProperty", description: null, domains: [ref("Hour")], datatype: null };
+    expect(texts("minutes", value)).toEqual(["minutes gives an Hour a value."]);
+  });
+
+  it("a class's names, which take no article", () => {
+    const members = { count: 1, capped: false, names: [ref("XML file")] };
+    expect(texts("Hour", { kind: "class", description: null, parents: [ref("University")], members })).toEqual([
+      "Hour is a more specific kind of University.",
+      "It has 1 individual of its own, XML file.",
+    ]);
+  });
+});
+
 describe("the other kinds' facts", () => {
   it("an individual is each of its classes, an before a vowel", () => {
     expect(texts("Apollo 11", { kind: "individual", description: null, types: [ref("Crewed mission")] })).toEqual([

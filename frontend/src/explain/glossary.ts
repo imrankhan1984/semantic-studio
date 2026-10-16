@@ -85,7 +85,7 @@ export const GLOSSARY: Record<string, string> = {
   [`${RDFS}member`]: "links a container to one of the things in it.",
 
   // OWL
-  [`${OWL}Ontology`]: "the record that names an ontology and says who made it, its version and its license.",
+  [`${OWL}Ontology`]: "the record that names an ontology; it often also says who made it, its version and its license.",
   [`${OWL}Class`]: "a category of things, as the Web Ontology Language defines one; its members are individuals.",
   [`${OWL}Thing`]: "the class of everything; every individual is in it.",
   [`${OWL}Nothing`]: "the empty class; nothing can be in it.",
