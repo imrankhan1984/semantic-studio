@@ -1896,3 +1896,51 @@ EXPECTED OUTPUT
   (`test_reasoning.py`'s six-thousand-conclusions explain, `test_snapshots.py`'s
   two-snapshot open) identically with `main`'s code; nothing here touches
   either path.
+- **Home is one library with three bundled examples, and Home downloads
+  nothing** (2026-10-16, spec `home-and-examples`, backlog U-13a, decision
+  D-111). Space Exploration (`backend/app/examples/space-exploration.ttl`,
+  832 statements, every floor of the spec's 5.2), The Lord of the Rings
+  (`middle-earth.ttl`, 547 statements, facts only) and FOAF
+  (`vocab/foaf.rdf` itself, not a copy) are added to the library once, at
+  the first start, through the store's own `add` with `source: "example"`
+  and fixed ids (`ont-` and 12 hex of SHA-256 of `example:<key>`).
+  `<data dir>/examples.json` records each key and hash: a later start parses
+  nothing (a count test), a removed example stays removed, and a changed
+  hash replaces an entry still in the library under the same id, so its
+  saved queries stay attached. `POST /api/examples/restore`, behind
+  `local_guard`, is the only way one comes back; the Load dialog's
+  Suggested tab offers it while one is missing. `examples/space-exploration.ttl`
+  at the repository root is untouched: eight backend test files and the
+  smoke run depend on its 142 statements.
+
+  **Seeding is in the lifespan, never at import**, so a `TestClient` that
+  never starts the app gets only the library it built; and a failure there
+  is logged and the server starts anyway (a read-only data folder cost the
+  person their own library otherwise). **An example is told by `source` and
+  its `example` record, never by its name**: a person's own file may be
+  called FOAF, and it sorts with their work. **The examples always follow
+  the person's work**, newest first by `updatedAt` for a project and
+  `addedAt` for a file, in `home/libraryOrder.ts`; its `EXAMPLE_ORDER` is
+  read against the server manifest by a test.
+
+  **Home's catalogue is gone, and with it the `memo` at Home's import** that
+  the card grid entry above describes: `CatalogueList` has one caller, the
+  Load dialog, and FOAF left `CATALOGUE` because picking it would add the
+  example twice. The comment above the array says so.
+
+  **The card is one sentence and two facts** (*832 statements*, *Added Oct
+  14* or *Example*) and *Read-only* in words. **`.onto-card` must not clip**:
+  found in Chrome, a card that short cut its own "⋮" menu off at Remove (a
+  64 px row did even before), so the miniature clips its own corners
+  instead; `styles.test.ts` pins both. **A person reads *statements***:
+  `statusWords.statementCount` says it for the card, the picker and the
+  status bar, and `wording.test.ts` strips comments and fails on *triple* or
+  *triples* standing as words; *N-Triples* and the code's `triples` stay.
+
+  Measured in Chrome from an empty data folder at 1280x720 and 1920x1080 in
+  both themes: Home's first load asked for `/api/ontologies` and
+  `/api/projects` and nothing else, the network activity log was empty,
+  focus started on *Explore Space Exploration*; Explore, Query and View
+  opened each example; a project started from Space Exploration came first;
+  a removed example stayed removed across a restart and came back from the
+  Load dialog, focus on the Suggested tab.
