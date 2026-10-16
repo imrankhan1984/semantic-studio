@@ -41,7 +41,9 @@ BASIC IDEA
     Results tab, in words and in its name, as Reasoning does. On arrival the
     first shape is selected, without moving focus, so the panel opens on a
     form rather than on *Choose a shape*; only arrival does this, since a
-    delete clears the selection on purpose.
+    delete clears the selection on purpose. Choosing or making a shape
+    shows Shape; the form stays mounted, hidden, under Results, so a rule
+    open in it keeps its edits through a run.
 
 INPUTS / INPUT SOURCES (props)
     - projectId, kind, languages, modelOntologyId, revisions.
@@ -189,11 +191,13 @@ export default function ShapesView({
       const result = await runner.run("create", "CreateShape", args);
       setChoosing(null);
       if (result?.created) {
+        // Its form is where focus goes, so Shape must be the tab showing.
         setSelectedId(result.created);
+        chooseTab("shape");
         setFocusFor(result.created);
       } else restorePlus();
     },
-    [runner, restorePlus],
+    [runner, restorePlus, chooseTab],
   );
 
   const stale = isStale(validation, documents);
@@ -280,7 +284,10 @@ export default function ShapesView({
                     type="button"
                     className={shape.id === selected?.id ? "shapes-row selected" : "shapes-row"}
                     aria-pressed={shape.id === selected?.id}
-                    onClick={() => setSelectedId(shape.id)}
+                    onClick={() => {
+                      setSelectedId(shape.id);
+                      chooseTab("shape");
+                    }}
                   >
                     <span className="shapes-row-name">{shape.name}</span>
                     <span className="shapes-row-sentence">{rowSentence(shape)}</span>
@@ -305,8 +312,9 @@ export default function ShapesView({
         label="Shape and results"
         className="side-panel shapes-panel"
       >
-        {tab === "shape" ? (
-          <div className="shapes-form-column">
+        {/* Shape stays mounted while Results shows: Validate switches tabs,
+            and a rule open in the form would otherwise lose its edits. */}
+        <div className="shapes-form-column" hidden={tab !== "shape"}>
             {selected ? (
               <ShapeForm
                 key={selected.id}
@@ -327,7 +335,7 @@ export default function ShapesView({
               </p>
             )}
           </div>
-        ) : (
+        {tab === "results" && (
           <div className="shapes-results">
             {/* Seen, not announced: the store's live region says Validating…
                 and the summary. */}

@@ -718,6 +718,45 @@ describe("ShapesView in two columns (load-and-shapes 5.3, AC-4)", () => {
     expect(screen.getByRole("tab", { name: "Results" }).textContent).toBe("Results");
   });
 
+  it("shows Shape again when a shape is chosen in the list while Results shows (found in review)", async () => {
+    await setup([PERSON, CONTACT]);
+    fireEvent.click(screen.getByRole("tab", { name: "Results" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Contact rules/ }));
+    });
+    expect(screen.getByRole("tab", { name: "Shape" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("heading", { name: "Contact rules" })).toBeTruthy();
+  });
+
+  it("shows Shape for a shape made with + while Results shows, and focus reaches its form (found in review)", async () => {
+    await setup([PERSON]);
+    fireEvent.click(screen.getByRole("tab", { name: "Results" }));
+    runCommand.mockResolvedValue(changed("Made the shape Model check", CONTACT.id));
+    getShapes.mockResolvedValue(listing([PERSON, CONTACT]));
+    fireEvent.click(screen.getByRole("button", { name: "Add a shape" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Check my model" }));
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(screen.getByRole("tab", { name: "Shape" }).getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement?.id).toBe("shape-form-heading");
+  });
+
+  it("keeps a rule being edited through Validate and back (found in review)", async () => {
+    await setup([PERSON]);
+    fireEvent.click(screen.getByRole("button", { name: "+ Add a rule" }));
+    fireEvent.change(screen.getByLabelText("What is the rule about?"), { target: { value: `${X}birthDate` } });
+    validateProject.mockResolvedValue(RESULT(0));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Validate" }));
+    });
+    expect(screen.getByRole("tab", { name: "Results" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("tab", { name: "Shape" }));
+    expect((screen.getByLabelText("What is the rule about?") as HTMLInputElement).value).toBe(`${X}birthDate`);
+  });
+
   it("moves between the tabs with the arrow keys, the selected one in the tab order", async () => {
     await setup([PERSON]);
     const shape = screen.getByRole("tab", { name: "Shape" });

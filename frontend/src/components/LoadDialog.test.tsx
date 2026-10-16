@@ -283,6 +283,62 @@ describe("the Load dialog is a dialog (load-and-shapes 5.2, AC-3)", () => {
     expect(document.activeElement).toBe(opener);
   });
 
+  it("leaves an Escape from the page's body to a modal dialog open over it (found in review)", () => {
+    const onClose = vi.fn();
+    render(
+      <>
+        <LoadDialog onLoaded={() => {}} onClose={onClose} />
+        <div role="dialog" aria-modal="true" aria-label="Approval">
+          <button type="button">Don't allow</button>
+        </div>
+      </>,
+    );
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("gives focus back to the opener when it opened on the URL tab, the field already focused (found in review)", () => {
+    function Host() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Load from a URL
+          </button>
+          {open && <LoadDialog onLoaded={() => {}} onClose={() => setOpen(false)} initialTab="url" />}
+        </>
+      );
+    }
+    render(<Host />);
+    const opener = screen.getByRole("button", { name: "Load from a URL" });
+    opener.focus();
+    fireEvent.click(opener);
+    expect(document.activeElement).toBe(screen.getByRole("textbox"));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("keeps Tab inside: past the last control to the first, and back (found in review)", () => {
+    render(
+      <>
+        <button type="button">Behind</button>
+        <LoadDialog onLoaded={() => {}} onClose={() => {}} initialTab="file" />
+      </>,
+    );
+    const dialog = screen.getByRole("dialog");
+    // The file input is `hidden` and Tab never stops on it: it is not an end.
+    expect(dialog.querySelector('input[type="file"][hidden]')).not.toBeNull();
+    const items = [...dialog.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), summary, a[href]")]
+      .filter((el) => !el.closest("[hidden]"));
+    expect(items.length).toBeGreaterThan(1);
+    items[items.length - 1].focus();
+    fireEvent.keyDown(document.activeElement!, { key: "Tab" });
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(document.activeElement!, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(items[items.length - 1]);
+  });
+
   it("keeps the URL field's own focus when it opens on the URL tab", () => {
     render(<LoadDialog onLoaded={() => {}} onClose={() => {}} initialTab="url" />);
     expect(document.activeElement).toBe(screen.getByRole("textbox"));

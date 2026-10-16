@@ -39,8 +39,10 @@ BASIC IDEA
     the page; a later tab switch does not take it again (X4).
 
     It is a dialog like the others (load-and-shapes 5.2): role, aria-modal,
-    labelled by its heading. Escape is the ✕, asking first past the
-    wizard's third step, and closing gives focus back to what opened it.
+    labelled by its heading, Tab kept inside (useDialogTrap's wrapTab).
+    Escape is the ✕, asking first past the wizard's third step, and closing
+    gives focus back to what opened it. While another modal dialog is open
+    over it (an approval), every key is that dialog's.
 
 INPUTS / INPUT SOURCES (props)
     - onLoaded: called with the new ontology's summary on success.
@@ -67,6 +69,7 @@ import type { CatalogueEntry } from "../catalogue";
 import CatalogueList from "./CatalogueList";
 import DataWizard, { type WizardStart } from "./DataWizard";
 import SnapshotList from "./SnapshotList";
+import { wrapTab } from "./useDialogTrap";
 import type { OntologySummary } from "../types";
 
 export type LoadTab = "file" | "url" | "suggested" | "data";
@@ -158,10 +161,11 @@ export default function LoadDialog({
   // Into the dialog on open, unless a control in it took focus already (the
   // URL field's autoFocus); back to whatever opened it on close -- the
   // header's Load, Home's two buttons, the project's data button -- if it is
-  // still in the document (load-and-shapes 5.2). Taken in the effect body,
-  // before any child moves focus; mount and unmount only.
+  // still in the document (load-and-shapes 5.2). Taken at the first render,
+  // not in the effect: by then the URL field's autoFocus and the wizard's own
+  // effect have already moved focus into the dialog.
+  const [opener] = useState(() => document.activeElement as HTMLElement | null);
   useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
     if (!panelRef.current?.contains(document.activeElement)) headingRef.current?.focus();
     return () => {
       if (opener && opener !== document.body && opener.isConnected) opener.focus();
@@ -230,7 +234,8 @@ export default function LoadDialog({
   // Escape is the ✕: it asks first while the wizard has a mapping, and with
   // the question showing it keeps going. On `document`, as useDialogTrap's
   // is, since a click on the dialog's prose blurs focus to <body>; a key
-  // pressed in another dialog over this one (an approval) is that dialog's.
+  // pressed while another dialog is open over this one (an approval) is that
+  // dialog's, even from <body>. Tab stays inside, as aria-modal promises.
   const onEscape = useRef<() => void>(() => {});
   onEscape.current = () => {
     if (leaving) setLeaving(null);
@@ -238,9 +243,16 @@ export default function LoadDialog({
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented) return;
+      const panel = panelRef.current;
+      if (!panel || e.defaultPrevented) return;
       const target = e.target as Node | null;
-      if (target && target !== document.body && !panelRef.current?.contains(target)) return;
+      if (target && target !== document.body && !panel.contains(target)) return;
+      const over = [...document.querySelectorAll('[aria-modal="true"]')].some((d) => d !== panel);
+      if (over) return;
+      if (e.key !== "Escape") {
+        wrapTab(panel, e);
+        return;
+      }
       e.preventDefault();
       onEscape.current();
     };

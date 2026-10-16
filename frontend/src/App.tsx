@@ -2064,6 +2064,8 @@ export default function App() {
       ) : mode === "shapes" && openProjectSummary ? (
         <main className="main">
           <ShapesView
+            // Another project is a new list: its arrival selects its own first shape.
+            key={openProjectSummary.id}
             projectId={openProjectSummary.id}
             kind={openProjectSummary.kind}
             languages={[openProjectSummary.primaryLanguage, ...openProjectSummary.languages]}

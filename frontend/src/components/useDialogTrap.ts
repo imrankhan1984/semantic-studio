@@ -66,29 +66,38 @@ export function useDialogTrap(
         onEscape();
         return;
       }
-      if (e.key !== "Tab") return;
-      const panel = panelRef.current;
-      if (!panel) return;
-      const items = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)];
-      if (items.length === 0) {
-        e.preventDefault();
-        return;
-      }
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement;
-      if (!panel.contains(active)) {
-        e.preventDefault();
-        first.focus();
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
-      } else if (e.shiftKey && active === first) {
-        e.preventDefault();
-        last.focus();
-      }
+      if (panelRef.current) wrapTab(panelRef.current, e);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [panelRef, onEscape]);
+}
+
+/** Tab and Shift+Tab kept inside `panel`, wrapping at either end. Shared with
+ *  the Load dialog, whose focus and Escape differ but whose Tab does not. */
+export function wrapTab(panel: HTMLElement, e: KeyboardEvent): void {
+  if (e.key !== "Tab") return;
+  // Only what Tab really stops on: the Load dialog's file input is `hidden`,
+  // and as the last item it let focus out and caught Shift+Tab (Chrome).
+  // checkVisibility catches CSS hiding where the browser has it; jsdom has not.
+  const items = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+    (el) => !el.closest("[hidden]") && (typeof el.checkVisibility !== "function" || el.checkVisibility()),
+  );
+  if (items.length === 0) {
+    e.preventDefault();
+    return;
+  }
+  const first = items[0];
+  const last = items[items.length - 1];
+  const active = document.activeElement;
+  if (!panel.contains(active)) {
+    e.preventDefault();
+    first.focus();
+  } else if (!e.shiftKey && active === last) {
+    e.preventDefault();
+    first.focus();
+  } else if (e.shiftKey && active === first) {
+    e.preventDefault();
+    last.focus();
+  }
 }
