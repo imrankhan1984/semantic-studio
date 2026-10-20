@@ -1850,3 +1850,44 @@ describe("Reason in the canvas toolbar (edit-page-rework 5.6, AC-7)", () => {
     expect(document.activeElement).toBe(reason);
   });
 });
+
+describe("a shared domain (attribute-reuse 5.3)", () => {
+  const shared = () =>
+    viewOf({
+      nodes: [
+        ...viewOf().nodes.map((n) =>
+          n.iri === EX + "Document" || n.iri === EX + "Invoice"
+            ? { ...n, attributes: [{ iri: EX + "code", label: "code", datatype: "xsd:string", shared: true, with: [] }] }
+            : n,
+        ),
+      ],
+      edges: [
+        ...viewOf().edges,
+        ...["Document", "Invoice"].map((m) => ({
+          kind: "relationship" as const,
+          source: EX + m,
+          target: "http://xmlns.com/foaf/0.1/Agent",
+          property: EX + "filedBy",
+          label: "filed by",
+          member: EX + m,
+          shared: true,
+          pair: 0,
+          pairs: 1,
+        })),
+      ],
+    });
+
+  it("says shared in text in every member's box (5.5)", async () => {
+    await renderCanvas(shared());
+    for (const name of ["Document", "Invoice (en)"]) {
+      expect(within(box(name)).getByRole("button", { name: "code : xsd:string (shared)" })).toBeTruthy();
+    }
+  });
+
+  it("draws one line per member, each named with its member", async () => {
+    await renderCanvas(shared());
+    const names = [...document.querySelectorAll(".react-flow__edge")].map((l) => l.getAttribute("aria-label"));
+    expect(names).toContain("filed by, from Document to Agent");
+    expect(names).toContain("filed by, from Invoice (en) to Agent");
+  });
+});

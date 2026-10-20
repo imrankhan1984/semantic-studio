@@ -471,11 +471,16 @@ def paths_for(model: Graph, target, names: Names, languages: list) -> list[dict]
     out.append({"path": [str(p) for p in DEFINITION_PATH], "label": "definition", "kind": "definition"})
     if target in (OWL.Class, RDFS.Class, SKOS.Concept) or target is None:
         return out
+    from . import axioms
+
     starts = set(ancestors(model, target))
     seen = set()
     found = []
-    for prop, domain in model.subject_objects(RDFS.domain):
-        if domain not in starts or not isinstance(prop, URIRef) or prop in seen:
+    # A class has P when it, or a parent, is a member of P's union, or is
+    # under every class two domain lines name: the standard's reading of
+    # them (attribute-reuse 5.3, 5.0 row 3).
+    for prop, reading in axioms.domains(model).items():
+        if not axioms.covers(reading, starts) or prop in seen:
             continue
         types = set(model.objects(prop, RDF.type))
         kind = ("relationship" if OWL.ObjectProperty in types

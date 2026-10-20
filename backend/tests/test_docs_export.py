@@ -679,3 +679,39 @@ def test_rate_limit_on_documentation_endpoint(monkeypatch):
         assert statuses[2] == 429
     finally:
         ontologies_router._reset_docs_rate_limit()
+
+
+# --- a union domain read by every view (attribute-reuse 5.3, D-116) ---------------------
+
+UNION_TTL = """
+@prefix u: <http://example.org/u#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+u:Employee a owl:Class ; rdfs:label "Employee" .
+u:Manager a owl:Class ; rdfs:label "Manager" ; rdfs:subClassOf u:Employee .
+u:Contractor a owl:Class ; rdfs:label "Contractor" .
+u:Team a owl:Class ; rdfs:label "Team" .
+u:hasName a owl:DatatypeProperty ; rdfs:label "hasName" ; rdfs:range xsd:string ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( u:Employee u:Contractor ) ] .
+u:leads a owl:ObjectProperty ; rdfs:label "leads" ; rdfs:range u:Team ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( u:Employee u:Contractor ) ] .
+u:badge a owl:DatatypeProperty ; rdfs:label "badge" ; rdfs:range xsd:string ;
+    rdfs:domain u:Manager , u:Team .
+"""
+UNI = "http://example.org/u#"
+
+
+def _union_graph():
+    from rdflib import Graph
+
+    return Graph().parse(data=UNION_TTL, format="turtle")
+
+
+def test_the_documentation_names_a_union_domain_with_or():
+    """AC-8: the Domain row reads *Employee or Contractor*."""
+    html = _html(_add(UNION_TTL, name="union.ttl"))
+    row = html[html.index('id="hasName"') if 'id="hasName"' in html else html.index("hasName"):]
+    row = row[row.index("<th>Domain</th>"):]
+    row = row[:row.index("</tr>")]
+    assert "Employee</a> or <a" in row and "Contractor" in row

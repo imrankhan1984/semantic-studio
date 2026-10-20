@@ -301,7 +301,7 @@ def test_an_end_given_as_a_blank_node_is_said_to_be_there():
         "@prefix ex: <http://example.org/u#> .\n"
         "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
         "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
-        "ex:hasPart a owl:ObjectProperty ; rdfs:domain [ owl:unionOf ( ex:Car ex:Boat ) ] ; rdfs:range ex:Part .\n"
+        "ex:hasPart a owl:ObjectProperty ; rdfs:domain [ owl:intersectionOf ( ex:Car ex:Boat ) ] ; rdfs:range ex:Part .\n"
     ), format="turtle")
     result = explain(graph, URIRef("http://example.org/u#hasPart"), labeler(graph, None))
     assert result["domains"] == [] and result["unnamedDomain"] is True
@@ -467,3 +467,121 @@ def test_the_glossary_list_is_every_standard_term_an_example_panel_shows():
     listed = json.loads(EXAMPLE_TERMS.read_text(encoding="utf-8"))["terms"]
     assert len(listed) >= 45
     assert sorted(measured) == listed
+
+
+# --- a class's properties, and how it has each (attribute-reuse 5.3) --------------------
+
+HR = "http://example.org/hr#"
+HR_MODEL = f"""@prefix hr: <{HR}> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+hr:Employee a owl:Class ; rdfs:label "Employee"@en .
+hr:Manager a owl:Class ; rdfs:label "Manager"@en ; rdfs:subClassOf hr:Employee .
+hr:Contractor a owl:Class ; rdfs:label "Contractor"@en .
+hr:Team a owl:Class ; rdfs:label "Team"@en .
+hr:title a owl:DatatypeProperty ; rdfs:label "title"@en ; rdfs:domain hr:Manager ; rdfs:range xsd:string .
+hr:hasJobCode a owl:DatatypeProperty ; rdfs:label "hasJobCode"@en ; rdfs:domain hr:Employee ; rdfs:range xsd:string .
+hr:hasName a owl:DatatypeProperty ; rdfs:label "hasName"@en ; rdfs:range xsd:string ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( hr:Manager hr:Contractor ) ] .
+hr:leads a owl:ObjectProperty ; rdfs:label "leads"@en ; rdfs:range hr:Team ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( hr:Employee hr:Contractor ) ] .
+hr:badge a owl:DatatypeProperty ; rdfs:label "badge"@en ; rdfs:domain hr:Manager , hr:Team .
+"""
+
+
+def _open_project(text: str) -> str:
+    response = client.post(
+        "/api/projects", json={"name": "HR", "template": "small", "baseIri": HR, "prefix": "hr"}
+    )
+    assert response.status_code == 200, response.text
+    pid = response.json()["id"]
+    assert client.post(f"/api/projects/{pid}/open").status_code == 200
+    assert client.put(f"/api/projects/{pid}/documents/model/source", json={"text": text}).status_code == 200
+    return pid
+
+
+@pytest.fixture
+def hr():
+    from app.editing import editing_service
+
+    yield _open_project(HR_MODEL)
+    editing_service.close_all()
+
+
+def _project_node(pid: str, iri: str) -> dict:
+    response = client.get(f"/api/ontologies/{pid}-model/node", params={"iri": iri})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_a_class_lists_its_own_shared_both_and_through_properties(hr):
+    """AC-8: *own*, *shared* in a union, *both* (two domain lines) and
+    *through* a parent, named in `via`."""
+    props = {p["label"]: p for p in _project_node(hr, HR + "Manager")["properties"]}
+    assert props["title"]["how"] == "own" and props["title"]["datatype"] == "xsd:string"
+    assert props["hasName"]["how"] == "shared"
+    assert props["hasName"]["with"] == [{"iri": HR + "Contractor", "label": "Contractor"}]
+    assert props["badge"]["how"] == "both"
+    assert props["hasJobCode"]["how"] == "through"
+    assert props["hasJobCode"]["via"] == {"iri": HR + "Employee", "label": "Employee"}
+    # Through Employee, a member of leads's union.
+    assert props["leads"]["how"] == "through" and props["leads"]["via"]["label"] == "Employee"
+    assert props["leads"]["kind"] == "relationship" and props["leads"]["range"]["label"] == "Team"
+    assert [p["how"] for p in _project_node(hr, HR + "Manager")["properties"]] == sorted(
+        (p["how"] for p in props.values()), key=lambda h: {"own": 0, "shared": 1, "both": 1, "through": 2}[h]
+    )
+
+
+def test_a_class_has_nothing_it_is_not_under(hr):
+    props = {p["label"] for p in _project_node(hr, HR + "Team")["properties"]}
+    assert props == {"badge"}, "badge lists Team; nothing else reaches it"
+    assert {p["label"] for p in _project_node(hr, HR + "Contractor")["properties"]} == {"hasName", "leads"}
+
+
+def test_a_property_carries_its_domain_as_the_reader_reads_it(hr):
+    domain = _project_node(hr, HR + "hasName")["domain"]
+    assert domain == {"form": "union", "classes": [
+        {"iri": HR + "Manager", "label": "Manager"}, {"iri": HR + "Contractor", "label": "Contractor"},
+    ]}
+    assert _project_node(hr, HR + "badge")["domain"]["form"] == "separate"
+
+
+@pytest.mark.perf
+def test_node_details_with_200_properties_budget():
+    """Section 10: a class with 200 properties, a third shared and a third
+    through parents, <= 50 ms, median of five with gc off."""
+    import gc
+    import time
+
+    from app.editing import editing_service
+    from budget import limit_ms
+
+    lines = [HR_MODEL, "hr:Worker a owl:Class ; rdfs:label \"Worker\"@en .",
+             "hr:Employee rdfs:subClassOf hr:Worker ."]
+    for i in range(200):
+        if i % 3 == 0:
+            domain = "hr:Manager"
+        elif i % 3 == 1:
+            domain = "[ a owl:Class ; owl:unionOf ( hr:Manager hr:Contractor ) ]"
+        else:
+            domain = "hr:Worker"
+        lines.append(f'hr:p{i} a owl:DatatypeProperty ; rdfs:label "p {i}"@en ; rdfs:domain {domain} ; rdfs:range xsd:string .')
+    pid = _open_project("\n".join(lines) + "\n")
+    try:
+        details = _project_node(pid, HR + "Manager")
+        hows = [p["how"] for p in details["properties"] if p["label"].startswith("p ")]
+        assert len(hows) == 200 and hows.count("shared") == 67 and hows.count("through") == 66
+        times = []
+        gc.disable()
+        try:
+            for _ in range(5):
+                start = time.perf_counter()
+                _project_node(pid, HR + "Manager")
+                times.append((time.perf_counter() - start) * 1000)
+        finally:
+            gc.enable()
+        median = sorted(times)[2]
+        assert median <= limit_ms(50), f"the node details took {median:.1f} ms (median of 5)"
+    finally:
+        editing_service.close_all()

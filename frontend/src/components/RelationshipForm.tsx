@@ -54,7 +54,7 @@ EXPECTED OUTPUT
 */
 
 import { useEffect, useId, useRef, useState } from "react";
-import type { EntityModel, Ref } from "../modeling/entity";
+import { domainLabel, sharedDomain, type EntityModel, type Ref } from "../modeling/entity";
 import {
   attributeSentence,
   CHARACTERISTICS,
@@ -114,12 +114,36 @@ export function PropertyHead({
   useWarningAnnouncer(iri, warnings);
   const attribute = model.kind === "datatypeProperty";
   const sentence = attribute
-    ? attributeSentence(model.domain?.label ?? null, name, datatypeOf(model.range))
-    : formSentence(model.domain?.label ?? null, name, model.range?.label ?? null);
+    ? attributeSentence(domainLabel(model), name, datatypeOf(model.range))
+    : formSentence(domainLabel(model), name, model.range?.label ?? null);
   return (
     <Block title="Sentence">
       <p className="form-sentence">{sentence}</p>
     </Block>
+  );
+}
+
+/** The classes of a shared domain (attribute-reuse 5.3): each a link, and
+ *  in words what the list means, *any one of these* for a union and *all
+ *  of these at once* for two domain lines, as the standards read them. */
+export function DomainMembers({ model, onSelect }: { model: EntityModel; onSelect: (iri: string) => void }) {
+  const reading = model.domainReading;
+  if (!reading) return null;
+  return (
+    <>
+      <p className="detail-note">
+        {reading.form === "union" ? "Any one of these classes:" : "All of these classes at once:"}
+      </p>
+      <ul className="edit-list">
+        {reading.classes.map((c) => (
+          <li key={c.iri}>
+            <button type="button" className="term-link" title={c.iri} onClick={() => onSelect(c.iri)}>
+              {c.label}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
@@ -193,7 +217,7 @@ export default function RelationshipForm({
   const id = useId();
   // The button each small form was opened from, to give focus back to.
   const openers = useRef<Record<string, HTMLButtonElement | null>>({});
-  const from = model.domain?.label ?? null;
+  const from = domainLabel(model);
   const to = model.range?.label ?? null;
 
   const close = () => {
@@ -293,7 +317,14 @@ export default function RelationshipForm({
   return (
     <>
       <Block title="From and to">
-        {end("domain", "From", model.domain)}
+        {sharedDomain(model) ? (
+          <div className="relationship-end">
+            <h5>From</h5>
+            <DomainMembers model={model} onSelect={onSelect} />
+          </div>
+        ) : (
+          end("domain", "From", model.domain)
+        )}
         {end("range", "To", model.range)}
         <div className="edit-actions">
           <button

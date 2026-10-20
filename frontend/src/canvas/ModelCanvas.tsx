@@ -642,7 +642,10 @@ function Canvas(props: ModelCanvasProps) {
         // selection, however it was selected: by the line, the tree or a link.
         selected: id === selectedEdge || (relationship && e.property === selected),
         ariaLabel:
-          e.kind === "relationship"
+          e.kind === "relationship" && e.member
+            ? // One of a shared relationship's lines names its member (5.5).
+              `${e.label}, from ${label(view, e.source)} to ${label(view, e.target)}`
+            : e.kind === "relationship"
             ? `${label(view, e.source)} ${e.label} ${label(view, e.target)}`
             : e.kind === "rule"
               ? `${ruleWords(view, e)}, a rule`
@@ -656,7 +659,7 @@ function Canvas(props: ModelCanvasProps) {
           // An inferred line always says so, in words: never by its dash alone.
           text:
             e.kind === "relationship"
-              ? (e.label ?? "")
+              ? `${e.label ?? ""}${e.both ? " (both, see warning)" : e.shared ? " (shared)" : ""}`
               : e.kind === "rule"
                 ? e.rule
                   ? shortLabel(e.rule)

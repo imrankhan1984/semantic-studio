@@ -986,10 +986,18 @@ def explain(
         result["children"] = _counted((c for c in graph.subjects(RDFS.subClassOf, node) if c != node), label)
         result["members"] = _counted(graph.subjects(RDF.type, node), label)
     elif kind in (KIND_OBJECT_PROPERTY, KIND_PROPERTY, KIND_DATATYPE_PROPERTY):
-        result["domains"] = _refs(graph.objects(node, RDFS.domain), label)
-        # An end given only as a blank node (a union, a restriction) is not
-        # "a thing": the sentence says the statements describe it (code review).
-        if _unnamed(graph.objects(node, RDFS.domain)):
+        from . import axioms
+
+        # The domain as axioms.domain_of reads it (attribute-reuse 5.3): a
+        # union's members, read *or*, and two domain lines, read *and*.
+        reading = axioms.domain_of(graph, node)
+        result["domains"] = _refs(reading.classes, label)
+        if reading.form in ("union", "separate"):
+            result["domainForm"] = reading.form
+        # An end given only as some other expression (an intersection, a
+        # restriction) is not "a thing": the sentence says the statements
+        # describe it (code review).
+        if reading.form == "expression":
             result["unnamedDomain"] = True
         if kind == KIND_DATATYPE_PROPERTY:
             ranges = sorted(str(r) for r in graph.objects(node, RDFS.range) if isinstance(r, URIRef))

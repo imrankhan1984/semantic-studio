@@ -58,6 +58,21 @@ EXPECTED OUTPUT
     - choices(graph, own, name) -> what the sentence builder's selects offer.
     - disjoint_with / disjoint_pairs -> disjointness, owl:disjointWith and
       owl:AllDisjointClasses alike, for the checks and the canvas.
+    - domain_of(graph, prop) -> DomainReading(form, classes, node): the one
+      reader of a property's domain (attribute-reuse 5.3, D-116), and
+      domains(graph) the same for every property that has one.
+    - covers(reading, ancestors) and class_properties(view, cls, name):
+      which properties a class has, and how (own, shared, both, through).
+    - reuse_plan(view, own, prop, cls, name) -> the case of 5.2 for using a
+      property on one more class, with the choices it offers.
+
+    A property's domain is read here and nowhere else but editing.py, which
+    writes it (test_axioms.py scans). Two rdfs:domain values mean *both*
+    (RDF 1.1 Semantics 9.2.1), never *either*: that is `separate`, read the
+    standard's way and warned of. *Either* is an owl:unionOf of named classes
+    on a blank node used only there, `union`; anything else is `expression`,
+    Turtle's. An RDF list is attacker-shaped input, so the walk stops at
+    UNION_MAX members and on a revisit, and reads the rest as `expression`.
 ================================================================================
 """
 
@@ -624,3 +639,200 @@ def choices(g: Graph, own: Graph, name: Name) -> dict:
         "classes": capped([_ref(c, name) for c in classes]),
         "things": capped([_ref(t, name) for t in things]),
     }
+
+
+# --- a property's domain (attribute-reuse 5.3, D-116) -----------------------------------
+
+# An RDF list in a loaded file is attacker-shaped (Section 9): a million
+# members, or a cycle. Past this many, or on a revisit, it is no union.
+UNION_MAX = 100
+DOMAIN_FORMS = ("none", "one", "union", "separate", "expression")
+_TOP = (OWL.Thing, RDFS.Resource)
+
+
+@dataclass(frozen=True)
+class DomainReading:
+    """A property's domain as every view reads it: `none`, `one` named class,
+    a `union` of named classes (*either*), `separate` named values (*all of
+    them*, the standard's reading), or an `expression` left to Turtle."""
+
+    form: str
+    classes: tuple = ()
+    node: Optional[BNode] = None
+    # An expression's values as written, for a view that shows its Turtle.
+    terms: tuple = ()
+
+
+def _union_members(g: Graph, node) -> Optional[tuple]:
+    """The named classes of `[ a owl:Class ; owl:unionOf ( ... ) ]` when the
+    node is exactly that and is used only once, else None. owl:Class is
+    optional here, as some tools omit it; the commands always write it."""
+    if not isinstance(node, BNode):
+        return None
+    referrers = 0
+    for _ in g.triples((None, None, node)):
+        referrers += 1
+        if referrers > 1:
+            return None  # shared with another statement: changing it would change that too
+    head, typed = None, False
+    for p, o in g.predicate_objects(node):
+        if p == OWL.unionOf and head is None:
+            head = o
+        elif p == RDF.type and o == OWL.Class and not typed:
+            typed = True
+        else:
+            return None
+    if head is None:
+        return None
+    members: list = []
+    seen: set = set()
+    cell = head
+    while cell != RDF.nil:
+        if not isinstance(cell, BNode) or cell in seen or len(members) >= UNION_MAX:
+            return None
+        seen.add(cell)
+        first = rest = None
+        for p, o in g.predicate_objects(cell):
+            if p == RDF.first and first is None:
+                first = o
+            elif p == RDF.rest and rest is None:
+                rest = o
+            else:
+                return None
+        # A blank member is a nested expression: the form cannot say it.
+        if not isinstance(first, URIRef) or rest is None:
+            return None
+        members.append(first)
+        cell = rest
+    return tuple(dict.fromkeys(members)) or None
+
+
+def domain_of(g: Graph, prop) -> DomainReading:
+    """The one reader of a property's domain (5.3)."""
+    values = list(dict.fromkeys(g.objects(prop, RDFS.domain)))
+    if not values:
+        return DomainReading("none")
+    if all(isinstance(v, URIRef) for v in values):
+        if len(values) == 1:
+            return DomainReading("one", (values[0],))
+        return DomainReading("separate", tuple(sorted(values, key=str)))
+    if len(values) == 1:
+        members = _union_members(g, values[0])
+        if members is not None:
+            return DomainReading("union", members, values[0])
+    return DomainReading("expression", terms=tuple(values))
+
+
+def domains(g: Graph) -> dict:
+    """Every named property with a domain, read by domain_of: one scan of
+    the subjects, then one reading each."""
+    return {
+        prop: domain_of(g, prop)
+        for prop in sorted({s for s in g.subjects(RDFS.domain, None) if isinstance(s, URIRef)})
+    }
+
+
+def domain_names(reading: DomainReading, name: Name) -> Optional[str]:
+    """*Employee*, *Employee or Manager* (a union), *Employee and Manager*
+    (two domain lines, which mean both), or None."""
+    if not reading.classes:
+        return None
+    joiner = " and " if reading.form == "separate" else " or "
+    return joiner.join(name(c) for c in reading.classes)
+
+
+def ancestors(g: Graph, cls) -> dict:
+    """Every named class `cls` is a kind of, itself included, by its distance
+    up rdfs:subClassOf. A loop is walked once."""
+    found = {cls: 0}
+    queue = [cls]
+    while queue:
+        current = queue.pop(0)
+        for parent in g.objects(current, RDFS.subClassOf):
+            if isinstance(parent, URIRef) and parent not in found:
+                found[parent] = found[current] + 1
+                queue.append(parent)
+    return found
+
+
+def descendants(g: Graph, cls) -> set:
+    """Every named class that is a kind of `cls`, itself included."""
+    found = {cls}
+    queue = [cls]
+    while queue:
+        current = queue.pop()
+        for child in g.subjects(RDFS.subClassOf, current):
+            if isinstance(child, URIRef) and child not in found:
+                found.add(child)
+                queue.append(child)
+    return found
+
+
+def covers(reading: DomainReading, lineage) -> bool:
+    """Whether a class whose ancestors are `lineage` has the property: under
+    one member of a union, under every value of `separate` (5.0 row 3)."""
+    if reading.form in ("one", "union"):
+        return any(c in lineage for c in reading.classes)
+    if reading.form == "separate":
+        return all(c in lineage for c in reading.classes)
+    return False
+
+
+def domain_json(reading: DomainReading, name: Name) -> dict:
+    return {"form": reading.form, "classes": [_ref(c, name) for c in reading.classes]}
+
+
+def class_type(g: Graph, cls) -> str:
+    """*rdfs* for a class typed rdfs:Class and not owl:Class, else *owl*
+    (5.0 row 7), as the canvas's box says it."""
+    if (cls, RDF.type, RDFS.Class) in g and (cls, RDF.type, OWL.Class) not in g:
+        return "rdfs"
+    return "owl"
+
+
+def _datatype_name(rng) -> Optional[str]:
+    if not isinstance(rng, URIRef):
+        return None
+    return f"xsd:{str(rng)[len(str(XSD)):]}" if str(rng).startswith(str(XSD)) else str(rng)
+
+
+def class_properties(view: Graph, cls, name: Name) -> list[dict]:
+    """The attributes and relationships a class has, and how (5.3): its
+    `own`, `shared` in a union, `both` where two domain lines list it (the
+    5.4 warning's), or `through` a parent, named in `via`."""
+    lineage = ancestors(view, cls)
+    out = []
+    for prop, reading in domains(view).items():
+        if reading.form in ("none", "expression"):
+            continue
+        members = reading.classes
+        if reading.form == "one" and members[0] == cls:
+            how = "own"
+        elif cls in members:
+            how = "shared" if reading.form == "union" else "both"
+        elif covers(reading, lineage):
+            how = "through"
+        else:
+            continue
+        kind = property_kind(view, prop)
+        if kind is None:
+            continue
+        entry = {"iri": str(prop), "label": name(prop), "kind": kind, "how": how}
+        if how in ("shared", "both"):
+            entry["with"] = [_ref(c, name) for c in members if c != cls]
+        if how == "through":
+            via = min((c for c in members if c in lineage), key=lambda c: (lineage[c], str(c)))
+            entry["via"] = _ref(via, name)
+        rng = view.value(prop, RDFS.range)
+        if kind == "attribute":
+            entry["datatype"] = _datatype_name(rng)
+        else:
+            entry["range"] = _ref(rng, name) if isinstance(rng, URIRef) else None
+        out.append(entry)
+    order = {"own": 0, "shared": 1, "both": 1, "through": 2}
+    out.sort(key=lambda e: (order[e["how"]], e["kind"] != "attribute", e["label"].casefold(), e["iri"]))
+    return out
+
+
+def _is_class(g: Graph, cls) -> bool:
+    return isinstance(cls, URIRef) and any((cls, RDF.type, t) in g for t in (OWL.Class, RDFS.Class))

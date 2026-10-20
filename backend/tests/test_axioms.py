@@ -38,6 +38,11 @@ EXPECTED OUTPUT
 
 from __future__ import annotations
 
+import ast
+import gc
+import time
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from rdflib import BNode, Graph, Literal, URIRef
@@ -47,6 +52,7 @@ from rdflib.namespace import OWL, RDF, RDFS, XSD
 from app import axioms, shapes_form
 from app.editing import editing_service
 from app.main import app
+from budget import limit_ms
 
 client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
 
@@ -848,3 +854,208 @@ def test_the_builders_choices_are_built_once_per_revision(pid, monkeypatch):
     choices = rules(pid, EX + "Order")["choices"]
     assert len(calls) == 2
     assert EX + "Invoice" in {c["iri"] for c in choices["classes"]["items"]}
+
+
+
+# --- one reader of a domain (attribute-reuse 5.3, D-116) --------------------------------
+
+D = "http://example.org/d#"
+DOMAIN_PREFIXES = f"""@prefix d: <{D}> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+"""
+
+
+def _domain(turtle: str, prop: str = "p") -> axioms.DomainReading:
+    g = Graph()
+    g.parse(data=DOMAIN_PREFIXES + turtle, format="turtle")
+    return axioms.domain_of(g, URIRef(D + prop))
+
+
+def test_domain_of_reads_each_of_the_five_forms():
+    """AC-7: none, one, union (owl:Class optional when read), separate,
+    expression."""
+    assert _domain("d:p a owl:DatatypeProperty .").form == "none"
+    one = _domain("d:p rdfs:domain d:Employee .")
+    assert (one.form, one.classes) == ("one", (URIRef(D + "Employee"),))
+    union = _domain("d:p rdfs:domain [ a owl:Class ; owl:unionOf ( d:Employee d:Manager ) ] .")
+    assert union.form == "union" and union.classes == (URIRef(D + "Employee"), URIRef(D + "Manager"))
+    assert isinstance(union.node, BNode)
+    untyped = _domain("d:p rdfs:domain [ owl:unionOf ( d:Employee d:Manager ) ] .")
+    assert untyped.form == "union", "owl:Class is optional when reading"
+    separate = _domain("d:p rdfs:domain d:Manager , d:Employee .")
+    assert separate.form == "separate"
+    assert separate.classes == (URIRef(D + "Employee"), URIRef(D + "Manager"))
+    expression = _domain("d:p rdfs:domain [ owl:intersectionOf ( d:Employee d:Manager ) ] .")
+    assert expression.form == "expression" and expression.classes == ()
+
+
+@pytest.mark.parametrize("turtle", [
+    # A statement beyond the shape.
+    "d:p rdfs:domain [ a owl:Class ; owl:unionOf ( d:A d:B ) ; rdfs:label \"x\" ] .",
+    # A type other than owl:Class.
+    "d:p rdfs:domain [ a owl:Restriction ; owl:unionOf ( d:A d:B ) ] .",
+    # The same node used by a second statement.
+    "_:u a owl:Class ; owl:unionOf ( d:A d:B ) . d:p rdfs:domain _:u . d:q rdfs:domain _:u .",
+    # A blank member: a nested expression.
+    "d:p rdfs:domain [ owl:unionOf ( d:A [ owl:complementOf d:B ] ) ] .",
+    # A union beside a named domain.
+    "d:p rdfs:domain d:A , [ owl:unionOf ( d:A d:B ) ] .",
+    # A list cell with an extra statement.
+    "_:c1 rdf:first d:A ; rdf:rest _:c2 ; rdfs:label \"x\" . _:c2 rdf:first d:B ; rdf:rest rdf:nil . "
+    "d:p rdfs:domain [ owl:unionOf _:c1 ] .",
+    # A list that never ends.
+    "_:c1 rdf:first d:A . d:p rdfs:domain [ owl:unionOf _:c1 ] .",
+    # An empty list.
+    "d:p rdfs:domain [ owl:unionOf () ] .",
+])
+def test_anything_but_the_exact_union_shape_is_an_expression(turtle):
+    """AC-7: the union is read only in 5.3's exact shape."""
+    assert _domain(turtle).form == "expression"
+
+
+def _cyclic() -> Graph:
+    g = Graph()
+    head, tail = BNode(), BNode()
+    node = BNode()
+    g.add((URIRef(D + "p"), RDFS.domain, node))
+    g.add((node, OWL.unionOf, head))
+    g.add((head, RDF.first, URIRef(D + "A")))
+    g.add((head, RDF.rest, tail))
+    g.add((tail, RDF.first, URIRef(D + "B")))
+    g.add((tail, RDF.rest, head))  # back to the start
+    return g
+
+
+def _long(members: int) -> Graph:
+    g = Graph()
+    node = BNode()
+    cells = [BNode() for _ in range(members)]
+    g.add((URIRef(D + "p"), RDFS.domain, node))
+    g.add((node, RDF.type, OWL.Class))
+    g.add((node, OWL.unionOf, cells[0]))
+    for i, cell in enumerate(cells):
+        g.add((cell, RDF.first, URIRef(f"{D}C{i}")))
+        g.add((cell, RDF.rest, cells[i + 1] if i + 1 < members else RDF.nil))
+    return g
+
+
+class _Counting(Graph):
+    """Counts the list cells read, to tell a stop on a revisit from a stop
+    at the cap: both read a cycle as an expression."""
+
+    def __init__(self, source: Graph):
+        super().__init__()
+        for t in source:
+            self.add(t)
+        self.reads = 0
+
+    def predicate_objects(self, subject=None, unique=False):
+        self.reads += 1
+        return super().predicate_objects(subject, unique)
+
+
+def test_a_cycle_and_a_list_past_the_cap_are_expressions():
+    """AC-14, Section 9: the list walk stops on a revisit and at 100."""
+    cyclic = _Counting(_cyclic())
+    assert axioms.domain_of(cyclic, URIRef(D + "p")).form == "expression"
+    assert cyclic.reads <= 3, "a two-cell cycle stops at its first revisit, not at the cap"
+    assert axioms.domain_of(_long(100), URIRef(D + "p")).form == "union"
+    assert len(axioms.domain_of(_long(100), URIRef(D + "p")).classes) == 100
+    assert axioms.domain_of(_long(101), URIRef(D + "p")).form == "expression"
+
+
+@pytest.mark.perf
+def test_domain_of_on_a_long_or_cyclic_list_budget():
+    """Section 10: <= 2 ms on a 101-member list or a cycle, median of five."""
+    for g in (_long(101), _cyclic()):
+        times = []
+        gc.disable()
+        try:
+            for _ in range(5):
+                start = time.perf_counter()
+                axioms.domain_of(g, URIRef(D + "p"))
+                times.append((time.perf_counter() - start) * 1000)
+        finally:
+            gc.enable()
+        median = sorted(times)[2]
+        assert median <= limit_ms(2), f"domain_of took {median:.2f} ms (median of 5)"
+
+
+# --- the scan: only axioms.py and editing.py read a domain's objects (AC-7) ------------
+
+APP = Path(__file__).resolve().parent.parent / "app"
+DOMAIN_READERS = {"axioms.py", "editing.py"}
+# Graph calls that hand back what a domain statement points at. subjects()
+# is not one: it answers the properties, never the domain.
+READING_CALLS = {"objects", "value", "subject_objects", "triples", "predicate_objects", "pairs",
+                 "items", "first", "quads", "triples_choices"}
+DOMAIN_IRI = "http://www.w3.org/2000/01/rdf-schema#domain"
+
+
+def _is_domain(node: ast.AST) -> bool:
+    if isinstance(node, ast.Attribute) and node.attr == "domain":
+        return isinstance(node.value, ast.Name) and node.value.id == "RDFS"
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == "RDFS":
+        return isinstance(node.slice, ast.Constant) and node.slice.value == "domain"
+    return isinstance(node, ast.Constant) and node.value == DOMAIN_IRI
+
+
+def domain_reads(source: str) -> list[str]:
+    """Each call that reads rdfs:domain's objects, and each alias of the
+    predicate (a name bound to it would hide a read from the first rule)."""
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in READING_CALLS:
+            arguments = list(node.args) + [k.value for k in node.keywords]
+            for arg in arguments:
+                parts = arg.elts if isinstance(arg, (ast.Tuple, ast.List)) else [arg]
+                # Inside the argument too: URIRef("...#domain") is a read.
+                if any(_is_domain(n) for part in parts for n in ast.walk(part)):
+                    found.append(f"line {node.lineno}: .{node.func.attr}() reads rdfs:domain")
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None and _is_domain(node.value):
+            found.append(f"line {node.lineno}: rdfs:domain bound to a name")
+    return found
+
+
+def test_the_domain_scan_catches_a_planted_read():
+    planted = '''
+def a(g, p):
+    return list(g.objects(p, RDFS.domain))
+
+def b(g, p):
+    return g.value(p, RDFS.domain)
+
+def c(g):
+    return g.subject_objects(RDFS.domain)
+
+def d(g, p):
+    return g.triples((p, RDFS.domain, None))
+
+def e(g, p):
+    return g.objects(p, RDFS["domain"])
+
+def f(g, p):
+    return g.objects(p, URIRef("http://www.w3.org/2000/01/rdf-schema#domain"))
+
+DOMAIN = RDFS.domain
+
+def fine(g, cls):
+    return g.subjects(RDFS.domain, cls)
+'''
+    assert len(domain_reads(planted)) == 7, domain_reads(planted)
+
+
+def test_only_axioms_and_editing_read_a_domain():
+    files = sorted(APP.rglob("*.py"))
+    assert len(files) > 15, "the scan found too few files to mean anything"
+    assert domain_reads((APP / "editing.py").read_text(encoding="utf-8")), "the scan sees editing's reads"
+    offenders = {}
+    for path in files:
+        if path.name in DOMAIN_READERS:
+            continue
+        found = domain_reads(path.read_text(encoding="utf-8"))
+        if found:
+            offenders[str(path.relative_to(APP))] = found
+    assert offenders == {}

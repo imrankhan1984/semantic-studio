@@ -64,7 +64,7 @@ from typing import Callable, Iterable, Optional
 from rdflib import BNode, Graph, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS
 
-from .axioms import disjoint_pairs, disjoint_with, named_pairs
+from .axioms import disjoint_pairs, disjoint_with, domain_of, named_pairs
 from .sentences import article
 
 Name = Callable[[URIRef], str]
@@ -489,30 +489,40 @@ def warnings(graph: Graph, prop: URIRef, name: Name) -> list[dict]:
     for bad, what, why in _Facts(graph).violations():
         if bad == prop:
             out.append({"text": chaining_sentence(bad, what, why, name), "block": "characteristics"})
-    domain = _named(graph.objects(prop, RDFS.domain))
+    # The domain as axioms.domain_of reads it (attribute-reuse 5.3): every
+    # class of a union, *or*; every class of two domain lines, *and*.
+    reading = domain_of(graph, prop)
+    classes = reading.classes
+    joiner = " and " if reading.form == "separate" else " or "
+    starts = joiner.join(f"{article(name(c))} {name(c)}" for c in classes)
     rng = _named(graph.objects(prop, RDFS.range))
     label = name(prop)
-    if "symmetric" in has and domain is not None and rng is not None and domain != rng:
+    if "symmetric" in has and classes and rng is not None and set(classes) != {rng}:
         # The spec's sentence conjugates the name (*can also work for*); this
         # one reads the name as written, as the "identifies its start"
         # example does, so no grammar is guessed.
-        start, end = name(domain), name(rng)
+        end = name(rng)
         out.append({
             "block": "characteristics",
             "text": (
                 f"Works both ways means {article(end)} {end} can also be linked by {label} "
-                f"to {article(start)} {start}. Usually start and end are the same class."
+                f"to {starts}. Usually start and end are the same class."
             )
         })
-    if "reflexive" in has and domain is not None:
+    if "reflexive" in has and classes:
         out.append({
             "block": "characteristics",
-            "text": f'"Always to itself" makes every thing {article(name(domain))} {name(domain)}. '
+            "text": f'"Always to itself" makes every thing {starts}. '
             "This is rarely what is meant."
         })
+    # The inverse's ends are checked against one class only: a range is
+    # read as one class (shared ranges are a follow-up), so the other way
+    # round of a shared start cannot be written with SetEnds.
+    domain = classes[0] if reading.form == "one" else None
     if domain is not None and rng is not None:
         for inverse in inverses(graph, prop):
-            ends = (_named(graph.objects(inverse, RDFS.domain)), _named(graph.objects(inverse, RDFS.range)))
+            other = domain_of(graph, inverse)
+            ends = (other.classes[0] if other.form == "one" else None, _named(graph.objects(inverse, RDFS.range)))
             if ends == (rng, domain):
                 continue
             warning = {"text": f"{name(inverse)} should go from {name(rng)} to {name(domain)}.", "block": "inverse"}

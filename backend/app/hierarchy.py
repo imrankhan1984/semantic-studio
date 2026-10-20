@@ -87,6 +87,7 @@ from .graph_builder import (
     subclass_parents,
 )
 from .graph_builder import KIND_INDIVIDUAL, KIND_SCHEME
+from . import axioms
 from . import examples as examples_mod
 from .query_schema import META_CLASSES
 
@@ -413,14 +414,14 @@ def _build_property_forests(
     labels = {n: (label(n), prefixed(graph, n)) for n in members}
 
     def ends(prop: URIRef) -> dict:
-        """The first named domain and range, by name; a datatype by its
-        prefixed name, which the row turns into a word."""
-        def first(predicate) -> Optional[URIRef]:
-            return next((o for o in graph.objects(prop, predicate) if isinstance(o, URIRef)), None)
-        domain, rng = first(RDFS.domain), first(RDFS.range)
+        """The domain by name, as axioms.domain_of reads it (*Employee or
+        Manager* for a union, attribute-reuse 5.3), and the first named
+        range; a datatype by its prefixed name, which the row turns into a
+        word."""
+        rng = next((o for o in graph.objects(prop, RDFS.range) if isinstance(o, URIRef)), None)
         attribute = kind_of[prop] == KIND_DATATYPE_PROPERTY
         return {
-            "domain": label(domain) if domain is not None else None,
+            "domain": axioms.domain_names(axioms.domain_of(graph, prop), label),
             "range": None if rng is None else prefixed(graph, rng) if attribute else label(rng),
         }
 

@@ -12,7 +12,9 @@ SUMMARY
     (relationships 5.6, 5.7), which this hands over to. It is the form half
     of every canvas action's keyboard route (5.2, D-078). A class's rules
     (axioms-and-reasoning 5.9) are RulesBlock, between its kinds and its
-    attributes and relationships.
+    attributes and relationships. A class's attributes and relationships
+    stand in three groups (attribute-reuse 5.3): its own, those shared with
+    other classes, and those it has through a parent.
 
 BASIC IDEA
     Each list names what is there, as links that select it, with Remove where
@@ -42,7 +44,7 @@ EXPECTED OUTPUT
 
 import { useRef, useState } from "react";
 import { structureOf, type EntityModel, type Ref } from "../modeling/entity";
-import type { ClassRules, ModelWarning, SearchKind } from "../types";
+import type { ClassProperty, ClassRules, ModelWarning, SearchKind } from "../types";
 import AttributeForm from "./AttributeForm";
 import ConceptRelations from "./ConceptRelations";
 import { Block, type Runner } from "./EditParts";
@@ -110,6 +112,78 @@ function Links({
         </li>
       ))}
     </ul>
+  );
+}
+
+/** A class's attributes or relationships in the three groups of
+ *  attribute-reuse 5.3: its own, *Shared with others*, and *Through* each
+ *  parent (read-only links). A shared one says so in text, never only by a
+ *  colour (5.5); one listed by two domain lines says *(both, see warning)*. */
+function PropertyGroups({
+  properties,
+  kind,
+  empty,
+  onSelect,
+}: {
+  properties: ClassProperty[];
+  kind: ClassProperty["kind"];
+  empty: string;
+  onSelect: (iri: string) => void;
+}) {
+  const mine = properties.filter((p) => p.kind === kind);
+  const own = mine.filter((p) => p.how === "own");
+  const shared = mine.filter((p) => p.how === "shared" || p.how === "both");
+  const through = new Map<string, { via: string; items: ClassProperty[] }>();
+  for (const p of mine.filter((p) => p.how === "through" && p.via)) {
+    const group = through.get(p.via!.iri) ?? { via: p.via!.label, items: [] };
+    group.items.push(p);
+    through.set(p.via!.iri, group);
+  }
+  if (mine.length === 0) return <p className="detail-note">{empty}</p>;
+  const link = (p: ClassProperty) => (
+    <button type="button" className="term-link" title={p.iri} onClick={() => onSelect(p.iri)}>
+      {p.label}
+    </button>
+  );
+  const note = (p: ClassProperty) =>
+    p.how === "both"
+      ? " (both, see warning)"
+      : p.with && p.with.length > 0
+        ? ` (shared with ${p.with.map((w) => w.label).join(", ")})`
+        : " (shared)";
+  return (
+    <>
+      {own.length > 0 && (
+        <ul className="edit-list">
+          {own.map((p) => (
+            <li key={p.iri}>{link(p)}</li>
+          ))}
+        </ul>
+      )}
+      {shared.length > 0 && (
+        <>
+          <h6 className="edit-subhead">Shared with others</h6>
+          <ul className="edit-list">
+            {shared.map((p) => (
+              <li key={p.iri}>
+                {link(p)}
+                <span className="detail-note">{note(p)}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {[...through.entries()].map(([via, group]) => (
+        <div key={via}>
+          <h6 className="edit-subhead">Through {group.via}</h6>
+          <ul className="edit-list">
+            {group.items.map((p) => (
+              <li key={p.iri}>{link(p)}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -217,7 +291,11 @@ export default function EditStructure({
         {rules && <RulesBlock iri={iri} name={name} rules={rules} runner={runner} onSelect={onSelect} />}
 
         <h5>Attributes</h5>
-        <Links refs={model.attributes} empty="No attributes." onSelect={onSelect} />
+        {model.properties.length > 0 ? (
+          <PropertyGroups properties={model.properties} kind="attribute" empty="No attributes." onSelect={onSelect} />
+        ) : (
+          <Links refs={model.attributes} empty="No attributes." onSelect={onSelect} />
+        )}
         {open === "attribute" ? (
           <NewEntityForm
             title={`New attribute of ${name}`}
@@ -235,7 +313,11 @@ export default function EditStructure({
         )}
 
         <h5>Relationships</h5>
-        <Links refs={model.relationships} empty="No relationships." onSelect={onSelect} />
+        {model.properties.length > 0 ? (
+          <PropertyGroups properties={model.properties} kind="relationship" empty="No relationships." onSelect={onSelect} />
+        ) : (
+          <Links refs={model.relationships} empty="No relationships." onSelect={onSelect} />
+        )}
         {open === "relationship" ? (
           <NewEntityForm
             title={`New relationship from ${name}`}

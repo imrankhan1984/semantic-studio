@@ -4398,6 +4398,19 @@ button.legend-row:hover {
   font-weight: 600;
 }
 
+/* A class's shared and inherited attributes (attribute-reuse 5.3): a quieter
+   heading under the block's own, the group indented beneath it. */
+.edit-block h6.edit-subhead {
+  margin: 6px 0 2px 8px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.edit-block h6.edit-subhead + .edit-list {
+  margin-left: 8px;
+}
+
 .edit-value {
   display: flex;
   align-items: baseline;

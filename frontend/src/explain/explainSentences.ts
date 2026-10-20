@@ -104,11 +104,23 @@ function list(items: Part[][]): Part[] {
  *  Person and an Agent* when the file names several, which RDFS reads as
  *  all of them at once. An end given only as a blank node is not *a
  *  thing*: the statements below say what it is. */
-function end(refs: ExplainRef[] | undefined, unnamed = false): Part[] {
+function end(refs: ExplainRef[] | undefined, unnamed = false, form?: "union" | "separate"): Part[] {
   if ((!refs || refs.length === 0) && unnamed) return ["something the statements below describe"];
   if (!refs || refs.length === 0) return ["a thing"];
   if (refs.length === 1) return articled(refs[0]);
+  // A union of named classes is *either* (attribute-reuse 5.3, D-116).
+  if (form === "union") return either(refs.map(articled));
   return ["a thing that is ", ...list(refs.map(articled))];
+}
+
+/** *an Employee or a Manager*, *an Employee, a Contractor or a Manager*. */
+function either(items: Part[][]): Part[] {
+  const out: Part[] = [];
+  items.forEach((item, i) => {
+    if (i > 0) out.push(i === items.length - 1 ? " or " : ", ");
+    out.push(...item);
+  });
+  return out;
 }
 
 /** A sentence from sentences.ts with names in its two places. */
@@ -174,7 +186,7 @@ export function factSentences(label: string, explain: Explain): Sentence[] {
     case "property": {
       out.push([
         `${label} links `,
-        ...end(explain.domains, explain.unnamedDomain),
+        ...end(explain.domains, explain.unnamedDomain, explain.domainForm),
         " to ",
         ...end(explain.ranges, explain.unnamedRange),
         ".",
@@ -184,7 +196,7 @@ export function factSentences(label: string, explain: Explain): Sentence[] {
     }
     case "datatypeProperty": {
       const value = explain.datatype ? `a value: ${asType(explain.datatype)}.` : "a value.";
-      out.push([`${label} gives `, ...end(explain.domains, explain.unnamedDomain), ` ${value}`]);
+      out.push([`${label} gives `, ...end(explain.domains, explain.unnamedDomain, explain.domainForm), ` ${value}`]);
       break;
     }
     case "individual": {

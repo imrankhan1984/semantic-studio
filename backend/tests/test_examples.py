@@ -512,3 +512,51 @@ shop:bob a shop:Person ; rdfs:label "Bob"@en .
     ok(pid, "AddExampleValue", iri="shop:alice", property="shop:memberOf", value={"kind": "link", "value": "shop:acme"})
     ok(pid, "SetExampleValue", iri="shop:alice", property="shop:memberOf", value={"kind": "link", "value": "shop:initech"})
     assert set(graph(pid).objects(U("alice"), U("memberOf"))) == {U("initech")}
+
+
+# --- a union domain read by every view (attribute-reuse 5.3, D-116) ---------------------
+
+UNION_TTL = """
+@prefix u: <http://example.org/u#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+u:Employee a owl:Class ; rdfs:label "Employee" .
+u:Manager a owl:Class ; rdfs:label "Manager" ; rdfs:subClassOf u:Employee .
+u:Contractor a owl:Class ; rdfs:label "Contractor" .
+u:Team a owl:Class ; rdfs:label "Team" .
+u:hasName a owl:DatatypeProperty ; rdfs:label "hasName" ; rdfs:range xsd:string ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( u:Employee u:Contractor ) ] .
+u:leads a owl:ObjectProperty ; rdfs:label "leads" ; rdfs:range u:Team ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( u:Employee u:Contractor ) ] .
+u:badge a owl:DatatypeProperty ; rdfs:label "badge" ; rdfs:range xsd:string ;
+    rdfs:domain u:Manager , u:Team .
+"""
+UNI = "http://example.org/u#"
+
+
+def _local(iri) -> str:
+    return str(iri).split("#")[-1]
+
+
+def _union_graph():
+    from rdflib import Graph
+
+    return Graph().parse(data=UNION_TTL, format="turtle")
+
+
+def test_an_example_of_a_union_member_is_offered_the_shared_attribute():
+    """AC-8: the example form reads the same rule (shapes_form.paths_for)."""
+    from rdflib import Graph, URIRef
+
+    g = _union_graph()
+    g.parse(data="@prefix u: <http://example.org/u#> . "
+                 "@prefix owl: <http://www.w3.org/2002/07/owl#> . "
+                 "u:alice a u:Manager , owl:NamedIndividual . "
+                 "u:bob a u:Contractor , owl:NamedIndividual . "
+                 "u:t a u:Team , owl:NamedIndividual .", format="turtle")
+    fields = lambda who: {f["label"] for f in examples.example_view(g, URIRef(UNI + who), _local, ["en"], own=g)["fields"]}  # noqa: E731
+    assert {"hasName", "leads"} <= fields("alice")
+    assert {"hasName", "leads"} <= fields("bob")
+    assert "hasName" not in fields("t")
+    assert "badge" not in fields("alice"), "two domain lines: alice is no Team"

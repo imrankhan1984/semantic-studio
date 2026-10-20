@@ -6,7 +6,7 @@ FILE: frontend/src/components/AttributeForm.tsx
 SUMMARY
     The attribute form of relationships-and-project-kinds 5.7, for a datatype
     property of the open project's model: *Belongs to* (its domain, changed
-    or cleared), *Type of value* (one of the seven types of E-6), and **One
+    or cleared; every class of a shared one, attribute-reuse 5.3), *Type of value* (one of the seven types of E-6), and **One
     value only**, with its example in the attribute's own names. The sentence
     at the top is RelationshipForm's PropertyHead; a warning is shown under
     *How many values* by its Warnings, and the checkbox is aria-disabled
@@ -31,12 +31,12 @@ EXPECTED OUTPUT
 */
 
 import { useId, useRef, useState } from "react";
-import type { EntityModel } from "../modeling/entity";
+import { domainLabel, sharedDomain, type EntityModel } from "../modeling/entity";
 import { oneValueExample, typeWord } from "../modeling/sentences";
 import { DATATYPES } from "../modeling/values";
 import { Block, type Runner } from "./EditParts";
 import EntityPicker from "./EntityPicker";
-import { datatypeOf, Warnings } from "./RelationshipForm";
+import { datatypeOf, DomainMembers, Warnings } from "./RelationshipForm";
 import type { ModelWarning } from "../types";
 
 interface Props {
@@ -80,7 +80,11 @@ export default function AttributeForm({ ontologyId, iri, name, model, runner, on
   return (
     <>
       <Block title="Belongs to">
-        {domain ? (
+        {sharedDomain(model) ? (
+          // A shared domain (attribute-reuse 5.3): every class, and *Change
+          // class* only for one, which would replace them all.
+          <DomainMembers model={model} onSelect={onSelect} />
+        ) : domain ? (
           <p className="edit-value">
             <button type="button" className="term-link" title={domain.iri} onClick={() => onSelect(domain.iri)}>
               {domain.label}
@@ -99,7 +103,7 @@ export default function AttributeForm({ ontologyId, iri, name, model, runner, on
           <p className="detail-note">No class yet.</p>
         )}
         {errors.domainList && <p className="edit-error">{errors.domainList}</p>}
-        {open === "domain" ? (
+        {sharedDomain(model) ? null : open === "domain" ? (
           <EntityPicker
             ontologyId={ontologyId}
             kind="class"
@@ -186,7 +190,7 @@ export default function AttributeForm({ ontologyId, iri, name, model, runner, on
           One value only <span className="owl-term">owl:FunctionalProperty</span>
         </label>
         <p id={`${id}-one`} className="characteristic-example">
-          {oneValueExample(domain?.label ?? null, name)}
+          {oneValueExample(domainLabel(model), name)}
         </p>
         <Warnings warnings={warnings} block="characteristics" runner={runner} />
         {errors.functional && (

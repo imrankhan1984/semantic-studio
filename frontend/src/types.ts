@@ -531,6 +531,35 @@ export interface NodeDetails {
   // Every ontology's entity: what the In plain words block is written from
   // (explain-panel 5.2, D-114). Structure only; explainSentences.ts words it.
   explain?: Explain;
+  // A project's class: its attributes and relationships and how it has each
+  // (attribute-reuse 5.3): its own, shared, both (two domain lines) or
+  // through a parent.
+  properties?: ClassProperty[];
+  // A project's relationship or attribute: its domain as the server's one
+  // reader reads it (attribute-reuse 5.3).
+  domain?: DomainReading;
+}
+
+/* --- a property's domain, read once (attribute-reuse 5.3, D-116) --------- */
+
+export type DomainForm = "none" | "one" | "union" | "separate" | "expression";
+
+export interface DomainReading {
+  form: DomainForm;
+  classes: { iri: string; label: string }[];
+}
+
+export interface ClassProperty {
+  iri: string;
+  label: string;
+  kind: "attribute" | "relationship";
+  how: "own" | "shared" | "both" | "through";
+  /** The other classes of a shared or both domain. */
+  with?: { iri: string; label: string }[];
+  /** The parent it comes through. */
+  via?: { iri: string; label: string };
+  datatype?: string | null;
+  range?: { iri: string; label: string } | null;
 }
 
 /* --- the In plain words block (explain-panel 5.2) ------------------------ */
@@ -558,7 +587,10 @@ export interface Explain {
   members?: ExplainCount;
   domains?: ExplainRef[];
   ranges?: ExplainRef[];
-  // An end the file gives only as a blank node (a union, a restriction).
+  // How several domains are read (attribute-reuse 5.3): a union is *either*,
+  // two domain lines *both*; absent for one.
+  domainForm?: "union" | "separate";
+  // An end the file gives only as some other expression (a restriction).
   unnamedDomain?: boolean;
   unnamedRange?: boolean;
   // A datatype property's type of value, prefixed (xsd:date), as typeWord reads it.
@@ -952,7 +984,16 @@ export interface CanvasNode {
   fallback: boolean;
   // Outside this document: the import it comes from, or "outside". Read-only.
   imported?: string;
-  attributes: { iri: string; label: string; datatype: string | null }[];
+  // A shared attribute (attribute-reuse 5.3) is in every member's box,
+  // `shared` for a union and `both` for two domain lines, `with` the others.
+  attributes: {
+    iri: string;
+    label: string;
+    datatype: string | null;
+    shared?: boolean;
+    both?: boolean;
+    with?: string[];
+  }[];
   // A current reasoning result found that this class can never have
   // members (axioms-and-reasoning 5.5, 5.7); only with ?inferred=true.
   neverMembers?: boolean;
@@ -975,6 +1016,13 @@ export interface CanvasEdge {
   target: string;
   property?: string;
   label?: string;
+  // A relationship shared by several classes is a line from each
+  // (attribute-reuse 5.3): its `member`, `shared` for a union, `both` for
+  // two domain lines, and the other classes in `with`.
+  member?: string;
+  shared?: boolean;
+  both?: boolean;
+  with?: string[];
   // This line's place among the lines joining the same two boxes, in either
   // direction, and how many there are: several are curved apart, and a line
   // from a box to itself is a loop (relationships 5.4).

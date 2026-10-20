@@ -201,6 +201,8 @@ function ClassNode({ data, selected }: NodeProps<BoxNode>) {
                   }}
                 >
                   {a.label} : {a.datatype ?? "no type"}
+                  {/* Said in text, never by colour alone (attribute-reuse 5.5). */}
+                  {a.both ? " (both, see warning)" : a.shared ? " (shared)" : ""}
                 </button>
               </li>
             ))}

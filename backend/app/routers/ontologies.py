@@ -703,6 +703,11 @@ def get_node(
         if details is not None and ontology.editable and details.get("kind") in PROPERTY_KINDS:
             name = labeler(ontology.graph, ontology.label_langs(lang))
             details["warnings"] = modeling_checks.warnings(ontology.graph, URIRef(iri), name)
+            # Its domain as every view reads it (attribute-reuse 5.3): the
+            # form lists a union's members, never the blank node.
+            details["domain"] = axioms.domain_json(
+                axioms.domain_of(graph, URIRef(iri)), labeler(graph, ontology.label_langs(lang))
+            )
         # A project's class carries its rules (axioms-and-reasoning 5.9):
         # the sentences of 5.8 read from the view, so an import's rule shows
         # read-only, the warnings of 5.10, and the builder's choices when
@@ -716,6 +721,9 @@ def get_node(
                 "choices": _rule_choices(ontology, graph, imports, lang, name)
                 if examples.is_class(ontology.graph, cls) else None,
             }
+            # What the class has and how: its own, shared, both (two domain
+            # lines) and through a parent (attribute-reuse 5.3).
+            details["properties"] = axioms.class_properties(graph, cls, name)
         # Any other ontology's class carries its rules too (explore-rules
         # 5.3, D-113), as the same sentences and read-only: the document is
         # not the person's to change. No warnings and no builder here.
