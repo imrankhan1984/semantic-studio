@@ -25,8 +25,13 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES (props)
     - fetchingId: the entry currently downloading, or null.
-    - busy: true while any download is in flight; disables every row.
+    - busy: true while any download is in flight; every row is
+      aria-disabled, never disabled, so the row pressed keeps focus and a
+      Cancel after it is the next stop (load-progress 5.3).
     - onPick: called with the chosen entry.
+    - status: the load's status, drawn under the entry being fetched
+      (load-progress 5.2), or after the entry a Cancel left it under.
+    - statusId: which entry the status stands under.
     Plus the CATALOGUE constant.
 
 EXPECTED OUTPUT
@@ -35,43 +40,50 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
+import { Fragment, type ReactNode } from "react";
 import { CATALOGUE, type CatalogueEntry } from "../catalogue";
 
 interface Props {
   /** The entry being downloaded right now, or null. */
   fetchingId: string | null;
-  /** True while any download is in flight: every row is disabled. */
+  /** True while any download is in flight: every row is aria-disabled. */
   busy: boolean;
   onPick: (entry: CatalogueEntry) => void;
+  /** The load's status, and the entry it stands under. */
+  status?: ReactNode;
+  statusId?: string | null;
 }
 
-export default function CatalogueList({ fetchingId, busy, onPick }: Props) {
+export default function CatalogueList({ fetchingId, busy, onPick, status, statusId }: Props) {
   return (
     <div className="catalogue">
       {CATALOGUE.map((entry) => (
-        <button
-          key={entry.id}
-          className="catalogue-entry"
-          disabled={busy}
-          onClick={() => onPick(entry)}
-          title={entry.url}
-        >
-          <span className="catalogue-name">
-            {entry.name}
-            {fetchingId === entry.id && (
-              <span className="catalogue-loading"> · downloading…</span>
-            )}
-          </span>
-          <span className="catalogue-desc">{entry.description}</span>
-          <span className="catalogue-size">{entry.size}</span>
-          {/*
-            Plain text inside the button, so it joins the accessible name rather
-            than needing aria-describedby. That makes the name long, and it is
-            the right trade: a screen reader user hears which entry suits them
-            instead of guessing from the vocabulary's initials.
-          */}
-          <span className="catalogue-audience">{entry.audience}</span>
-        </button>
+        <Fragment key={entry.id}>
+          <button
+            className="catalogue-entry"
+            data-entry={entry.id}
+            aria-disabled={busy}
+            onClick={() => !busy && onPick(entry)}
+            title={entry.url}
+          >
+            <span className="catalogue-name">
+              {entry.name}
+              {fetchingId === entry.id && (
+                <span className="catalogue-loading"> · downloading…</span>
+              )}
+            </span>
+            <span className="catalogue-desc">{entry.description}</span>
+            <span className="catalogue-size">{entry.size}</span>
+            {/*
+              Plain text inside the button, so it joins the accessible name rather
+              than needing aria-describedby. That makes the name long, and it is
+              the right trade: a screen reader user hears which entry suits them
+              instead of guessing from the vocabulary's initials.
+            */}
+            <span className="catalogue-audience">{entry.audience}</span>
+          </button>
+          {statusId === entry.id && status}
+        </Fragment>
       ))}
     </div>
   );

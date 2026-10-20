@@ -2357,6 +2357,8 @@ export default function App() {
           initialTab={dialogTab}
           examplesMissing={missingExamples(ontologies).length}
           onExamplesRestored={(result) => setOntologies(result.ontologies)}
+          // A cancelled load that had already finished is in the library now.
+          onLibraryChanged={refreshList}
           project={
             openProjectSummary && modelOntologyId
               ? {

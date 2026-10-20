@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1381 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1632 tests, vitest
+cd backend  && python -m pytest tests    # 1402 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1674 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -161,6 +161,8 @@ backend/app/
                      every derived view keyed on the revision (D-081)
   parse_errors.py    A failed load in one plain sentence (D-112): the line,
                      the format, the raw parser text kept apart
+  loads.py           The loads running now, by the browser's id; a cancel's
+                     mark, which store.add reads before it writes (D-115)
   projects.py        Project folders and manifests: create, list, rename,
                      duplicate, trash, export; per-project saved queries
   editing.py         The only mutator of a project document: commands, undo,
@@ -221,6 +223,8 @@ frontend/src/
   links.ts           linkTarget: the one gate an IRI passes to become a link
   theme/             kinds.ts, the one kind palette every tab draws from
                      (D-109), and contrast.ts, the WCAG ratio its tests use
+  loadWords.ts       The Load dialog's step sentences, the expected time,
+                     a Cancel's two endings, and the load id (load-progress)
   statusWords.ts     The status bar's words: Home's count, format names,
                      and statementCount, the one place *statements* is said
   canvas/            The modeling canvas (D-086): ModelCanvas on React Flow,
@@ -267,6 +271,8 @@ leaves one behind.
 - Every `href` goes through `linkTarget` (http and https only); `links.test.ts` scans for one that does not (D-088). [safe links]
 
 **Queries and imports**
+- No `async` route parses or builds on the event loop; that work goes through `run_in_threadpool` (`test_load_cancel.py` scans). [off the event loop]
+- A cancelled load writes nothing: `store.add` checks its mark after the download and the parse, and `commit()`s under the lock `cancel()` takes, before the first write (D-115). [off the event loop]
 - `MergedView` deduplicates and prunes by subject. [owl:imports]
 - Vocabulary files stay `binary` in `.gitattributes`, or their hashes fail. [owl:imports]
 - The example files are `binary` too and pinned in `examples/manifest.json`; change a file and its hash together, and a changed hash replaces the entry under its fixed id. [Home and examples]

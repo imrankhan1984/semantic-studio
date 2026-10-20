@@ -17,8 +17,20 @@ BASIC IDEA
     uploadOntology or fetchOntology and then onLoaded with the resulting
     summary. *Add the examples back* is the one exception: it opens nothing
     and downloads nothing, the server adds its own bundled files again, and
-    the dialog stays open on its tab, focus on the tab, saying what came back. Busy/error state gives feedback while a large file downloads or
-    parses. The GHE limitation is explained inline on the URL tab.
+    the dialog stays open on its tab, focus on the tab, saying what came back.
+    The GHE limitation is explained inline on the URL tab.
+
+    While a load runs (load-progress 5.2 to 5.4) a status stands under the
+    control it started from -- the drop area, the address box, or the
+    suggested entry's row -- saying which step it is on (loadWords.ts): the
+    bytes sent, with a bar that has a value, then the seconds while it is
+    read or downloaded, with a bar that has none. Its Cancel aborts the
+    request and asks the server to throw the result away, then says whether
+    it was in time, and focus goes back to where the load started. The ✕,
+    Escape and a click outside do the same and close; nothing opens after
+    the dialog has gone. Every answer is applied only while its load is
+    still the current one. A live region speaks each step once, never the
+    seconds.
 
     A file no parser could read comes back as one sentence the server wrote
     (parse_errors.py, load-and-shapes 5.1); the parsers' own text, when the
@@ -53,6 +65,8 @@ INPUTS / INPUT SOURCES (props)
     - examplesMissing / onExamplesRestored: how many bundled examples are
       not in the library, and what to do with the library the restore
       answers; with none missing, or no handler, the button is absent.
+    - onLibraryChanged: a cancelled load had already finished, so the
+      library has a new entry to read.
     - project: the open project, which adds the Data tab; startImport opens
       it with the wizard started; onValidate and onShowData are the import
       report's next steps.
@@ -64,8 +78,24 @@ EXPECTED OUTPUT
 */
 
 import { useEffect, useRef, useState } from "react";
-import { ApiError, fetchOntology, restoreExamples, uploadOntology, type ExamplesRestored } from "../api";
+import {
+  ApiError,
+  cancelLoad,
+  fetchOntology,
+  restoreExamples,
+  uploadOntology,
+  type ExamplesRestored,
+  type LoadOptions,
+} from "../api";
 import type { CatalogueEntry } from "../catalogue";
+import {
+  STOPPED,
+  TOO_LATE,
+  newLoadId,
+  stepAnnouncement,
+  stepSentence,
+  type LoadStep,
+} from "../loadWords";
 import CatalogueList from "./CatalogueList";
 import DataWizard, { type WizardStart } from "./DataWizard";
 import SnapshotList from "./SnapshotList";
@@ -93,6 +123,28 @@ interface Props {
   /** Bundled examples not in the library (home-and-examples 5.8). */
   examplesMissing?: number;
   onExamplesRestored?: (result: ExamplesRestored) => void;
+  /** A cancelled load had already finished: the library has a new entry. */
+  onLibraryChanged?: () => void;
+}
+
+/** Where a load started: the status stands there, and focus goes back there. */
+type LoadOrigin = { tab: "file" } | { tab: "url" } | { tab: "suggested"; entryId: string };
+
+function sameOrigin(a: LoadOrigin, b: LoadOrigin): boolean {
+  return a.tab === b.tab && (a.tab !== "suggested" || a.entryId === (b as { entryId: string }).entryId);
+}
+
+/** The load running now. `size` is a file's; null for a web address. */
+interface LoadRun {
+  id: string;
+  origin: LoadOrigin;
+  controller: AbortController;
+  started: number;
+  name: string;
+  size: number | null;
+  sending: boolean;
+  sent: number;
+  total: number;
 }
 
 /** What went wrong, and for a file no parser read, the parsers' own text. */
@@ -123,6 +175,7 @@ export default function LoadDialog({
   onShowData,
   examplesMissing = 0,
   onExamplesRestored,
+  onLibraryChanged,
 }: Props) {
   const [tab, setTab] = useState<LoadTab>(initialTab === "data" && !project ? "suggested" : initialTab);
   const [wizard, setWizard] = useState<WizardStart | null>(startImport && project ? { kind: "new" } : null);
@@ -146,11 +199,205 @@ export default function LoadDialog({
       setTab(next);
     });
   };
-  const [fetching, setFetching] = useState<string | null>(null);
   const [url, setUrl] = useState("");
-  const [busy, setBusy] = useState(false);
+  // The examples' restore; a load's own busy state is `run`.
+  const [restoring, setRestoring] = useState(false);
   const [error, setError] = useState<LoadError | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const dropzoneRef = useRef<HTMLDivElement>(null);
+  const urlInput = useRef<HTMLInputElement>(null);
+
+  // The load running now (load-progress 5.2, 5.3). The ref is its identity:
+  // an answer, a progress event or a failure is applied only while its load
+  // is still the current one, so a cancelled load never opens and never
+  // shows an error. The state is what the status draws.
+  const runRef = useRef<LoadRun | null>(null);
+  const [run, setRun] = useState<LoadRun | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  // What a Cancel ended with, standing where the load started.
+  const [ended, setEnded] = useState<{ origin: LoadOrigin; text: string } | null>(null);
+  const busy = run !== null || restoring;
+
+  // The seconds tick while a load runs; only the visible sentence reads them.
+  const runId = run?.id;
+  useEffect(() => {
+    if (!runId) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [runId]);
+
+  const startLoad = async (
+    origin: LoadOrigin,
+    name: string,
+    size: number | null,
+    request: (options: LoadOptions) => Promise<OntologySummary>,
+  ) => {
+    if (runRef.current) return;
+    const fresh: LoadRun = {
+      id: newLoadId(),
+      origin,
+      controller: new AbortController(),
+      started: Date.now(),
+      name,
+      size,
+      sending: size !== null,
+      sent: 0,
+      total: size ?? 0,
+    };
+    runRef.current = fresh;
+    setRun(fresh);
+    setNow(fresh.started);
+    setEnded(null);
+    setError(null);
+    const mine = () => runRef.current?.id === fresh.id;
+    try {
+      const summary = await request({
+        loadId: fresh.id,
+        signal: fresh.controller.signal,
+        onSent: (sent, total) => {
+          if (!mine()) return;
+          // On the ref's own object too: Cancel reads `sending` there, and a
+          // file all sent may have reached the server whole.
+          // Progress fires every few milliseconds; the dialog draws again
+          // only when the words, the bar's whole percent or the step change
+          // (PR #65 review).
+          const shown = (s: number, t: number) =>
+            `${stepSentence({ kind: "sending", name, sent: s, total: t })}|${t > 0 ? Math.round((s / t) * 100) : 0}`;
+          const before = shown(fresh.sent, fresh.total);
+          const wasSending = fresh.sending;
+          Object.assign(fresh, { sent, total, sending: sent < total });
+          if (shown(sent, total) !== before || fresh.sending !== wasSending) setRun({ ...fresh });
+        },
+      });
+      if (!mine()) return;
+      runRef.current = null;
+      setRun(null);
+      onLoaded(summary);
+    } catch (e: unknown) {
+      if (!mine()) return;
+      runRef.current = null;
+      setRun(null);
+      setError(loadError(e));
+    }
+  };
+
+  const focusOrigin = (origin: LoadOrigin) => {
+    const target =
+      origin.tab === "file"
+        ? dropzoneRef.current
+        : origin.tab === "url"
+          ? urlInput.current
+          : [...(panelRef.current?.querySelectorAll<HTMLElement>("[data-entry]") ?? [])].find(
+              (row) => row.dataset.entry === origin.entryId,
+            );
+    // On another tab than the one it started from, the control is gone.
+    (target ?? headingRef.current)?.focus();
+  };
+
+  // Cancel, and every way of closing while a load runs (5.3, Section 15).
+  // The request is aborted at once, so the dialog stops waiting; the server
+  // is asked to throw the result away and says whether it was in time. A
+  // file still being sent never reached the server whole, so it is stopped
+  // whatever the answer. Closing shows no answer, the dialog being gone, but
+  // a load that was too late still refreshes the library; nothing opens.
+  const mounted = useRef(true);
+  const cancelRun = (closing: boolean) => {
+    const current = runRef.current;
+    if (!current) return;
+    runRef.current = null;
+    current.controller.abort();
+    setRun(null);
+    if (!closing) focusOrigin(current.origin);
+    const show = (text: string) => {
+      if (!closing && mounted.current && !runRef.current) setEnded({ origin: current.origin, text });
+    };
+    cancelLoad(current.id).then(
+      ({ stopped }) => {
+        const inTime = stopped || current.sending;
+        if (!inTime) onLibraryChanged?.();
+        show(inTime ? STOPPED : TOO_LATE);
+      },
+      (e: unknown) => {
+        // Not knowing is said as such; the library is read again either way.
+        onLibraryChanged?.();
+        if (!closing && mounted.current && !runRef.current) setError(loadError(e));
+      },
+    );
+  };
+  const cancelOnUnmount = useRef(cancelRun);
+  cancelOnUnmount.current = cancelRun;
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      cancelOnUnmount.current(true);
+    };
+  }, []);
+
+  const close = () => {
+    cancelRun(true);
+    onClose();
+  };
+
+  const step: LoadStep | null = run
+    ? run.size === null
+      ? { kind: "downloading", elapsed: Math.max(0, Math.floor((now - run.started) / 1000)) }
+      : run.sending
+        ? { kind: "sending", name: run.name, sent: run.sent, total: run.total }
+        : {
+            kind: "reading",
+            name: run.name,
+            size: run.size,
+            elapsed: Math.max(0, Math.floor((now - run.started) / 1000)),
+          }
+    : null;
+
+  // The status under the control a load started from: the step, its bar and
+  // Cancel while it runs; what a Cancel ended with after. Not live: the
+  // live region below speaks the step once, and never the seconds.
+  const statusAt = (origin: LoadOrigin) => {
+    if (run && step && sameOrigin(run.origin, origin)) {
+      // Sending always has a value, 0 for a file of no bytes: the bar never
+      // says reading while the sentence says sending (PR #65 review).
+      const share =
+        step.kind === "sending" ? (step.total > 0 ? Math.min(100, Math.round((step.sent / step.total) * 100)) : 0) : null;
+      return (
+        <div className="load-status">
+          <p className="load-step">{stepSentence(step)}</p>
+          {share !== null ? (
+            <div
+              className="load-bar"
+              role="progressbar"
+              aria-label="Sending the file"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={share}
+            >
+              <div className="load-bar-fill" style={{ width: `${share}%` }} />
+            </div>
+          ) : (
+            <div className="load-bar moving" role="progressbar" aria-label={step.kind === "downloading" ? "Downloading and reading" : "Reading the file"}>
+              <div className="load-bar-fill" />
+            </div>
+          )}
+          <button type="button" onClick={() => cancelRun(false)}>
+            Cancel
+          </button>
+        </div>
+      );
+    }
+    if (ended && !run && sameOrigin(ended.origin, origin)) {
+      return (
+        <div className="load-status">
+          <p className="load-step">{ended.text}</p>
+        </div>
+      );
+    }
+    return null;
+  };
+  const announcement = step ? stepAnnouncement(step) : (ended?.text ?? "");
+  const suggestedOrigin =
+    run?.origin.tab === "suggested" ? run.origin : ended?.origin.tab === "suggested" ? ended.origin : null;
   // The Suggested tab, where focus goes once the examples are back: the
   // button that was pressed goes with them, and focus would fall to the page.
   const suggestedTab = useRef<HTMLButtonElement>(null);
@@ -173,48 +420,23 @@ export default function LoadDialog({
   }, []);
   const [dragOver, setDragOver] = useState(false);
 
-  const submitFile = async (file: File) => {
-    setBusy(true);
-    setError(null);
-    try {
-      onLoaded(await uploadOntology(file));
-    } catch (e: unknown) {
-      setError(loadError(e));
-    } finally {
-      setBusy(false);
-    }
+  const submitFile = (file: File) =>
+    startLoad({ tab: "file" }, file.name, file.size, (options) => uploadOntology(file, options));
+
+  const submitUrl = () => {
+    const address = url.trim();
+    if (!address || busy) return;
+    return startLoad({ tab: "url" }, address, null, (options) => fetchOntology(address, options));
   };
 
-  const submitUrl = async () => {
-    if (!url.trim()) return;
-    setBusy(true);
-    setError(null);
-    try {
-      onLoaded(await fetchOntology(url.trim()));
-    } catch (e: unknown) {
-      setError(loadError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const loadSuggested = async (entry: CatalogueEntry) => {
-    setBusy(true);
-    setFetching(entry.id);
-    setError(null);
-    try {
-      onLoaded(await fetchOntology(entry.url));
-    } catch (e: unknown) {
-      setError(loadError(e));
-    } finally {
-      setBusy(false);
-      setFetching(null);
-    }
-  };
+  const loadSuggested = (entry: CatalogueEntry) =>
+    startLoad({ tab: "suggested", entryId: entry.id }, entry.name, null, (options) =>
+      fetchOntology(entry.url, options),
+    );
 
   const addExamplesBack = async () => {
     if (!onExamplesRestored) return;
-    setBusy(true);
+    setRestoring(true);
     setError(null);
     try {
       const result = await restoreExamples();
@@ -227,19 +449,19 @@ export default function LoadDialog({
     } catch (e: unknown) {
       setError(loadError(e));
     } finally {
-      setBusy(false);
+      setRestoring(false);
     }
   };
 
-  // Escape is the ✕: it asks first while the wizard has a mapping, and with
-  // the question showing it keeps going. On `document`, as useDialogTrap's
+  // Escape is the ✕, and like it cancels a running load: it asks first while
+  // the wizard has a mapping, and with the question showing it keeps going. On `document`, as useDialogTrap's
   // is, since a click on the dialog's prose blurs focus to <body>; a key
   // pressed while another dialog is open over this one (an approval) is that
   // dialog's, even from <body>. Tab stays inside, as aria-modal promises.
   const onEscape = useRef<() => void>(() => {});
   onEscape.current = () => {
     if (leaving) setLeaving(null);
-    else guard(onClose);
+    else guard(close);
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -264,7 +486,8 @@ export default function LoadDialog({
 
   return (
     // A click outside does not drop a wizard half way: Cancel does, and asks.
-    <div className="modal-backdrop" onClick={() => !(tab === "data" && wizard) && onClose()}>
+    // It cancels a running load, as the ✕ and Escape do (load-progress 5.3).
+    <div className="modal-backdrop" onClick={() => !(tab === "data" && wizard) && close()}>
       <div
         ref={panelRef}
         className={tab === "data" ? "modal modal-wide" : "modal"}
@@ -277,7 +500,7 @@ export default function LoadDialog({
           <h2 id="load-dialog-title" ref={headingRef} tabIndex={-1}>
             {title}
           </h2>
-          <button className="icon-btn" onClick={() => guard(onClose)} title="Close" aria-label="Close">
+          <button className="icon-btn" onClick={() => guard(close)} title="Close" aria-label="Close">
             ✕
           </button>
         </div>
@@ -377,9 +600,11 @@ export default function LoadDialog({
             {/* CatalogueList, a component of its own since Home and this tab
                 both showed it; this tab is its one caller now. */}
             <CatalogueList
-              fetchingId={fetching}
+              fetchingId={run?.origin.tab === "suggested" ? run.origin.entryId : null}
               busy={busy}
               onPick={(entry) => void loadSuggested(entry)}
+              status={suggestedOrigin && statusAt(suggestedOrigin)}
+              statusId={suggestedOrigin?.entryId ?? null}
             />
           </>
         )}
@@ -396,9 +621,21 @@ export default function LoadDialog({
               e.preventDefault();
               setDragOver(false);
               const file = e.dataTransfer.files?.[0];
-              if (file) void submitFile(file);
+              if (file && !busy) void submitFile(file);
             }}
-            onClick={() => fileInput.current?.click()}
+            // The picker's own click bubbles back here: it is not a second ask.
+            onClick={(e) => e.target !== fileInput.current && !busy && fileInput.current?.click()}
+            // A control of its own, so a keyboard reaches it and a Cancel
+            // can give focus back to it (load-progress 5.3).
+            ref={dropzoneRef}
+            role="button"
+            tabIndex={0}
+            aria-disabled={busy}
+            onKeyDown={(e) => {
+              if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+              e.preventDefault();
+              if (!busy) fileInput.current?.click();
+            }}
           >
             <input
               ref={fileInput}
@@ -415,20 +652,26 @@ export default function LoadDialog({
             <p className="hint">Turtle, RDF/XML, OWL, N-Triples, N3, JSON-LD, TriG, N-Quads</p>
           </div>
         )}
+        {tab === "file" && statusAt({ tab: "file" })}
 
         {tab === "url" && (
           <div className="url-form">
             <input
+              ref={urlInput}
               type="text"
+              aria-label="Address of an RDF file"
               placeholder="https://github.com/owner/repo/blob/main/ontology.ttl or any raw RDF URL"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void submitUrl()}
               autoFocus
             />
-            <button className="primary" onClick={() => void submitUrl()} disabled={busy || !url.trim()}>
+            {/* aria-disabled, never disabled: the button pressed keeps focus,
+                and Cancel is the next stop after it (load-progress 5.3). */}
+            <button className="primary" onClick={() => void submitUrl()} aria-disabled={busy || !url.trim()}>
               Fetch
             </button>
+            {statusAt({ tab: "url" })}
             <p className="hint">
               Any directly reachable RDF URL works, including public <strong>github.com</strong>{" "}
               repositories — “blob” links are converted to raw file URLs automatically.
@@ -441,7 +684,12 @@ export default function LoadDialog({
           </div>
         )}
 
-        {busy && <p className="detail-note">Parsing ontology…</p>}
+        {/* Rendered whether or not a load runs: a live region added with
+            its text is unreliably announced. It speaks each step once
+            (load-progress 5.4); the seconds stay in the visible sentence. */}
+        <p className="visually-hidden" role="status">
+          {announcement}
+        </p>
         {error && (
           <div className="load-error">
             <p className="detail-error">{error.message}</p>

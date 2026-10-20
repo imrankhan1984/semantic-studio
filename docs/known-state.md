@@ -2144,3 +2144,66 @@ EXPECTED OUTPUT
   another language than the one shown says which, as a fallback name does
   (D-085). An empty description no longer hides the next predicate's, and
   the fallback among other languages is the first by tag, not store order.
+
+- **Loads say their step and can be cancelled; parsing is off the event
+  loop** (2026-10-20, spec `load-progress`, backlog U-1, decision D-115).
+  The Load dialog says which step a load is on, under the control it
+  started from, and Cancel throws the result away.
+
+  **No `async` route parses or builds on the event loop; that work goes
+  through `run_in_threadpool`.** The upload and fetch routes are `async`
+  and called `store.add` directly, so a parse ran on the server's one event
+  loop: behind a 35.5 MB upload a request for the library list waited
+  47.3 s. A Cancel would have waited in the same line, so 5.1 came first.
+  `test_load_cancel.py` reads every `async` route in `routers/` with `ast`
+  for a direct call to `store.add` or `parse_rdf` (a nested def handed to
+  the threadpool is skipped), and holds an upload inside its parse with an
+  Event while the library list is asked for through the same client: the
+  same portal, so the same loop.
+
+  **A cancel is a mark the store reads, under one lock with the last
+  check.** `loads.py` keeps the running loads by the browser's id, each
+  entry removed when its route ends, whatever the outcome. `store.add`
+  checks the mark on entry (after a download), after the parse, and takes
+  `commit()` after the summary, before the first write; `cancel()` takes
+  the same lock, so a cancel landing between the last check and the write
+  cannot answer `stopped` for a load that is then written. A running parse
+  is not stopped (D-013); only its result is dropped. An unknown id is
+  `{"stopped": false}`, a non-UUID 422.
+
+  **The dialog applies an answer only while its load is current.** The
+  ref holding the running load is its identity: Cancel clears it, so a
+  late success never opens and an aborted request never shows an error.
+  Progress is written onto the ref's own object as well as the state,
+  because Cancel reads `sending` there: a file still being sent never
+  reached the server whole and is *Stopped* whatever the server answers,
+  and reading it from a stale copy said *Stopped* for every file load
+  (found by the tests). The ✕, Escape and a click outside cancel before
+  `onClose`, and the unmount cleanup cancels too, for any other way the
+  dialog goes. The upload is XMLHttpRequest, for `upload.onprogress`, its
+  answer made a `Response` so `send`'s approval round reads it unchanged.
+
+  **Found in code review, fixed.** A cancel that found a load already
+  committed answered *too late* at once, and the dialog read the library
+  while the writes were still under way, so it said *it is in your library*
+  of a list without it; and a write failing after the last check would
+  still have read as finished. A committed load's cancel now waits for the
+  load to end (`ended`, at most 30 s) and answers by `written`. The upload
+  registered its id only after reading the spooled body back; it registers
+  first now. FastAPI parses the multipart body before the handler runs, and
+  a Cancel in that moment still finds no id: it answers *too late* and the
+  load goes on to be written, so what the dialog says becomes true a moment
+  later. An answer no `Response` can carry (a null-body status, status 0)
+  fails as fetch does; a file of no bytes shows a sending bar at 0; progress
+  draws again only when the words or the whole percent change. Not taken:
+  a cancelled download still streams until the broker ends it, because the
+  spec checks the mark after the download and stopping the stream would
+  change the broker.
+
+  **Found while building, not fixed (not in the spec).** `parse_rdf`'s
+  `with ThreadPoolExecutor(...)` waits for its worker on the way out, so
+  `ParseTimeout` reaches the caller only when the parse ends: the 60 s
+  limit has never released a request early. `pool.shutdown(wait=False)`
+  inside the block is undone by the context manager's own `shutdown(wait=
+  True)`. Measured: a parse held 3 s under a 0.2 s timeout raised after
+  3.01 s.

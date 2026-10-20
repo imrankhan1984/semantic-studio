@@ -20,9 +20,17 @@ SUMMARY
     the server's sentence with the raw text under a closed Technical
     details (5.1); the dialog is announced as one, Escape closes it or asks
     past the wizard's step 3, and focus goes back to its opener (5.2).
+    While a load runs (load-progress 5.2 to 5.4): each step's sentence and
+    bar under the control it started from, the expected time only over
+    5 MB and *Still reading* past it, under fake timers; Cancel aborts,
+    posts the cancel and says each of its two endings, focus going back to
+    the starting control; the ✕, Escape and a click outside cancel and
+    close, and nothing opens afterwards; the live region speaks the steps,
+    never the seconds.
 
 BASIC IDEA
-    api.ts is mocked; the snapshot list reads the real project store, left
+    api.ts is mocked; a load is held by its mock until the test answers it,
+    and rejects on its abort signal as the real request does; the snapshot list reads the real project store, left
     empty, so the list says it is reading -- opened on a fixed project where
     the focus test needs the list itself.
 
@@ -35,10 +43,20 @@ EXPECTED OUTPUT
 */
 
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { Profiler, useState } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { fetchHierarchy, inspectData, previewData, openProject, listData, restoreExamples, uploadOntology } = vi.hoisted(() => ({
+const {
+  fetchHierarchy,
+  inspectData,
+  previewData,
+  openProject,
+  listData,
+  restoreExamples,
+  uploadOntology,
+  fetchOntology,
+  cancelLoad,
+} = vi.hoisted(() => ({
   fetchHierarchy: vi.fn(() => new Promise(() => {})),
   inspectData: vi.fn(),
   previewData: vi.fn(),
@@ -46,6 +64,8 @@ const { fetchHierarchy, inspectData, previewData, openProject, listData, restore
   listData: vi.fn(),
   restoreExamples: vi.fn(),
   uploadOntology: vi.fn(),
+  fetchOntology: vi.fn(),
+  cancelLoad: vi.fn(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -57,9 +77,11 @@ vi.mock("../api", async (importOriginal) => ({
   listData,
   restoreExamples,
   uploadOntology,
+  fetchOntology,
+  cancelLoad,
 }));
 
-import { ApiError } from "../api";
+import { ApiError, type LoadOptions } from "../api";
 import { projectStore } from "../state/projectStore";
 import LoadDialog from "./LoadDialog";
 
@@ -168,7 +190,9 @@ describe("LoadDialog suggestions (home-and-examples 5.8)", () => {
     const { rerender } = render(
       <LoadDialog onLoaded={() => {}} onClose={() => {}} examplesMissing={2} onExamplesRestored={onExamplesRestored} />,
     );
-    const status = screen.getByRole("status");
+    // The examples' own region; the load's steps have another (load-progress 5.4).
+    const status = document.querySelector<HTMLElement>(".examples-restored")!;
+    expect(status.getAttribute("role")).toBe("status");
     expect(status.textContent).toBe("");
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Add the examples back" }));
@@ -329,7 +353,8 @@ describe("the Load dialog is a dialog (load-and-shapes 5.2, AC-3)", () => {
     const dialog = screen.getByRole("dialog");
     // The file input is `hidden` and Tab never stops on it: it is not an end.
     expect(dialog.querySelector('input[type="file"][hidden]')).not.toBeNull();
-    const items = [...dialog.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), summary, a[href]")]
+    // The drop area is a stop of its own since load-progress 5.3.
+    const items = [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), summary, a[href], [tabindex="0"]')]
       .filter((el) => !el.closest("[hidden]"));
     expect(items.length).toBeGreaterThan(1);
     items[items.length - 1].focus();
@@ -496,5 +521,344 @@ describe("LoadDialog", () => {
       fireEvent.click(screen.getByRole("button", { name: "Close" }));
       expect(onClose).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("a load's steps and Cancel (load-progress 5.2 to 5.4)", () => {
+  const MB = 1024 * 1024;
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  type Pending = {
+    options: LoadOptions;
+    resolve: (summary: unknown) => void;
+  };
+
+  /** The mocked load: held until the test answers it, rejected on abort. */
+  function hold(mock: typeof uploadOntology | typeof fetchOntology) {
+    const pending: Pending[] = [];
+    mock.mockImplementation((_what: unknown, options: LoadOptions) =>
+      new Promise((resolve, reject) => {
+        pending.push({ options, resolve });
+        options.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      }),
+    );
+    return pending;
+  }
+
+  function bigFile(name: string, size: number): File {
+    const file = new File(["x"], name);
+    Object.defineProperty(file, "size", { value: size });
+    return file;
+  }
+
+  const live = () => document.querySelector<HTMLElement>('p.visually-hidden[role="status"]')!;
+  const step = () => document.querySelector<HTMLElement>(".load-status .load-step")?.textContent ?? null;
+  const bar = () => screen.getByRole("progressbar");
+
+  function openFile(props: Partial<Parameters<typeof LoadDialog>[0]> = {}) {
+    const handlers = { onLoaded: vi.fn(), onClose: vi.fn(), onLibraryChanged: vi.fn() };
+    render(<LoadDialog {...handlers} initialTab="file" {...props} />);
+    return handlers;
+  }
+
+  async function chooseFile(file: File) {
+    await act(async () => {
+      fireEvent.change(document.querySelector(".dropzone input[type=file]")!, { target: { files: [file] } });
+    });
+  }
+
+  beforeEach(() => {
+    cancelLoad.mockResolvedValue({ stopped: true });
+  });
+
+  afterEach(() => {
+    // Unmounted first: a dialog closed mid-load cancels it, through the mock.
+    cleanup();
+    vi.useRealTimers();
+    fetchOntology.mockReset();
+    cancelLoad.mockReset();
+  });
+
+  it("sends with real progress, then reads with the seconds and the expected time", async () => {
+    vi.useFakeTimers();
+    const pending = hold(uploadOntology);
+    openFile();
+    // The live region is there before any load, empty: one added with its
+    // text is unreliably announced.
+    expect(live().textContent).toBe("");
+    await chooseFile(bigFile("big-file.ttl", 35 * MB));
+
+    const { options } = pending[0];
+    expect(options.loadId).toMatch(UUID);
+    expect(step()).toBe("Sending big-file.ttl: 0 of 35 MB.");
+    act(() => options.onSent!(12 * MB, 35 * MB));
+    expect(step()).toBe("Sending big-file.ttl: 12 of 35 MB.");
+    expect(bar().getAttribute("aria-valuenow")).toBe("34");
+    expect(live().textContent).toBe("Sending big-file.ttl");
+
+    act(() => options.onSent!(35 * MB, 35 * MB));
+    expect(step()).toBe(
+      "Reading big-file.ttl (35 MB): 0 seconds so far. Files this size often take about 15 seconds.",
+    );
+    // No value while reading: it is moving, not measured.
+    expect(bar().hasAttribute("aria-valuenow")).toBe(false);
+    expect(live().textContent).toBe("Reading big-file.ttl");
+
+    act(() => vi.advanceTimersByTime(6000));
+    expect(step()).toBe(
+      "Reading big-file.ttl (35 MB): 6 seconds so far. Files this size often take about 15 seconds.",
+    );
+    // The seconds are not announced: the live region did not change.
+    expect(live().textContent).toBe("Reading big-file.ttl");
+
+    act(() => vi.advanceTimersByTime(16000));
+    expect(step()).toBe("Still reading: 22 seconds so far.");
+    expect(live().textContent).toBe("Still reading big-file.ttl");
+    expect(live().textContent).not.toMatch(/\d/);
+  });
+
+  it("says no expected time for a file of 5 MB or less", async () => {
+    hold(uploadOntology);
+    openFile();
+    await chooseFile(bigFile("small.ttl", 5 * MB));
+    const { onSent } = uploadOntology.mock.calls[0][1] as LoadOptions;
+    act(() => onSent!(5 * MB, 5 * MB));
+    expect(step()).toBe("Reading small.ttl (5 MB): 0 seconds so far.");
+  });
+
+  it("a web address downloads and reads, counting the seconds, with its id and signal", async () => {
+    vi.useFakeTimers();
+    const pending = hold(fetchOntology);
+    render(<LoadDialog onLoaded={vi.fn()} onClose={vi.fn()} initialTab="url" />);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "https://example.org/a.ttl" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Fetch" }));
+    });
+    expect(fetchOntology.mock.calls[0][0]).toBe("https://example.org/a.ttl");
+    expect(pending[0].options.loadId).toMatch(UUID);
+    expect(pending[0].options.signal).toBeInstanceOf(AbortSignal);
+    expect(step()).toBe("Downloading and reading: 0 seconds so far.");
+    act(() => vi.advanceTimersByTime(6000));
+    expect(step()).toBe("Downloading and reading: 6 seconds so far.");
+    expect(live().textContent).toBe("Downloading and reading");
+    // Fetch is aria-disabled, never disabled: it keeps focus.
+    const fetchButton = screen.getByRole("button", { name: "Fetch" }) as HTMLButtonElement;
+    expect(fetchButton.getAttribute("aria-disabled")).toBe("true");
+    expect(fetchButton.disabled).toBe(false);
+  });
+
+  it("Cancel aborts, asks the server, says Stopped and gives focus back; nothing opens", async () => {
+    const pending = hold(uploadOntology);
+    let answer!: (value: { stopped: boolean }) => void;
+    cancelLoad.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const { onLoaded, onLibraryChanged } = openFile();
+    await chooseFile(bigFile("big-file.ttl", 35 * MB));
+    const { options, resolve } = pending[0];
+    act(() => options.onSent!(35 * MB, 35 * MB));
+
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    const dropzone = document.querySelector<HTMLElement>(".dropzone")!;
+    // Cancel comes after the control the load started from.
+    expect(dropzone.compareDocumentPosition(cancel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(cancel);
+    });
+    expect(options.signal!.aborted).toBe(true);
+    expect(cancelLoad).toHaveBeenCalledWith(options.loadId);
+    expect(document.activeElement).toBe(dropzone);
+    await act(async () => answer({ stopped: true }));
+    expect(step()).toBe("Stopped. Nothing was added to your library.");
+    expect(live().textContent).toBe("Stopped. Nothing was added to your library.");
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    // An answer arriving after the cancel is never applied.
+    await act(async () => resolve({ id: "ont-late" }));
+    expect(onLoaded).not.toHaveBeenCalled();
+    expect(onLibraryChanged).not.toHaveBeenCalled();
+    // No error from the aborted request either.
+    expect(document.querySelector(".load-error")).toBeNull();
+  });
+
+  it("too late to stop: says so, refreshes the library, opens nothing", async () => {
+    hold(uploadOntology);
+    cancelLoad.mockResolvedValue({ stopped: false });
+    const { onLoaded, onLibraryChanged } = openFile();
+    await chooseFile(bigFile("big-file.ttl", 35 * MB));
+    const { onSent } = uploadOntology.mock.calls[0][1] as LoadOptions;
+    act(() => onSent!(35 * MB, 35 * MB));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+    expect(step()).toBe("It had already finished, so it is in your library.");
+    expect(onLibraryChanged).toHaveBeenCalledTimes(1);
+    expect(onLoaded).not.toHaveBeenCalled();
+  });
+
+  it("a file still being sent never reached the server whole: it is stopped", async () => {
+    hold(uploadOntology);
+    cancelLoad.mockResolvedValue({ stopped: false });
+    const { onLibraryChanged } = openFile();
+    await chooseFile(bigFile("big-file.ttl", 35 * MB));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+    expect(cancelLoad).toHaveBeenCalledTimes(1);
+    expect(step()).toBe("Stopped. Nothing was added to your library.");
+    expect(onLibraryChanged).not.toHaveBeenCalled();
+  });
+
+  it("a suggested entry's status stands under its row, and Cancel gives the row focus", async () => {
+    hold(fetchOntology);
+    cancelLoad.mockResolvedValue({ stopped: true });
+    render(<LoadDialog onLoaded={vi.fn()} onClose={vi.fn()} />);
+    const row = document.querySelectorAll<HTMLElement>(".catalogue-entry")[1];
+    await act(async () => {
+      fireEvent.click(row);
+    });
+    expect(row.nextElementSibling?.classList.contains("load-status")).toBe(true);
+    expect(step()).toBe("Downloading and reading: 0 seconds so far.");
+    // Every row is aria-disabled, so the row pressed keeps focus.
+    expect(row.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+    expect(document.activeElement).toBe(row);
+    expect(row.nextElementSibling?.textContent).toBe("Stopped. Nothing was added to your library.");
+  });
+
+  for (const [way, leave] of [
+    ["the ✕", () => fireEvent.click(screen.getByRole("button", { name: "Close" }))],
+    ["Escape", () => fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" })],
+    ["a click outside", () => fireEvent.click(document.querySelector(".modal-backdrop")!)],
+  ] as const) {
+    it(`${way} cancels a running load and closes; nothing opens afterwards`, async () => {
+      const pending = hold(uploadOntology);
+      cancelLoad.mockResolvedValue({ stopped: false });
+      const handlers = { onLoaded: vi.fn(), onLibraryChanged: vi.fn() };
+      // Aborted before the dialog is told to go, not only by its unmount.
+      const onClose = vi.fn(() => pending[0].options.signal!.aborted);
+      function Host() {
+        const [open, setOpen] = useState(true);
+        return open ? (
+          <LoadDialog
+            {...handlers}
+            onClose={() => {
+              onClose();
+              setOpen(false);
+            }}
+            initialTab="file"
+          />
+        ) : null;
+      }
+      render(<Host />);
+      await chooseFile(bigFile("big-file.ttl", 35 * MB));
+      const { options, resolve } = pending[0];
+      act(() => options.onSent!(35 * MB, 35 * MB));
+      await act(async () => {
+        leave();
+      });
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onClose.mock.results[0].value).toBe(true);
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(options.signal!.aborted).toBe(true);
+      expect(cancelLoad).toHaveBeenCalledWith(options.loadId);
+      // Too late to stop: the library is read again, and nothing opens.
+      expect(handlers.onLibraryChanged).toHaveBeenCalledTimes(1);
+      await act(async () => resolve({ id: "ont-late" }));
+      expect(handlers.onLoaded).not.toHaveBeenCalled();
+    });
+  }
+
+  it("a file of no bytes is sending, with a bar at 0, never a reading bar", async () => {
+    hold(uploadOntology);
+    openFile();
+    await chooseFile(bigFile("empty.ttl", 0));
+    expect(step()).toBe("Sending empty.ttl: 0 of 0 KB.");
+    expect(bar().getAttribute("aria-valuenow")).toBe("0");
+    expect(bar().getAttribute("aria-label")).toBe("Sending the file");
+  });
+
+  it("draws again only when the words or the bar's percent change, not on every progress event", async () => {
+    const pending = hold(uploadOntology);
+    let commits = 0;
+    render(
+      <Profiler id="load" onRender={() => commits++}>
+        <LoadDialog onLoaded={vi.fn()} onClose={vi.fn()} initialTab="file" />
+      </Profiler>,
+    );
+    await chooseFile(bigFile("big-file.ttl", 35 * MB));
+    const { onSent } = pending[0].options;
+    act(() => onSent!(12 * MB, 35 * MB));
+    const before = commits;
+    // A hundred events inside one shown megabyte and one percent, each in
+    // its own act, as the browser delivers them: React would batch one act.
+    for (let i = 1; i <= 100; i++) act(() => onSent!(12 * MB + i * 100, 35 * MB));
+    expect(commits - before).toBe(0);
+    expect(step()).toBe("Sending big-file.ttl: 12 of 35 MB.");
+    act(() => onSent!(20 * MB, 35 * MB));
+    expect(step()).toBe("Sending big-file.ttl: 20 of 35 MB.");
+    // The last bytes change neither the words nor the percent; the step
+    // still changes to reading.
+    act(() => onSent!(35 * MB - 10, 35 * MB));
+    expect(step()).toBe("Sending big-file.ttl: 35 of 35 MB.");
+    act(() => onSent!(35 * MB, 35 * MB));
+    expect(step()).toMatch(/^Reading big-file.ttl/);
+  });
+
+  it("an answer the abort did not stop is still never applied", async () => {
+    let resolve!: (summary: unknown) => void;
+    // A request that ignores its signal: only the dialog's own check stands.
+    uploadOntology.mockImplementation(() => new Promise((r) => (resolve = r)));
+    const { onLoaded } = openFile();
+    await chooseFile(bigFile("big-file.ttl", 35 * MB));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+    await act(async () => resolve({ id: "ont-late" }));
+    expect(onLoaded).not.toHaveBeenCalled();
+    expect(step()).toBe("Stopped. Nothing was added to your library.");
+  });
+
+  it("a dialog taken away mid-load by its parent cancels the load too", async () => {
+    const pending = hold(uploadOntology);
+    cancelLoad.mockResolvedValue({ stopped: false });
+    const handlers = { onLoaded: vi.fn(), onClose: vi.fn(), onLibraryChanged: vi.fn() };
+    const { rerender } = render(<LoadDialog {...handlers} initialTab="file" />);
+    await chooseFile(bigFile("big-file.ttl", 35 * MB));
+    const { options, resolve } = pending[0];
+    await act(async () => {
+      rerender(<></>);
+    });
+    expect(options.signal!.aborted).toBe(true);
+    expect(cancelLoad).toHaveBeenCalledWith(options.loadId);
+    await act(async () => resolve({ id: "ont-late" }));
+    expect(handlers.onLoaded).not.toHaveBeenCalled();
+  });
+
+  it("closing with no load running posts no cancel", () => {
+    const { onClose } = openFile();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(cancelLoad).not.toHaveBeenCalled();
+  });
+
+  it("a finished load opens as before, and the next one starts clean", async () => {
+    const pending = hold(uploadOntology);
+    const { onLoaded } = openFile();
+    await chooseFile(bigFile("a.ttl", 1000));
+    await act(async () => pending[0].resolve({ id: "ont-a" }));
+    expect(onLoaded).toHaveBeenCalledWith({ id: "ont-a" });
+    expect(document.querySelector(".load-status")).toBeNull();
+    expect(live().textContent).toBe("");
+  });
+
+  it("the drop area is a control: Enter opens the picker", () => {
+    openFile();
+    const dropzone = document.querySelector<HTMLElement>(".dropzone")!;
+    expect(dropzone.getAttribute("role")).toBe("button");
+    expect(dropzone.tabIndex).toBe(0);
+    const input = document.querySelector<HTMLInputElement>(".dropzone input[type=file]")!;
+    const picked = vi.spyOn(input, "click");
+    fireEvent.keyDown(dropzone, { key: "Enter" });
+    expect(picked).toHaveBeenCalledTimes(1);
   });
 });
