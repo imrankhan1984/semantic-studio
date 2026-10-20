@@ -418,7 +418,8 @@ def _load(load_id: Optional[uuid.UUID]):
         raise HTTPException(status_code=409, detail=CANCELLED_DETAIL) from exc
     except LoadAlreadyRunning as exc:
         raise HTTPException(
-            status_code=409, detail="A load with this id is already running."
+            status_code=409,
+            detail={"code": "load_running", "message": "A load with this id is already running."},
         ) from exc
 
 
@@ -454,13 +455,17 @@ async def upload_ontology(
                 status_code=413,
                 detail=too_large_detail(MAX_UPLOAD_BYTES, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES"),
             )
-    data = await _read_capped(file, MAX_UPLOAD_BYTES, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES")
-    if not data:
-        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
-    # Detect the RDF format from the filename (or the caller's override).
-    fmt = detect_format(file.filename, format)
-    try:
-        with _load(loadId) as mark:
+    # Registered before the body is read back from its spool, so a Cancel
+    # pressed once the browser has sent the last byte finds the load (PR #65
+    # review). FastAPI parses the multipart body before this line runs; a
+    # Cancel in that moment finds no id, and answers too late.
+    with _load(loadId) as mark:
+        data = await _read_capped(file, MAX_UPLOAD_BYTES, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES")
+        if not data:
+            raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+        # Detect the RDF format from the filename (or the caller's override).
+        fmt = detect_format(file.filename, format)
+        try:
             # Off the event loop: a 35 MB file parses for seconds, and every
             # other request waits behind whatever runs on the loop (5.1).
             ontology = await run_in_threadpool(
@@ -472,13 +477,13 @@ async def upload_ontology(
                 parse_timeout=PARSE_TIMEOUT_SECONDS,
                 mark=mark,
             )
-    except ParseTimeout as exc:
-        raise HTTPException(status_code=504, detail=str(exc)) from exc
-    except ParseError as exc:
-        raise HTTPException(
-            status_code=422, detail=_load_failure(exc, data, file.filename)
-        ) from exc
-    return ontology.summary()
+        except ParseTimeout as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        except ParseError as exc:
+            raise HTTPException(
+                status_code=422, detail=_load_failure(exc, data, file.filename)
+            ) from exc
+        return ontology.summary()
 
 
 def _load_failure(exc: ParseError, data: bytes, filename: Optional[str],

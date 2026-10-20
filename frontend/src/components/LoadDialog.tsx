@@ -258,8 +258,15 @@ export default function LoadDialog({
           if (!mine()) return;
           // On the ref's own object too: Cancel reads `sending` there, and a
           // file all sent may have reached the server whole.
+          // Progress fires every few milliseconds; the dialog draws again
+          // only when the words, the bar's whole percent or the step change
+          // (PR #65 review).
+          const shown = (s: number, t: number) =>
+            `${stepSentence({ kind: "sending", name, sent: s, total: t })}|${t > 0 ? Math.round((s / t) * 100) : 0}`;
+          const before = shown(fresh.sent, fresh.total);
+          const wasSending = fresh.sending;
           Object.assign(fresh, { sent, total, sending: sent < total });
-          setRun({ ...fresh });
+          if (shown(sent, total) !== before || fresh.sending !== wasSending) setRun({ ...fresh });
         },
       });
       if (!mine()) return;
@@ -350,7 +357,10 @@ export default function LoadDialog({
   // live region below speaks the step once, and never the seconds.
   const statusAt = (origin: LoadOrigin) => {
     if (run && step && sameOrigin(run.origin, origin)) {
-      const share = step.kind === "sending" && step.total > 0 ? Math.min(100, Math.round((step.sent / step.total) * 100)) : null;
+      // Sending always has a value, 0 for a file of no bytes: the bar never
+      // says reading while the sentence says sending (PR #65 review).
+      const share =
+        step.kind === "sending" ? (step.total > 0 ? Math.min(100, Math.round((step.sent / step.total) * 100)) : 0) : null;
       return (
         <div className="load-status">
           <p className="load-step">{stepSentence(step)}</p>

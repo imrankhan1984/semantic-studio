@@ -391,14 +391,94 @@ def test_the_table_holds_a_load_only_while_it_runs(client, monkeypatch):
 def test_a_committed_load_cannot_be_cancelled():
     """The last check and a cancel take one lock: exactly one wins."""
     loads = RunningLoads()
+    answers: dict = {}
     with loads.running("a") as mark:
         mark.commit()
-        assert loads.cancel("a") is False
+        asker = threading.Thread(target=lambda: answers.setdefault("a", loads.cancel("a")))
+        asker.start()
+        # Past its last check, the answer waits for the load to end.
+        asker.join(0.3)
+        assert asker.is_alive(), "answered while the load was still writing"
+        mark.wrote()
+    asker.join(WAIT_S)
+    assert answers["a"] is False
     with loads.running("b") as mark:
         assert loads.cancel("b") is True
         with pytest.raises(LoadCancelled):
             mark.commit()
     assert len(loads) == 0
+
+
+def test_a_committed_load_that_wrote_nothing_reads_as_stopped():
+    """A write that failed after the last check: nothing reached the library."""
+    loads = RunningLoads()
+    with loads.running("c") as mark:
+        mark.commit()
+        mark.ended.set()
+        assert loads.cancel("c") is True
+
+
+def test_too_late_is_answered_only_once_the_entry_is_in_the_library(client, monkeypatch):
+    real = store_mod.Ontology
+    entered, release = threading.Event(), threading.Event()
+
+    def held(*args, **kwargs):
+        # After the last check and the file writes, before the library entry.
+        if kwargs.get("name") == "cancel.ttl" and kwargs.get("graph") is not None:
+            entered.set()
+            release.wait(WAIT_S * 3)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(store_mod, "Ontology", held)
+    load_id = str(uuid.uuid4())
+    loader, loaded = _in_thread(lambda: _upload(client, load_id))
+    seen: dict = {}
+
+    def cancel_then_list():
+        seen["stop"] = client.post(f"/api/ontologies/loads/{load_id}/cancel").json()
+        seen["library"] = _library(client)
+
+    try:
+        assert entered.wait(WAIT_S)
+        asker = threading.Thread(target=cancel_then_list)
+        asker.start()
+        asker.join(0.3)
+        assert asker.is_alive(), "too late was answered before the entry was written"
+    finally:
+        release.set()
+        loader.join(WAIT_S * 3)
+    asker.join(WAIT_S)
+    oid = loaded["r"].json()["id"]
+    assert seen["stop"] == {"stopped": False}
+    assert oid in seen["library"]
+    client.delete(f"/api/ontologies/{oid}")
+
+
+def test_a_cancel_while_the_upload_is_read_back_is_in_time(client, monkeypatch):
+    """The id is registered before the spooled body is read (PR #65 review)."""
+    import anyio
+
+    from app.routers import ontologies as routes
+
+    real = routes._read_capped
+    entered, release = threading.Event(), threading.Event()
+
+    async def held(*args, **kwargs):
+        entered.set()
+        await anyio.to_thread.run_sync(release.wait, WAIT_S * 3)
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(routes, "_read_capped", held)
+    files, library = _files(), _library(client)
+    load_id = str(uuid.uuid4())
+    stop, loaded = _cancel_while_held(
+        client, type("H", (), {"entered": entered, "release": release})(),
+        lambda: _upload(client, load_id), load_id,
+    )
+    assert stop.json() == {"stopped": True}
+    assert loaded.status_code == 409
+    assert _files() == files
+    assert _library(client) == library
 
 
 def test_a_second_load_under_a_running_id_is_refused(client, monkeypatch):
@@ -412,5 +492,6 @@ def test_a_second_load_under_a_running_id_is_refused(client, monkeypatch):
         hold.release.set()
         thread.join(WAIT_S * 3)
     assert again.status_code == 409
+    assert again.json()["detail"]["code"] == "load_running"
     assert out["r"].status_code == 200
     client.delete(f"/api/ontologies/{out['r'].json()['id']}")

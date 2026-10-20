@@ -674,6 +674,8 @@ class OntologyStore:
         )
         with self._lock:
             self._items[oid] = ontology
+        if mark is not None:
+            mark.wrote()
         return ontology
 
     def update_meta(self, ontology: Ontology, **fields) -> None:

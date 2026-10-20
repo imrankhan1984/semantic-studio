@@ -331,7 +331,14 @@ function xhrTransport(onSent?: LoadOptions["onSent"]): Transport {
           const at = line.indexOf(":");
           if (at > 0) headers.append(line.slice(0, at).trim(), line.slice(at + 1).trim());
         }
-        resolve(new Response(xhr.responseText, { status: xhr.status, statusText: xhr.statusText, headers }));
+        // A Response takes no body on a null-body status, and no status
+        // outside 200 to 599: either is a failed request, as fetch says.
+        const empty = [101, 204, 205, 304].includes(xhr.status);
+        try {
+          resolve(new Response(empty ? null : xhr.responseText, { status: xhr.status, statusText: xhr.statusText, headers }));
+        } catch {
+          reject(new TypeError("Failed to fetch"));
+        }
       };
       xhr.onerror = () => {
         done();

@@ -25,13 +25,20 @@ BASIC IDEA
     a cancel landing between the last check and the write would answer
     *stopped* for a load that was then written.
 
+    A cancel that finds a load already committed waits for the load to end
+    before it answers (PR #65 review): the dialog reads the library the
+    moment it hears *too late*, and the writes may still be under way. It
+    then answers by what happened -- written, or not, if a write failed --
+    so *it is in your library* is said only of a load that is.
+
 INPUTS / INPUT SOURCES
     - Load ids from the upload and fetch routes, and from the cancel route.
 
 EXPECTED OUTPUT
     - `running_loads`, the process's one table: `running(id)` registers a
       load and yields its `LoadMark` (or None for a load without an id);
-      `cancel(id)` answers whether it stopped one.
+      `cancel(id)` answers whether nothing of that load reaches the
+      library; for a committed load it waits until the load has ended.
     - `LoadCancelled`, raised by a mark's `check()` or `commit()`, which the
       routes answer with 409.
 ================================================================================
@@ -52,6 +59,12 @@ class LoadAlreadyRunning(Exception):
     """A second load arrived under an id that is still running."""
 
 
+# How long a cancel waits for a committed load's writes. They are the file
+# and its metadata, well under a second at the 50 MB cap; past this the
+# cancel answers *too late* rather than hold its request.
+COMMIT_WAIT_S = 30.0
+
+
 class LoadMark:
     """One running load's cancel mark, shared with the table's lock."""
 
@@ -59,6 +72,8 @@ class LoadMark:
         self._lock = lock
         self.cancelled = False
         self.committed = False
+        self.written = False
+        self.ended = threading.Event()
 
     def check(self) -> None:
         """Raise LoadCancelled if the load has been cancelled."""
@@ -72,6 +87,11 @@ class LoadMark:
             if self.cancelled:
                 raise LoadCancelled()
             self.committed = True
+
+    def wrote(self) -> None:
+        """The load is in the library."""
+        with self._lock:
+            self.written = True
 
 
 class RunningLoads:
@@ -97,15 +117,23 @@ class RunningLoads:
         finally:
             with self._lock:
                 self._marks.pop(load_id, None)
+            mark.ended.set()
 
     def cancel(self, load_id: str) -> bool:
-        """Mark a running load cancelled; False if it is unknown or committed."""
+        """Mark a running load cancelled: True if nothing of it reaches the
+        library, False if it is unknown or was written."""
         with self._lock:
             mark = self._marks.get(load_id)
-            if mark is None or mark.committed:
+            if mark is None:
                 return False
-            mark.cancelled = True
-            return True
+            if not mark.committed:
+                mark.cancelled = True
+                return True
+        # Past its last check: answer once it has ended (see BASIC IDEA).
+        if not mark.ended.wait(COMMIT_WAIT_S):
+            return False
+        with self._lock:
+            return not mark.written
 
     def __len__(self) -> int:
         with self._lock:

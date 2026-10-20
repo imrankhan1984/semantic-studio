@@ -585,6 +585,24 @@ describe("loads that can be followed and cancelled (load-progress 5.2, 5.3)", ()
     expect((error as DOMException).name).toBe("AbortError");
   });
 
+  it("an answer no Response can carry fails as fetch would, never with the constructor's error", async () => {
+    FakeXHR.manual = true;
+    const loading = api.uploadOntology(new File(["x"], "x.ttl"));
+    FakeXHR.instances[0].answer(0, "");
+    const error = await loading.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(TypeError);
+    expect((error as TypeError).message).toBe("Failed to fetch");
+  });
+
+  it("a null-body status is answered without a body", async () => {
+    FakeXHR.manual = true;
+    const loading = api.uploadOntology(new File(["x"], "x.ttl"));
+    FakeXHR.instances[0].answer(204, "");
+    // Not the Response constructor's refusal; handle's own reading of it.
+    const error = await loading.catch((e: unknown) => e);
+    expect(String(error)).not.toMatch(/null body/i);
+  });
+
   it("an upload already aborted never leaves the browser", async () => {
     const controller = new AbortController();
     controller.abort();

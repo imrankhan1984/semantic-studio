@@ -2183,6 +2183,23 @@ EXPECTED OUTPUT
   dialog goes. The upload is XMLHttpRequest, for `upload.onprogress`, its
   answer made a `Response` so `send`'s approval round reads it unchanged.
 
+  **Found in code review, fixed.** A cancel that found a load already
+  committed answered *too late* at once, and the dialog read the library
+  while the writes were still under way, so it said *it is in your library*
+  of a list without it; and a write failing after the last check would
+  still have read as finished. A committed load's cancel now waits for the
+  load to end (`ended`, at most 30 s) and answers by `written`. The upload
+  registered its id only after reading the spooled body back; it registers
+  first now. FastAPI parses the multipart body before the handler runs, and
+  a Cancel in that moment still finds no id: it answers *too late* and the
+  load goes on to be written, so what the dialog says becomes true a moment
+  later. An answer no `Response` can carry (a null-body status, status 0)
+  fails as fetch does; a file of no bytes shows a sending bar at 0; progress
+  draws again only when the words or the whole percent change. Not taken:
+  a cancelled download still streams until the broker ends it, because the
+  spec checks the mark after the download and stopping the stream would
+  change the broker.
+
   **Found while building, not fixed (not in the spec).** `parse_rdf`'s
   `with ThreadPoolExecutor(...)` waits for its worker on the way out, so
   `ParseTimeout` reaches the caller only when the parse ends: the 60 s

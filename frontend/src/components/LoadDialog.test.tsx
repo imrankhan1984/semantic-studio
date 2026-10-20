@@ -43,7 +43,7 @@ EXPECTED OUTPUT
 */
 
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { useState } from "react";
+import { Profiler, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -767,6 +767,36 @@ describe("a load's steps and Cancel (load-progress 5.2 to 5.4)", () => {
       expect(handlers.onLoaded).not.toHaveBeenCalled();
     });
   }
+
+  it("a file of no bytes is sending, with a bar at 0, never a reading bar", async () => {
+    hold(uploadOntology);
+    openFile();
+    await chooseFile(bigFile("empty.ttl", 0));
+    expect(step()).toBe("Sending empty.ttl: 0 of 0 KB.");
+    expect(bar().getAttribute("aria-valuenow")).toBe("0");
+    expect(bar().getAttribute("aria-label")).toBe("Sending the file");
+  });
+
+  it("draws again only when the words or the bar's percent change, not on every progress event", async () => {
+    const pending = hold(uploadOntology);
+    let commits = 0;
+    render(
+      <Profiler id="load" onRender={() => commits++}>
+        <LoadDialog onLoaded={vi.fn()} onClose={vi.fn()} initialTab="file" />
+      </Profiler>,
+    );
+    await chooseFile(bigFile("big-file.ttl", 35 * MB));
+    const { onSent } = pending[0].options;
+    const before = commits;
+    // A hundred events inside one shown megabyte and one percent.
+    act(() => {
+      for (let i = 1; i <= 100; i++) onSent!(12 * MB + i * 1000, 35 * MB);
+    });
+    expect(commits - before).toBeLessThanOrEqual(1);
+    expect(step()).toBe("Sending big-file.ttl: 12 of 35 MB.");
+    act(() => onSent!(20 * MB, 35 * MB));
+    expect(step()).toBe("Sending big-file.ttl: 20 of 35 MB.");
+  });
 
   it("an answer the abort did not stop is still never applied", async () => {
     let resolve!: (summary: unknown) => void;
