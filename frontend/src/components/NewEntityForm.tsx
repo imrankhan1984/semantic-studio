@@ -35,6 +35,13 @@ INPUTS / INPUT SOURCES (props)
     - onNameBlur: the name field lost focus, with where it went.
     - onMoreChange: More options' identifier and type of value as they
       change, for a caller that keeps them (the side panel's draft).
+    - suggest: for *Add attribute* and *Add relationship* (attribute-reuse
+      5.1), the project's own properties of that kind offered while the
+      name is typed, each with *Use it on* the class; existing: the same
+      choice after Create was refused because the name exists. Enter in
+      the name field still creates; the suggestions are buttons between the
+      name and More options, and a polite live region says how many match,
+      never the list.
 
 EXPECTED OUTPUT
     - The form; one onSubmit per Create.
@@ -42,7 +49,9 @@ EXPECTED OUTPUT
 */
 
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { ALREADY_HERE, useOn } from "../modeling/sentences";
 import { DATATYPES } from "../modeling/values";
+import { useSuggestions } from "./useSuggestions";
 
 export interface NewEntity {
   name: string;
@@ -66,6 +75,17 @@ interface Props {
   focusName?: boolean;
   onNameBlur?: (to: EventTarget | null) => void;
   onMoreChange?: (more: { iri?: string; datatype?: string }) => void;
+  /** Offer the project's own properties of this kind while the name is
+   *  typed (attribute-reuse 5.1); onUse opens the reuse plan for one. */
+  suggest?: {
+    ontologyId: string;
+    kind: "datatypeProperty" | "objectProperty";
+    className: string;
+    onUse: (property: { iri: string; label: string }) => void;
+  };
+  /** A create refused because the name is a property already (5.1's 409):
+   *  its sentence, and the same choice the suggestions give. */
+  existing?: { sentence: string; className: string; onUse: () => void; onAnother: () => void } | null;
 }
 
 export default function NewEntityForm({
@@ -84,6 +104,8 @@ export default function NewEntityForm({
   focusName = true,
   onNameBlur,
   onMoreChange,
+  suggest,
+  existing = null,
 }: Props) {
   const id = useId();
   const [ownName, setOwnName] = useState("");
@@ -94,6 +116,8 @@ export default function NewEntityForm({
   const [iri, setIri] = useState("");
   const [datatype, setDatatype] = useState("xsd:string");
   const nameRef = useRef<HTMLInputElement>(null);
+  // Suggestions (5.1): what the project already has of this kind.
+  const { suggestions, said } = useSuggestions(suggest?.ontologyId ?? null, suggest?.kind ?? "datatypeProperty", name);
 
   useEffect(() => {
     if (focusName) nameRef.current?.focus();
@@ -135,15 +159,62 @@ export default function NewEntityForm({
         ref={nameRef}
         value={name}
         readOnly={busy}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error ? `${id}-error` : undefined}
+        aria-invalid={error || existing ? true : undefined}
+        aria-describedby={error || existing ? `${id}-error` : undefined}
         onChange={(e) => setName(e.target.value)}
         onBlur={onNameBlur ? (e) => onNameBlur(e.relatedTarget) : undefined}
       />
-      {error && (
-        <p id={`${id}-error`} className="edit-error">
-          {error}
-        </p>
+      {existing ? (
+        <div className="reuse-existing">
+          <p id={`${id}-error`}>{existing.sentence}</p>
+          <div className="edit-actions">
+            <button type="button" aria-disabled={busy} onClick={() => !busy && existing.onUse()}>
+              {useOn(existing.className)}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                existing.onAnother();
+                nameRef.current?.focus();
+              }}
+            >
+              Choose another name
+            </button>
+          </div>
+        </div>
+      ) : (
+        error && (
+          <p id={`${id}-error`} className="edit-error">
+            {error}
+          </p>
+        )
+      )}
+      {suggest && suggestions.length > 0 && !existing && (
+        <div className="reuse-suggestions">
+          <p className="edit-field-label">{ALREADY_HERE}</p>
+          <ul className="edit-list">
+            {suggestions.map((s) => (
+              <li key={s.iri}>
+                <span>{s.line}</span>{" "}
+                <button
+                  type="button"
+                  className="ghost edit-btn"
+                  aria-label={`${useOn(suggest.className)} (${s.label})`}
+                  aria-disabled={busy}
+                  onClick={() => !busy && suggest.onUse({ iri: s.iri, label: s.label })}
+                >
+                  {useOn(suggest.className)}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {suggest && (
+        <span className="visually-hidden" role="status">
+          {said}
+        </span>
       )}
       {children}
       <button

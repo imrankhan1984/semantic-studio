@@ -477,3 +477,54 @@ def test_the_checks_for_a_command_stay_inside_their_budget():
         worst[command] = sorted(times)[2]
     slowest = max(worst, key=worst.get)
     assert worst[slowest] <= limit_ms(20), f"{slowest}'s checks took {worst[slowest]:.1f} ms (median of 5)"
+
+
+# --- two domain lines (attribute-reuse 5.4, AC-9) ----------------------------------------
+
+
+def test_two_domain_lines_carry_the_warning_that_they_mean_both_and_a_fix(pid):
+    assert apply(pid, MODEL + """
+shop:badge a owl:DatatypeProperty ; rdfs:label "badge"@en ; rdfs:domain shop:Person , shop:Organization .
+shop:audits a owl:ObjectProperty ; rdfs:label "audits"@en ; rdfs:domain shop:Person , shop:Organization ;
+    rdfs:range shop:Organization .
+""").status_code == 200
+    assert warnings(pid, EX + "badge") == [{
+        "code": "separate",
+        "text": "badge lists Organization and Person separately. In RDFS and OWL that means whatever has badge "
+                "is both an Organization and a Person. To mean either one, share it.",
+        "fix": {"command": "ShareDomain", "args": {"property": EX + "badge", "how": "union"}, "label": "Share it"},
+    }]
+    assert blocks(pid, EX + "badge") == {warnings(pid, EX + "badge")[0]["text"]: "domain"}
+    audits = warnings(pid, EX + "audits")[0]["text"]
+    assert "whatever audits something is both an Organization and a Person" in audits
+
+
+def test_the_fix_needs_a_parent_name_when_a_class_is_rdfs(pid):
+    assert apply(pid, MODEL + """
+shop:Robot a rdfs:Class ; rdfs:label "Robot"@en .
+shop:badge a owl:DatatypeProperty ; rdfs:label "badge"@en ; rdfs:domain shop:Person , shop:Robot .
+""").status_code == 200
+    fix = warnings(pid, EX + "badge")[0]["fix"]
+    assert fix["args"] == {"property": EX + "badge", "how": "parent"} and fix["needs"] == "parentName"
+
+
+def test_no_warning_for_a_union(pid):
+    assert apply(pid, MODEL + """
+shop:badge a owl:DatatypeProperty ; rdfs:label "badge"@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( shop:Person shop:Organization ) ] .
+""").status_code == 200
+    assert warnings(pid, EX + "badge") == []
+
+
+def test_an_imported_property_gets_the_sentence_and_no_fix():
+    from app.modeling_checks import domain_warning
+
+    view = Graph().parse(data=PREFIXES + """
+shop:Person a owl:Class ; rdfs:label "Person"@en .
+shop:Organization a owl:Class ; rdfs:label "Organization"@en .
+shop:badge a owl:DatatypeProperty ; rdfs:label "badge"@en ; rdfs:domain shop:Person , shop:Organization .
+""", format="turtle")
+    own = Graph()
+    warning = domain_warning(view, own, U("badge"), lambda iri: str(iri).split("#")[-1])
+    assert warning["text"].startswith("badge lists Organization and Person separately.")
+    assert "fix" not in warning

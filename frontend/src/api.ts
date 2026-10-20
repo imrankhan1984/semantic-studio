@@ -58,9 +58,11 @@ EXPECTED OUTPUT
 
 import type { QueryState } from "./sparql/types";
 import type {
+  AlreadyDefined,
   AnnotationPropertyOption,
   CanvasLayout,
   CanvasView,
+  SharePlan,
   ApprovalRequest,
   ChangeResult,
   DeleteImpact,
@@ -471,9 +473,11 @@ export function fetchHierarchy(id: string, imports = false, inferred = false): P
 }
 
 // Every statement about one entity, for the detail panel.
-export function getNodeDetails(id: string, iri: string, imports = false): Promise<NodeDetails> {
+// `signal` lets a caller abort a request a newer one has replaced (CF-4).
+export function getNodeDetails(id: string, iri: string, imports = false, signal?: AbortSignal): Promise<NodeDetails> {
   return send(
     withLang(withImports(`/api/ontologies/${id}/node?iri=${encodeURIComponent(iri)}`, imports)),
+    signal ? { signal } : undefined,
   ).then((r) => handle<NodeDetails>(r));
 }
 
@@ -868,6 +872,27 @@ export function previewDelete(
     headers: JSON_WRITE,
     body: JSON.stringify({ command: "DeleteEntity", args: { iri, strategy }, dryRun: true }),
   }).then((r) => handle<{ dryRun: true; impact: DeleteImpact; revision: number }>(r));
+}
+
+// ShareDomain's dry run: the reuse plan, with nothing changed
+// (attribute-reuse 5.2). With no class, the 5.4 Fix's plan.
+export function planShare(
+  pid: string,
+  property: string,
+  cls?: string,
+): Promise<{ dryRun: true; plan: SharePlan; revision: number }> {
+  return send(documentUrl(pid, "model", "/commands"), {
+    method: "POST",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ command: "ShareDomain", args: cls ? { property, class: cls } : { property }, dryRun: true }),
+  }).then((r) => handle<{ dryRun: true; plan: SharePlan; revision: number }>(r));
+}
+
+/** The 409 of a create whose name is a property of its kind already. */
+export function alreadyDefined(e: unknown): AlreadyDefined | null {
+  if (!(e instanceof ApiError) || e.status !== 409) return null;
+  const detail = e.detail as AlreadyDefined | undefined;
+  return detail?.code === "already_defined" ? detail : null;
 }
 
 // The annotation properties the form offers, each with its default type.

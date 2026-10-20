@@ -36,7 +36,8 @@ import { oneValueExample, typeWord } from "../modeling/sentences";
 import { DATATYPES } from "../modeling/values";
 import { Block, type Runner } from "./EditParts";
 import EntityPicker from "./EntityPicker";
-import { datatypeOf, DomainMembers, Warnings } from "./RelationshipForm";
+import { datatypeOf, Warnings } from "./RelationshipForm";
+import SharedDomain from "./SharedDomain";
 import type { ModelWarning } from "../types";
 
 interface Props {
@@ -83,7 +84,16 @@ export default function AttributeForm({ ontologyId, iri, name, model, runner, on
         {sharedDomain(model) ? (
           // A shared domain (attribute-reuse 5.3): every class, and *Change
           // class* only for one, which would replace them all.
-          <DomainMembers model={model} onSelect={onSelect} />
+          <SharedDomain
+            ontologyId={ontologyId}
+            iri={iri}
+            name={name}
+            model={model}
+            runner={runner}
+            onSelect={onSelect}
+            warnings={warnings}
+            members
+          />
         ) : domain ? (
           <p className="edit-value">
             <button type="button" className="term-link" title={domain.iri} onClick={() => onSelect(domain.iri)}>
@@ -102,7 +112,7 @@ export default function AttributeForm({ ontologyId, iri, name, model, runner, on
         ) : (
           <p className="detail-note">No class yet.</p>
         )}
-        {errors.domainList && <p className="edit-error">{errors.domainList}</p>}
+        {errors.domainList && !sharedDomain(model) && <p className="edit-error">{errors.domainList}</p>}
         {sharedDomain(model) ? null : open === "domain" ? (
           <EntityPicker
             ontologyId={ontologyId}
@@ -118,6 +128,18 @@ export default function AttributeForm({ ontologyId, iri, name, model, runner, on
           />
         ) : (
           opener("domain", domain ? "Change class" : "Choose a class", `${domain ? "Change" : "Choose"} the class ${name} belongs to`)
+        )}
+        {/* One class: it can be shared with another through the plan (5.2). */}
+        {!sharedDomain(model) && domain && open !== "domain" && (
+          <SharedDomain
+            ontologyId={ontologyId}
+            iri={iri}
+            name={name}
+            model={model}
+            runner={runner}
+            onSelect={onSelect}
+            members={false}
+          />
         )}
       </Block>
 

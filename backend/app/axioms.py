@@ -737,11 +737,14 @@ def domain_names(reading: DomainReading, name: Name) -> Optional[str]:
     (two domain lines, which mean both), or None."""
     if not reading.classes:
         return None
+    names = [name(c) for c in reading.classes]
+    if len(names) == 1:
+        return names[0]
     joiner = " and " if reading.form == "separate" else " or "
-    return joiner.join(name(c) for c in reading.classes)
+    return ", ".join(names[:-1]) + joiner + names[-1]
 
 
-def ancestors(g: Graph, cls) -> dict:
+def _ancestors(g: Graph, cls) -> dict:
     """Every named class `cls` is a kind of, itself included, by its distance
     up rdfs:subClassOf. A loop is walked once."""
     found = {cls: 0}
@@ -755,7 +758,7 @@ def ancestors(g: Graph, cls) -> dict:
     return found
 
 
-def descendants(g: Graph, cls) -> set:
+def _descendants(g: Graph, cls) -> set:
     """Every named class that is a kind of `cls`, itself included."""
     found = {cls}
     queue = [cls]
@@ -766,6 +769,10 @@ def descendants(g: Graph, cls) -> set:
                 found.add(child)
                 queue.append(child)
     return found
+
+
+ancestors = _ancestors
+descendants = _descendants
 
 
 def covers(reading: DomainReading, lineage) -> bool:
@@ -832,6 +839,127 @@ def class_properties(view: Graph, cls, name: Name) -> list[dict]:
     order = {"own": 0, "shared": 1, "both": 1, "through": 2}
     out.sort(key=lambda e: (order[e["how"]], e["kind"] != "attribute", e["label"].casefold(), e["iri"]))
     return out
+
+
+def union_triples(prop, members) -> tuple:
+    """`prop rdfs:domain [ a owl:Class ; owl:unionOf ( ... ) ]` on fresh
+    blank nodes (5.0 row 5): (the node, its statements). Never one member."""
+    if len(members) < 2:
+        raise ValueError("a union is never left with one member")
+    node = BNode()
+    cells = [BNode() for _ in members]
+    triples = [(prop, RDFS.domain, node), (node, RDF.type, OWL.Class), (node, OWL.unionOf, cells[0])]
+    for i, (cell, member) in enumerate(zip(cells, members)):
+        triples.append((cell, RDF.first, member))
+        triples.append((cell, RDF.rest, cells[i + 1] if i + 1 < len(cells) else RDF.nil))
+    return node, triples
+
+
+def shared_members(view: Graph, reading: DomainReading, cls) -> list:
+    """What a domain's classes become when `cls` joins them: those that are
+    not a kind of `cls`, then `cls`. A member under it is covered by it
+    already, and listing both would say the same thing twice."""
+    kept = [c for c in reading.classes if cls not in ancestors(view, c)]
+    return [*kept, cls]
+
+
+def defined(own: Graph, cls) -> bool:
+    """Defined in this document: typed a class here, not only mentioned."""
+    return isinstance(cls, URIRef) and any((cls, RDF.type, t) in own for t in (OWL.Class, RDFS.Class))
+
+
+def _nearest(lineage: dict, members) -> URIRef:
+    return min((c for c in members if c in lineage), key=lambda c: (lineage[c], str(c)))
+
+
+def reuse_plan(view: Graph, own: Graph, prop, cls, name: Name, imported_from: Optional[dict] = None) -> dict:
+    """The case of 5.2 for using `prop` on `cls`, and what it offers. The
+    domain is the document's own statement; parents are read from the
+    view, so an imported parent counts (case B). With no case to offer,
+    `case` is None and `refused` says why."""
+    reading = domain_of(own, prop)
+    imported_from = imported_from or {}
+    members = list(reading.classes)
+    # One walk per class for the whole plan: case D asks the same classes'
+    # ancestors many times over.
+    up_cache: dict = {}
+    down_cache: dict = {}
+
+    def up(c) -> dict:
+        if c not in up_cache:
+            up_cache[c] = _ancestors(view, c)
+        return up_cache[c]
+
+    def down(c) -> set:
+        if c not in down_cache:
+            down_cache[c] = _descendants(view, c)
+        return down_cache[c]
+
+    plan = {
+        "property": {**_ref(prop, name), "kind": property_kind(own, prop)},
+        "class": {**_ref(cls, name), "type": class_type(view, cls)},
+        "domain": {
+            "form": reading.form,
+            "classes": [{**_ref(c, name), "type": class_type(view, c)} for c in members],
+        },
+    }
+    if reading.form == "expression":
+        return {**plan, "case": None, "refused": (
+            f"The class {name(prop)} belongs to is written as an expression in Turtle; change it there."
+        )}
+    if reading.form == "none":
+        return {**plan, "case": "A"}
+    lineage = up(cls)
+    if covers(reading, lineage):
+        return {**plan, "case": "B", "via": _ref(_nearest(up(cls), members), name)}
+    if reading.form == "separate":
+        return {**plan, "case": None, "refused": (
+            f"{name(prop)} lists {domain_names(reading, name)} separately, which means both. "
+            "Share it from its warning first."
+        )}
+    if all(cls in up(c) for c in members):
+        return {**plan, "case": "C"}
+
+    # Case D: neither is a kind of the other.
+    everyone = [*members, cls]
+    outside = [c for c in everyone if not defined(own, c)]
+    all_owl = all(class_type(view, c) == "owl" for c in everyone)
+    common: Optional[set] = None
+    for c in everyone:
+        above = set(up(c)) - {c}
+        common = above if common is None else common & above
+    common = {s for s in (common or set()) if s not in _TOP}
+    # The nearest shared parents: none of them a parent of another.
+    nearest = sorted((s for s in common if not any(t != s and s in up(t) for t in common)), key=str)
+    # What has the property already, or will under the union: the members'
+    # kinds and the class's own.
+    covered: set = set()
+    for c in everyone:
+        covered |= down(c)
+    moves = []
+    for s in nearest:
+        gains = sorted(
+            (d for d in down(s) - covered - {s, cls} if _is_class(view, d)),
+            key=lambda d: (name(d).casefold(), str(d)),
+        )
+        moves.append({**_ref(s, name), "gains": [_ref(d, name) for d in gains[:10]], "gainsTotal": len(gains)})
+    union = [c for c in members if cls not in up(c)] + [cls]
+    turtle = turtle_of(own, union_triples(prop, union)[1]) if all_owl and len(union) >= 2 else None
+    return {
+        **plan,
+        "case": "D",
+        "choices": {
+            # Make C a kind of D: for one class only, and never a parent
+            # added to an import's class.
+            "subclass": reading.form == "one" and defined(own, cls),
+            "union": all_owl,
+            "parent": not outside,
+            "up": moves,
+        },
+        "imported": [{**_ref(c, name), "from": imported_from.get(str(c))} for c in outside],
+        "union": [_ref(c, name) for c in union],
+        "turtle": turtle,
+    }
 
 
 def _is_class(g: Graph, cls) -> bool:

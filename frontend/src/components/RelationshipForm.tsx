@@ -69,6 +69,7 @@ import { projectStore } from "../state/projectStore";
 import type { ModelWarning } from "../types";
 import { Block, type Runner } from "./EditParts";
 import EntityPicker from "./EntityPicker";
+import SharedDomain from "./SharedDomain";
 
 const XSD = "http://www.w3.org/2001/XMLSchema#";
 const RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
@@ -120,30 +121,6 @@ export function PropertyHead({
     <Block title="Sentence">
       <p className="form-sentence">{sentence}</p>
     </Block>
-  );
-}
-
-/** The classes of a shared domain (attribute-reuse 5.3): each a link, and
- *  in words what the list means, *any one of these* for a union and *all
- *  of these at once* for two domain lines, as the standards read them. */
-export function DomainMembers({ model, onSelect }: { model: EntityModel; onSelect: (iri: string) => void }) {
-  const reading = model.domainReading;
-  if (!reading) return null;
-  return (
-    <>
-      <p className="detail-note">
-        {reading.form === "union" ? "Any one of these classes:" : "All of these classes at once:"}
-      </p>
-      <ul className="edit-list">
-        {reading.classes.map((c) => (
-          <li key={c.iri}>
-            <button type="button" className="term-link" title={c.iri} onClick={() => onSelect(c.iri)}>
-              {c.label}
-            </button>
-          </li>
-        ))}
-      </ul>
-    </>
   );
 }
 
@@ -312,7 +289,9 @@ export default function RelationshipForm({
       </li>
     );
   };
-  const swappable = (model.domain || model.range) && model.domain?.iri !== model.range?.iri;
+  // A shared start cannot be swapped: its end would become several classes.
+  const swappable =
+    !sharedDomain(model) && (model.domain || model.range) && model.domain?.iri !== model.range?.iri;
 
   return (
     <>
@@ -320,10 +299,32 @@ export default function RelationshipForm({
         {sharedDomain(model) ? (
           <div className="relationship-end">
             <h5>From</h5>
-            <DomainMembers model={model} onSelect={onSelect} />
+            <SharedDomain
+              ontologyId={ontologyId}
+              iri={iri}
+              name={name}
+              model={model}
+              runner={runner}
+              onSelect={onSelect}
+              warnings={warnings}
+              members
+            />
           </div>
         ) : (
-          end("domain", "From", model.domain)
+          <>
+            {end("domain", "From", model.domain)}
+            {model.domain && (
+              <SharedDomain
+                ontologyId={ontologyId}
+                iri={iri}
+                name={name}
+                model={model}
+                runner={runner}
+                onSelect={onSelect}
+                members={false}
+              />
+            )}
+          </>
         )}
         {end("range", "To", model.range)}
         <div className="edit-actions">

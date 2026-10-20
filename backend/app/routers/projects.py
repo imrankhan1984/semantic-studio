@@ -38,7 +38,10 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - JSON project summaries, document states, command results; a zip for
-      export and Turtle for a copy.
+      export and Turtle for a copy. A create naming a property of its kind
+      that exists is 409 `{"code": "already_defined", "property",
+      "message"}` (attribute-reuse 5.1); ShareDomain's dry run answers the
+      reuse plan (5.2).
 ================================================================================
 """
 
@@ -55,6 +58,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import reasoning
 from ..editing import (
+    AlreadyDefined,
     CommandError,
     Dirty,
     NoSuchRule,
@@ -134,6 +138,13 @@ def _errors():
         raise HTTPException(
             status_code=422,
             detail={"line": exc.line, "column": exc.column, "message": str(exc), "detail": exc.detail},
+        ) from exc
+    except AlreadyDefined as exc:
+        # A property of that name and kind is there already (attribute-reuse
+        # 5.1): the form offers to use it, so the property goes with the words.
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "already_defined", "property": exc.property, "message": str(exc)},
         ) from exc
     except NoSuchRule as exc:
         # A restriction named by its content that is not there (axioms 5.10).
@@ -247,7 +258,8 @@ def add_document(pid: str, body: NewDocument) -> dict:
 @router.post("/{pid}/documents/{doc}/commands")
 def run_command(pid: str, doc: str, body: RunCommand) -> dict:
     """One of the commands the canvas will use (5.4). A dry run is offered for
-    DeleteEntity only, and returns the impact summary with nothing changed."""
+    DeleteEntity, returning the impact summary, and for ShareDomain, returning
+    the reuse plan (attribute-reuse 5.2), with nothing changed either way."""
     with _errors():
         return editing_service.command(pid, doc, body.command, body.args, dry_run=body.dryRun)
 

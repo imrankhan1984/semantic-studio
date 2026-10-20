@@ -65,19 +65,61 @@ describe("relateChoices", () => {
       "Every Order has at least one… (a rule)",
       "Order related to Invoice (existing relationship)",
       "Order placed by Invoice (existing relationship)",
+      "Share belongs to: an Order belongs to an Invoice too.",
     ]);
     expect(result.choices[2]).toMatchObject({ kind: "rule" });
     expect(result.choices[3]).toMatchObject({ kind: "existing", setDomain: true, setRange: true });
     expect(result.choices[4]).toMatchObject({ kind: "existing", setDomain: false, setRange: true });
   });
 
-  it("never offers one already linking other classes, and says so", () => {
+  it("never offers to complete one already linking other classes, and says so", () => {
     const result = relateChoices(view, "Order", "Inv");
     if ("refusal" in result) throw new Error(result.refusal);
     expect(result.choices.some((c) => c.kind === "existing" && c.name === "made by")).toBe(false);
-    expect(result.notes).toEqual([
-      "belongs to already links Invoice Item to Invoice; create a new relationship instead.",
-    ]);
+    // From Invoice Item to Document, a line from Invoice Item somewhere else.
+    const away = relateChoices(view, "Item", "Doc");
+    if ("refusal" in away) throw new Error(away.refusal);
+    expect(away.notes).toEqual(["belongs to already links Invoice Item to Invoice; create a new relationship instead."]);
+  });
+
+  it("offers to share a relationship that ends at the same class (attribute-reuse 5.1)", () => {
+    const result = relateChoices(view, "Order", "Inv");
+    if ("refusal" in result) throw new Error(result.refusal);
+    expect(result.choices.find((c) => c.kind === "share")).toEqual({
+      kind: "share",
+      label: "Share belongs to: an Order belongs to an Invoice too.",
+      name: "belongs to",
+      property: "belongsTo",
+    });
+    // Not from the class it already starts at, and not offered twice.
+    const shared = {
+      ...view,
+      edges: [
+        ...view.edges,
+        { kind: "relationship" as const, source: "Order", target: "Inv", property: "belongsTo", label: "belongs to", member: "Order", pair: 0, pairs: 1 },
+      ],
+    };
+    const again = relateChoices(shared, "Order", "Inv");
+    if ("refusal" in again) throw new Error(again.refusal);
+    expect(again.choices.filter((c) => c.kind === "share")).toEqual([]);
+    const third = relateChoices(shared, "Doc", "Inv");
+    if ("refusal" in third) throw new Error(third.refusal);
+    expect(third.choices.filter((c) => c.kind === "share")).toHaveLength(1);
+  });
+
+  it("never completes a relationship whose start is several classes (5.3)", () => {
+    const shared = {
+      ...view,
+      undrawn: [
+        { iri: "u", label: "audits", kind: "objectProperty", missing: "range" as const, domain: null, range: null, domains: ["Order", "Doc"] },
+      ],
+    };
+    const fromOther = relateChoices(shared, "Item", "Inv");
+    if ("refusal" in fromOther) throw new Error(fromOther.refusal);
+    expect(fromOther.choices.some((c) => c.kind === "existing")).toBe(false);
+    const fromMember = relateChoices(shared, "Order", "Inv");
+    if ("refusal" in fromMember) throw new Error(fromMember.refusal);
+    expect(fromMember.choices.find((c) => c.kind === "existing")).toMatchObject({ setDomain: false, setRange: true });
   });
 
   it("does not offer a subclass link that already exists", () => {

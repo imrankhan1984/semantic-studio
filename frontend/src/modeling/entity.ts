@@ -44,7 +44,7 @@ EXPECTED OUTPUT
 */
 
 import type { AnnotationValue, ClassProperty, DomainReading, NodeDetails, TermRef } from "../types";
-import type { Characteristic } from "./sentences";
+import { domainWords, type Characteristic } from "./sentences";
 import { datatypeName } from "./values";
 
 const RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
@@ -330,8 +330,8 @@ export function entityModel(details: NodeDetails, primary: string, languages: st
 export function domainLabel(model: EntityModel): string | null {
   const reading = model.domainReading;
   if (!reading || reading.form === "one" || reading.form === "none") return model.domain?.label ?? null;
-  if (reading.classes.length === 0) return null;
-  return reading.classes.map((c) => c.label).join(reading.form === "union" ? " or " : " and ");
+  if (reading.classes.length === 0 || reading.form === "expression") return null;
+  return domainWords(reading.form, reading.classes.map((c) => c.label));
 }
 
 /** Whether a property's domain is several classes: a union or two lines. */

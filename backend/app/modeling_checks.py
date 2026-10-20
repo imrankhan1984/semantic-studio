@@ -34,6 +34,15 @@ BASIC IDEA
     visible until it is resolved rather than surfacing only at the next
     click.
 
+    attribute-reuse 5.4 adds one more (domain_warning): a property with two
+    rdfs:domain lines, which the standards read as *both* (RDF 1.1
+    Semantics 9.2.1), is warned of under *Belongs to* in those words, and
+    its Fix shares it -- a union when every class is an OWL class, a shared
+    parent, whose name the form asks first, when one is RDFS. It is read
+    from the view, so an imported property is warned of too, without a Fix.
+    The symmetric, reflexive and inverse warnings read the domain through
+    axioms.domain_of, a union's every class rather than the first named.
+
     axioms-and-reasoning 5.10 adds the checks on a class's rules, in the
     same words: a count on a relationship that is not simple, found by the
     same walk the chaining rule uses (counting_refusal); *at least* above
@@ -64,8 +73,8 @@ from typing import Callable, Iterable, Optional
 from rdflib import BNode, Graph, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS
 
-from .axioms import disjoint_pairs, disjoint_with, domain_of, named_pairs
-from .sentences import article
+from .axioms import class_type, defined, disjoint_pairs, disjoint_with, domain_of, named_pairs
+from .sentences import article, verb
 
 Name = Callable[[URIRef], str]
 
@@ -536,3 +545,42 @@ def warnings(graph: Graph, prop: URIRef, name: Name) -> list[dict]:
                 }
             out.append(warning)
     return out
+
+
+def domain_warning(view: Graph, own: Graph, prop: URIRef, name: Name) -> Optional[dict]:
+    """Two rdfs:domain lines (attribute-reuse 5.4): the standards read them
+    as *both* (RDF 1.1 Semantics 9.2.1), which is rarely what was meant.
+    Shown under *Belongs to*; its Fix shares the property between the
+    classes, a union when every one is an OWL class and a shared parent,
+    which needs a name, when any is RDFS. An imported property gets the
+    sentence and no Fix: it is changed where it is defined."""
+    reading = domain_of(view, prop)
+    if reading.form != "separate":
+        return None
+    label = name(prop)
+    listed = " and ".join(name(c) for c in reading.classes)
+    every = " and ".join(f"{article(name(c))} {name(c)}" for c in reading.classes)
+    subject = (
+        f"whatever {verb(label)} something" if (prop, RDF.type, OWL.ObjectProperty) in view
+        else f"whatever has {label}"
+    )
+    warning = {
+        "block": "domain",
+        "code": "separate",
+        "text": (
+            f"{label} lists {listed} separately. In RDFS and OWL that means {subject} is both {every}. "
+            "To mean either one, share it."
+        ),
+    }
+    if domain_of(own, prop).form != "separate":
+        return warning
+    owl = all(class_type(view, c) == "owl" for c in reading.classes)
+    if owl:
+        warning["fix"] = {"command": "ShareDomain", "args": {"property": str(prop), "how": "union"}, "label": "Share it"}
+    elif all(defined(own, c) for c in reading.classes):
+        # A shared parent needs its name: the form asks for it first.
+        warning["fix"] = {
+            "command": "ShareDomain", "args": {"property": str(prop), "how": "parent"},
+            "label": "Share it", "needs": "parentName",
+        }
+    return warning

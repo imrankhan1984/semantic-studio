@@ -47,6 +47,17 @@ BASIC IDEA
     the shapes document's lock and then the model's, like every shape
     command.
 
+    A property is shared between classes by one domain (attribute-reuse
+    5.2, D-116), never by a second rdfs:domain: ShareDomain writes the case
+    axioms.reuse_plan gives -- the domain where there was none, nothing
+    where the class has it already, the domain moved up, or for two classes
+    neither a kind of the other an owl:unionOf of named classes, a shared
+    parent (an RDFS class when RDFS is in use) or a parent they share -- and
+    its dry run answers the plan. UnshareDomain takes one class out and
+    never leaves a union of one. Replacing or clearing a domain takes the
+    union's blank nodes with it. A create naming a property of the same kind
+    is AlreadyDefined (409), so the form can offer to use it instead.
+
     Examples (shacl-authoring 5.8) are individuals of the model's classes,
     made so a shape has something to check: CreateExample types one with its
     class and owl:NamedIndividual, and SetExampleValue, AddExampleValue and
@@ -118,6 +129,7 @@ EXPECTED OUTPUT
       .draft/<doc>.json while unsaved.
     - The canvas view, and layout entries moved by a rename or pruned on open.
     - CommandError (422, a sentence), NoSuchRule (404, a sentence),
+      AlreadyDefined (409, the property and a sentence),
       TurtleSyntaxError (422, line and column), NotOpen and Dirty (409),
       ReasoningRefused (422, a taxonomy).
     - reason(...) -> a reasoning result's summary; the current result for the
@@ -190,6 +202,16 @@ CURIE = re.compile(r"([A-Za-z][A-Za-z0-9_.-]*)?:([^\s<>\"{}|\\^`:]*)")
 
 class CommandError(ValueError):
     """A command refused, with the sentence the user reads."""
+
+
+class AlreadyDefined(CommandError):
+    """A create command naming a property of the same kind that exists
+    (attribute-reuse 5.1): the form offers to use it rather than a second
+    one, so the refusal carries the property, not only a sentence."""
+
+    def __init__(self, message: str, prop: dict):
+        super().__init__(message)
+        self.property = prop
 
 
 class TurtleSyntaxError(ValueError):
@@ -562,6 +584,7 @@ class Context:
         imported: Callable[[], Optional[Graph]],
         doc: str = "model",
         model: Optional[Callable[[], Graph]] = None,
+        imported_from: Optional[Callable[[], dict]] = None,
     ):
         self.graph = graph
         self.manifest = manifest
@@ -574,6 +597,7 @@ class Context:
         self._imported_read = False
         self._model = model
         self._model_view: Optional[Graph] = None
+        self._imported_from = imported_from
 
     @property
     def model(self) -> Graph:
@@ -593,6 +617,12 @@ class Context:
             self._imported_view = self._imported()
             self._imported_read = True
         return self._imported_view
+
+    @property
+    def imported_from(self) -> dict:
+        """Which import each imported term comes from, by IRI: a refusal
+        names it (attribute-reuse 5.2, *Contractor comes from HR-Core*)."""
+        return self._imported_from() if self._imported_from is not None else {}
 
     # --- names --------------------------------------------------------------
 
@@ -746,10 +776,39 @@ def _definition(ctx: Context, iri: URIRef, a: dict) -> list:
     return [(iri, SKOS.definition, Literal(text.strip(), lang=ctx.primary))] if text.strip() else []
 
 
+def _new_property(ctx: Context, iri: URIRef, kind: URIRef) -> None:
+    """A new property's IRI is not taken (attribute-reuse 5.1). One of the
+    same kind is AlreadyDefined, which the form turns into an offer to use
+    it; one of the other kind says what it is; anything else keeps the
+    sentence about IRIs."""
+    types = set(ctx.graph.objects(iri, RDF.type))
+    word = "attribute" if kind == OWL.DatatypeProperty else "relationship"
+    other = OWL.ObjectProperty if kind == OWL.DatatypeProperty else OWL.DatatypeProperty
+    name = ctx.name(iri)
+    if kind in types:
+        reading = axioms.domain_of(ctx.graph, iri)
+        named = axioms.domain_names(reading, ctx.name)
+        rng = ctx.graph.value(iri, RDFS.range)
+        raise AlreadyDefined(
+            f"There is already {sentences.a(word)} {name}" + (f", of {named}." if named else "."),
+            {
+                "iri": str(iri), "label": name, "kind": word,
+                "domain": axioms.domain_json(reading, ctx.name),
+                "range": str(rng) if isinstance(rng, URIRef) else None,
+            },
+        )
+    if other in types:
+        other_word = "relationship" if word == "attribute" else "attribute"
+        raise CommandError(
+            f"{name} is {sentences.a(other_word)} in this project; {sentences.a(word)} needs another name."
+        )
+    ctx.require_new(iri)
+
+
 def cmd_create_object_property(ctx: Context, a: dict) -> Change:
     label = ctx.primary_label(a)
     iri = ctx.minted(a, label, lower_first=True)
-    ctx.require_new(iri)
+    _new_property(ctx, iri, OWL.ObjectProperty)
     adds = [(iri, RDF.type, OWL.ObjectProperty), (iri, RDFS.label, Literal(label, lang=ctx.primary))]
     for key, predicate in (("domain", RDFS.domain), ("range", RDFS.range)):
         if a.get(key):
@@ -762,7 +821,7 @@ def cmd_create_object_property(ctx: Context, a: dict) -> Change:
 def cmd_create_datatype_property(ctx: Context, a: dict) -> Change:
     label = ctx.primary_label(a)
     iri = ctx.minted(a, label, lower_first=True)
-    ctx.require_new(iri)
+    _new_property(ctx, iri, OWL.DatatypeProperty)
     adds = [(iri, RDF.type, OWL.DatatypeProperty), (iri, RDFS.label, Literal(label, lang=ctx.primary))]
     if a.get("domain"):
         domain = ctx.iri(a["domain"], "domain")
@@ -969,11 +1028,19 @@ def _set_single(ctx: Context, a: dict, predicate: URIRef, what: str) -> Change:
         raise CommandError(f"There is no property {ctx.short(prop)} in this document.")
     target = ctx.iri(a.get("target"), what)
     ctx.require(target, what)
-    old = [(prop, predicate, o) for o in ctx.graph.objects(prop, predicate)]
+    old = _end_removes(ctx, prop, predicate)
     return _change(
         ctx.graph, f"Set {what} of {ctx.name(prop)} to {ctx.name(target)}",
         [(prop, predicate, target)], old,
     )
+
+
+def _end_removes(ctx: Context, prop: URIRef, predicate: URIRef) -> list:
+    """Every statement of one end of a property, and the blank nodes only
+    they reach: replacing or clearing a shared domain takes its union and
+    list with it, never leaving them behind (attribute-reuse 5.2)."""
+    removes = [(prop, predicate, o) for o in ctx.graph.objects(prop, predicate)]
+    return removes + list(_bnode_closure(ctx.graph, [t[2] for t in removes], set(removes)))
 
 
 def cmd_set_domain(ctx: Context, a: dict) -> Change:
@@ -1006,6 +1073,13 @@ def cmd_swap_ends(ctx: Context, a: dict) -> Change:
     prop = _relationship(ctx, a)
     domains = [o for o in ctx.graph.objects(prop, RDFS.domain)]
     ranges = [o for o in ctx.graph.objects(prop, RDFS.range)]
+    if axioms.domain_of(ctx.graph, prop).form == "union":
+        # Its end would become several classes, which no form reads: a
+        # shared range is a follow-up of attribute-reuse (Section 4).
+        raise CommandError(
+            f"{ctx.name(prop)} starts at several classes, so it cannot be swapped; "
+            "its end would become several classes."
+        )
     if not domains and not ranges:
         raise CommandError(f"{ctx.name(prop)} has no start or end to swap yet.")
     if set(domains) == set(ranges):
@@ -1029,7 +1103,7 @@ def cmd_set_ends(ctx: Context, a: dict) -> Change:
             continue
         target = ctx.iri(a[key], key)
         ctx.require(target, "class")
-        removes += [(prop, predicate, o) for o in ctx.graph.objects(prop, predicate)]
+        removes += _end_removes(ctx, prop, predicate)
         adds.append((prop, predicate, target))
         parts.append(f"{word} {ctx.name(target)}")
     return _change(ctx.graph, f"Set the ends of {ctx.name(prop)}: {' '.join(parts)}", adds, removes)
@@ -1049,7 +1123,7 @@ def _property(ctx: Context, a: dict, key: str = "property") -> URIRef:
 
 def _clear_end(ctx: Context, a: dict, predicate: URIRef, word: str) -> Change:
     prop = _property(ctx, a)
-    removes = [(prop, predicate, o) for o in ctx.graph.objects(prop, predicate)]
+    removes = _end_removes(ctx, prop, predicate)
     if not removes:
         raise CommandError(f"{ctx.name(prop)} has no {word} to clear.")
     return _change(ctx.graph, f"Cleared the {word} of {ctx.name(prop)}", removes=removes)
@@ -1061,6 +1135,164 @@ def cmd_clear_domain(ctx: Context, a: dict) -> Change:
 
 def cmd_clear_range(ctx: Context, a: dict) -> Change:
     return _clear_end(ctx, a, RDFS.range, "end")
+
+
+# --- reuse: one domain shared by several classes (attribute-reuse 5.2, D-116) --------
+
+
+def _share_name(ctx: Context) -> Callable[[URIRef], str]:
+    return lambda iri: _rule_name(ctx, iri)
+
+
+def share_plan(ctx: Context, a: dict) -> dict:
+    """ShareDomain's dry run: the case of 5.2 and what it offers, decided
+    here alone so the form and the canvas say the same thing."""
+    if ctx.doc != "model":
+        raise CommandError("Attributes and relationships live in model.ttl; share them there.")
+    prop = _property(ctx, a)
+    if a.get("class") is None:
+        return _separate_plan(ctx, prop)
+    cls = ctx.iri(a.get("class"), "class")
+    if not examples.is_class(_view(ctx), cls):
+        raise CommandError(f"There is no class {ctx.short(cls)} in this document or its imports.")
+    return axioms.reuse_plan(_view(ctx), ctx.graph, prop, cls, _share_name(ctx), ctx.imported_from)
+
+
+def _separate_plan(ctx: Context, prop: URIRef) -> dict:
+    """The 5.4 Fix's plan: two domain lines made one shared domain, a union
+    when every class is an OWL class, else a shared parent."""
+    view, name = _view(ctx), _share_name(ctx)
+    reading = axioms.domain_of(ctx.graph, prop)
+    if reading.form != "separate":
+        raise CommandError(f"Say which class to share {name(prop)} with.")
+    members = list(reading.classes)
+    all_owl = all(axioms.class_type(view, c) == "owl" for c in members)
+    outside = [c for c in members if not axioms.defined(ctx.graph, c)]
+    return {
+        "case": "separate",
+        "property": {"iri": str(prop), "label": name(prop), "kind": axioms.property_kind(ctx.graph, prop)},
+        "domain": {"form": "separate", "classes": [
+            {"iri": str(c), "label": name(c), "type": axioms.class_type(view, c)} for c in members
+        ]},
+        "choices": {"subclass": False, "union": all_owl, "parent": not outside, "up": []},
+        "imported": [{"iri": str(c), "label": name(c), "from": ctx.imported_from.get(str(c))} for c in outside],
+        "union": [{"iri": str(c), "label": name(c)} for c in members],
+        "turtle": axioms.turtle_of(ctx.graph, axioms.union_triples(prop, members)[1]) if all_owl else None,
+    }
+
+
+def _imported_sentence(plan: dict) -> str:
+    first = plan["imported"][0]
+    source = first.get("from") or "an imported ontology"
+    return f"{first['label']} comes from {source}, so it cannot be given a new parent here."
+
+
+def _parent_change(ctx: Context, a: dict, everyone: list, rdfs: bool) -> tuple:
+    """A shared parent: an existing class, or a new one made in the same
+    step (an RDFS class when RDFS is in use, 5.2), and each class a kind
+    of it. Never a loop: a parent already below one of them is refused."""
+    view, name = _view(ctx), _share_name(ctx)
+    adds: list = []
+    if a.get("parent"):
+        parent = ctx.iri(a["parent"], "parent class")
+        if not examples.is_class(view, parent):
+            raise CommandError(f"There is no class {ctx.short(parent)} in this document or its imports.")
+        if parent in everyone:
+            raise CommandError(f"{name(parent)} is one of the classes being shared; choose another parent.")
+        above = axioms.ancestors(view, parent)
+        for c in everyone:
+            if c in above:
+                raise CommandError(f"{name(parent)} is already a kind of {name(c)}, so it cannot be its parent too.")
+    else:
+        label = ctx.primary_label(a, "parentLabel")
+        parent = ctx.minted({"iri": a.get("parentIri")}, label, lower_first=False)
+        ctx.require_new(parent)
+        adds += [
+            (parent, RDF.type, RDFS.Class if rdfs else OWL.Class),
+            (parent, RDFS.label, Literal(label, lang=ctx.primary)),
+        ]
+    adds += [(c, RDFS.subClassOf, parent) for c in everyone]
+    return parent, adds
+
+
+def cmd_share_domain(ctx: Context, a: dict) -> Change:
+    """Use a property on one more class (5.2), as one undo step: the case
+    the plan gives, and for case D the choice in `how`. Never a second
+    rdfs:domain (D-116): a union of named classes, a shared parent, or a
+    parent the classes already share. With no class, the 5.4 Fix: two
+    domain lines made one shared domain."""
+    plan = share_plan(ctx, a)
+    name = _share_name(ctx)
+    prop = URIRef(plan["property"]["iri"])
+    p = name(prop)
+    case = plan["case"]
+    if case is None:
+        raise CommandError(plan["refused"])
+    view = _view(ctx)
+    reading = axioms.domain_of(ctx.graph, prop)
+    cls = None
+    if case == "separate":
+        everyone = list(reading.classes)
+    else:
+        cls = URIRef(plan["class"]["iri"])
+        c = name(cls)
+        if case == "A":
+            return _change(ctx.graph, f"Gave {p} to {c}", [(prop, RDFS.domain, cls)])
+        if case == "B":
+            via = plan["via"]["label"]
+            raise CommandError(
+                f"{c} already has {p}." if via == c
+                else f"{c} already has {p}, because {sentences.a(c)} is {sentences.a(via)}."
+            )
+        if case == "C":
+            return _change(
+                ctx.graph, f"Moved {p} up to {c}", [(prop, RDFS.domain, cls)], _end_removes(ctx, prop, RDFS.domain)
+            )
+        everyone = [*reading.classes, cls]
+    how = a.get("how")
+    if how is None and case == "separate" and plan["choices"]["union"]:
+        how = "union"
+    removes = _end_removes(ctx, prop, RDFS.domain)
+    names = " and ".join(name(x) for x in everyone)
+    if how == "union":
+        if not plan["choices"]["union"]:
+            raise CommandError(
+                f'RDFS has no way to say "either", and {names} include an RDFS class. '
+                "Give them a shared parent instead."
+            )
+        members = list(reading.classes) if cls is None else axioms.shared_members(view, reading, cls)
+        return _change(ctx.graph, f"Shared {p} between {names}", axioms.union_triples(prop, members)[1], removes)
+    if how == "parent":
+        if not plan["choices"]["parent"]:
+            raise CommandError(_imported_sentence(plan))
+        parent, adds = _parent_change(ctx, a, everyone, rdfs=not plan["choices"]["union"])
+        adds.append((prop, RDFS.domain, parent))
+        return _change(ctx.graph, f"Gave {names} a shared parent, and {p} to it", adds, removes)
+    if how == "up":
+        target = ctx.iri(a.get("parent"), "parent class")
+        if str(target) not in {u["iri"] for u in plan["choices"]["up"]}:
+            raise CommandError(f"{name(target)} is not a parent {names} share.")
+        return _change(ctx.graph, f"Moved {p} up to {name(target)}", [(prop, RDFS.domain, target)], removes)
+    raise CommandError(f"Say how to share {p}: as a union, with a shared parent, or up to a parent they share.")
+
+
+def cmd_unshare_domain(ctx: Context, a: dict) -> Change:
+    """One class taken out of a shared domain (5.2): out of a union's list,
+    a union of two becoming the one class left, so no union is ever left
+    with one member; one of two domain lines removed; or the one domain."""
+    prop = _property(ctx, a)
+    cls = ctx.iri(a.get("class"), "class")
+    name = _share_name(ctx)
+    reading = axioms.domain_of(ctx.graph, prop)
+    if cls not in reading.classes:
+        raise CommandError(f"{name(cls)} is not one of the classes {name(prop)} belongs to.")
+    left = [c for c in reading.classes if c != cls]
+    if reading.form == "union":
+        removes = _end_removes(ctx, prop, RDFS.domain)
+        adds = axioms.union_triples(prop, left)[1] if len(left) >= 2 else [(prop, RDFS.domain, c) for c in left]
+    else:
+        removes, adds = [(prop, RDFS.domain, cls)], []
+    return _change(ctx.graph, f"Removed {name(cls)} from {name(prop)}", adds, removes)
 
 
 def _inverse_triples(ctx: Context, prop: URIRef) -> list:
@@ -1112,9 +1344,11 @@ def cmd_set_inverse(ctx: Context, a: dict) -> Change:
             (inverse, RDFS.label, Literal(label, lang=ctx.primary)),
             (inverse, OWL.inverseOf, prop),
         ]
-        # Swapped ends: *An Organization employs a Person*.
-        adds += [(inverse, RDFS.domain, r) for r in ctx.graph.objects(prop, RDFS.range)]
-        adds += [(inverse, RDFS.range, d) for d in ctx.graph.objects(prop, RDFS.domain)]
+        # Swapped ends: *An Organization employs a Person*. Named ends only:
+        # a shared start's blank node would gain a second statement and stop
+        # being read as a union (attribute-reuse 5.3); a range is one class.
+        adds += [(inverse, RDFS.domain, r) for r in ctx.graph.objects(prop, RDFS.range) if isinstance(r, URIRef)]
+        adds += [(inverse, RDFS.range, d) for d in ctx.graph.objects(prop, RDFS.domain) if isinstance(d, URIRef)]
         created = inverse
         target_name = label
     change = _change(ctx.graph, f"Made {target_name} the other way round of {ctx.name(prop)}", adds, removes)
@@ -1462,6 +1696,17 @@ def delete_plan(ctx: Context, a: dict) -> tuple[Change, dict]:
     removing |= set(g.triples((None, None, iri)))
     removing |= _bnode_closure(g, [o for _, _, o in g.triples((iri, None, None))], removing)
     removing |= _expressions_mentioning(g, iri)
+    # A union domain the class is a member of loses that member only
+    # (attribute-reuse 5.2): the expression goes above, and the union of
+    # the rest, or the one class left, is written in its place.
+    shrunk: list = []
+    for prop, reading in axioms.domains(g).items():
+        if reading.form == "union" and iri in reading.classes and prop != iri:
+            left = [c for c in reading.classes if c != iri]
+            if len(left) >= 2:
+                shrunk += axioms.union_triples(prop, left)[1]
+            else:
+                shrunk += [(prop, RDFS.domain, c) for c in left]
 
     children: list[URIRef] = []
     parents: list[URIRef] = []
@@ -1518,7 +1763,7 @@ def delete_plan(ctx: Context, a: dict) -> tuple[Change, dict]:
         "individuals": [ref(i) for i in individuals],
         "importMentions": import_mentions,
     }
-    change = _change(g, f"Deleted {kind} {ctx.name(iri)}", adds, removing)
+    change = _change(g, f"Deleted {kind} {ctx.name(iri)}", adds + shrunk, removing)
     return change, impact
 
 
@@ -2501,6 +2746,8 @@ COMMANDS: dict[str, Callable[[Context, dict], Change]] = {
     "SwapEnds": cmd_swap_ends,
     "SetEnds": cmd_set_ends,
     "ClearDomain": cmd_clear_domain,
+    "ShareDomain": cmd_share_domain,
+    "UnshareDomain": cmd_unshare_domain,
     "ClearRange": cmd_clear_range,
     "SetInverse": cmd_set_inverse,
     "ClearInverse": cmd_clear_inverse,
@@ -2766,11 +3013,16 @@ class EditingService:
                 return None
             return imports_service.merged(document.ontology)["graph"]
 
+        def imported_from() -> dict:
+            if not load_state(document.ontology):
+                return {}
+            return imports_service.merged(document.ontology)["importedFrom"]
+
         model = None
         if document.doc != "model":
             model_doc = self._open[document.pid]["model"]
             model = lambda: self._model_view(model_doc)  # noqa: E731
-        return Context(document.graph, manifest, imported, document.doc, model)
+        return Context(document.graph, manifest, imported, document.doc, model, imported_from)
 
     @contextlib.contextmanager
     def model_reader(self, pid: str):
@@ -2826,9 +3078,12 @@ class EditingService:
                 change, impact = delete_plan(ctx, args)
                 if dry_run:
                     return {"dryRun": True, "impact": impact, "revision": document.ontology.revision}
+            elif name == "ShareDomain" and dry_run:
+                # The reuse plan (attribute-reuse 5.2): nothing changes.
+                return {"dryRun": True, "plan": share_plan(ctx, args), "revision": document.ontology.revision}
             else:
                 if dry_run:
-                    raise CommandError("Only DeleteEntity has a dry run.")
+                    raise CommandError("Only DeleteEntity and ShareDomain have a dry run.")
                 change = handler(ctx, args)
                 impact = None
             if not change.added and not change.removed:
@@ -2857,7 +3112,7 @@ class EditingService:
         file behind, and the file is made under the service lock, so two
         first commands at once make it once (both found in review)."""
         if dry_run:
-            raise CommandError("Only DeleteEntity has a dry run.")
+            raise CommandError("Only DeleteEntity and ShareDomain have a dry run.")
         model_doc = self._open[pid]["model"]
         manifest = self.projects.manifest(pid)
         with model_doc.lock:

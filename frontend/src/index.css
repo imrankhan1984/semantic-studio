@@ -5086,6 +5086,60 @@ kbd {
   font-size: var(--fs-xs);
 }
 
+/* Reuse (attribute-reuse 5.1, 5.2): what the project has, offered under the
+   name, and the plan's choices, each a sentence and its button. The union's
+   Turtle is shown small, for when the person meets it in Protégé. */
+.reuse-suggestions,
+.reuse-existing,
+.reuse-plan {
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: var(--fs-sm);
+}
+
+.reuse-suggestions .edit-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.reuse-choice + .reuse-choice {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.reuse-choice p,
+.reuse-plan > p {
+  margin: 0 0 4px;
+}
+
+.reuse-turtle {
+  margin: 4px 0;
+  padding: 4px 6px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  background: var(--bg-panel);
+}
+
+.reuse-parent {
+  margin-top: 6px;
+}
+
+.canvas-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  font-size: var(--fs-xs);
+}
+
 .characteristic label {
   font-weight: 600;
 }

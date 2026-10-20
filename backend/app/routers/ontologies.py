@@ -55,7 +55,10 @@ INPUTS / INPUT SOURCES
 EXPECTED OUTPUT
     - JSON responses (ontology summaries, graph, one entity's neighbourhood,
       node details -- for a project's class, its rules, their warnings and
-      the sentence builder's choices (axioms-and-reasoning 5.9); for any
+      the sentence builder's choices (axioms-and-reasoning 5.9), and its
+      `properties`, own, shared, both or through a parent (attribute-reuse
+      5.3); for a project's property, its `domain` as axioms.domain_of reads
+      it and the 5.4 warning for two domain lines; for any
       other ontology's class, its rules read-only (explore-rules 5.3); for a
       project's example, its classes and fields
       (shacl-authoring 5.8) --, search results, query schema, the queries stored in the
@@ -703,10 +706,22 @@ def get_node(
         if details is not None and ontology.editable and details.get("kind") in PROPERTY_KINDS:
             name = labeler(ontology.graph, ontology.label_langs(lang))
             details["warnings"] = modeling_checks.warnings(ontology.graph, URIRef(iri), name)
+            # Two domain lines (attribute-reuse 5.4), read from the view so an
+            # imported property is warned of too, without its Fix.
+            separate = modeling_checks.domain_warning(
+                graph, ontology.graph, URIRef(iri), labeler(graph, ontology.label_langs(lang))
+            )
+            if separate is not None:
+                details["warnings"].append(separate)
             # Its domain as every view reads it (attribute-reuse 5.3): the
             # form lists a union's members, never the blank node.
+            # The document's own statement when it defines the property, so
+            # every class listed with Remove is one UnshareDomain can take
+            # out; an imported property's, from the view.
+            own_property = axioms.property_kind(ontology.graph, URIRef(iri)) is not None
             details["domain"] = axioms.domain_json(
-                axioms.domain_of(graph, URIRef(iri)), labeler(graph, ontology.label_langs(lang))
+                axioms.domain_of(ontology.graph if own_property else graph, URIRef(iri)),
+                labeler(graph, ontology.label_langs(lang)),
             )
         # A project's class carries its rules (axioms-and-reasoning 5.9):
         # the sentences of 5.8 read from the view, so an import's rule shows

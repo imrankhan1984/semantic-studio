@@ -188,6 +188,8 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   getShapeSuggestions: () => api.getShapeSuggestions("prj-1", "http://example.org/A", "http://example.org/S"),
   validateProject: () => api.validateProject("prj-1"),
   previewDelete: () => api.previewDelete("prj-1", "model", "http://example.org/A"),
+  // attribute-reuse 5.2: ShareDomain's dry run, the reuse plan.
+  planShare: () => api.planShare("prj-1", "http://example.org/p", "http://example.org/A"),
   getAnnotationProperties: () => api.getAnnotationProperties("prj-1", "model"),
   getCanvas: () => api.getCanvas("prj-1", "model"),
   getLayout: () => api.getLayout("prj-1", "model"),
@@ -214,6 +216,8 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   setApprovalHandler: async () => api.setApprovalHandler(null),
   declinedMessage: async () => api.declinedMessage([]),
   setDisplayLanguage: async () => api.setDisplayLanguage(null),
+  // Not a request either: reads a refusal's body (attribute-reuse 5.1).
+  alreadyDefined: async () => api.alreadyDefined(null),
 };
 
 describe("api client header (S-6)", () => {
@@ -237,12 +241,13 @@ describe("api client header (S-6)", () => {
     // PUT (its layout); validation one POST (shacl-authoring 5.6); the data
     // wizard four POSTs, a PATCH and a DELETE (csv-data-import); reasoning
     // a POST (Reason) and a DELETE (Stop); the examples one POST (restore);
-    // a load's cancel one POST (load-progress 5.3).
+    // a load's cancel one POST (load-progress 5.3); the reuse plan one POST
+    // (ShareDomain's dry run, attribute-reuse 5.2).
     const expected = [
       ...Array(6).fill("DELETE"),
       "PATCH",
       "PATCH",
-      ...Array(29).fill("POST"),
+      ...Array(30).fill("POST"),
       "PUT",
       "PUT",
       "PUT",

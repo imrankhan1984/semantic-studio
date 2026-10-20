@@ -481,6 +481,8 @@ describe("relating (AC-12)", () => {
       "Document is a kind of Agent",
       "new relationship…",
       "Every Document has at least one… (a rule)",
+      // billed to ends at Agent already, from Invoice (attribute-reuse 5.1).
+      "Share billed to: a Document is billed to an Agent too.",
     ]);
     await act(async () => {
       fireEvent.click(within(menu).getByRole("menuitem", { name: "Document is a kind of Agent" }));
@@ -1889,5 +1891,40 @@ describe("a shared domain (attribute-reuse 5.3)", () => {
     const names = [...document.querySelectorAll(".react-flow__edge")].map((l) => l.getAttribute("aria-label"));
     expect(names).toContain("filed by, from Document to Agent");
     expect(names).toContain("filed by, from Invoice (en) to Agent");
+  });
+
+  it("Share on the relate menu opens the plan in the start class's form (5.1)", async () => {
+    await renderCanvas();
+    await act(async () => {
+      flow.props.onConnect({ source: EX + "Document", target: "http://xmlns.com/foaf/0.1/Agent", sourceHandle: null, targetHandle: null });
+      flow.props.onConnectEnd({ clientX: 40, clientY: 50 });
+    });
+    const menu = screen.getByRole("menu");
+    await act(async () => {
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Share billed to: a Document is billed to an Agent too." }));
+    });
+    expect(projectStore.getSnapshot().reuseDraft).toMatchObject({
+      cls: EX + "Document",
+      property: EX + "billedTo",
+      label: "billed to",
+      kind: "relationship",
+    });
+    expect(onSelect).toHaveBeenCalledWith(EX + "Document");
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("Delete on a member's line asks: remove the class, or delete the relationship (5.3)", async () => {
+    await renderCanvas(shared());
+    const edges = flow.props.edges as { id: string; source: string; ariaLabel: string }[];
+    const line = edges.find((e) => e.ariaLabel === "filed by, from Invoice (en) to Agent")!;
+    await act(async () => flow.props.onEdgeClick({}, line));
+    await act(async () => {
+      fireEvent.keyDown(document.querySelector(".react-flow")!, { key: "Delete" });
+    });
+    const dialog = screen.getByRole("dialog", { name: "Remove Invoice (en) from filed by, or delete filed by?" });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Remove Invoice (en)" }));
+    });
+    expect(lastCommand()).toEqual(["UnshareDomain", { property: EX + "filedBy", class: EX + "Invoice" }]);
   });
 });
