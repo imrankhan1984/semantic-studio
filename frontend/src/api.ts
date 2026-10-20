@@ -29,6 +29,11 @@ BASIC IDEA
     means any action that can reach the network -- including a GET whose lazy
     parse needs a JSON-LD context -- asks the same way.
 
+    The upload alone goes over XMLHttpRequest, as fetch reports no upload
+    progress (load-progress 5.2); its answer is made a Response, so the
+    approval round and `handle` treat it as any other. Upload and fetch take
+    a load id and an abort signal, and cancelLoad names the id (5.3).
+
     Data snapshots (csv-data-import) come last. A data file is multipart, as
     an upload is, with the wizard's options and choices as JSON fields beside
     it; the wizard holds the File and sends it again for each step, so the
@@ -176,11 +181,15 @@ async function approvalRequests(response: Response): Promise<ApprovalRequest[] |
   return null;
 }
 
+/** How a request goes out: fetch, or for an upload, XMLHttpRequest. */
+type Transport = (url: string, init: RequestInit) => Promise<Response>;
+
 /**
  * fetch, with the approval round trip. The first attempt is exactly the
- * request the caller built; only a retry adds the grant header.
+ * request the caller built; only a retry adds the grant header. `transport`
+ * replaces fetch for the one call that needs upload progress.
  */
-async function send(url: string, init?: RequestInit): Promise<Response> {
+async function send(url: string, init?: RequestInit, transport?: Transport): Promise<Response> {
   let grants: string[] = [];
   for (let round = 0; ; round++) {
     const attempt =
@@ -193,7 +202,11 @@ async function send(url: string, init?: RequestInit): Promise<Response> {
               "X-Semantic-Studio-Grant": grants.join(","),
             },
           };
-    const response = await (attempt === undefined ? fetch(url) : fetch(url, attempt));
+    const response = await (attempt === undefined
+      ? fetch(url)
+      : transport
+        ? transport(url, attempt)
+        : fetch(url, attempt));
     if (response.status !== 409 || !approvalHandler || round >= MAX_APPROVAL_ROUNDS) {
       return response;
     }
@@ -270,24 +283,98 @@ export function listOntologies(): Promise<OntologySummary[]> {
   return send("/api/ontologies").then((r) => handle<OntologySummary[]>(r));
 }
 
-// Upload a local file as multipart form data.
-export function uploadOntology(file: File): Promise<OntologySummary> {
-  const form = new FormData();
-  form.append("file", file);
-  return send("/api/ontologies/upload", {
-    method: "POST",
-    headers: { ...CLIENT_HEADER },
-    body: form,
-  }).then((r) => handle<OntologySummary>(r));
+/** A load the dialog can follow and cancel (load-progress 5.2, 5.3). */
+export interface LoadOptions {
+  /** The browser's id for this load, which a cancel names. */
+  loadId?: string;
+  /** Aborts the request: the dialog stops waiting at once. */
+  signal?: AbortSignal;
+  /** Bytes of the request body sent so far, an upload only. */
+  onSent?: (sent: number, total: number) => void;
 }
 
-// Ask the backend to download an ontology from a URL.
-export function fetchOntology(url: string): Promise<OntologySummary> {
+function aborted(): DOMException {
+  return new DOMException("The load was cancelled.", "AbortError");
+}
+
+/**
+ * One request over XMLHttpRequest, answered as a fetch Response so `send`'s
+ * approval round and `handle` read it unchanged. Here only because fetch
+ * reports no upload progress; it rejects as fetch does, an AbortError on its
+ * signal and a TypeError when nothing came back.
+ */
+function xhrTransport(onSent?: LoadOptions["onSent"]): Transport {
+  return (url, init) =>
+    new Promise<Response>((resolve, reject) => {
+      const signal = init.signal;
+      if (signal?.aborted) return reject(aborted());
+      const xhr = new XMLHttpRequest();
+      xhr.open(init.method ?? "GET", url);
+      for (const [name, value] of Object.entries((init.headers as Record<string, string>) ?? {})) {
+        xhr.setRequestHeader(name, value);
+      }
+      const onAbort = () => xhr.abort();
+      signal?.addEventListener("abort", onAbort);
+      const done = () => signal?.removeEventListener("abort", onAbort);
+      if (onSent) {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) onSent(e.loaded, e.total);
+        };
+        // The last progress event may stop short of the total; this one
+        // says the body is all sent, which is when reading begins.
+        xhr.upload.onload = (e) => onSent(e.total || e.loaded, e.total || e.loaded);
+      }
+      xhr.onload = () => {
+        done();
+        const headers = new Headers();
+        for (const line of xhr.getAllResponseHeaders().trim().split(/[\r\n]+/)) {
+          const at = line.indexOf(":");
+          if (at > 0) headers.append(line.slice(0, at).trim(), line.slice(at + 1).trim());
+        }
+        resolve(new Response(xhr.responseText, { status: xhr.status, statusText: xhr.statusText, headers }));
+      };
+      xhr.onerror = () => {
+        done();
+        reject(new TypeError("Failed to fetch"));
+      };
+      xhr.onabort = () => {
+        done();
+        reject(aborted());
+      };
+      xhr.send(init.body as XMLHttpRequestBodyInit | null);
+    });
+}
+
+// Upload a local file as multipart form data, over XMLHttpRequest for its
+// upload progress; `loadId` goes as a form field beside the file.
+export function uploadOntology(file: File, options: LoadOptions = {}): Promise<OntologySummary> {
+  const form = new FormData();
+  form.append("file", file);
+  if (options.loadId) form.append("loadId", options.loadId);
+  return send(
+    "/api/ontologies/upload",
+    { method: "POST", headers: { ...CLIENT_HEADER }, body: form, signal: options.signal },
+    xhrTransport(options.onSent),
+  ).then((r) => handle<OntologySummary>(r));
+}
+
+// Ask the backend to download an ontology from a URL; `loadId` in the JSON.
+export function fetchOntology(url: string, options: Omit<LoadOptions, "onSent"> = {}): Promise<OntologySummary> {
   return send("/api/ontologies/fetch", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify(options.loadId ? { url, loadId: options.loadId } : { url }),
+    signal: options.signal,
   }).then((r) => handle<OntologySummary>(r));
+}
+
+/** Cancel a running load (D-115): `stopped` is false when it had already
+ *  finished, or the server never knew the id. */
+export function cancelLoad(loadId: string): Promise<{ stopped: boolean }> {
+  return send(`/api/ontologies/loads/${encodeURIComponent(loadId)}/cancel`, {
+    method: "POST",
+    headers: { ...CLIENT_HEADER },
+  }).then((r) => handle<{ stopped: boolean }>(r));
 }
 
 /** What POST /api/examples/restore answers (home-and-examples 5.1): the

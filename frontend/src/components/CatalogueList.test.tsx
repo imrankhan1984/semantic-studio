@@ -40,7 +40,7 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import CatalogueList from "./CatalogueList";
 import LoadDialog from "./LoadDialog";
@@ -114,16 +114,38 @@ describe("CatalogueList", () => {
 
   it("marks only the downloading entry and disables all of them", () => {
     // The busy contract both callers rely on: one row says what it is doing,
-    // and nothing else can be started underneath it.
+    // and nothing else can be started underneath it. aria-disabled, never
+    // disabled, so the row pressed keeps focus (load-progress 5.3).
     const target = CATALOGUE[1];
-    render(<CatalogueList fetchingId={target.id} busy onPick={vi.fn()} />);
+    const onPick = vi.fn();
+    render(<CatalogueList fetchingId={target.id} busy onPick={onPick} />);
 
     for (const button of screen.getAllByRole("button")) {
-      expect((button as HTMLButtonElement).disabled).toBe(true);
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      expect((button as HTMLButtonElement).disabled).toBe(false);
+      fireEvent.click(button);
     }
+    expect(onPick).not.toHaveBeenCalled();
     const downloading = document.querySelectorAll(".catalogue-loading");
     expect(downloading).toHaveLength(1);
     expect(downloading[0].closest("button")?.textContent).toContain(target.name);
+  });
+
+  it("draws the status under the entry it names, outside the button", () => {
+    const target = CATALOGUE[2];
+    render(
+      <CatalogueList
+        fetchingId={target.id}
+        busy
+        onPick={vi.fn()}
+        status={<p className="load-step">Downloading and reading: 3 seconds so far.</p>}
+        statusId={target.id}
+      />,
+    );
+    const step = screen.getByText("Downloading and reading: 3 seconds so far.");
+    expect(step.closest("button")).toBeNull();
+    const row = document.querySelector(`[data-entry="${target.id}"]`)!;
+    expect(row.nextElementSibling).toBe(step);
   });
 
   it("renders the audience line for each entry", () => {

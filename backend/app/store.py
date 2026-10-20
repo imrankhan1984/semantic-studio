@@ -52,6 +52,7 @@ INPUTS / INPUT SOURCES
     - Raw file bytes from uploads or URL fetches (passed to `add`).
     - A format hint from the file extension / caller, else content sniffing.
     - An optional parse timeout, supplied by the router from configuration.
+    - An optional cancel mark (loads.py) for a load the browser can cancel.
     - Previously persisted <id>.rdf, <id>.meta.json and (for JSON-LD with a
       remote context) <id>.contexts.json files in the data dir.
     - Environment variable SEMANTIC_STUDIO_DATA_DIR (or the legacy
@@ -67,6 +68,8 @@ EXPECTED OUTPUT
     - Raises ParseError for unparseable input, carrying every attempt's
       message, and ParseTimeout when a bounded parse runs out of time; the
       router maps them to HTTP 422 (explained by parse_errors.py) and 504.
+      LoadCancelled, before anything is written, for a load whose mark was
+      set (D-115); the router answers 409.
       The broker's decisions (ApprovalRequired, Offline, HostBlocked) pass
       through unchanged and main.py maps them to 409, 503 and 403.
     - Two module-level singletons imported across the app: `store` (the
@@ -108,6 +111,7 @@ from rdflib.util import guess_format
 # Derived-view builders and the saved-query store live in sibling modules.
 from .graph_builder import build_card_sketch, build_viz_graph, ontology_iris
 from .hierarchy import build_hierarchy
+from .loads import LoadMark
 from . import network_broker
 from .net_guard import (
     BlockedAddress,
@@ -590,6 +594,7 @@ class OntologyStore:
         *,
         parse_timeout: Optional[float] = None,
         oid: Optional[str] = None,
+        mark: Optional[LoadMark] = None,
     ) -> Ontology:
         """Parse, persist and register a new ontology; return it (graph loaded).
 
@@ -599,12 +604,21 @@ class OntologyStore:
         ``oid`` is for the bundled examples alone (library_examples.py), whose
         ids are fixed so a link to one survives a reinstall; an entry already
         under that id is replaced in place.
+
+        ``mark`` is a running load's cancel mark (loads.py, D-115): it is
+        checked after the download (the caller's, so on entry), after the
+        parse and after the summary, and a cancelled load raises
+        LoadCancelled before anything is written.
         """
+        if mark is not None:
+            mark.check()
         # Parse now so we can fail fast on bad input and compute the summary.
         # Any remote JSON-LD context the parse fetches is recorded, so the lazy
         # restore after a restart can re-read the file without a connection.
         with recording_contexts() as contexts:
             graph, used_format = parse_rdf(data, fmt, timeout=parse_timeout)
+        if mark is not None:
+            mark.check()
         viz = build_viz_graph(graph)
         # A short random id keeps URLs and filenames stable across restarts.
         oid = oid or "ont-" + uuid.uuid4().hex[:12]
@@ -633,6 +647,10 @@ class OntologyStore:
                 prefix: str(ns) for prefix, ns in graph.namespaces() if prefix
             },
         }
+        # The last check, taken under the lock a cancel takes: past it the
+        # load is written and a cancel answers that it was too late.
+        if mark is not None:
+            mark.commit()
         # Persist the raw bytes and the metadata side by side.
         data_path = self._data_path(oid)
         data_path.write_bytes(data)

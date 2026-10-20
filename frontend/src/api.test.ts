@@ -24,6 +24,11 @@ BASIC IDEA
     function added to api.ts fails this file until it is added here — which is
     the moment someone has to decide whether it mutates.
 
+    The upload goes over XMLHttpRequest (load-progress 5.2). FakeXHR stands in
+    for it and hands each request to the fetch spy, so every check above
+    reads the upload as it reads the rest; in its manual mode a test drives
+    the upload's progress and its abort itself.
+
 INPUTS / INPUT SOURCES
     - api.ts, with global fetch stubbed.
 
@@ -41,8 +46,61 @@ type Recorded = { url: string; method: string; headers: Record<string, string> }
 
 let recorded: Recorded[] = [];
 
+type Handler = ((e: ProgressEvent) => void) | null;
+
+/** XMLHttpRequest, answered by whatever `fetch` is stubbed as. */
+class FakeXHR {
+  static instances: FakeXHR[] = [];
+  /** When set, a request waits for the test to answer or abort it. */
+  static manual = false;
+  method = "";
+  url = "";
+  headers: Record<string, string> = {};
+  body: unknown = null;
+  status = 0;
+  statusText = "";
+  responseText = "";
+  rawHeaders = "";
+  upload: { onprogress: Handler; onload: Handler } = { onprogress: null, onload: null };
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+  open(method: string, url: string) {
+    this.method = method;
+    this.url = url;
+  }
+  setRequestHeader(name: string, value: string) {
+    this.headers[name] = value;
+  }
+  getAllResponseHeaders() {
+    return this.rawHeaders;
+  }
+  send(body: unknown) {
+    this.body = body;
+    FakeXHR.instances.push(this);
+    if (FakeXHR.manual) return;
+    void (async () => {
+      const response = await fetch(this.url, { method: this.method, headers: this.headers, body: body as BodyInit });
+      this.answer(response.status, await response.text(), [...response.headers]);
+    })();
+  }
+  answer(status: number, text: string, headers: [string, string][] = [["content-type", "application/json"]]) {
+    this.status = status;
+    this.responseText = text;
+    this.rawHeaders = headers.map(([k, v]) => `${k}: ${v}`).join("\r\n");
+    this.upload.onload?.(new ProgressEvent("load", { lengthComputable: true, loaded: 1, total: 1 }));
+    this.onload?.();
+  }
+  abort() {
+    this.onabort?.();
+  }
+}
+
 beforeEach(() => {
   recorded = [];
+  FakeXHR.instances = [];
+  FakeXHR.manual = false;
+  vi.stubGlobal("XMLHttpRequest", FakeXHR);
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -66,6 +124,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   listOntologies: () => api.listOntologies(),
   uploadOntology: () => api.uploadOntology(new File(["x"], "x.ttl")),
   fetchOntology: () => api.fetchOntology("https://example.org/x.ttl"),
+  cancelLoad: () => api.cancelLoad("0b8a3f5e-1c2d-4e5f-8a9b-0c1d2e3f4a5b"),
   deleteOntology: () => api.deleteOntology("ont-1"),
   getGraph: () => api.getGraph("ont-1"),
   getNeighborhood: () => api.getNeighborhood("ont-1", "http://example.org/a"),
@@ -177,12 +236,13 @@ describe("api client header (S-6)", () => {
     // the editing form adds one POST (the delete's dry run); the canvas one
     // PUT (its layout); validation one POST (shacl-authoring 5.6); the data
     // wizard four POSTs, a PATCH and a DELETE (csv-data-import); reasoning
-    // a POST (Reason) and a DELETE (Stop); the examples one POST (restore).
+    // a POST (Reason) and a DELETE (Stop); the examples one POST (restore);
+    // a load's cancel one POST (load-progress 5.3).
     const expected = [
       ...Array(6).fill("DELETE"),
       "PATCH",
       "PATCH",
-      ...Array(28).fill("POST"),
+      ...Array(29).fill("POST"),
       "PUT",
       "PUT",
       "PUT",
@@ -468,5 +528,101 @@ describe("projects in the client (authoring-foundations)", () => {
     );
     const error = await api.runCommand("prj-1", "model", "AddAnnotation", {}).catch((e) => e);
     expect(error.message).toBe('"4.5" is not a valid integer (expected a whole number such as 42).');
+  });
+});
+
+describe("loads that can be followed and cancelled (load-progress 5.2, 5.3)", () => {
+  const LOAD_ID = "0b8a3f5e-1c2d-4e5f-8a9b-0c1d2e3f4a5b";
+
+  it("uploadOntology reports the bytes sent, then answers as fetch would", async () => {
+    FakeXHR.manual = true;
+    const sent: [number, number][] = [];
+    const loading = api.uploadOntology(new File(["x".repeat(10)], "big.ttl"), {
+      loadId: LOAD_ID,
+      onSent: (done, total) => sent.push([done, total]),
+    });
+    const xhr = FakeXHR.instances[0];
+    expect([xhr.method, xhr.url]).toEqual(["POST", "/api/ontologies/upload"]);
+    expect(xhr.headers).toEqual({ "X-Semantic-Studio": "1" });
+    xhr.upload.onprogress!(new ProgressEvent("progress", { lengthComputable: true, loaded: 40, total: 100 }));
+    // A progress event that cannot say its total is not a share of anything.
+    xhr.upload.onprogress!(new ProgressEvent("progress", { lengthComputable: false, loaded: 60 }));
+    xhr.answer(200, JSON.stringify({ id: "ont-7" }));
+    expect(await loading).toEqual({ id: "ont-7" });
+    expect(sent).toEqual([
+      [40, 100],
+      [1, 1],
+    ]);
+  });
+
+  it("both loads send the loadId: a form field and a JSON field", async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        bodies.push(init?.body);
+        return new Response("{}", { status: 200 });
+      }),
+    );
+    await api.uploadOntology(new File(["x"], "x.ttl"), { loadId: LOAD_ID });
+    await api.fetchOntology("https://example.org/x.ttl", { loadId: LOAD_ID });
+    expect((bodies[0] as FormData).get("loadId")).toBe(LOAD_ID);
+    expect(JSON.parse(String(bodies[1]))).toEqual({ url: "https://example.org/x.ttl", loadId: LOAD_ID });
+    // Without one, the request is the one it always was.
+    await api.fetchOntology("https://example.org/x.ttl");
+    expect(JSON.parse(String(bodies[2]))).toEqual({ url: "https://example.org/x.ttl" });
+  });
+
+  it("uploadOntology aborts on its signal, and rejects as an AbortError", async () => {
+    FakeXHR.manual = true;
+    const controller = new AbortController();
+    const loading = api.uploadOntology(new File(["x"], "x.ttl"), { signal: controller.signal });
+    const xhr = FakeXHR.instances[0];
+    const aborted = vi.spyOn(xhr, "abort");
+    controller.abort();
+    expect(aborted).toHaveBeenCalledTimes(1);
+    const error = await loading.catch((e: unknown) => e);
+    expect((error as DOMException).name).toBe("AbortError");
+  });
+
+  it("an upload already aborted never leaves the browser", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const error = await api.uploadOntology(new File(["x"], "x.ttl"), { signal: controller.signal }).catch((e) => e);
+    expect(error.name).toBe("AbortError");
+    expect(FakeXHR.instances).toHaveLength(0);
+  });
+
+  it("fetchOntology aborts on its signal", async () => {
+    let signal: AbortSignal | null | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            signal = init?.signal;
+            signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+          }),
+      ),
+    );
+    const controller = new AbortController();
+    const loading = api.fetchOntology("https://example.org/x.ttl", { signal: controller.signal });
+    controller.abort();
+    expect(signal).toBe(controller.signal);
+    expect(((await loading.catch((e: unknown) => e)) as DOMException).name).toBe("AbortError");
+  });
+
+  it("cancelLoad posts to the load's cancel route and reads stopped", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        recorded.push({ url, method: init?.method ?? "GET", headers: { ...((init?.headers as Record<string, string>) ?? {}) } });
+        return new Response(JSON.stringify({ stopped: true }), { status: 200 });
+      }),
+    );
+    expect(await api.cancelLoad(LOAD_ID)).toEqual({ stopped: true });
+    expect(recorded).toEqual([
+      { url: `/api/ontologies/loads/${LOAD_ID}/cancel`, method: "POST", headers: { "X-Semantic-Studio": "1" } },
+    ]);
   });
 });

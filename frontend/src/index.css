@@ -2398,6 +2398,59 @@ button.legend-row:hover {
   gap: 8px;
 }
 
+/* A load's status, under the control it started from (load-progress 5.2):
+   the step sentence on its own line, then the bar and Cancel side by side.
+   The sentence carries everything; the bar only shows it moving. */
+.load-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  flex-basis: 100%;
+  margin: 8px 0 4px;
+}
+
+.load-step {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+/* The track is outlined in --text-dim, so its extent reads at 3:1 against
+   the dialog whatever the fill. */
+.load-bar {
+  position: relative;
+  flex: 1 1 160px;
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid var(--text-dim);
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+.load-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 200ms linear;
+}
+
+/* No value while reading: a short fill crosses the track. Reduced motion
+   stops it, as it stops every animation, and the sentence still counts. */
+.load-bar.moving .load-bar-fill {
+  width: 30%;
+  animation: load-moving 1.4s ease-in-out infinite;
+}
+
+@keyframes load-moving {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+
 .url-form input {
   flex: 1;
   min-width: 260px;

@@ -8,7 +8,8 @@ SUMMARY
     viewing, exploring (graph + node details + search) and querying (schema +
     SPARQL execution) an ontology lives here, under the /api/ontologies prefix,
     together with its owl:imports routes (list, resolve, refresh, cancel, map,
-    chosen files) from external-access Stage 2.
+    chosen files) from external-access Stage 2, and the cancel of a running
+    load (load-progress 5.3).
 
 BASIC IDEA
     The read endpoints take ?imports=true, which serves the same view built
@@ -38,7 +39,9 @@ BASIC IDEA
     Doing any of these afterwards would report a number rather than prevent the
     harm. Both load routes run `store.add` on the threadpool, never on the
     event loop: a parse there froze every other request for as long as it
-    ran (load-progress 5.1).
+    ran (load-progress 5.1). A load sent with a `loadId` is registered in
+    loads.py while it runs, and a cancel marks it: the store checks the mark
+    before it writes, so a cancelled load leaves nothing (D-115).
 
 INPUTS / INPUT SOURCES
     - HTTP requests from the frontend / API clients.
@@ -60,17 +63,21 @@ EXPECTED OUTPUT
       and appropriate HTTP errors:
       400 for a blocked address or refused query, 413 for a body over the cap,
       422 for a file no parser reads, with one plain sentence and the raw
-      text apart (load-and-shapes 5.1), 504 for a parse that ran out of time. The broker's policy decisions are
+      text apart (load-and-shapes 5.1), 504 for a parse that ran out of time,
+      409 `load_cancelled` for a load cancelled before it wrote anything;
+      `{"stopped": bool}` from the cancel route. The broker's policy decisions are
       mapped once, in main.py: 409 approval required, 403 blocked, 503 offline.
 ================================================================================
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import threading
 import time
+import uuid
 from collections import deque
 from typing import Literal, Optional
 from urllib.parse import urlparse
@@ -105,6 +112,7 @@ from ..net_guard import BlockedAddress
 from ..network_broker import FetchFailed, TooLarge, TooManyRedirects, broker
 from ..editing import editing_service
 from ..hierarchy import with_inferred
+from ..loads import LoadAlreadyRunning, LoadCancelled, running_loads
 from ..projects import split_document_id
 from ..query_schema import describe_query_node
 from ..sparql_exec import QueryBusy, QueryError, QueryTimeout, execute_select
@@ -278,6 +286,8 @@ class FetchRequest(BaseModel):
     url: str
     format: Optional[str] = None
     name: Optional[str] = None
+    # Made by the browser so the load can be cancelled (load-progress 5.3).
+    loadId: Optional[uuid.UUID] = None
 
 
 # JSON body for POST /{oid}/sparql: the query text to run. Capped since queries
@@ -389,13 +399,49 @@ async def _read_capped(file: UploadFile, limit: int, variable: str) -> bytes:
     return b"".join(chunks)
 
 
+CANCELLED_DETAIL = {
+    "code": "load_cancelled",
+    "message": "This load was cancelled. Nothing was added to your library.",
+}
+
+
+@contextlib.contextmanager
+def _load(load_id: Optional[uuid.UUID]):
+    """Register a load under its id while it runs; answer a cancel with 409.
+
+    The entry goes when the block ends, whatever the outcome, so an id is
+    known only while its load runs (AC-4)."""
+    try:
+        with running_loads.running(str(load_id) if load_id else None) as mark:
+            yield mark
+    except LoadCancelled as exc:
+        raise HTTPException(status_code=409, detail=CANCELLED_DETAIL) from exc
+    except LoadAlreadyRunning as exc:
+        raise HTTPException(
+            status_code=409, detail="A load with this id is already running."
+        ) from exc
+
+
+@router.post("/loads/{load_id}/cancel")
+def cancel_load(load_id: uuid.UUID) -> dict:
+    """POST /api/ontologies/loads/{loadId}/cancel -> {"stopped": bool}.
+
+    True when the load was marked before its last check, so it writes
+    nothing; false when it had already passed it, or the id is not running
+    (D-115). A parse already running is not stopped, only thrown away."""
+    return {"stopped": running_loads.cancel(str(load_id))}
+
+
 @router.post("/upload")
 async def upload_ontology(
     request: Request,
     file: UploadFile = File(...),
     format: Optional[str] = Form(default=None),
+    loadId: Optional[uuid.UUID] = Form(default=None),
 ) -> dict:
-    """POST /api/ontologies/upload -> parse and store an uploaded file."""
+    """POST /api/ontologies/upload -> parse and store an uploaded file.
+
+    ``loadId``, made by the browser, lets the load be cancelled (5.3)."""
     # Refuse an obviously oversized body before reading a single byte of it.
     # Content-Length covers the whole multipart envelope, not just the file, so
     # a generous allowance for the framing keeps a file that is legitimately
@@ -414,16 +460,18 @@ async def upload_ontology(
     # Detect the RDF format from the filename (or the caller's override).
     fmt = detect_format(file.filename, format)
     try:
-        # Off the event loop: a 35 MB file parses for seconds, and every other
-        # request waits behind whatever runs on the loop (load-progress 5.1).
-        ontology = await run_in_threadpool(
-            store.add,
-            name=file.filename or "uploaded ontology",
-            source="upload",
-            data=data,
-            fmt=fmt,
-            parse_timeout=PARSE_TIMEOUT_SECONDS,
-        )
+        with _load(loadId) as mark:
+            # Off the event loop: a 35 MB file parses for seconds, and every
+            # other request waits behind whatever runs on the loop (5.1).
+            ontology = await run_in_threadpool(
+                store.add,
+                name=file.filename or "uploaded ontology",
+                source="upload",
+                data=data,
+                fmt=fmt,
+                parse_timeout=PARSE_TIMEOUT_SECONDS,
+                mark=mark,
+            )
     except ParseTimeout as exc:
         raise HTTPException(status_code=504, detail=str(exc)) from exc
     except ParseError as exc:
@@ -485,63 +533,65 @@ async def fetch_ontology(request: FetchRequest) -> dict:
         raise HTTPException(status_code=400, detail=GHE_NOT_SUPPORTED_DETAIL)
     # Turn a github.com "blob" page URL into the raw download URL.
     url = to_raw_url(raw_input)
-    try:
-        # The broker is synchronous (the rdflib chokepoint calls it from a
-        # parse thread), so it runs on the threadpool here. The context, and
-        # with it any just-once grant this request presented, travels along.
-        response = await run_in_threadpool(
-            broker.request,
-            "ontology:fetch",
-            url,
-            reason=FETCH_REASON,
-            headers=FETCH_HEADERS,
-            max_bytes=MAX_FETCH_BYTES,
-            timeout=60,
-            user_initiated=True,
-        )
-    except BlockedAddress as exc:
-        # Refused before any connection was made to the address in question.
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except TooLarge as exc:
-        raise HTTPException(
-            status_code=413,
-            detail=too_large_detail(MAX_FETCH_BYTES, "SEMANTIC_STUDIO_MAX_FETCH_BYTES"),
-        ) from exc
-    except TooManyRedirects as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except FetchFailed as exc:
-        # Connection/timeout/DNS failure.
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    if response.status >= 400:
-        # The remote server returned an error status (404, 403, ...).
-        raise HTTPException(
-            status_code=502,
-            detail=f"Fetching {url} failed with HTTP {response.status}.",
-        )
-    final_url, data = response.url, response.body
+    with _load(request.loadId) as mark:
+        try:
+            # The broker is synchronous (the rdflib chokepoint calls it from a
+            # parse thread), so it runs on the threadpool here. The context, and
+            # with it any just-once grant this request presented, travels along.
+            response = await run_in_threadpool(
+                broker.request,
+                "ontology:fetch",
+                url,
+                reason=FETCH_REASON,
+                headers=FETCH_HEADERS,
+                max_bytes=MAX_FETCH_BYTES,
+                timeout=60,
+                user_initiated=True,
+            )
+        except BlockedAddress as exc:
+            # Refused before any connection was made to the address in question.
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except TooLarge as exc:
+            raise HTTPException(
+                status_code=413,
+                detail=too_large_detail(MAX_FETCH_BYTES, "SEMANTIC_STUDIO_MAX_FETCH_BYTES"),
+            ) from exc
+        except TooManyRedirects as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except FetchFailed as exc:
+            # Connection/timeout/DNS failure.
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if response.status >= 400:
+            # The remote server returned an error status (404, 403, ...).
+            raise HTTPException(
+                status_code=502,
+                detail=f"Fetching {url} failed with HTTP {response.status}.",
+            )
+        final_url, data = response.url, response.body
 
-    # Name defaults to the URL's last path segment; format from the extension.
-    filename = final_url.rsplit("/", 1)[-1] or final_url
-    fmt = detect_format(filename, request.format)
-    try:
-        # Off the event loop, as the upload's is (load-progress 5.1).
-        ontology = await run_in_threadpool(
-            store.add,
-            name=request.name or filename,
-            source=final_url,
-            data=data,
-            fmt=fmt,
-            parse_timeout=PARSE_TIMEOUT_SECONDS,
-        )
-    except ParseTimeout as exc:
-        raise HTTPException(status_code=504, detail=str(exc)) from exc
-    except ParseError as exc:
-        # The name wins; a server's content type explains a nameless address.
-        suggested = parse_errors.format_from_content_type(response.headers.get("content-type"))
-        raise HTTPException(
-            status_code=422, detail=_load_failure(exc, data, filename, suggested)
-        ) from exc
-    return ontology.summary()
+        # Name defaults to the URL's last path segment; format from the extension.
+        filename = final_url.rsplit("/", 1)[-1] or final_url
+        fmt = detect_format(filename, request.format)
+        try:
+            # Off the event loop, as the upload's is (load-progress 5.1).
+            ontology = await run_in_threadpool(
+                store.add,
+                name=request.name or filename,
+                source=final_url,
+                data=data,
+                fmt=fmt,
+                parse_timeout=PARSE_TIMEOUT_SECONDS,
+                mark=mark,
+            )
+        except ParseTimeout as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        except ParseError as exc:
+            # The name wins; a server's content type explains a nameless address.
+            suggested = parse_errors.format_from_content_type(response.headers.get("content-type"))
+            raise HTTPException(
+                status_code=422, detail=_load_failure(exc, data, filename, suggested)
+            ) from exc
+        return ontology.summary()
 
 
 @router.delete("/{oid}")
