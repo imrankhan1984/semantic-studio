@@ -787,15 +787,21 @@ describe("a load's steps and Cancel (load-progress 5.2 to 5.4)", () => {
     );
     await chooseFile(bigFile("big-file.ttl", 35 * MB));
     const { onSent } = pending[0].options;
+    act(() => onSent!(12 * MB, 35 * MB));
     const before = commits;
-    // A hundred events inside one shown megabyte and one percent.
-    act(() => {
-      for (let i = 1; i <= 100; i++) onSent!(12 * MB + i * 1000, 35 * MB);
-    });
-    expect(commits - before).toBeLessThanOrEqual(1);
+    // A hundred events inside one shown megabyte and one percent, each in
+    // its own act, as the browser delivers them: React would batch one act.
+    for (let i = 1; i <= 100; i++) act(() => onSent!(12 * MB + i * 100, 35 * MB));
+    expect(commits - before).toBe(0);
     expect(step()).toBe("Sending big-file.ttl: 12 of 35 MB.");
     act(() => onSent!(20 * MB, 35 * MB));
     expect(step()).toBe("Sending big-file.ttl: 20 of 35 MB.");
+    // The last bytes change neither the words nor the percent; the step
+    // still changes to reading.
+    act(() => onSent!(35 * MB - 10, 35 * MB));
+    expect(step()).toBe("Sending big-file.ttl: 35 of 35 MB.");
+    act(() => onSent!(35 * MB, 35 * MB));
+    expect(step()).toMatch(/^Reading big-file.ttl/);
   });
 
   it("an answer the abort did not stop is still never applied", async () => {

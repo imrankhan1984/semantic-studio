@@ -598,8 +598,10 @@ describe("loads that can be followed and cancelled (load-progress 5.2, 5.3)", ()
     FakeXHR.manual = true;
     const loading = api.uploadOntology(new File(["x"], "x.ttl"));
     FakeXHR.instances[0].answer(204, "");
-    // Not the Response constructor's refusal; handle's own reading of it.
+    // It reaches handle, which finds no JSON in it: not the transport's
+    // "Failed to fetch", and not the Response constructor's refusal.
     const error = await loading.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SyntaxError);
     expect(String(error)).not.toMatch(/null body/i);
   });
 
