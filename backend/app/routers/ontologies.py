@@ -36,7 +36,9 @@ BASIC IDEA
     broker, which judges every redirect hop before connecting and streams the
     body under the same kind of cap. Parsing is handed a wall-clock timeout.
     Doing any of these afterwards would report a number rather than prevent the
-    harm.
+    harm. Both load routes run `store.add` on the threadpool, never on the
+    event loop: a parse there froze every other request for as long as it
+    ran (load-progress 5.1).
 
 INPUTS / INPUT SOURCES
     - HTTP requests from the frontend / API clients.
@@ -412,7 +414,10 @@ async def upload_ontology(
     # Detect the RDF format from the filename (or the caller's override).
     fmt = detect_format(file.filename, format)
     try:
-        ontology = store.add(
+        # Off the event loop: a 35 MB file parses for seconds, and every other
+        # request waits behind whatever runs on the loop (load-progress 5.1).
+        ontology = await run_in_threadpool(
+            store.add,
             name=file.filename or "uploaded ontology",
             source="upload",
             data=data,
@@ -519,7 +524,9 @@ async def fetch_ontology(request: FetchRequest) -> dict:
     filename = final_url.rsplit("/", 1)[-1] or final_url
     fmt = detect_format(filename, request.format)
     try:
-        ontology = store.add(
+        # Off the event loop, as the upload's is (load-progress 5.1).
+        ontology = await run_in_threadpool(
+            store.add,
             name=request.name or filename,
             source=final_url,
             data=data,
