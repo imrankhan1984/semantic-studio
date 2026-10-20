@@ -613,3 +613,40 @@ def test_class_type_adds_no_store_lookup_to_a_hierarchy_build():
     graph = _counting()
     build_hierarchy(graph)
     assert _Counting.patterns == 29
+
+
+# --- a union domain read by every view (attribute-reuse 5.3, D-116) ---------------------
+
+UNION_TTL = """
+@prefix u: <http://example.org/u#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+u:Employee a owl:Class ; rdfs:label "Employee" .
+u:Manager a owl:Class ; rdfs:label "Manager" ; rdfs:subClassOf u:Employee .
+u:Contractor a owl:Class ; rdfs:label "Contractor" .
+u:Team a owl:Class ; rdfs:label "Team" .
+u:hasName a owl:DatatypeProperty ; rdfs:label "hasName" ; rdfs:range xsd:string ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( u:Employee u:Contractor ) ] .
+u:leads a owl:ObjectProperty ; rdfs:label "leads" ; rdfs:range u:Team ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( u:Employee u:Contractor ) ] .
+u:badge a owl:DatatypeProperty ; rdfs:label "badge" ; rdfs:range xsd:string ;
+    rdfs:domain u:Manager , u:Team .
+"""
+UNI = "http://example.org/u#"
+
+
+def _union_graph():
+    from rdflib import Graph
+
+    return Graph().parse(data=UNION_TTL, format="turtle")
+
+
+def test_the_tree_names_a_union_domain_with_or():
+    """AC-8: *Employee or Contractor*; two domain lines read *and*."""
+    g = _union_graph()
+    tree = build_hierarchy(g, own=g)
+    attributes = tree["datatypeProperties"]["nodes"]
+    assert attributes[UNI + "hasName"]["ends"]["domain"] == "Employee or Contractor"
+    assert attributes[UNI + "badge"]["ends"]["domain"] == "Manager and Team"
+    assert tree["objectProperties"]["nodes"][UNI + "leads"]["ends"] == {"domain": "Employee or Contractor", "range": "Team"}

@@ -17,6 +17,10 @@ BASIC IDEA
     for a project document each URI term carries the kind its rdf:type gives.
     That is enough to build every block of the form, so the form costs no
     request of its own and refreshes with the panel on each new revision.
+    A domain is the exception (attribute-reuse 5.3): a union's members are
+    reached through a blank node the statements do not follow, so a class's
+    attributes and relationships, and a property's domain, come from the
+    server's one reader (`properties`, `domain`) whenever it sends them.
 
     "Editable" means defined in this document: the entity has an rdf:type
     here. A class that is only mentioned -- foaf:Agent as a parent -- is
@@ -39,8 +43,8 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import type { AnnotationValue, NodeDetails, TermRef } from "../types";
-import type { Characteristic } from "./sentences";
+import type { AnnotationValue, ClassProperty, DomainReading, NodeDetails, TermRef } from "../types";
+import { domainWords, type Characteristic } from "./sentences";
 import { datatypeName } from "./values";
 
 const RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
@@ -136,7 +140,13 @@ export interface EntityModel {
   children: Ref[];
   attributes: Ref[];
   relationships: Ref[];
+  /** What a class has and how (attribute-reuse 5.3): the server's reading,
+   *  with what comes through a parent; empty when it sent none. */
+  properties: ClassProperty[];
   domain: Ref | null;
+  /** A property's domain as the server reads it: a union's members, never
+   *  its blank node; null when the server sent none. */
+  domainReading: DomainReading | null;
   range: Ref | null;
   broader: Ref[];
   narrower: Ref[];
@@ -192,6 +202,10 @@ function kindFromStatements(details: NodeDetails): string {
   if (details.incoming.some((r) => r.predicate.value === P.broader)) return "concept";
   if (details.outgoing.some((r) => r.predicate.value === P.broader)) return "concept";
   return details.kind ?? "other";
+}
+
+function propertyRef(p: ClassProperty): Ref {
+  return { iri: p.iri, label: p.label };
 }
 
 function uniq(refs: Ref[]): Ref[] {
@@ -275,9 +289,21 @@ export function entityModel(details: NodeDetails, primary: string, languages: st
     annotations,
     parents: uniq(objects(P.subClassOf)),
     children: uniq(subjects(P.subClassOf)),
-    attributes: uniq(subjects(P.domain, ["datatypeProperty"])),
-    relationships: uniq(subjects(P.domain, ["objectProperty"])),
-    domain: objects(P.domain)[0] ?? null,
+    // A union's members point at a blank node, never at the class: the
+    // server's reading lists them (5.3), the statements only a named domain.
+    attributes: details.properties
+      ? details.properties.filter((p) => p.kind === "attribute" && p.how !== "through").map(propertyRef)
+      : uniq(subjects(P.domain, ["datatypeProperty"])),
+    relationships: details.properties
+      ? details.properties.filter((p) => p.kind === "relationship" && p.how !== "through").map(propertyRef)
+      : uniq(subjects(P.domain, ["objectProperty"])),
+    properties: details.properties ?? [],
+    domain: details.domain
+      ? details.domain.form === "one"
+        ? details.domain.classes[0]
+        : null
+      : (objects(P.domain)[0] ?? null),
+    domainReading: details.domain ?? null,
     range: objects(P.range)[0] ?? null,
     broader: uniq([...objects(P.broader), ...subjects(P.narrower)]),
     narrower: uniq([...subjects(P.broader), ...objects(P.narrower)]),
@@ -296,6 +322,22 @@ export function entityModel(details: NodeDetails, primary: string, languages: st
       .map((r) => ({ kind: MAPPING_PROPERTIES[r.predicate.value], target: ref(r.object) })),
     partial: details.outgoingTotal > out.length || details.incomingTotal > inc.length,
   };
+}
+
+/** A property's domain in words for its sentences (attribute-reuse 5.3):
+ *  *Employee*, *Employee or Contractor* for a union, *Employee and
+ *  Manager* for two domain lines, which mean both; null for none. */
+export function domainLabel(model: EntityModel): string | null {
+  const reading = model.domainReading;
+  if (!reading || reading.form === "one" || reading.form === "none") return model.domain?.label ?? null;
+  if (reading.classes.length === 0 || reading.form === "expression") return null;
+  return domainWords(reading.form, reading.classes.map((c) => c.label));
+}
+
+/** Whether a property's domain is several classes: a union or two lines. */
+export function sharedDomain(model: EntityModel): boolean {
+  const form = model.domainReading?.form;
+  return form === "union" || form === "separate";
 }
 
 /** Where an entity's structure block comes from, by kind. */

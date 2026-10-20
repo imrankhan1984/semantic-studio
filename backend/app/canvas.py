@@ -31,9 +31,14 @@ BASIC IDEA
     A relationship is drawn only with both ends: an arrow needs a start and a
     finish, and inventing one would draw something the model does not say.
     The rest are listed in `undrawn`, so the canvas can say how many and the
-    form can show them. An end written as an expression (`owl:unionOf` ...)
-    is not missing: it is listed as `expression`, never offered for a line
-    to complete, because setting it would change what the property means.
+    form can show them. A domain is read by axioms.domain_of (attribute-reuse
+    5.3, D-116): a union of named classes puts an attribute in every
+    member's box, marked shared, and draws a relationship as one line from
+    each member, each carrying its member; two domain lines are drawn the
+    same way, marked `both`, as the 5.4 warning explains. Any other end
+    written as an expression is not missing: it is listed as `expression`,
+    never offered for a line to complete, because setting it would change
+    what the property means.
     An attribute of a class outside the model is listed too, as `outside`,
     rather than vanishing (both found in review).
 
@@ -61,7 +66,9 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - build_canvas(...) -> {nodes, edges, undrawn, total}; each edge with
-      `pair` and `pairs`; a `rule` edge with `rule` and `key`; a class box
+      `pair` and `pairs`; a shared relationship's edge, and a shared
+      attribute in a box, with `shared` or `both` and `with` (the other
+      classes), the edge with its `member` too; a `rule` edge with `rule` and `key`; a class box
       with `disjoint` and `moreRules` when it has them, and its `classType`,
       "owl" for owl:Class (or both) and "rdfs" for rdfs:Class alone
       (edit-page-rework 5.8). An imported box has none: absent means owl.
@@ -119,32 +126,44 @@ def build_canvas(
         return bool(tag) and not lang_matches(tag, display)
 
     def ends(prop: URIRef) -> tuple:
-        """(domain, range, written as an expression): the first named end of
-        each, and whether either is an anonymous expression instead."""
-        domains = list(graph.objects(prop, RDFS.domain))
+        """(the domain's classes, the first named range, written as an
+        expression): the domain as axioms.domain_of reads it, so a union's
+        members are every one of its classes (attribute-reuse 5.3)."""
+        reading = axioms.domain_of(graph, prop)
         ranges = list(graph.objects(prop, RDFS.range))
-        named = lambda values: next((v for v in values if isinstance(v, URIRef)), None)  # noqa: E731
-        expression = any(not isinstance(v, URIRef) for v in domains + ranges)
-        return named(domains), named(ranges), expression
+        rng = next((v for v in ranges if isinstance(v, URIRef)), None)
+        expression = reading.form == "expression" or any(not isinstance(v, URIRef) for v in ranges)
+        return reading, rng, expression
 
-    # Attributes: datatype properties, listed inside the box of their domain.
+    def mark(reading, member) -> dict:
+        """How a member has a property it shares: *shared* in a union, *both*
+        where two domain lines list it, which the 5.4 warning explains."""
+        if reading.form == "union":
+            return {"shared": True, "with": [str(c) for c in reading.classes if c != member]}
+        if reading.form == "separate":
+            return {"both": True, "with": [str(c) for c in reading.classes if c != member]}
+        return {}
+
+    # Attributes: datatype properties, listed inside the box of each class
+    # of their domain.
     attributes: dict[URIRef, list] = {}
     undrawn: list[dict] = []
     for prop in sorted(_typed(graph, (OWL.DatatypeProperty,))):
-        domain, rng, expression = ends(prop)
+        reading, rng, expression = ends(prop)
         entry = {
             "iri": str(prop),
             "label": label(prop),
             "datatype": prefixed(graph, rng) if rng is not None else None,
         }
-        if expression or domain is None:
+        if expression or not reading.classes:
             undrawn.append({
                 "iri": str(prop), "label": entry["label"], "kind": "datatypeProperty",
                 "missing": "expression" if expression else "domain",
                 "domain": None, "range": str(rng) if rng is not None else None,
             })
         else:
-            attributes.setdefault(domain, []).append(entry)
+            for member in reading.classes:
+                attributes.setdefault(member, []).append({**entry, **mark(reading, member)})
 
     edges: list[dict] = []
     outside: dict[URIRef, str] = {}  # an imported or undeclared box, and its kind
@@ -189,31 +208,39 @@ def build_canvas(
             edges.append({"kind": "related", "source": str(first), "target": str(second)})
 
     for prop in sorted(_typed(graph, (OWL.ObjectProperty,))):
-        domain, rng, expression = ends(prop)
+        reading, rng, expression = ends(prop)
+        domain = reading.classes[0] if reading.form == "one" else None
         missing = (
             "expression" if expression
-            else "both" if domain is None and rng is None
-            else "domain" if domain is None
+            else "both" if not reading.classes and rng is None
+            else "domain" if not reading.classes
             else "range" if rng is None
             else None
         )
         if missing:
             # The end it has, so drawing a line can offer to complete it
-            # rather than bend it to a new meaning (5.4, Relating).
+            # rather than bend it to a new meaning (5.4, Relating). A domain
+            # of several classes is no one end to complete: it is listed.
             undrawn.append({
                 "iri": str(prop), "label": label(prop), "kind": "objectProperty", "missing": missing,
                 "domain": str(domain) if domain is not None else None,
                 "range": str(rng) if rng is not None else None,
+                **({"domains": [str(c) for c in reading.classes]} if len(reading.classes) > 1 else {}),
             })
             continue
-        if end(domain, "class") and end(rng, "class"):
-            edges.append({
-                "kind": "relationship",
-                "source": str(domain),
-                "target": str(rng),
-                "property": str(prop),
-                "label": label(prop),
-            })
+        # One line from each class of the domain (attribute-reuse 5.3): a
+        # shared relationship's line names its member, so two lines of one
+        # relationship have two ids.
+        for member in reading.classes:
+            if end(member, "class") and end(rng, "class"):
+                edges.append({
+                    "kind": "relationship",
+                    "source": str(member),
+                    "target": str(rng),
+                    "property": str(prop),
+                    "label": label(prop),
+                    **({"member": str(member), **mark(reading, member)} if len(reading.classes) > 1 else {}),
+                })
 
     # Rules (axioms-and-reasoning 5.9): a restriction whose filler is a named
     # class is a dashed line to it, labelled by the frontend from its
@@ -278,11 +305,18 @@ def build_canvas(
 
     # An attribute is drawn in its class's box; a class outside the model is
     # drawn only when a line reaches it, and otherwise the attribute is
-    # listed, not lost.
+    # listed, not lost. A shared one drawn in another box is not lost either.
+    drawn = {
+        entry["iri"] for domain, entries in attributes.items()
+        if domain in classes or domain in outside for entry in entries
+    }
     for domain, entries in attributes.items():
         if domain in classes or domain in outside:
             continue
         for entry in entries:
+            if entry["iri"] in drawn:
+                continue
+            drawn.add(entry["iri"])
             undrawn.append({
                 "iri": entry["iri"], "label": entry["label"], "kind": "datatypeProperty",
                 "missing": "outside", "domain": str(domain), "range": None,

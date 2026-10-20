@@ -70,6 +70,10 @@ BASIC IDEA
     closing the project each has to ask "Apply, discard, or stay?", and only
     something outside the editor can ask before the editor unmounts.
 
+    reuseDraft (attribute-reuse 5.1) carries a reuse begun on the canvas
+    to the class's form, which opens the reuse plan once, as ruleDraft does
+    for a rule.
+
 INPUTS / INPUT SOURCES
     - api.ts, for every project call.
 
@@ -168,6 +172,10 @@ export interface ProjectSnapshot {
    *  menu's *a rule* entry opens the class's sentence builder with both
    *  classes filled. The form takes it once, by its token. */
   ruleDraft: { cls: string; filler: string; property?: string; token: number } | null;
+  /** A reuse begun on the canvas (attribute-reuse 5.1): the relate menu's
+   *  *Share* entry, or a box's attribute suggestion, opens the class's
+   *  reuse plan for that property. The form takes it once, by its token. */
+  reuseDraft: { cls: string; property: string; label: string; kind: "attribute" | "relationship"; token: number } | null;
   /** A thing being named before it is made (edit-page-rework 5.5): the
    *  canvas's draft box and the side panel's form both show it. */
   creating: Creating | null;
@@ -225,6 +233,7 @@ const EMPTY: ProjectSnapshot = {
   reasoningData: false,
   reasoningToken: 0,
   ruleDraft: null,
+  reuseDraft: null,
   creating: null,
   creatingBusy: false,
   creatingError: null,
@@ -721,6 +730,17 @@ export const projectStore = {
       creationStart()?.focus();
       creatingFrom = null;
     }, 0);
+  },
+
+  /** Open the class's reuse plan for a property (attribute-reuse 5.1):
+   *  every canvas way to reuse ends in the class's form (D-078). */
+  startReuse(cls: string, property: string, label: string, kind: "attribute" | "relationship"): void {
+    set({ reuseDraft: { cls, property, label, kind, token: (snapshot.reuseDraft?.token ?? 0) + 1 } });
+  },
+
+  /** The form has opened the plan for the draft: it is spent. */
+  reuseDraftTaken(): void {
+    if (snapshot.reuseDraft !== null) set({ reuseDraft: null });
   },
 
   /** The form has opened the builder for the draft: it is spent. */

@@ -402,9 +402,11 @@ def test_an_end_written_as_an_expression_is_listed_never_offered_to_complete():
     pid = _project(PREFIXES + """
 shop:A a owl:Class . shop:B a owl:Class .
 shop:either a owl:ObjectProperty ; rdfs:label "either"@en ;
-    rdfs:domain [ owl:unionOf ( shop:A shop:B ) ] ; rdfs:range shop:B .
-shop:size a owl:DatatypeProperty ; rdfs:label "size"@en ; rdfs:domain [ owl:unionOf ( shop:A shop:B ) ] .
+    rdfs:domain [ owl:intersectionOf ( shop:A shop:B ) ] ; rdfs:range shop:B .
+shop:size a owl:DatatypeProperty ; rdfs:label "size"@en ; rdfs:domain [ owl:intersectionOf ( shop:A shop:B ) ] .
 """, languages=())
+    # A union of named classes is read since attribute-reuse 5.3 (D-116);
+    # an intersection is still Turtle's.
     undrawn = {u["label"]: u for u in canvas(pid)["undrawn"]}
     assert undrawn["either"]["missing"] == "expression"
     assert undrawn["size"]["missing"] == "expression"
@@ -551,3 +553,76 @@ def test_class_type_adds_no_store_lookup_to_a_canvas_build():
     graph = _counting()
     canvas_mod.build_canvas(graph, ["en"])
     assert _Counting.patterns == 55
+
+
+# --- a shared domain (attribute-reuse 5.3, D-116) ---------------------------------------
+
+SHARED = PREFIXES + """
+shop:Employee a owl:Class ; rdfs:label "Employee"@en .
+shop:Contractor a owl:Class ; rdfs:label "Contractor"@en .
+shop:Manager a owl:Class ; rdfs:label "Manager"@en .
+shop:hasName a owl:DatatypeProperty ; rdfs:label "hasName"@en ; rdfs:range xsd:string ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( shop:Employee shop:Contractor ) ] .
+shop:reportsTo a owl:ObjectProperty ; rdfs:label "reportsTo"@en ; rdfs:range shop:Manager ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( shop:Employee shop:Contractor ) ] .
+shop:badge a owl:DatatypeProperty ; rdfs:label "badge"@en ; rdfs:domain shop:Employee , shop:Manager .
+"""
+
+
+def test_a_union_attribute_is_in_every_member_box_marked_shared():
+    """AC-8: drawn in each box, marked in text by the frontend from `shared`."""
+    boxes = {n["label"]: n for n in canvas(_project(SHARED, languages=()))["nodes"]}
+    for member, other in (("Employee", EX + "Contractor"), ("Contractor", EX + "Employee")):
+        rows = {a["label"]: a for a in boxes[member]["attributes"]}
+        assert rows["hasName"]["shared"] is True and rows["hasName"]["with"] == [other]
+    assert "hasName" not in {a["label"] for a in boxes["Manager"]["attributes"]}
+
+
+def test_a_union_relationship_is_one_line_per_member_each_naming_it():
+    """AC-8: one line from each member, told apart by `member`."""
+    view = canvas(_project(SHARED, languages=()))
+    lines = [e for e in view["edges"] if e.get("property") == EX + "reportsTo"]
+    assert sorted(e["source"] for e in lines) == [EX + "Contractor", EX + "Employee"]
+    assert {e["member"] for e in lines} == {EX + "Contractor", EX + "Employee"}
+    assert all(e["target"] == EX + "Manager" and e["shared"] for e in lines)
+    assert "reportsTo" not in {u["label"] for u in view["undrawn"]}
+
+
+def test_two_domain_lines_are_drawn_in_each_box_marked_both():
+    """5.4: the standard's reading, shown in each listed box, never as *either*."""
+    boxes = {n["label"]: n for n in canvas(_project(SHARED, languages=()))["nodes"]}
+    for member in ("Employee", "Manager"):
+        badge = {a["label"]: a for a in boxes[member]["attributes"]}["badge"]
+        assert badge["both"] is True and "shared" not in badge
+
+
+def _union_attributes(count: int, classes: int) -> str:
+    lines = []
+    for i in range(count):
+        a, b = i % classes, (i + 1) % classes
+        lines.append(
+            f'shop:u{i} a owl:DatatypeProperty ; rdfs:label "u {i}"@en ; rdfs:range xsd:string ; '
+            f"rdfs:domain [ a owl:Class ; owl:unionOf ( shop:C{a} shop:C{b} ) ] ."
+        )
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.perf
+def test_canvas_with_union_attributes_budget():
+    """Section 10: the fixture plus 1,000 union-domain attributes, each now
+    drawn in two boxes, <= 150 ms."""
+    pid = _project(_big_model(3334) + _union_attributes(1000, 300), languages=())
+    document = editing_service.document(pid, "model")
+    assert len(document.graph) >= 20_000
+
+    def invalidate():
+        document._canvas = None
+
+    canvas(pid)  # warm-up
+    # Past the box limit the route sends only a shown set: the view it cuts
+    # from is what is built, and every attribute is in it twice.
+    view = canvas_mod.build_canvas(document.graph, None)
+    drawn = sum(1 for n in view["nodes"] for a in n["attributes"] if a.get("shared"))
+    assert drawn == 2000
+    median = _median_ms(lambda: canvas(pid), setup=invalidate)
+    assert median <= limit_ms(150), f"the canvas view took {median:.0f} ms (median of 5)"

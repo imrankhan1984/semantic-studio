@@ -34,6 +34,15 @@ BASIC IDEA
     visible until it is resolved rather than surfacing only at the next
     click.
 
+    attribute-reuse 5.4 adds one more (domain_warning): a property with two
+    rdfs:domain lines, which the standards read as *both* (RDF 1.1
+    Semantics 9.2.1), is warned of under *Belongs to* in those words, and
+    its Fix shares it -- a union when every class is an OWL class, a shared
+    parent, whose name the form asks first, when one is RDFS. It is read
+    from the view, so an imported property is warned of too, without a Fix.
+    The symmetric, reflexive and inverse warnings read the domain through
+    axioms.domain_of, a union's every class rather than the first named.
+
     axioms-and-reasoning 5.10 adds the checks on a class's rules, in the
     same words: a count on a relationship that is not simple, found by the
     same walk the chaining rule uses (counting_refusal); *at least* above
@@ -64,8 +73,8 @@ from typing import Callable, Iterable, Optional
 from rdflib import BNode, Graph, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS
 
-from .axioms import disjoint_pairs, disjoint_with, named_pairs
-from .sentences import article
+from .axioms import class_type, defined, disjoint_pairs, disjoint_with, domain_of, named_pairs
+from .sentences import article, verb
 
 Name = Callable[[URIRef], str]
 
@@ -489,30 +498,40 @@ def warnings(graph: Graph, prop: URIRef, name: Name) -> list[dict]:
     for bad, what, why in _Facts(graph).violations():
         if bad == prop:
             out.append({"text": chaining_sentence(bad, what, why, name), "block": "characteristics"})
-    domain = _named(graph.objects(prop, RDFS.domain))
+    # The domain as axioms.domain_of reads it (attribute-reuse 5.3): every
+    # class of a union, *or*; every class of two domain lines, *and*.
+    reading = domain_of(graph, prop)
+    classes = reading.classes
+    joiner = " and " if reading.form == "separate" else " or "
+    starts = joiner.join(f"{article(name(c))} {name(c)}" for c in classes)
     rng = _named(graph.objects(prop, RDFS.range))
     label = name(prop)
-    if "symmetric" in has and domain is not None and rng is not None and domain != rng:
+    if "symmetric" in has and classes and rng is not None and set(classes) != {rng}:
         # The spec's sentence conjugates the name (*can also work for*); this
         # one reads the name as written, as the "identifies its start"
         # example does, so no grammar is guessed.
-        start, end = name(domain), name(rng)
+        end = name(rng)
         out.append({
             "block": "characteristics",
             "text": (
                 f"Works both ways means {article(end)} {end} can also be linked by {label} "
-                f"to {article(start)} {start}. Usually start and end are the same class."
+                f"to {starts}. Usually start and end are the same class."
             )
         })
-    if "reflexive" in has and domain is not None:
+    if "reflexive" in has and classes:
         out.append({
             "block": "characteristics",
-            "text": f'"Always to itself" makes every thing {article(name(domain))} {name(domain)}. '
+            "text": f'"Always to itself" makes every thing {starts}. '
             "This is rarely what is meant."
         })
+    # The inverse's ends are checked against one class only: a range is
+    # read as one class (shared ranges are a follow-up), so the other way
+    # round of a shared start cannot be written with SetEnds.
+    domain = classes[0] if reading.form == "one" else None
     if domain is not None and rng is not None:
         for inverse in inverses(graph, prop):
-            ends = (_named(graph.objects(inverse, RDFS.domain)), _named(graph.objects(inverse, RDFS.range)))
+            other = domain_of(graph, inverse)
+            ends = (other.classes[0] if other.form == "one" else None, _named(graph.objects(inverse, RDFS.range)))
             if ends == (rng, domain):
                 continue
             warning = {"text": f"{name(inverse)} should go from {name(rng)} to {name(domain)}.", "block": "inverse"}
@@ -526,3 +545,42 @@ def warnings(graph: Graph, prop: URIRef, name: Name) -> list[dict]:
                 }
             out.append(warning)
     return out
+
+
+def domain_warning(view: Graph, own: Graph, prop: URIRef, name: Name) -> Optional[dict]:
+    """Two rdfs:domain lines (attribute-reuse 5.4): the standards read them
+    as *both* (RDF 1.1 Semantics 9.2.1), which is rarely what was meant.
+    Shown under *Belongs to*; its Fix shares the property between the
+    classes, a union when every one is an OWL class and a shared parent,
+    which needs a name, when any is RDFS. An imported property gets the
+    sentence and no Fix: it is changed where it is defined."""
+    reading = domain_of(view, prop)
+    if reading.form != "separate":
+        return None
+    label = name(prop)
+    listed = " and ".join(name(c) for c in reading.classes)
+    every = " and ".join(f"{article(name(c))} {name(c)}" for c in reading.classes)
+    subject = (
+        f"whatever {verb(label)} something" if (prop, RDF.type, OWL.ObjectProperty) in view
+        else f"whatever has {label}"
+    )
+    warning = {
+        "block": "domain",
+        "code": "separate",
+        "text": (
+            f"{label} lists {listed} separately. In RDFS and OWL that means {subject} is both {every}. "
+            "To mean either one, share it."
+        ),
+    }
+    if domain_of(own, prop).form != "separate":
+        return warning
+    owl = all(class_type(view, c) == "owl" for c in reading.classes)
+    if owl:
+        warning["fix"] = {"command": "ShareDomain", "args": {"property": str(prop), "how": "union"}, "label": "Share it"}
+    elif all(defined(own, c) for c in reading.classes):
+        # A shared parent needs its name: the form asks for it first.
+        warning["fix"] = {
+            "command": "ShareDomain", "args": {"property": str(prop), "how": "parent"},
+            "label": "Share it", "needs": "parentName",
+        }
+    return warning

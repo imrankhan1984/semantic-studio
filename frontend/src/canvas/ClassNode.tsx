@@ -31,6 +31,11 @@ BASIC IDEA
     nothing is told by colour or line style alone. The colours are CSS
     tokens chosen by a `kind-…` class (kindColours.ts holds their values).
 
+    A shared attribute says *(shared)*, or *(both, see warning)* for two
+    domain lines, in text (attribute-reuse 5.5); and *+ attribute* offers
+    the project's own attributes while one is named (5.1), each *Use it on*
+    this class, which the class's form takes up as the reuse plan.
+
 INPUTS / INPUT SOURCES
     - data: see BoxData.
 
@@ -42,8 +47,9 @@ EXPECTED OUTPUT
 
 import { memo, useState } from "react";
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
+import { useSuggestions } from "../components/useSuggestions";
 import { moreRulesText } from "../modeling/ruleSentences";
-import { article } from "../modeling/sentences";
+import { ALREADY_HERE, article, useOn } from "../modeling/sentences";
 import { DATATYPES } from "../modeling/values";
 import type { CanvasNode } from "../types";
 import { boxKind, kindWord } from "./kindColours";
@@ -60,6 +66,11 @@ export interface BoxData extends Record<string, unknown> {
   onAddAttribute: (iri: string, name: string, datatype: string) => Promise<boolean>;
   // An attribute row clicked: its form opens (relationships 5.7).
   onSelectAttribute?: (iri: string) => void;
+  // The model's ontology id, for the suggestions while an attribute is
+  // named (attribute-reuse 5.1), and what choosing one does: the class's
+  // form opens the reuse plan.
+  ontologyId?: string;
+  onReuse?: (cls: string, property: string, label: string) => void;
 }
 
 export type BoxNode = Node<BoxData, "class" | "concept">;
@@ -158,6 +169,7 @@ function ClassNode({ data, selected }: NodeProps<BoxNode>) {
   const [name, setName] = useState("");
   const [datatype, setDatatype] = useState("xsd:string");
   const imported = Boolean(node.imported);
+  const { suggestions, said } = useSuggestions(adding ? (data.ontologyId ?? null) : null, "datatypeProperty", name);
   const submit = async () => {
     if (busy || !name.trim()) return;
     if (await onAddAttribute(node.iri, name.trim(), datatype)) {
@@ -201,6 +213,8 @@ function ClassNode({ data, selected }: NodeProps<BoxNode>) {
                   }}
                 >
                   {a.label} : {a.datatype ?? "no type"}
+                  {/* Said in text, never by colour alone (attribute-reuse 5.5). */}
+                  {a.both ? " (both, see warning)" : a.shared ? " (shared)" : ""}
                 </button>
               </li>
             ))}
@@ -239,6 +253,32 @@ function ClassNode({ data, selected }: NodeProps<BoxNode>) {
               <button type="button" className="ghost" onClick={() => setAdding(false)}>
                 Cancel
               </button>
+              {suggestions.length > 0 && data.onReuse && (
+                <div className="canvas-suggestions">
+                  <span className="canvas-box-from">{ALREADY_HERE}</span>
+                  {suggestions.map((s) => (
+                    <span key={s.iri} className="canvas-suggestion">
+                      {s.line}{" "}
+                      <button
+                        type="button"
+                        aria-label={`${useOn(node.label)} (${s.label})`}
+                        aria-disabled={busy}
+                        onClick={() => {
+                          if (busy) return;
+                          setAdding(false);
+                          setName("");
+                          data.onReuse?.(node.iri, s.iri, s.label);
+                        }}
+                      >
+                        {useOn(node.label)}
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <span className="visually-hidden" role="status">
+                {said}
+              </span>
             </div>
           ) : (
             <button

@@ -2207,3 +2207,62 @@ EXPECTED OUTPUT
   inside the block is undone by the context manager's own `shutdown(wait=
   True)`. Measured: a parse held 3 s under a 0.2 s timeout raised after
   3.01 s.
+
+- **A property is shared by one domain, read by one reader** (2026-10-20,
+  spec `attribute-reuse` Stage A, backlog E-13, decision D-116). *Add
+  attribute* and *Add relationship* offer what the project has, a Create
+  with an existing name offers the same, and the reuse plan says in the
+  person's names what each choice writes.
+
+  **One reader of a domain (`axioms.domain_of`).** Before it, each view read
+  `rdfs:domain` its own way, and two of them disagreed: the canvas took the
+  first named value, the class panels every incoming statement. A union
+  written in Turtle was in no box and no panel, because the members hang
+  off a blank node none of them followed; two domain lines were listed as
+  if they meant *either*. Every view now reads the five forms of 5.3, and
+  `test_axioms.py` reads every module but `axioms.py` and `editing.py` with
+  `ast` for a call that hands back `rdfs:domain`'s objects (`objects`,
+  `value`, `subject_objects`, `triples`, ... with the predicate in its
+  arguments, `URIRef("...#domain")` included) or a name bound to the
+  predicate; it catches seven planted reads first. `subjects(RDFS.domain,
+  cls)` is allowed: it answers properties, never a domain, which is how the
+  reasoner's explainer now finds rdfs2's premise. Explore's `/graph` still
+  draws domain lines from the statements, as the spec leaves it.
+
+  **No command writes a second `rdfs:domain`.** RDF 1.1 Semantics applies
+  rdfs2 once per domain statement, so `rdfs:domain A , B` makes whatever
+  has the property both an A and a B; the reasoner here concludes exactly
+  that (`test_reasoning.py`). ShareDomain writes `[ a owl:Class ;
+  owl:unionOf ( ... ) ]` for OWL classes and a shared parent when one is
+  RDFS; `test_attribute_reuse.py` counts the domain statements after every
+  way of sharing.
+
+  **A union is never left with one member, and never left behind.**
+  UnshareDomain from a union of two writes the one class left as a plain
+  domain; SetDomain, ClearDomain and SetEnds remove the union's blank nodes
+  with the statement (`_end_removes`, through `_bnode_closure`). Before
+  this, a cleared union left its list behind, invisible and unselectable.
+
+  **The list walk is bounded.** A loaded RDF list is attacker-shaped (a
+  million cells, a cycle). `_union_members` stops at `UNION_MAX` (100) and
+  on a revisit, and reads the rest as an expression; a cycle of two stops
+  after three cell reads, which the test counts, since the cap alone also
+  ends a cycle and a test of the result could not tell them apart.
+
+  **A relationship whose start is several classes is never offered to
+  complete.** Its `undrawn` entry carries `domains`; the relate menu skips
+  it from any other class, and from a member sets the range only. Without
+  that, SetEnds would have replaced the union with one class.
+
+  **Found in code review, fixed.** Deleting a class that is a member of a
+  union took the property's whole domain, as DeleteEntity takes every
+  expression mentioning the class; `delete_plan` now writes the union of
+  the rest, or the one class left, in the same step. A new inverse copied
+  the union's blank node as its range, giving it a second statement, so
+  the original read as an expression from then on: it copies named ends
+  only. SwapEnds refuses a shared start, which would make a shared range
+  no form reads. The form's *Belongs to* lists the document's own domain
+  statements, so every Remove is one UnshareDomain can do; an import's
+  extra line is warned of, without a Fix. A replaced suggestion search is
+  aborted, its details with it (CF-4). Not changed: each suggestion still
+  costs one `/node` request, at most five per pause.

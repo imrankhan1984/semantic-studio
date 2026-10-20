@@ -79,6 +79,13 @@ BASIC IDEA
 
     Moving a box is not an undo step and never makes the model dirty (5.5).
 
+    attribute-reuse 5.1 and 5.3: a box's *+ attribute* offers what the
+    project already has while it is named, and the relate menu offers to
+    share a relationship that already ends at the line's end; either opens
+    the reuse plan in the class's form, through the store's reuseDraft
+    (D-078). Delete on one line of a shared relationship asks whether to
+    remove that class from it (UnshareDomain) or delete it.
+
 INPUTS / INPUT SOURCES (props)
     - projectId, doc, revision, language, primaryLanguage: the document, and
       the language names are shown and renamed in.
@@ -123,10 +130,10 @@ import {
 import "@xyflow/react/dist/base.css";
 import ConfirmDialog from "../components/ConfirmDialog";
 import DeleteDialog from "../components/DeleteDialog";
-import { getNodeDetails } from "../api";
+import { alreadyDefined, getNodeDetails } from "../api";
 import { useRunner } from "../components/EditParts";
 import { restrictionSentence, shortLabel } from "../modeling/ruleSentences";
-import { createdAnnouncement, linkSentence, otherKindNote } from "../modeling/sentences";
+import { createdAnnouncement, linkSentence, memberDeleteQuestion, otherKindNote, removedAnnouncement } from "../modeling/sentences";
 import { projectStore, useProjectSelector } from "../state/projectStore";
 import { intoDraft } from "../components/CreateForm";
 import type { CanvasLink, CanvasNode, CanvasSet, CanvasView, ProjectDocName } from "../types";
@@ -318,6 +325,8 @@ function Canvas(props: ModelCanvasProps) {
   } | null>(null);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
   const [deleting, setDeleting] = useState<{ iri: string; label: string } | null>(null);
+  // Delete on one line of a shared relationship: remove the class, or delete it?
+  const [unsharing, setUnsharing] = useState<{ property: string; label: string; member: string; memberLabel: string } | null>(null);
   const [tidying, setTidying] = useState(false);
   const [undrawnOpen, setUndrawnOpen] = useState(false);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
@@ -382,10 +391,22 @@ function Canvas(props: ModelCanvasProps) {
     [run, language, primaryLanguage, focusBox],
   );
 
+  // A name that is an attribute already (attribute-reuse 5.1's 409): the
+  // class's form opens the reuse plan for it, as a suggestion does.
+  const onReuse = useCallback(
+    (cls: string, property: string, name: string) => {
+      projectStore.startReuse(cls, property, name, "attribute");
+      selectHere(cls);
+    },
+    [selectHere],
+  );
   const onAddAttribute = useCallback(
     async (iri: string, name: string, datatype: string) =>
-      (await run("attribute", "CreateDatatypeProperty", { label: name, domain: iri, datatype })) !== null,
-    [run],
+      (await run("attribute", "CreateDatatypeProperty", { label: name, domain: iri, datatype }, undefined, (_m, e) => {
+        const found = alreadyDefined(e);
+        if (found && found.property.kind === "attribute") onReuse(iri, found.property.iri, found.property.label);
+      })) !== null,
+    [run, onReuse],
   );
 
   // What a draft made: placed where its box stood, selected and focused
@@ -432,6 +453,14 @@ function Canvas(props: ModelCanvasProps) {
       selectHere(from);
       return;
     }
+    if (choice.kind === "share") {
+      // The reuse plan is the form's (attribute-reuse 5.1, D-078): select the
+      // start class, whose form opens the plan for this relationship.
+      projectStore.startReuse(from, choice.property, choice.name, "relationship");
+      setRelate(null);
+      selectHere(from);
+      return;
+    }
     if (choice.kind === "subClassOf") ok = !!(await run("relate", "AddSubClassOf", { child: from, parent: to }));
     else if (choice.kind === "broader") ok = !!(await run("relate", "AddBroader", { concept: from, broader: to }));
     else if (choice.kind === "related") ok = !!(await run("relate", "AddRelated", { concept: from, related: to }));
@@ -444,7 +473,7 @@ function Canvas(props: ModelCanvasProps) {
       );
       ok = !!result;
       relationship = result?.created ?? null;
-    } else {
+    } else if (choice.kind === "existing") {
       // Both ends in one command, so one undo step (relationships R6; the
       // E-7 note: SetDomain then SetRange took two).
       const result = await run(
@@ -527,7 +556,11 @@ function Canvas(props: ModelCanvasProps) {
       const said = ruleWords(view!, edge);
       await run("edge", "RemoveRestriction", { class: edge.source, restriction: edge.key }, (r) => `Removed: ${said}. ${r.label}.`);
     }
-    else if (edge.property) setDeleting({ iri: edge.property, label: edge.label ?? edge.property });
+    // One line of a shared relationship (attribute-reuse 5.3): the class
+    // can be taken out, or the relationship deleted; the person says which.
+    else if (edge.property && edge.member) {
+      setUnsharing({ property: edge.property, label: edge.label ?? edge.property, member: edge.member, memberLabel: label(view!, edge.member) });
+    } else if (edge.property) setDeleting({ iri: edge.property, label: edge.label ?? edge.property });
     setSelectedEdge(null);
   };
 
@@ -604,6 +637,8 @@ function Canvas(props: ModelCanvasProps) {
             onRenameDone: (iri, value) => void onRenameDone(iri, value),
             onAddAttribute,
             onSelectAttribute: selectHere,
+            ontologyId: `${projectId}-${doc}`,
+            onReuse,
           };
           return {
             id: n.iri,
@@ -622,7 +657,7 @@ function Canvas(props: ModelCanvasProps) {
       boxes.sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x);
       return boxes;
     });
-  }, [view, positions, selected, renaming, dropTarget, busy, onRenameDone, onAddAttribute, selectHere]);
+  }, [view, positions, selected, renaming, dropTarget, busy, onRenameDone, onAddAttribute, selectHere, onReuse, projectId, doc]);
 
   const edges = useMemo<Edge[]>(() => {
     if (!view) return [];
@@ -642,7 +677,10 @@ function Canvas(props: ModelCanvasProps) {
         // selection, however it was selected: by the line, the tree or a link.
         selected: id === selectedEdge || (relationship && e.property === selected),
         ariaLabel:
-          e.kind === "relationship"
+          e.kind === "relationship" && e.member
+            ? // One of a shared relationship's lines names its member (5.5).
+              `${e.label}, from ${label(view, e.source)} to ${label(view, e.target)}`
+            : e.kind === "relationship"
             ? `${label(view, e.source)} ${e.label} ${label(view, e.target)}`
             : e.kind === "rule"
               ? `${ruleWords(view, e)}, a rule`
@@ -656,7 +694,7 @@ function Canvas(props: ModelCanvasProps) {
           // An inferred line always says so, in words: never by its dash alone.
           text:
             e.kind === "relationship"
-              ? (e.label ?? "")
+              ? `${e.label ?? ""}${e.both ? " (both, see warning)" : e.shared ? " (shared)" : ""}`
               : e.kind === "rule"
                 ? e.rule
                   ? shortLabel(e.rule)
@@ -1193,6 +1231,35 @@ function Canvas(props: ModelCanvasProps) {
           }}
         >
           <p>This moves every box. Positions you set are replaced.</p>
+        </ConfirmDialog>
+      )}
+      {unsharing && (
+        <ConfirmDialog
+          title={memberDeleteQuestion(unsharing.memberLabel, unsharing.label)}
+          escape="cancel"
+          busy={busy}
+          actions={[
+            { id: "remove", label: `Remove ${unsharing.memberLabel}`, primary: true },
+            { id: "delete", label: `Delete ${unsharing.label}` },
+            { id: "cancel", label: "Cancel" },
+          ]}
+          onAnswer={async (id) => {
+            const asked = unsharing;
+            if (id === "remove") {
+              const done = await run("edge", "UnshareDomain", { property: asked.property, class: asked.member }, () =>
+                removedAnnouncement(asked.label, asked.memberLabel),
+              );
+              if (!done) return;
+            }
+            setUnsharing(null);
+            if (id === "delete") setDeleting({ iri: asked.property, label: asked.label });
+            wrapper.current?.focus();
+          }}
+        >
+          <p>
+            Remove {unsharing.memberLabel} takes only this line away. Delete {unsharing.label} removes the relationship
+            from every class.
+          </p>
         </ConfirmDialog>
       )}
     </section>

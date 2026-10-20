@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1402 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1674 tests, vitest
+cd backend  && python -m pytest tests    # 1462 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1717 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -62,7 +62,7 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Thirty-two backend tests carry
+**Timing budgets are separated, not deleted.** Thirty-five backend tests carry
 `@pytest.mark.perf`; ten frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
@@ -411,6 +411,11 @@ leaves one behind.
 - A rule line's id carries its key: two rules can join the same two boxes. [Rules on a class]
 - Disjointness is `owl:disjointWith` or `owl:AllDisjointClasses`, read through `axioms.disjoint_with`/`disjoint_pairs`; a group is read-only Turtle. [AllDisjointClasses counts]
 - The relate menu and a relationship's pointer start a rule through `projectStore.ruleDraft`; the rule is written in the form (D-078). [Rules on a class]
+
+**Sharing a property**
+- Only `axioms.py` reads a domain's objects, through `domain_of`; `editing.py` writes them. `test_axioms.py` scans for any other read (D-116). [one reader of a domain]
+- No command writes a second `rdfs:domain`: the standards read two as *both*. Sharing is a union of named classes or a shared parent (D-116). [one reader of a domain]
+- A union is never left with one member: UnshareDomain from two writes the plain domain, and replacing or clearing a domain takes the union's blank nodes. [one reader of a domain]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

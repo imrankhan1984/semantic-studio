@@ -653,13 +653,15 @@ class Explainer:
                         yield "same", [(s, RDF.type, k), x], [], (
                             f"{n(s)} is {a(n(k))}, and {n(k)} and {n(o)} mean the same thing"
                         )
-        for prop, x in c.pairs(RDFS.domain):
-            if x == o:
-                for y in c.objects(s, prop):
-                    yield "domainRange", [(s, prop, y), (prop, RDFS.domain, o)], [], (
-                        f"{n(s)} {verb(n(prop))} {n(y)}, and whoever {verb(n(prop))} something is {a(n(o))}"
-                    )
-                    break
+        # Each domain statement is its own premise (rdfs2): the properties
+        # whose domain is this class, found by subject, so only axioms.py
+        # reads a domain's objects (attribute-reuse 5.3).
+        for prop in sorted(c.subjects(RDFS.domain, o), key=str):
+            for y in c.objects(s, prop):
+                yield "domainRange", [(s, prop, y), (prop, RDFS.domain, o)], [], (
+                    f"{n(s)} {verb(n(prop))} {n(y)}, and whoever {verb(n(prop))} something is {a(n(o))}"
+                )
+                break
         for prop, x in c.pairs(RDFS.range):
             if x == o:
                 for y in c.subjects(prop, s):

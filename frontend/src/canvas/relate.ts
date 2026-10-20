@@ -28,6 +28,12 @@ BASIC IDEA
     in. A line that would change an imported box is refused
     with a sentence. A link that already exists is not offered again.
 
+    A relationship that already ends at the line's end, from another class,
+    is offered to share (attribute-reuse 5.1): the reuse plan for it and
+    the line's start, opened in the start's form. A relationship whose
+    start is several classes is never offered to complete, since setting
+    its start would replace them all.
+
     Each choice is labelled by the sentence it would make (relationships
     5.3): *Person is a kind of Organization*, so a wrong direction is seen
     before it is confirmed, and the menu can be asked again the other way
@@ -49,7 +55,7 @@ EXPECTED OUTPUT
 */
 
 import { moreRulesText } from "../modeling/ruleSentences";
-import { article, existingSentence, linkSentence } from "../modeling/sentences";
+import { article, existingSentence, linkSentence, shareEntry } from "../modeling/sentences";
 import type { CanvasNode, CanvasView } from "../types";
 import { kindWord } from "./kindColours";
 
@@ -70,7 +76,11 @@ export type RelateChoice =
       // Which ends the command must set: the one it lacks, or both.
       setDomain: boolean;
       setRange: boolean;
-    };
+    }
+  // A relationship that already ends at this line's end, from another
+  // class (attribute-reuse 5.1): the reuse plan for it and this line's
+  // start, in the start's form.
+  | { kind: "share"; label: string; name: string; property: string };
 
 export type RelateResult =
   | { refusal: string }
@@ -148,7 +158,10 @@ export function relateChoices(view: CanvasView, fromIri: string, toIri: string):
     // An end that is an expression is set, not missing: completing it would
     // replace what it says.
     if (u.kind !== "objectProperty" || u.missing === "expression") continue;
-    const domainFits = u.domain === null || u.domain === from.iri;
+    // A start of several classes is set, not missing: SetEnds would replace
+    // every one of them (attribute-reuse 5.3).
+    if (u.domains && !u.domains.includes(from.iri)) continue;
+    const domainFits = u.domains !== undefined || u.domain === null || u.domain === from.iri;
     const rangeFits = u.range === null || u.range === to.iri;
     if (!domainFits || !rangeFits) continue;
     choices.push({
@@ -156,9 +169,22 @@ export function relateChoices(view: CanvasView, fromIri: string, toIri: string):
       label: existingSentence(from.label, u.label, to.label),
       name: u.label,
       property: u.iri,
-      setDomain: u.domain === null,
+      setDomain: u.domain === null && u.domains === undefined,
       setRange: u.range === null,
     });
+  }
+  // Share a relationship that ends here already, from another class (5.1):
+  // *Share reportsTo: a Contractor reportsTo a Manager too.* Not one that
+  // already starts at this box, which the line would not change.
+  const offered = new Set<string>();
+  const startsHere = new Set(
+    view.edges.filter((e) => e.kind === "relationship" && e.source === from.iri).map((e) => e.property),
+  );
+  for (const e of view.edges) {
+    if (e.kind !== "relationship" || e.target !== to.iri || e.source === from.iri || !e.property) continue;
+    if (offered.has(e.property) || startsHere.has(e.property)) continue;
+    offered.add(e.property);
+    choices.push({ kind: "share", label: shareEntry(e.label ?? e.property, from.label, to.label), name: e.label ?? e.property, property: e.property });
   }
   // Drawn relationships sharing an end with this line are not offered, and
   // the menu says why, so the learner does not look for them in vain. A
@@ -168,8 +194,9 @@ export function relateChoices(view: CanvasView, fromIri: string, toIri: string):
     .filter(
       (e) =>
         e.kind === "relationship" &&
-        (e.source === from.iri || e.target === to.iri) &&
-        !(e.source === from.iri && e.target === to.iri),
+        // One ending here is offered to share instead (5.1).
+        e.source === from.iri &&
+        e.target !== to.iri,
     )
     .slice(0, 3)
     .map((e) => {

@@ -531,6 +531,69 @@ export interface NodeDetails {
   // Every ontology's entity: what the In plain words block is written from
   // (explain-panel 5.2, D-114). Structure only; explainSentences.ts words it.
   explain?: Explain;
+  // A project's class: its attributes and relationships and how it has each
+  // (attribute-reuse 5.3): its own, shared, both (two domain lines) or
+  // through a parent.
+  properties?: ClassProperty[];
+  // A project's relationship or attribute: its domain as the server's one
+  // reader reads it (attribute-reuse 5.3).
+  domain?: DomainReading;
+}
+
+/* --- a property's domain, read once (attribute-reuse 5.3, D-116) --------- */
+
+export type DomainForm = "none" | "one" | "union" | "separate" | "expression";
+
+export interface DomainReading {
+  form: DomainForm;
+  classes: { iri: string; label: string }[];
+}
+
+/** ShareDomain's dry run (attribute-reuse 5.2): the case the server
+ *  decides, and what it offers. `separate` is the 5.4 Fix's plan. */
+export interface SharePlan {
+  case: "A" | "B" | "C" | "D" | "separate" | null;
+  refused?: string;
+  property: { iri: string; label: string; kind: "attribute" | "relationship" | null };
+  class?: { iri: string; label: string; type: "owl" | "rdfs" };
+  domain: { form: DomainForm; classes: { iri: string; label: string; type: "owl" | "rdfs" }[] };
+  via?: { iri: string; label: string };
+  choices?: {
+    subclass: boolean;
+    union: boolean;
+    parent: boolean;
+    up: { iri: string; label: string; gains: { iri: string; label: string }[]; gainsTotal: number }[];
+  };
+  imported?: { iri: string; label: string; from: string | null }[];
+  union?: { iri: string; label: string }[];
+  turtle?: string | null;
+}
+
+/** The 409 a create answers when the name is a property of its kind
+ *  already (attribute-reuse 5.1). */
+export interface AlreadyDefined {
+  code: "already_defined";
+  message: string;
+  property: {
+    iri: string;
+    label: string;
+    kind: "attribute" | "relationship";
+    domain: DomainReading;
+    range: string | null;
+  };
+}
+
+export interface ClassProperty {
+  iri: string;
+  label: string;
+  kind: "attribute" | "relationship";
+  how: "own" | "shared" | "both" | "through";
+  /** The other classes of a shared or both domain. */
+  with?: { iri: string; label: string }[];
+  /** The parent it comes through. */
+  via?: { iri: string; label: string };
+  datatype?: string | null;
+  range?: { iri: string; label: string } | null;
 }
 
 /* --- the In plain words block (explain-panel 5.2) ------------------------ */
@@ -558,7 +621,10 @@ export interface Explain {
   members?: ExplainCount;
   domains?: ExplainRef[];
   ranges?: ExplainRef[];
-  // An end the file gives only as a blank node (a union, a restriction).
+  // How several domains are read (attribute-reuse 5.3): a union is *either*,
+  // two domain lines *both*; absent for one.
+  domainForm?: "union" | "separate";
+  // An end the file gives only as some other expression (a restriction).
   unnamedDomain?: boolean;
   unnamedRange?: boolean;
   // A datatype property's type of value, prefixed (xsd:date), as typeWord reads it.
@@ -654,9 +720,13 @@ export interface ExampleField {
 export interface ModelWarning {
   text: string;
   // The block it concerns, where the form shows it: "characteristics" (What
-  // else is true, How many values) or "inverse" (The other way round).
-  block?: "characteristics" | "inverse";
-  fix?: { command: string; args: Record<string, unknown>; label: string };
+  // else is true, How many values), "inverse" (The other way round) or
+  // "domain" (Belongs to, From: two domain lines, attribute-reuse 5.4).
+  block?: "characteristics" | "inverse" | "domain";
+  code?: string;
+  // `needs`: what the form must ask before the fix can run (a shared
+  // parent's name).
+  fix?: { command: string; args: Record<string, unknown>; label: string; needs?: "parentName" };
 }
 
 /* --- theme-aware palettes ------------------------------------------------ */
@@ -952,7 +1022,16 @@ export interface CanvasNode {
   fallback: boolean;
   // Outside this document: the import it comes from, or "outside". Read-only.
   imported?: string;
-  attributes: { iri: string; label: string; datatype: string | null }[];
+  // A shared attribute (attribute-reuse 5.3) is in every member's box,
+  // `shared` for a union and `both` for two domain lines, `with` the others.
+  attributes: {
+    iri: string;
+    label: string;
+    datatype: string | null;
+    shared?: boolean;
+    both?: boolean;
+    with?: string[];
+  }[];
   // A current reasoning result found that this class can never have
   // members (axioms-and-reasoning 5.5, 5.7); only with ?inferred=true.
   neverMembers?: boolean;
@@ -975,6 +1054,13 @@ export interface CanvasEdge {
   target: string;
   property?: string;
   label?: string;
+  // A relationship shared by several classes is a line from each
+  // (attribute-reuse 5.3): its `member`, `shared` for a union, `both` for
+  // two domain lines, and the other classes in `with`.
+  member?: string;
+  shared?: boolean;
+  both?: boolean;
+  with?: string[];
   // This line's place among the lines joining the same two boxes, in either
   // direction, and how many there are: several are curved apart, and a line
   // from a box to itself is a loop (relationships 5.4).
@@ -1011,13 +1097,15 @@ export interface CanvasView {
     iri: string;
     label: string;
     kind: string;
-    // "expression": an end written as owl:unionOf and the like, drawn by
+    // "expression": an end written as an intersection and the like, drawn by
     // neither a line nor a box; "outside": an attribute of a class the canvas
     // does not draw.
     missing: "domain" | "range" | "both" | "expression" | "outside";
     // The end it has, if any: a line can complete it (5.4, Relating).
     domain: string | null;
     range: string | null;
+    // A start of several classes (attribute-reuse 5.3): set, never completed.
+    domains?: string[];
   }[];
   // Classes and concepts in the document, drawn or not.
   total: number;

@@ -55,6 +55,7 @@ from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 # Shared label/prefix helpers keep class and predicate labels consistent with
 # the graph view; subclass_parents is the one asserted subClassOf pass, shared
 # with the hierarchy view so both read the class hierarchy identically.
+from . import axioms
 from .embedded_queries import count_embedded_queries
 from .graph_builder import pick_label, prefixed, subclass_parents
 
@@ -299,9 +300,13 @@ def build_query_schema(graph: Graph) -> dict:
 
     # Any class used as a property's domain or (non-literal) range is a class
     # worth listing, even if nothing is typed as it directly.
-    for _, obj in graph.subject_objects(RDFS.domain):
-        if isinstance(obj, URIRef) and obj not in META_CLASSES:
-            classes.add(obj)
+    # Domains are read by axioms.domain_of (attribute-reuse 5.3): each class
+    # of a union counts, as a named domain does.
+    declared_domains = axioms.domains(graph)
+    for reading in declared_domains.values():
+        for obj in reading.classes:
+            if obj not in META_CLASSES:
+                classes.add(obj)
     for _, obj in graph.subject_objects(RDFS.range):
         if isinstance(obj, URIRef) and obj not in META_CLASSES:
             if not _is_literal_type(obj):  # literal ranges are data props, not classes
@@ -361,10 +366,12 @@ def build_query_schema(graph: Graph) -> dict:
 
     # Every property that declares a domain and/or a range becomes a link from
     # each declared domain class to each declared (non-literal) range class.
-    for prop in set(graph.subjects(RDFS.domain, None)) | set(graph.subjects(RDFS.range, None)):
+    # A union's members each get the link: one link from each member (5.3).
+    for prop in set(declared_domains) | set(graph.subjects(RDFS.range, None)):
         if not isinstance(prop, URIRef):
             continue
-        domains = [d for d in graph.objects(prop, RDFS.domain) if isinstance(d, URIRef)]
+        reading = declared_domains.get(prop)
+        domains = list(reading.classes) if reading is not None else []
         ranges = [
             r
             for r in graph.objects(prop, RDFS.range)
@@ -419,8 +426,9 @@ def build_query_schema(graph: Graph) -> dict:
         ranges = [r for r in graph.objects(prop, RDFS.range) if isinstance(r, URIRef)]
         datatype = ranges[0] if ranges else XSD.string
         # Also recorded at the declared level only; subclasses inherit.
-        for domain in graph.objects(prop, RDFS.domain):
-            if not isinstance(domain, URIRef) or domain not in classes:
+        reading = declared_domains.get(prop)
+        for domain in reading.classes if reading is not None else ():
+            if domain not in classes:
                 continue
             if not data_counts[(domain, prop)]:
                 data_counts[(domain, prop)][datatype] = 0

@@ -185,6 +185,12 @@ COMMAND_CASES = [
     # a characteristic, a more general relationship.
     ("ClearRange", {"property": "shop:billedTo"},
      [], [(U("billedTo"), RDFS.range, U("Invoice"))], "Cleared the end of billed to"),
+    # attribute-reuse 5.2: shared as a union (its blank nodes are
+    # test_attribute_reuse.py's), then back to the one class.
+    ("ShareDomain", {"property": "shop:billedTo", "class": "shop:Organization", "how": "union"},
+     [], [(U("billedTo"), RDFS.domain, U("Person"))], "Shared billed to between Person and Organization"),
+    ("UnshareDomain", {"property": "shop:billedTo", "class": "shop:Organization"},
+     [(U("billedTo"), RDFS.domain, U("Person"))], [], "Removed Organization from billed to"),
     ("ClearDomain", {"property": "shop:billedTo"},
      [], [(U("billedTo"), RDFS.domain, U("Person"))], "Cleared the start of billed to"),
     ("SetInverse", {"property": "shop:memberOf", "label": "has member"},

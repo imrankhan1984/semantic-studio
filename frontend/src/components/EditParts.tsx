@@ -57,8 +57,9 @@ export interface Runner {
     args: Record<string, unknown>,
     announcement?: (result: ChangeResult) => string,
     /** Told the server's sentence when the command is refused, to say it in
-     *  the live region as well (axioms 5.9). */
-    refused?: (message: string) => void,
+     *  the live region as well (axioms 5.9), and the error itself, for a
+     *  refusal that carries more than words (attribute-reuse 5.1's 409). */
+    refused?: (message: string, error: unknown) => void,
   ) => Promise<ChangeResult | null>;
   clear: (field: string) => void;
   /** The form that made this runner is still mounted. */
@@ -86,7 +87,7 @@ export function useRunner(doc?: ProjectDocName): Runner {
       command: string,
       args: Record<string, unknown>,
       announcement?: (result: ChangeResult) => string,
-      refused?: (message: string) => void,
+      refused?: (message: string, error: unknown) => void,
     ) => {
       if (inFlight.current) return null;
       inFlight.current = true;
@@ -99,7 +100,7 @@ export function useRunner(doc?: ProjectDocName): Runner {
         if (mounted.current) {
           setErrors((prev) => ({ ...prev, [field]: message }));
         }
-        refused?.(message);
+        refused?.(message, e);
         return null;
       } finally {
         inFlight.current = false;

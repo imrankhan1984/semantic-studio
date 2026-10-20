@@ -54,7 +54,7 @@ EXPECTED OUTPUT
 */
 
 import { useEffect, useId, useRef, useState } from "react";
-import type { EntityModel, Ref } from "../modeling/entity";
+import { domainLabel, sharedDomain, type EntityModel, type Ref } from "../modeling/entity";
 import {
   attributeSentence,
   CHARACTERISTICS,
@@ -69,6 +69,7 @@ import { projectStore } from "../state/projectStore";
 import type { ModelWarning } from "../types";
 import { Block, type Runner } from "./EditParts";
 import EntityPicker from "./EntityPicker";
+import SharedDomain from "./SharedDomain";
 
 const XSD = "http://www.w3.org/2001/XMLSchema#";
 const RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
@@ -114,8 +115,8 @@ export function PropertyHead({
   useWarningAnnouncer(iri, warnings);
   const attribute = model.kind === "datatypeProperty";
   const sentence = attribute
-    ? attributeSentence(model.domain?.label ?? null, name, datatypeOf(model.range))
-    : formSentence(model.domain?.label ?? null, name, model.range?.label ?? null);
+    ? attributeSentence(domainLabel(model), name, datatypeOf(model.range))
+    : formSentence(domainLabel(model), name, model.range?.label ?? null);
   return (
     <Block title="Sentence">
       <p className="form-sentence">{sentence}</p>
@@ -193,7 +194,7 @@ export default function RelationshipForm({
   const id = useId();
   // The button each small form was opened from, to give focus back to.
   const openers = useRef<Record<string, HTMLButtonElement | null>>({});
-  const from = model.domain?.label ?? null;
+  const from = domainLabel(model);
   const to = model.range?.label ?? null;
 
   const close = () => {
@@ -288,12 +289,43 @@ export default function RelationshipForm({
       </li>
     );
   };
-  const swappable = (model.domain || model.range) && model.domain?.iri !== model.range?.iri;
+  // A shared start cannot be swapped: its end would become several classes.
+  const swappable =
+    !sharedDomain(model) && (model.domain || model.range) && model.domain?.iri !== model.range?.iri;
 
   return (
     <>
       <Block title="From and to">
-        {end("domain", "From", model.domain)}
+        {sharedDomain(model) ? (
+          <div className="relationship-end">
+            <h5>From</h5>
+            <SharedDomain
+              ontologyId={ontologyId}
+              iri={iri}
+              name={name}
+              model={model}
+              runner={runner}
+              onSelect={onSelect}
+              warnings={warnings}
+              members
+            />
+          </div>
+        ) : (
+          <>
+            {end("domain", "From", model.domain)}
+            {model.domain && (
+              <SharedDomain
+                ontologyId={ontologyId}
+                iri={iri}
+                name={name}
+                model={model}
+                runner={runner}
+                onSelect={onSelect}
+                members={false}
+              />
+            )}
+          </>
+        )}
         {end("range", "To", model.range)}
         <div className="edit-actions">
           <button

@@ -18,6 +18,13 @@ SUMMARY
     attribute's sentence and *one value only*, a concept's related line, and
     what each kind of mapping means.
 
+    attribute-reuse 5.1, 5.2 and 5.4 read the same way: a suggestion under
+    the name (*hasName, an attribute of Employee (text).*), each case of the
+    reuse plan in the person's names, what a union means (*whatever has
+    hasName is an Employee or a Contractor*), the shared parent's question,
+    who else gains a property moved up, the canvas's *Share* entry and its
+    two-way Delete question, and what the live region says after.
+
     And the two grammar rules every sentence shares (X-12, T-18, T-19): *a*
     or *an* before a name, and a relationship's label read as a verb, after
     a subject or after *must*. backend/app/sentences.py holds the same two,
@@ -339,4 +346,150 @@ export const MAPPINGS: { id: string; name: string; means: string }[] = [
 /** *Top concept of Fruits* (5.8). */
 export function topConceptSentence(scheme: string): string {
   return `Top concept of ${scheme}`;
+}
+
+// ---------------------------------------------------------------------------
+// Reuse (attribute-reuse 5.1, 5.2, 5.4)
+// ---------------------------------------------------------------------------
+
+export type PropertyWord = "attribute" | "relationship";
+
+/** *Employee*, *Employee and Contractor*, *Employee, Contractor and Intern*. */
+export function namesList(names: string[], joiner: "and" | "or" = "and"): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} ${joiner} ${names[names.length - 1]}`;
+}
+
+/** A domain's classes in words (attribute-reuse 5.3): *Employee or
+ *  Contractor* for a union, *Employee and Manager* for two domain lines,
+ *  which mean both; the one rule the form, the tree's words and the
+ *  suggestions share. */
+export function domainWords(form: "union" | "separate", names: string[]): string {
+  return namesList(names, form === "union" ? "or" : "and");
+}
+
+/** *an Employee or a Contractor*: each name with its article. */
+function either(names: string[]): string {
+  return namesList(names.map(a), "or");
+}
+
+/** A suggestion under the name field (5.1): *hasName, an attribute of
+ *  Employee (text).*, *reportsTo, from Employee to Manager.* The domain is
+ *  the server's reading: *Employee or Contractor* when shared, *no class
+ *  yet* when it has none. */
+export function suggestionLine(
+  kind: PropertyWord,
+  name: string,
+  domain: string | null,
+  end: string | null,
+): string {
+  const of = domain ?? "no class yet";
+  if (kind === "attribute") return `${name}, an attribute of ${of}${end ? ` (${typeWord(end)})` : ""}.`;
+  return `${name}, from ${of} to ${end ?? "no class yet"}.`;
+}
+
+/** The suggestions' heading and each one's button. */
+export const ALREADY_HERE = "Already in this project";
+export function useOn(cls: string): string {
+  return `Use it on ${cls}`;
+}
+
+/** What the live region says once typing pauses: the count, never the list. */
+export function matchesSaid(count: number, kind: PropertyWord): string {
+  return count === 1 ? `1 existing ${kind} matches` : `${count} existing ${kind}s match`;
+}
+
+/** Who has a property, for *It means: whatever has a name ...*. */
+function whoever(kind: PropertyWord, name: string): string {
+  return kind === "relationship" ? `whatever ${verb(name)} something` : `whatever has ${name}`;
+}
+
+/** Case A (5.2): no class yet. */
+export function planNoClass(name: string, cls: string): string {
+  return `${name} belongs to no class yet. Make it ${cls}'s?`;
+}
+
+/** Case B: the class has it already, through the class named in `via`. */
+export function planAlready(name: string, cls: string, via: string): string {
+  return via === cls ? `${cls} already has ${name}.` : `${cls} already has ${name}, because ${a(cls)} is ${a(via)}.`;
+}
+
+/** Case C: the domain is a kind of the class, so the property moves up. */
+export function planMoveUp(name: string, cls: string, domain: string[]): string {
+  const kept = domain.map((d) => `Every ${d} keeps it, because ${a(d)} is ${a(cls)}.`).join(" ");
+  return `${name} moves up to ${cls}. ${kept}`;
+}
+
+/** Case D, the first choice: the plain question, then what it does. */
+export function planSubclass(name: string, cls: string, domain: string): string {
+  return `Is every ${cls} ${a(domain)}? Then make ${cls} a kind of ${domain}, and it gets ${name} through ${domain}.`;
+}
+export function makeKindOf(cls: string, domain: string): string {
+  return `Make ${cls} a kind of ${domain}`;
+}
+
+/** Case D, the union, for OWL classes: what it means in one sentence. */
+export function planUnion(kind: PropertyWord, name: string, classes: string[]): string {
+  return `Share ${name} between ${namesList(classes)}. It means: ${whoever(kind, name)} is ${either(classes)}.`;
+}
+export const SHARE_IT = "Share it";
+export const OR_PARENT = "Or give them a shared parent, which the reasoner can use";
+
+/** Case D with an RDFS class: a shared parent is the only way. */
+export function planRdfsParent(name: string, classes: string[]): string {
+  return `RDFS has no way to say "either". Give ${namesList(classes)} a shared parent, and ${name} belongs to it:`;
+}
+
+/** The shared parent's name field and its button. */
+export function parentQuestion(classes: string[]): string {
+  return `What is every ${namesList(classes)}? For example, Worker`;
+}
+export function giveParent(classes: string[]): string {
+  return `Give ${namesList(classes)} this parent`;
+}
+
+/** Why no shared parent is offered: a class is another ontology's. */
+export function importedParentNote(cls: string, from: string | null): string {
+  return `${cls} comes from ${from ?? "an imported ontology"}, so it cannot be given a new parent here.`;
+}
+
+/** A parent the classes already share: the button, and who else gains. */
+export function moveUpTo(name: string, parent: string): string {
+  return `Move ${name} up to ${parent}`;
+}
+export function gainsSentence(name: string, parent: string, gains: string[], total: number): string {
+  if (total === 0) return `Nothing else gets ${name}: only these classes are kinds of ${parent}.`;
+  if (total === 1) return `Every ${gains[0]} gets ${name} too, because ${a(gains[0])} is ${a(parent)}.`;
+  const shown = total > gains.length ? [...gains, `${total - gains.length} more`] : gains;
+  return `${namesList(shown)} get ${name} too, because each is ${a(parent)}.`;
+}
+
+/** The live region once a choice is made. */
+export function sharedAnnouncement(name: string, classes: string[]): string {
+  return `${name} is now shared by ${namesList(classes)}.`;
+}
+export function givenAnnouncement(name: string, cls: string): string {
+  return `${name} now belongs to ${cls}.`;
+}
+export function removedAnnouncement(name: string, cls: string): string {
+  return `${cls} no longer has ${name}.`;
+}
+
+/** *Belongs to* for a shared domain: what the list means. */
+export function domainListNote(form: "union" | "separate"): string {
+  return form === "union" ? "Any one of these classes:" : "All of these classes at once (see the warning):";
+}
+
+/** Said where a shared domain is shown (Section 7, 5.0 row 6). */
+export const REASONER_NOTE =
+  "The reasoner here follows OWL 2 RL, which draws no conclusion from a shared class list.";
+
+/** The canvas relate menu's entry (5.1): share an existing relationship. */
+export function shareEntry(name: string, from: string, to: string): string {
+  return `Share ${name}: ${a(from)} ${verb(name)} ${a(to)} too.`;
+}
+
+/** Delete on one line of a shared relationship (5.3). */
+export function memberDeleteQuestion(member: string, name: string): string {
+  return `Remove ${member} from ${name}, or delete ${name}?`;
 }

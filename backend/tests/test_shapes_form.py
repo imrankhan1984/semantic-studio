@@ -284,3 +284,62 @@ def test_suggestions_refuse_a_target_that_is_not_an_iri(pid):
 def test_the_shapes_route_lists_nothing_before_shapes_ttl_exists(pid):
     body = client.get(f"/api/projects/{pid}/shapes").json()
     assert body["shapes"] == [] and body["revision"] is None
+
+
+# --- a union domain read by every view (attribute-reuse 5.3, D-116) ---------------------
+
+UNION_TTL = """
+@prefix u: <http://example.org/u#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+u:Employee a owl:Class ; rdfs:label "Employee" .
+u:Manager a owl:Class ; rdfs:label "Manager" ; rdfs:subClassOf u:Employee .
+u:Contractor a owl:Class ; rdfs:label "Contractor" .
+u:Team a owl:Class ; rdfs:label "Team" .
+u:hasName a owl:DatatypeProperty ; rdfs:label "hasName" ; rdfs:range xsd:string ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( u:Employee u:Contractor ) ] .
+u:leads a owl:ObjectProperty ; rdfs:label "leads" ; rdfs:range u:Team ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( u:Employee u:Contractor ) ] .
+u:badge a owl:DatatypeProperty ; rdfs:label "badge" ; rdfs:range xsd:string ;
+    rdfs:domain u:Manager , u:Team .
+"""
+UNI = "http://example.org/u#"
+
+
+def _local(iri) -> str:
+    return str(iri).split("#")[-1]
+
+
+def _union_graph():
+    from rdflib import Graph
+
+    return Graph().parse(data=UNION_TTL, format="turtle")
+
+
+def test_a_union_member_and_its_subclass_are_offered_the_property():
+    """AC-8: a member of the union, and a subclass of one, have P; a class
+    under neither has not."""
+    from rdflib import URIRef
+
+    g = _union_graph()
+    offered = lambda cls: {e["label"] for e in shapes_form.paths_for(g, URIRef(UNI + cls), _local, ["en"])}  # noqa: E731
+    assert {"hasName", "leads"} <= offered("Employee")
+    assert {"hasName", "leads"} <= offered("Contractor")
+    assert {"hasName", "leads"} <= offered("Manager")
+    assert not {"hasName", "leads"} & offered("Team")
+
+
+def test_two_domain_lines_offer_the_property_only_where_every_class_applies():
+    """AC-9, 5.0 row 3: two domain lines mean both, so neither listed class
+    alone is offered it; a class under both is."""
+    from rdflib import URIRef
+
+    g = _union_graph()
+    g.parse(data="@prefix u: <http://example.org/u#> . "
+                 "@prefix owl: <http://www.w3.org/2002/07/owl#> . "
+                 "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> . "
+                 "u:TeamManager a owl:Class ; rdfs:subClassOf u:Manager , u:Team .", format="turtle")
+    offered = lambda cls: {e["label"] for e in shapes_form.paths_for(g, URIRef(UNI + cls), _local, ["en"])}  # noqa: E731
+    assert "badge" not in offered("Manager") and "badge" not in offered("Team")
+    assert "badge" in offered("TeamManager")

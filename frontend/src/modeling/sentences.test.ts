@@ -184,3 +184,71 @@ describe("one a/an rule and one verb rule (X-12)", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("reuse (attribute-reuse 5.1, 5.2, 5.4)", () => {
+  it("words a suggestion with the domain as read, and its type or end", () => {
+    expect(S.suggestionLine("attribute", "hasName", "Employee", "xsd:string")).toBe("hasName, an attribute of Employee (text).");
+    expect(S.suggestionLine("attribute", "hasName", "Employee or Contractor", null)).toBe("hasName, an attribute of Employee or Contractor.");
+    expect(S.suggestionLine("attribute", "hasName", null, null)).toBe("hasName, an attribute of no class yet.");
+    expect(S.suggestionLine("relationship", "reportsTo", "Employee", "Manager")).toBe("reportsTo, from Employee to Manager.");
+    expect(S.useOn("Manager")).toBe("Use it on Manager");
+    expect(S.matchesSaid(1, "attribute")).toBe("1 existing attribute matches");
+    expect(S.matchesSaid(3, "relationship")).toBe("3 existing relationships match");
+  });
+
+  it("words each case of the plan with the a/an rule", () => {
+    expect(S.planNoClass("hasName", "Manager")).toBe("hasName belongs to no class yet. Make it Manager's?");
+    expect(S.planAlready("hasName", "Manager", "Employee")).toBe("Manager already has hasName, because a Manager is an Employee.");
+    expect(S.planAlready("hasName", "Employee", "Employee")).toBe("Employee already has hasName.");
+    expect(S.planMoveUp("hasName", "Employee", ["Manager"])).toBe(
+      "hasName moves up to Employee. Every Manager keeps it, because a Manager is an Employee.",
+    );
+    expect(S.planSubclass("hasName", "Contractor", "Employee")).toBe(
+      "Is every Contractor an Employee? Then make Contractor a kind of Employee, and it gets hasName through Employee.",
+    );
+    expect(S.makeKindOf("Contractor", "Employee")).toBe("Make Contractor a kind of Employee");
+  });
+
+  it("says what a union means, an attribute's and a relationship's, the label read as a verb", () => {
+    expect(S.planUnion("attribute", "hasName", ["Employee", "Contractor"])).toBe(
+      "Share hasName between Employee and Contractor. It means: whatever has hasName is an Employee or a Contractor.",
+    );
+    expect(S.planUnion("relationship", "part of", ["Engine", "Wheel", "Unit"])).toBe(
+      "Share part of between Engine, Wheel and Unit. It means: whatever is part of something is an Engine, a Wheel or a Unit.",
+    );
+  });
+
+  it("words the shared parent, the import's refusal and moving up", () => {
+    expect(S.planRdfsParent("hasName", ["Employee", "Contractor"])).toBe(
+      'RDFS has no way to say "either". Give Employee and Contractor a shared parent, and hasName belongs to it:',
+    );
+    expect(S.parentQuestion(["Employee", "Contractor"])).toBe("What is every Employee and Contractor? For example, Worker");
+    expect(S.giveParent(["Employee", "Contractor"])).toBe("Give Employee and Contractor this parent");
+    expect(S.importedParentNote("Contractor", "HR-Core")).toBe("Contractor comes from HR-Core, so it cannot be given a new parent here.");
+    expect(S.importedParentNote("Contractor", null)).toBe("Contractor comes from an imported ontology, so it cannot be given a new parent here.");
+    expect(S.moveUpTo("hasName", "Worker")).toBe("Move hasName up to Worker");
+    expect(S.gainsSentence("hasName", "Worker", ["Intern"], 1)).toBe("Every Intern gets hasName too, because an Intern is a Worker.");
+    expect(S.gainsSentence("hasName", "Agent", ["Intern", "Robot"], 4)).toBe(
+      "Intern, Robot and 2 more get hasName too, because each is an Agent.",
+    );
+    expect(S.gainsSentence("hasName", "Worker", [], 0)).toBe("Nothing else gets hasName: only these classes are kinds of Worker.");
+  });
+
+  it("announces what changed, and words the canvas's entry and question", () => {
+    expect(S.sharedAnnouncement("hasName", ["Employee", "Contractor"])).toBe("hasName is now shared by Employee and Contractor.");
+    expect(S.removedAnnouncement("hasName", "Contractor")).toBe("Contractor no longer has hasName.");
+    expect(S.shareEntry("reportsTo", "Contractor", "Manager")).toBe("Share reportsTo: a Contractor reportsTo a Manager too.");
+    expect(S.shareEntry("part of", "Engine", "Unit")).toBe("Share part of: an Engine is part of a Unit too.");
+    expect(S.memberDeleteQuestion("Contractor", "reportsTo")).toBe("Remove Contractor from reportsTo, or delete reportsTo?");
+    expect(S.domainListNote("union")).toBe("Any one of these classes:");
+    expect(S.domainListNote("separate")).toBe("All of these classes at once (see the warning):");
+  });
+});
+
+describe("a domain in words (attribute-reuse 5.3)", () => {
+  it("is one rule for a union and for two domain lines", () => {
+    expect(S.domainWords("union", ["Employee", "Contractor"])).toBe("Employee or Contractor");
+    expect(S.domainWords("union", ["Employee", "Intern", "Manager"])).toBe("Employee, Intern or Manager");
+    expect(S.domainWords("separate", ["Employee", "Manager"])).toBe("Employee and Manager");
+  });
+});

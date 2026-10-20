@@ -481,6 +481,8 @@ describe("relating (AC-12)", () => {
       "Document is a kind of Agent",
       "new relationship…",
       "Every Document has at least one… (a rule)",
+      // billed to ends at Agent already, from Invoice (attribute-reuse 5.1).
+      "Share billed to: a Document is billed to an Agent too.",
     ]);
     await act(async () => {
       fireEvent.click(within(menu).getByRole("menuitem", { name: "Document is a kind of Agent" }));
@@ -1848,5 +1850,81 @@ describe("Reason in the canvas toolbar (edit-page-rework 5.6, AC-7)", () => {
     });
     expect(reason.textContent).toBe("Stop");
     expect(document.activeElement).toBe(reason);
+  });
+});
+
+describe("a shared domain (attribute-reuse 5.3)", () => {
+  const shared = () =>
+    viewOf({
+      nodes: [
+        ...viewOf().nodes.map((n) =>
+          n.iri === EX + "Document" || n.iri === EX + "Invoice"
+            ? { ...n, attributes: [{ iri: EX + "code", label: "code", datatype: "xsd:string", shared: true, with: [] }] }
+            : n,
+        ),
+      ],
+      edges: [
+        ...viewOf().edges,
+        ...["Document", "Invoice"].map((m) => ({
+          kind: "relationship" as const,
+          source: EX + m,
+          target: "http://xmlns.com/foaf/0.1/Agent",
+          property: EX + "filedBy",
+          label: "filed by",
+          member: EX + m,
+          shared: true,
+          pair: 0,
+          pairs: 1,
+        })),
+      ],
+    });
+
+  it("says shared in text in every member's box (5.5)", async () => {
+    await renderCanvas(shared());
+    for (const name of ["Document", "Invoice (en)"]) {
+      expect(within(box(name)).getByRole("button", { name: "code : xsd:string (shared)" })).toBeTruthy();
+    }
+  });
+
+  it("draws one line per member, each named with its member", async () => {
+    await renderCanvas(shared());
+    const names = [...document.querySelectorAll(".react-flow__edge")].map((l) => l.getAttribute("aria-label"));
+    expect(names).toContain("filed by, from Document to Agent");
+    expect(names).toContain("filed by, from Invoice (en) to Agent");
+  });
+
+  it("Share on the relate menu opens the plan in the start class's form (5.1)", async () => {
+    await renderCanvas();
+    await act(async () => {
+      flow.props.onConnect({ source: EX + "Document", target: "http://xmlns.com/foaf/0.1/Agent", sourceHandle: null, targetHandle: null });
+      flow.props.onConnectEnd({ clientX: 40, clientY: 50 });
+    });
+    const menu = screen.getByRole("menu");
+    await act(async () => {
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Share billed to: a Document is billed to an Agent too." }));
+    });
+    expect(projectStore.getSnapshot().reuseDraft).toMatchObject({
+      cls: EX + "Document",
+      property: EX + "billedTo",
+      label: "billed to",
+      kind: "relationship",
+    });
+    expect(onSelect).toHaveBeenCalledWith(EX + "Document");
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("Delete on a member's line asks: remove the class, or delete the relationship (5.3)", async () => {
+    await renderCanvas(shared());
+    const edges = flow.props.edges as { id: string; source: string; ariaLabel: string }[];
+    const line = edges.find((e) => e.ariaLabel === "filed by, from Invoice (en) to Agent")!;
+    await act(async () => flow.props.onEdgeClick({}, line));
+    await act(async () => {
+      fireEvent.keyDown(document.querySelector(".react-flow")!, { key: "Delete" });
+    });
+    const dialog = screen.getByRole("dialog", { name: "Remove Invoice (en) from filed by, or delete filed by?" });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Remove Invoice (en)" }));
+    });
+    expect(lastCommand()).toEqual(["UnshareDomain", { property: EX + "filedBy", class: EX + "Invoice" }]);
   });
 });

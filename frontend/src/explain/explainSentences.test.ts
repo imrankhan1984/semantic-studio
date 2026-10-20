@@ -165,6 +165,16 @@ describe("a property's facts", () => {
     ]);
   });
 
+  it("a union's members are either one (attribute-reuse 5.3)", () => {
+    const shared = { kind: "datatypeProperty", description: null, domainForm: "union" as const, datatype: null };
+    expect(texts("hasName", { ...shared, domains: [ref("Employee"), ref("Manager")] })).toEqual([
+      "hasName gives an Employee or a Manager a value.",
+    ]);
+    expect(texts("hasName", { ...shared, domains: [ref("Employee"), ref("Intern"), ref("Manager")] })).toEqual([
+      "hasName gives an Employee, an Intern or a Manager a value.",
+    ]);
+  });
+
   it("several ends are all of them at once", () => {
     expect(
       texts("p", { kind: "objectProperty", description: null, domains: [ref("Person"), ref("Agent")], ranges: [ref("Item")] }),

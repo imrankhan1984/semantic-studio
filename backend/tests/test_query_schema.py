@@ -223,3 +223,38 @@ def test_rdfs_only_class_carries_class_type():
     # Typed owl:Class, or both, or not typed at all: no field.
     for name in ("Owl", "Both", "Child"):
         assert "classType" not in by_iri[ex + name], name
+
+
+# --- a union domain read by every view (attribute-reuse 5.3, D-116) ---------------------
+
+UNION_TTL = """
+@prefix u: <http://example.org/u#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+u:Employee a owl:Class ; rdfs:label "Employee" .
+u:Manager a owl:Class ; rdfs:label "Manager" ; rdfs:subClassOf u:Employee .
+u:Contractor a owl:Class ; rdfs:label "Contractor" .
+u:Team a owl:Class ; rdfs:label "Team" .
+u:hasName a owl:DatatypeProperty ; rdfs:label "hasName" ; rdfs:range xsd:string ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( u:Employee u:Contractor ) ] .
+u:leads a owl:ObjectProperty ; rdfs:label "leads" ; rdfs:range u:Team ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( u:Employee u:Contractor ) ] .
+u:badge a owl:DatatypeProperty ; rdfs:label "badge" ; rdfs:range xsd:string ;
+    rdfs:domain u:Manager , u:Team .
+"""
+UNI = "http://example.org/u#"
+
+
+def _union_graph():
+    from rdflib import Graph
+
+    return Graph().parse(data=UNION_TTL, format="turtle")
+
+
+def test_a_union_domain_gives_one_link_from_each_member():
+    """AC-8: the visual query builder steps from either member."""
+    schema = build_query_schema(_union_graph())
+    for member in ("Employee", "Contractor"):
+        assert _links(schema, UNI + member, UNI + "leads", UNI + "Team"), member
+    assert {UNI + "Employee", UNI + "Contractor"} <= _class_iris(schema)

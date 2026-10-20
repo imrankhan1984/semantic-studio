@@ -82,6 +82,7 @@ from typing import Optional
 from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import DC, DCTERMS, OWL, RDF, RDFS, SKOS
 
+from . import axioms
 from .graph_builder import (
     KIND_ANNOTATION_PROPERTY,
     KIND_CLASS,
@@ -576,6 +577,16 @@ def _fact_row(graph: Graph, label: str, objects: list, anchors: dict[str, str]) 
     return f"<tr><th>{esc(label)}</th><td><ul>{items}</ul></td></tr>"
 
 
+def _domain_row(graph: Graph, reading, anchors: dict[str, str]) -> str:
+    """The Domain row as axioms.domain_of reads it (attribute-reuse 5.3): a
+    union's members on one line, *Employee or Manager*; two domain lines
+    one per line, as written; an expression as its blank node."""
+    if reading.form == "union":
+        joined = " or ".join(_term_value(graph, c, anchors) for c in reading.classes)
+        return f"<tr><th>Domain</th><td><ul><li>{joined}</li></ul></td></tr>"
+    return _fact_row(graph, "Domain", list(reading.classes or reading.terms), anchors)
+
+
 def _named_objects(graph: Graph, subj: URIRef, predicate) -> list:
     """Objects of (subj, predicate, *), URIRefs and blank nodes, deduped by id."""
     seen: set[str] = set()
@@ -624,7 +635,7 @@ def _render_term(graph: Graph, node: dict, anchors: dict[str, str]) -> str:
         rows.append(_fact_row(graph, "Super-class of", _subjects_of(graph, RDFS.subClassOf, ref), anchors))
         rows.append(_fact_row(graph, "Equivalent to", _named_objects(graph, ref, OWL.equivalentClass), anchors))
     elif kind in (KIND_OBJECT_PROPERTY, KIND_DATATYPE_PROPERTY, KIND_ANNOTATION_PROPERTY, KIND_PROPERTY):
-        rows.append(_fact_row(graph, "Domain", _named_objects(graph, ref, RDFS.domain), anchors))
+        rows.append(_domain_row(graph, axioms.domain_of(graph, ref), anchors))
         rows.append(_fact_row(graph, "Range", _named_objects(graph, ref, RDFS.range), anchors))
         rows.append(_fact_row(graph, "Sub-property of", _named_objects(graph, ref, RDFS.subPropertyOf), anchors))
         rows.append(_fact_row(graph, "Inverse of", _named_objects(graph, ref, OWL.inverseOf), anchors))

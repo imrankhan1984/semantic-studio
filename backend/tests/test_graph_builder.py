@@ -439,3 +439,43 @@ def test_rule_lines_build_budget(generated):
         gc.enable()
     median = sorted(times)[2]
     assert median <= limit_ms(1000), f"build_viz_graph took {median:.0f} ms (median of 5)"
+
+
+# --- a union domain read by every view (attribute-reuse 5.3, D-116) ---------------------
+
+UNION_TTL = """
+@prefix u: <http://example.org/u#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+u:Employee a owl:Class ; rdfs:label "Employee" .
+u:Manager a owl:Class ; rdfs:label "Manager" ; rdfs:subClassOf u:Employee .
+u:Contractor a owl:Class ; rdfs:label "Contractor" .
+u:Team a owl:Class ; rdfs:label "Team" .
+u:hasName a owl:DatatypeProperty ; rdfs:label "hasName" ; rdfs:range xsd:string ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( u:Employee u:Contractor ) ] .
+u:leads a owl:ObjectProperty ; rdfs:label "leads" ; rdfs:range u:Team ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( u:Employee u:Contractor ) ] .
+u:badge a owl:DatatypeProperty ; rdfs:label "badge" ; rdfs:range xsd:string ;
+    rdfs:domain u:Manager , u:Team .
+"""
+UNI = "http://example.org/u#"
+
+
+def _union_graph():
+    from rdflib import Graph
+
+    return Graph().parse(data=UNION_TTL, format="turtle")
+
+
+def test_the_explain_panel_reads_a_union_s_members():
+    """AC-8: the members, *or*, and no unnamedDomain."""
+    from rdflib import URIRef
+
+    from app.graph_builder import explain, labeler
+
+    g = _union_graph()
+    result = explain(g, URIRef(UNI + "hasName"), labeler(g, None))
+    assert sorted(r["label"] for r in result["domains"]) == ["Contractor", "Employee"]
+    assert result["domainForm"] == "union" and "unnamedDomain" not in result
+    assert explain(g, URIRef(UNI + "badge"), labeler(g, None))["domainForm"] == "separate"

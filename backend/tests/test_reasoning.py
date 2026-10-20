@@ -772,3 +772,36 @@ def test_a_run_ended_after_its_project_closed_keeps_nothing():
     assert not reasoning.service.running(pid)
     # The next run is not refused for the closed one.
     reasoning.service.end(pid, reasoning.service.begin(pid), None)
+
+
+# --- a shared domain and two domain lines (attribute-reuse 5.0, AC-10, AC-11) ------------
+
+SHARED_DOMAIN = PREFIXES + """
+:Employee a owl:Class ; rdfs:label "Employee"@en .
+:Contractor a owl:Class ; rdfs:label "Contractor"@en .
+:Manager a owl:Class ; rdfs:label "Manager"@en .
+:hasName a owl:DatatypeProperty ; rdfs:label "hasName"@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( :Employee :Contractor ) ] .
+:badge a owl:DatatypeProperty ; rdfs:label "badge"@en ; rdfs:domain :Employee , :Manager .
+:alice rdfs:label "alice"@en ; :hasName "Alice" .
+:bob rdfs:label "bob"@en ; :badge "B-7" .
+"""
+
+
+def test_a_union_domain_concludes_nothing_that_names_the_union():
+    """AC-11, 5.0 row 6: prp-dom puts alice in the anonymous union only, and
+    no conclusion naming a blank node is shown."""
+    pid = create()
+    apply(pid, SHARED_DOMAIN)
+    result = reason(pid)
+    for item in items(result):
+        assert item["s"].startswith(EX) and item["o"].startswith(EX), item
+    assert not [s for s in shown(result)["memberships"] if s.startswith("alice")]
+
+
+def test_two_domain_lines_make_a_subject_a_member_of_both():
+    """AC-10: the 5.4 warning's claim, shown true by the reasoner."""
+    pid = create()
+    apply(pid, SHARED_DOMAIN)
+    memberships = shown(reason(pid))["memberships"]
+    assert "bob is an Employee" in memberships and "bob is a Manager" in memberships
