@@ -3420,6 +3420,18 @@ button.legend-row:hover {
   margin: 0 0 8px;
 }
 
+/* Questions for this example (query-page-rework 5.4): a sub-heading in
+   Try one of these, above the schema's starters. */
+.query-start-sub {
+  margin: 6px 0 4px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.question-list {
+  margin-bottom: 10px;
+}
+
 .starter-list {
   display: flex;
   flex-direction: column;

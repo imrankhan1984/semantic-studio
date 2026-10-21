@@ -1,0 +1,11 @@
+# COUNT and GROUP BY: one row per agency, how many missions it ran, the most first.
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX space: <http://example.org/space#>
+
+SELECT ?agency ?name (COUNT(DISTINCT ?mission) AS ?missions) WHERE {
+  ?mission space:operatedBy ?agency .
+  ?agency rdfs:label ?name .
+  FILTER (lang(?name) = "en")
+}
+GROUP BY ?agency ?name
+ORDER BY DESC(?missions) ?name

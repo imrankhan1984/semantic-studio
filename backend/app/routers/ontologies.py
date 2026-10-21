@@ -111,7 +111,7 @@ from ..graph_builder import (
     search_nodes,
     term_kind,
 )
-from .. import axioms, examples, modeling_checks
+from .. import axioms, examples, library_examples, modeling_checks
 from .. import imports as imports_mod
 from ..imports import imports_service
 from ..net_guard import BlockedAddress
@@ -387,8 +387,12 @@ def _get_or_404(oid: str):
 
 @router.get("")
 def list_ontologies() -> list[dict]:
-    """GET /api/ontologies -> the dropdown list (lightweight summaries)."""
-    return [o.summary() for o in store.list()]
+    """GET /api/ontologies -> the dropdown list (lightweight summaries).
+
+    A bundled example's record carries its ready-made questions
+    (query-page-rework 5.4); library_examples attaches them.
+    """
+    return [library_examples.with_questions(o.summary()) for o in store.list()]
 
 
 def too_large_detail(limit: int, variable: str) -> str:

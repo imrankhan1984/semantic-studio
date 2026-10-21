@@ -37,4 +37,5 @@ router = APIRouter(prefix="/api/examples", tags=["examples"])
 @router.post("/restore")
 def restore_examples() -> dict:
     restored = library_examples.restore(store)
-    return {"restored": restored, "ontologies": [o.summary() for o in store.list()]}
+    ontologies = [library_examples.with_questions(o.summary()) for o in store.list()]
+    return {"restored": restored, "ontologies": ontologies}

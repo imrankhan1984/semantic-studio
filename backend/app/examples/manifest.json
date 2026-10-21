@@ -1,5 +1,5 @@
 {
-  "description": "The examples added to the library once, on first start, with no download (home-and-examples 5.1, D-111). In this order on Home, after the person's own work. Each file is the application's own and is pinned by SHA-256; test_library_examples.py fails on a mismatch. 'file' is relative to backend/app; FOAF is the bundled vocabulary itself, not a copy. Change a file and its hash together: a changed hash is what replaces an example already in a library.",
+  "description": "The examples added to the library once, on first start, with no download (home-and-examples 5.1, D-111). In this order on Home, after the person's own work. Each file is the application's own and is pinned by SHA-256; test_library_examples.py fails on a mismatch. 'file' is relative to backend/app; FOAF is the bundled vocabulary itself, not a copy. Change a file and its hash together: a changed hash is what replaces an example already in a library. Each example's 'questions' are ready-made SPARQL files in examples/questions/ (query-page-rework 5.4), pinned the same way and shown first in Query's Try one of these; a question file opens with a one-line comment saying what it shows.",
   "examples": [
     {
       "key": "space",
@@ -7,7 +7,27 @@
       "format": "turtle",
       "name": "Space Exploration",
       "purpose": "The Solar System, the agencies that explore it and their missions: something to try in every tab.",
-      "sha256": "1edb0156834b1ae9b734b3ffd62dfe082016d5b89520419428aeb1b02abf7d30"
+      "sha256": "1edb0156834b1ae9b734b3ffd62dfe082016d5b89520419428aeb1b02abf7d30",
+      "questions": [
+        {
+          "id": "space-missions-to-mars",
+          "title": "Which missions went to Mars?",
+          "file": "examples/questions/space-missions-to-mars.rq",
+          "sha256": "032e987bdbe7eb18ebca1f11d41810691db1fa8bc349435cd3d04aa76e1ab4bb"
+        },
+        {
+          "id": "space-moons-of-jupiter",
+          "title": "Which moons orbit Jupiter?",
+          "file": "examples/questions/space-moons-of-jupiter.rq",
+          "sha256": "a338c55bddef78d83d01595251a3ced4b183d5b080e188264de7e682187d634b"
+        },
+        {
+          "id": "space-missions-per-agency",
+          "title": "How many missions did each agency run?",
+          "file": "examples/questions/space-missions-per-agency.rq",
+          "sha256": "fe6b27e0fb3b5fa18d96f6dd0588f599594469c0d2fedcb206f631e8e8ced089"
+        }
+      ]
     },
     {
       "key": "middle-earth",
@@ -15,7 +35,27 @@
       "format": "turtle",
       "name": "The Lord of the Rings",
       "purpose": "People, places and the links between them, from a story many people already know.",
-      "sha256": "be43b1cf20234e7168e191bc8e2c3226fae61c3244034d4cd4e78ffc2756f0f1"
+      "sha256": "be43b1cf20234e7168e191bc8e2c3226fae61c3244034d4cd4e78ffc2756f0f1",
+      "questions": [
+        {
+          "id": "middle-earth-ring-bearers",
+          "title": "Who carried the One Ring?",
+          "file": "examples/questions/middle-earth-ring-bearers.rq",
+          "sha256": "62ee50b785847e3728099dad48cd751c8d35253b9dd7ac0bb388de6a003ec6fc"
+        },
+        {
+          "id": "middle-earth-fellowship",
+          "title": "Who belongs to the Fellowship?",
+          "file": "examples/questions/middle-earth-fellowship.rq",
+          "sha256": "305bcf3fe292e876f54acadcab867a9a5b5e864931f55ad0778c105808619d6a"
+        },
+        {
+          "id": "middle-earth-who-lives-where",
+          "title": "Who lives where?",
+          "file": "examples/questions/middle-earth-who-lives-where.rq",
+          "sha256": "6d7c1ff0036fb694e8b835c8da1f59fcf240b69764f4b6cd3a8579b51293c370"
+        }
+      ]
     },
     {
       "key": "foaf",
@@ -23,7 +63,21 @@
       "format": "xml",
       "name": "FOAF (Friend of a Friend)",
       "purpose": "A real, published vocabulary for people and their links. By Dan Brickley and Libby Miller, CC BY 1.0.",
-      "sha256": "3d859b5d92a2c3d041545d014fa826f682ca06d056af8c7b31e32d930abf2bc5"
+      "sha256": "3d859b5d92a2c3d041545d014fa826f682ca06d056af8c7b31e32d930abf2bc5",
+      "questions": [
+        {
+          "id": "foaf-classes",
+          "title": "Which classes does FOAF define?",
+          "file": "examples/questions/foaf-classes.rq",
+          "sha256": "ff732f1dc744a1395a48efb3f99f2836d15c45b4317855591e72776d48944fff"
+        },
+        {
+          "id": "foaf-person-properties",
+          "title": "What can you say about a Person?",
+          "file": "examples/questions/foaf-person-properties.rq",
+          "sha256": "6a087a8e537febbfc18a8eeda84e757193358bc7d3c43b0716cdb7e0d7aae0e1"
+        }
+      ]
     }
   ]
 }

@@ -1,0 +1,9 @@
+# One relationship to one named thing: everyone who bears the One Ring.
+PREFIX me: <http://example.org/middle-earth#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?bearer ?name WHERE {
+  ?bearer me:bears me:TheOneRing ;
+          rdfs:label ?name .
+}
+ORDER BY ?name

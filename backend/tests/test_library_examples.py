@@ -10,7 +10,9 @@ SUMMARY
     endpoint; the manifest and its hashes; and what each new file must hold
     -- every floor of 5.2 for Space Exploration, the content of 5.3 for The
     Lord of the Rings; and the one server sentence that said *triples*, now
-    *statements* (5.7). (test_examples.py is a project's example data,
+    *statements* (5.7); and the ready-made questions of query-page-rework
+    5.4, each pinned, a SELECT, and answering what 5.4 measured against its
+    example. (test_examples.py is a project's example data,
     shacl-authoring 5.8: a different thing that had the name first.)
 
 BASIC IDEA
@@ -34,7 +36,7 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - Pass/fail for AC-1 to AC-6, the backend half of AC-10, and the
-      server's part of AC-9.
+      server's part of AC-9; the server's half of query-page-rework AC-8.
 ================================================================================
 """
 
@@ -703,3 +705,93 @@ def test_lotr_comments_are_one_plain_sentence_at_most(middle_earth):
 
 def test_lotr_is_about_five_to_eight_hundred_statements(middle_earth):
     assert 500 <= len(middle_earth) <= 800
+
+
+# --- the ready-made questions (query-page-rework 5.4, AC-8) ---------------
+
+QUESTIONS = [(e["key"], q) for e in MANIFEST["examples"] for q in e["questions"]]
+
+# 5.4's table, as measured: rows, and for the short ones the names in order.
+ANSWERS = {
+    "space-missions-to-mars": (3, ["Mars 2020", "Mars Orbiter Mission", "Tianwen-1"]),
+    "space-moons-of-jupiter": (4, ["Callisto", "Europa", "Ganymede", "Io"]),
+    "space-missions-per-agency": (8, None),
+    "middle-earth-ring-bearers": (4, ["Bilbo Baggins", "Frodo Baggins", "Gollum", "Samwise Gamgee"]),
+    "middle-earth-fellowship": (9, None),
+    "middle-earth-who-lives-where": (21, None),
+    "foaf-classes": (13, None),
+    "foaf-person-properties": (16, None),
+}
+
+
+def test_every_example_has_two_or_three_questions_and_5_4s_eight_in_all():
+    for entry in MANIFEST["examples"]:
+        assert 2 <= len(entry["questions"]) <= 3, entry["key"]
+    assert sorted(q["id"] for _key, q in QUESTIONS) == sorted(ANSWERS)
+
+
+@pytest.mark.parametrize("key,question", QUESTIONS, ids=lambda v: v["id"] if isinstance(v, dict) else v)
+def test_each_question_exists_matches_its_hash_and_is_a_select(key, question):
+    from app.sparql_exec import prepare_select
+
+    path = APP / question["file"]
+    assert path.parent == APP / "examples" / "questions"
+    data = path.read_bytes()
+    assert hashlib.sha256(data).hexdigest() == question["sha256"]
+    text = data.decode("utf-8")
+    # Opens with the one line that says what it shows.
+    assert text.startswith("# ") and len(text.split("\n", 1)[0]) > 10
+    prepare_select(text)  # raises unless a SELECT this application may run
+    assert question["title"].endswith("?")
+
+
+def test_the_question_files_are_binary_in_gitattributes():
+    attributes = (APP.parent.parent / ".gitattributes").read_text(encoding="utf-8")
+    assert "backend/app/examples/questions/*.rq binary" in attributes
+
+
+def test_every_question_answers_as_5_4_records(no_examples_after, parses):
+    """Each question run against its example, through the route a click
+    takes, with the row count 5.4 measured; the agency count NASA first."""
+    library_examples.seed(app_store)
+    client = TestClient(app, base_url="http://localhost", headers=HEADERS)
+    for key, question in QUESTIONS:
+        oid = library_examples.example_id(key)
+        text = (APP / question["file"]).read_text(encoding="utf-8")
+        response = client.post(f"/api/ontologies/{oid}/sparql", json={"query": text})
+        assert response.status_code == 200, (question["id"], response.text)
+        body = response.json()
+        rows, names = ANSWERS[question["id"]]
+        assert body["rowCount"] == rows, question["id"]
+        if names is not None:
+            assert [row[1]["value"] for row in body["rows"]] == names, question["id"]
+        if question["id"] == "space-missions-per-agency":
+            assert body["rows"][0][1]["value"] == "NASA"
+            assert body["rows"][0][2]["value"] == "9"
+
+
+def test_a_listed_example_carries_its_questions_and_nothing_else_does(no_examples_after, parses, tmp_path):
+    """The record is attached when listed, by `source` and the example
+    record, never by name: a library entry called Space Exploration is not
+    an example."""
+    library_examples.seed(app_store)
+    client = TestClient(app, base_url="http://localhost", headers=HEADERS)
+    space_file = (APP / "examples" / "space-exploration.ttl").read_bytes()
+    copy = client.post(
+        "/api/ontologies/upload", files={"file": ("Space Exploration.ttl", space_file, "text/turtle")}
+    ).json()["id"]
+    try:
+        listed = {o["id"]: o for o in client.get("/api/ontologies").json()}
+        space = listed[library_examples.example_id("space")]["example"]
+        assert [q["title"] for q in space["questions"]] == [
+            "Which missions went to Mars?",
+            "Which moons orbit Jupiter?",
+            "How many missions did each agency run?",
+        ]
+        first = space["questions"][0]
+        assert set(first) == {"id", "title", "about", "text"}
+        assert first["text"] == (APP / "examples" / "questions" / "space-missions-to-mars.rq").read_text(encoding="utf-8")
+        assert first["about"] == first["text"].split("\n", 1)[0][2:]
+        assert listed[copy]["example"] is None
+    finally:
+        client.delete(f"/api/ontologies/{copy}")

@@ -365,6 +365,7 @@ vi.mock("./components/QueryPanel", () => ({
     resultsOnGraph,
     onFrameResults,
     resultsNote,
+    questions,
   }: {
     onPickIri: (iri: string) => void;
     onViewInSource: (iri: string, prefixed?: string) => void;
@@ -374,6 +375,7 @@ vi.mock("./components/QueryPanel", () => ({
     resultsOnGraph?: number;
     onFrameResults?: () => void;
     resultsNote?: string | null;
+    questions?: { title: string }[];
   }) => (
     <div className="query-panel">
       {/* A run, an Auto re-run and Clear results, as QueryPanel reports
@@ -385,6 +387,7 @@ vi.mock("./components/QueryPanel", () => ({
       {onFrameResults && <button onClick={onFrameResults}>fake frame</button>}
       <span data-testid="results-on-graph">{resultsOnGraph ?? 0}</span>
       <span data-testid="results-note">{resultsNote ?? ""}</span>
+      <span data-testid="questions">{(questions ?? []).map((q) => q.title).join("|")}</span>
       <button onClick={() => onPickIri(pick.iri)}>fake result chip</button>
       <button onClick={() => onViewInSource(pick.iri, pick.prefixed)}>fake source control</button>
       {/* What App hands over for the "Querying ..." sentence (external-access
@@ -3871,5 +3874,40 @@ describe("App: the graph frames the results (query-page-rework 5.2)", () => {
       });
     });
     expect(graph().getAttribute("data-expansion")).toBe("");
+  });
+});
+
+describe("App: a bundled example's questions (query-page-rework 5.4, AC-8)", () => {
+  const QUESTION = { id: "q", title: "Which moons orbit Jupiter?", about: "Two conditions.", text: "SELECT ?m {}" };
+  /** The example, and the person's own file under the same name. */
+  const EXAMPLE: OntologySummary = {
+    ...SUMMARY,
+    id: "ont-example",
+    name: "Space Exploration",
+    source: "example",
+    example: { key: "space", purpose: "Something to try.", questions: [QUESTION] },
+  };
+  const NAMESAKE: OntologySummary = { ...SUMMARY, id: "ont-mine", name: "Space Exploration", source: "upload", example: null };
+
+  async function openInQuery(index: number) {
+    listOntologies.mockResolvedValue([NAMESAKE, EXAMPLE]);
+    await renderApp();
+    // The person's work first, the examples last (home/libraryOrder.ts).
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "Explore Space Exploration" })[index]);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Query" }));
+    });
+  }
+
+  it("the example hands its questions to Query", async () => {
+    await openInQuery(1);
+    expect(screen.getByTestId("questions").textContent).toBe("Which moons orbit Jupiter?");
+  });
+
+  it("an entry that only shares its name has none: told by the record, never the name", async () => {
+    await openInQuery(0);
+    expect(screen.getByTestId("questions").textContent).toBe("");
   });
 });

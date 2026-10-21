@@ -229,6 +229,7 @@ import { missingExamples } from "./home/libraryOrder";
 import type { SourceTarget } from "./sourceTarget";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type {
+  ExampleQuestion,
   VizNodes,
   SparqlResults,
   AppMode,
@@ -378,6 +379,7 @@ interface Expanded {
 const NOTHING_EXPANDED: Expanded = { nodes: new Set(), edges: 0 };
 
 const NO_RESULTS: ReadonlySet<string> = new Set();
+const NO_QUESTIONS: ExampleQuestion[] = [];
 
 /**
  * The status-bar count for nodes or edges: "34" normally, "2,000 of 18,717"
@@ -1370,6 +1372,14 @@ export default function App() {
   }, []);
 
   const frameResults = useCallback(() => setFrameTick((t) => t + 1), []);
+
+  // A bundled example's ready-made questions (query-page-rework 5.4), told by
+  // its source and its example record, never its name: a project made from
+  // an example, or a file that happens to share its name, has none.
+  const exampleQuestions = useMemo(
+    () => (active?.source === "example" && active.example ? active.example.questions ?? NO_QUESTIONS : NO_QUESTIONS),
+    [active],
+  );
 
   // How many results are on the graph: the rings drawn, for the legend's row
   // and Frame on graph.
@@ -2366,6 +2376,7 @@ export default function App() {
               resultsOnGraph={resultsOnGraph}
               onFrameResults={frameResults}
               resultsNote={resultsNote}
+              questions={exampleQuestions}
             />
           ) : mode === "explore" ? (
             // The two halves of the Explore column. Which one shows is decided

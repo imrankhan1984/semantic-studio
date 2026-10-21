@@ -32,3 +32,5 @@ backend/app/vocab/*.rdf binary
 # The library's bundled examples (home-and-examples 5.1) are pinned the same
 # way, in backend/app/examples/manifest.json; FOAF is read from vocab/ above.
 backend/app/examples/*.ttl binary
+# Their ready-made questions (query-page-rework 5.4) are pinned there too.
+backend/app/examples/questions/*.rq binary

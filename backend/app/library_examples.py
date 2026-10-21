@@ -34,7 +34,8 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES
     - backend/app/examples/manifest.json and the files it names (FOAF is
-      vocab/foaf.rdf, the file owl:imports uses).
+      vocab/foaf.rdf, the file owl:imports uses), the questions' .rq files
+      among them.
     - The OntologyStore to add to, and examples.json in its data directory.
 
 EXPECTED OUTPUT
@@ -42,11 +43,15 @@ EXPECTED OUTPUT
     - restore(store): the examples missing from the library added back;
       returns their ids.
     - example_id(key): an example's fixed id.
+    - with_questions(summary): a listed example's record with its
+      ready-made questions, {id, title, about, text} each, from
+      examples/questions/ (query-page-rework 5.4).
 ================================================================================
 """
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import threading
@@ -103,6 +108,40 @@ def _add(store: OntologyStore, entry: dict) -> str:
     # with the entry so listing the library still needs nothing but metadata.
     store.update_meta(ontology, example={"key": entry["key"], "purpose": entry["purpose"]})
     return ontology.id
+
+
+@functools.cache
+def _questions() -> dict[str, list[dict]]:
+    """Each example's ready-made questions by key (query-page-rework 5.4),
+    read once per process: the files are the application's own and change
+    only with a release."""
+    out: dict[str, list[dict]] = {}
+    for entry in load_manifest():
+        questions = []
+        for question in entry.get("questions", []):
+            text = (APP_DIR / question["file"]).read_text(encoding="utf-8")
+            # The file's first line is its one-line comment, what it shows.
+            first = text.split("\n", 1)[0]
+            about = first[1:].strip() if first.startswith("#") else ""
+            questions.append(
+                {"id": question["id"], "title": question["title"], "about": about, "text": text}
+            )
+        out[entry["key"]] = questions
+    return out
+
+
+def with_questions(summary: dict) -> dict:
+    """A library summary, an example's record carrying its questions.
+
+    Attached when the library is listed, never stored with the entry: an
+    example seeded before the questions shipped gains them without being
+    seeded again, and an update to a question needs no new hash on the
+    example. Told by the entry's `example` record, never by its name.
+    """
+    record = summary.get("example")
+    if summary.get("source") != "example" or not isinstance(record, dict):
+        return summary
+    return {**summary, "example": {**record, "questions": _questions().get(record.get("key"), [])}}
 
 
 def seed(store: OntologyStore) -> list[str]:

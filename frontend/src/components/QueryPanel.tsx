@@ -56,6 +56,8 @@ INPUTS / INPUT SOURCES (props)
       source line, a sample's words included (csv-data-import 5.6).
     - rdfsClasses: the classes the graph draws as RDFS-only, for the path
       bar's colours (portal-foundations 5.3).
+    - questions: a bundled example's ready-made questions, first in Try one
+      of these; a click opens one as a text query and runs it (5.4).
     - onResults / resultsOnGraph / onFrameResults / resultsNote: the results
       on the graph (query-page-rework 5.2): each change reported, Frame on
       graph while any are drawn, and the header's sentence for the undrawn.
@@ -90,7 +92,15 @@ import { linkOptionsBetween } from "../sparql/useQueryBuilder";
 import { dataLabel } from "../modeling/dataSentences";
 import type { useQueryBuilder } from "../sparql/useQueryBuilder";
 import type { QueryState } from "../sparql/types";
-import type { EmbeddedQueries, EmbeddedQuery, SavedQuery, SparqlResults, Theme, DataSource } from "../types";
+import type {
+  DataSource,
+  EmbeddedQueries,
+  EmbeddedQuery,
+  ExampleQuestion,
+  SavedQuery,
+  SparqlResults,
+  Theme,
+} from "../types";
 import ClassPropsMenu from "./ClassPropsMenu";
 import NextSteps from "./NextSteps";
 import PathBar from "./PathBar";
@@ -130,6 +140,9 @@ interface Props {
   onFrameResults?: () => void;
   /** The header's sentence when more results were hidden than drawn. */
   resultsNote?: string | null;
+  /** A bundled example's ready-made questions (query-page-rework 5.4);
+   *  App hands them over only for an example, told by its record. */
+  questions?: ExampleQuestion[];
 }
 
 /** One of the toolbar's four switches: a toggle button that says whether it
@@ -185,6 +198,8 @@ export function embeddedOptions(query: EmbeddedQuery) {
   };
 }
 
+const NO_QUESTIONS: ExampleQuestion[] = [];
+
 /** Above this size a preview is no longer guaranteed to feel immediate. */
 const AUTO_PREVIEW_MAX_TRIPLES = 50000;
 const PREVIEW_ROWS = 5;
@@ -205,6 +220,7 @@ export default function QueryPanel({
   resultsOnGraph = 0,
   onFrameResults,
   resultsNote = null,
+  questions = NO_QUESTIONS,
 }: Props) {
   const {
     schema,
@@ -573,6 +589,16 @@ export default function QueryPanel({
       .catch((e: unknown) => current() && setEmbeddedError(e instanceof Error ? e.message : String(e)));
   };
 
+  // A question opens as a text query, its title the query's name, and runs
+  // (query-page-rework 5.4): the person asked, so the answer comes at once,
+  // framed on the graph, with the SPARQL that found it above. Editing it and
+  // saving makes the person's own; the shipped file never changes.
+  const askQuestion = (question: ExampleQuestion) => {
+    if (inText && !mayDiscard()) return;
+    startText(question.text, { name: question.title });
+    void runText(question.text);
+  };
+
   const openEmbedded = (query: EmbeddedQuery) => {
     if (!mayDiscard()) return;
     startText(query.text, embeddedOptions(query));
@@ -635,6 +661,8 @@ export default function QueryPanel({
           schema={schema}
           theme={theme}
           onUseStarter={runStarter}
+          questions={questions}
+          onAskQuestion={askQuestion}
           onPickClass={addClass}
         />
       )}

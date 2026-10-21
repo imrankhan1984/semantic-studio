@@ -11,7 +11,9 @@ SUMMARY
     visual version restores the builder state exactly, Run and Ctrl+Enter
     send the text, New text query, .rq open and download, saved text queries,
     queries stored in the file, hostile text, keyboard and focus, and the
-    keystroke render budget.
+    keystroke render budget. And query-page-rework: a new query starting with
+    the prefixes the ontology uses, every other query opened as written, Add
+    PREFIX (5.3), and a ready-made question opened and run (5.4).
 
 BASIC IDEA
     Rendered through the real useQueryBuilder hook and the real QueryPanel,
@@ -34,7 +36,7 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - Pass/fail per assertion, covering AC-2 to AC-11, AC-14, AC-15 and
-      Section 10's keystroke row.
+      Section 10's keystroke row; query-page-rework AC-5, AC-6 and AC-8.
 ================================================================================
 */
 
@@ -825,5 +827,29 @@ describe("performance (Section 10)", () => {
     expect(harnessRenders).toBe(hostRenders);
     // And the typed text still reached the hook, for Run and Save to read.
     expect(builder.textRef.current).toBe("SELECT ?s WHERE { ?s ?p ?o }LIMIT 5");
+  });
+});
+
+describe("a ready-made question (query-page-rework 5.4, AC-8)", () => {
+  const QUESTION = {
+    id: "space-moons-of-jupiter",
+    title: "Which moons orbit Jupiter?",
+    about: "Two conditions on one subject.",
+    text: "# Two conditions on one subject.\nSELECT ?m WHERE { ?m ?p ?o }\n",
+  };
+
+  it("opens as a text query named by its title, exactly as written, runs as an explicit run, and focus is in the editor", async () => {
+    const onResults = vi.fn();
+    await setup({ questions: [QUESTION], onResults }, null);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: QUESTION.title }));
+    });
+    expect(textarea().value).toBe(QUESTION.text);
+    expect(document.querySelector(".sparql-editor-name")?.textContent).toBe(QUESTION.title);
+    expect(api.runSparql).toHaveBeenCalledWith("ont-1", QUESTION.text, false);
+    await waitFor(() => expect(onResults).toHaveBeenLastCalledWith(expect.anything(), true));
+    expect(document.activeElement).toBe(textarea());
+    // Never copied into the saved queries: nothing is saved until asked.
+    expect(api.saveQuery).not.toHaveBeenCalled();
   });
 });

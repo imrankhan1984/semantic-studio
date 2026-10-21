@@ -412,7 +412,18 @@ export interface OntologySummary {
   /** A bundled example's key and one-line purpose (home-and-examples 5.1),
    *  which its card shows in place of the counted sentence and the date.
    *  Null for everything else, absent from a server that predates it. */
-  example?: { key: string; purpose: string } | null;
+  example?: { key: string; purpose: string; questions?: ExampleQuestion[] } | null;
+}
+
+/** One of a bundled example's ready-made questions (query-page-rework 5.4):
+ *  the application's, read-only, shown first in Query's Try one of these. */
+export interface ExampleQuestion {
+  id: string;
+  title: string;
+  /** What it shows the learner: the file's own first comment line. */
+  about: string;
+  /** The SPARQL, exactly as the file holds it. */
+  text: string;
 }
 
 /* --- hierarchy view ------------------------------------------------------ */
