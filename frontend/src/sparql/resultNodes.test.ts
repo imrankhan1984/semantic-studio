@@ -22,6 +22,7 @@ EXPECTED OUTPUT
 import { describe, expect, it } from "vitest";
 import type { SparqlResults } from "../types";
 import {
+  RESULT_IRIS_SENT,
   SINGLE_RESULT_RATIO,
   frameTarget,
   resultIris,
@@ -102,5 +103,14 @@ describe("sendable (the /nodes body's bounds)", () => {
     expect(sent.length).toBeLessThan(2000);
     const bytes = new TextEncoder().encode(JSON.stringify({ iris: sent })).length;
     expect(bytes).toBeLessThanOrEqual(4 * 1024 * 1024);
+  });
+
+  it("stops at RESULT_IRIS_SENT IRIs, the first ones, well inside 4 MB", () => {
+    // 25,000 short IRIs are about 0.5 MB: only the count can stop them.
+    const many = Array.from({ length: 25000 }, (_, i) => `http://x/E${i}`);
+    const sent = sendable(many);
+    expect(RESULT_IRIS_SENT).toBe(20000);
+    expect(sent.length).toBe(RESULT_IRIS_SENT);
+    expect(sent).toEqual(many.slice(0, RESULT_IRIS_SENT));
   });
 });

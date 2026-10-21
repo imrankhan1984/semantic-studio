@@ -303,21 +303,6 @@ async def put_source(pid: str, doc: str, request: Request) -> dict:
         )
 
 
-async def _read_json_capped(request: Request, limit: int, detail: str):
-    """The body as JSON, refused while reading once past `limit`."""
-    chunks: list[bytes] = []
-    total = 0
-    async for chunk in request.stream():
-        total += len(chunk)
-        if total > limit:
-            raise HTTPException(status_code=413, detail=detail)
-        chunks.append(chunk)
-    try:
-        return json.loads(b"".join(chunks) or b"null")
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail="The body must be JSON.") from exc
-
-
 LAYOUT_TOO_LARGE = f"A layout is at most {LAYOUT_MAX_BYTES // (1024 * 1024)} MB."
 
 
@@ -346,7 +331,7 @@ def get_layout(pid: str, doc: str) -> dict:
 async def put_layout(pid: str, doc: str, request: Request) -> dict:
     """Replace the canvas layout. Not a model change: no revision, no dirty
     flag, no undo step (D-087). Validated in projects.validate_layout."""
-    payload = await _read_json_capped(request, LAYOUT_MAX_BYTES, LAYOUT_TOO_LARGE)
+    payload = await ontologies.read_json_capped(request, LAYOUT_MAX_BYTES, LAYOUT_TOO_LARGE)
     with _errors():
         return editing_service.put_layout(pid, doc, payload)
 

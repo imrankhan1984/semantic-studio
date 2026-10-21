@@ -506,3 +506,25 @@ def test_nodes_refuses_a_body_declared_over_4_mb(client, hub_oid):
     )
     assert response.status_code == 413
     assert response.json()["detail"] == ontologies.NODES_TOO_LARGE
+
+
+def test_nodes_refuses_a_chunked_body_over_4_mb_while_reading(client, hub_oid):
+    """A chunked body declares no length, so main.py's check passes it; the
+    route's reader refuses it at 4 MB. Read whole first, it was a 422."""
+    head = b'{"iris": ["'
+    chunk = b"x" * (64 * 1024)
+    count = (ontologies.NODES_MAX_BYTES + 2 * 1024 * 1024) // len(chunk)
+
+    def body():
+        yield head
+        for _ in range(count):
+            yield chunk
+        yield b'"]}'
+
+    response = client.post(
+        f"/api/ontologies/{hub_oid}/nodes", content=body(), headers={"Content-Type": "application/json"}
+    )
+    assert response.request.headers.get("transfer-encoding") == "chunked"
+    assert "content-length" not in response.request.headers
+    assert response.status_code == 413
+    assert response.json()["detail"] == ontologies.NODES_TOO_LARGE

@@ -78,6 +78,7 @@ EXPECTED OUTPUT
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import threading
@@ -90,7 +91,8 @@ from urllib.parse import urlparse
 # FastAPI request-shaping helpers: File/Form/UploadFile for uploads, Query for
 # query params, HTTPException for error responses, APIRouter to group endpoints.
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
-from pydantic import BaseModel, Field  # declares/validates JSON request bodies
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, Field, ValidationError  # declares/validates JSON request bodies
 from rdflib import URIRef
 from starlette.concurrency import run_in_threadpool
 
@@ -312,7 +314,8 @@ NODES_LIMIT = 200
 # for; an IRI longer than 4,096 characters names nothing a graph holds.
 NODES_MAX_IRIS = 20000
 # The body that carries them, refused by its declared length in main.py
-# before anything reads it: twenty thousand IRIs of 200 characters.
+# before anything reads it, and while reading when it declares none:
+# twenty thousand IRIs of 200 characters.
 NODES_MAX_BYTES = 4 * 1024 * 1024
 NODES_TOO_LARGE = "This request names more than 4 MB of IRIs."
 
@@ -426,6 +429,22 @@ async def _read_capped(file: UploadFile, limit: int, variable: str) -> bytes:
             raise HTTPException(status_code=413, detail=too_large_detail(limit, variable))
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+async def read_json_capped(request: Request, limit: int, detail: str):
+    """The body as JSON, refused while reading once past `limit`. The check
+    in main.py reads only a declared length; a chunked body declares none."""
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(status_code=413, detail=detail)
+        chunks.append(chunk)
+    try:
+        return json.loads(b"".join(chunks) or b"null")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="The body must be JSON.") from exc
 
 
 CANCELLED_DETAIL = {
@@ -707,8 +726,8 @@ def get_neighborhood(
 
 
 @router.post("/{oid}/nodes")
-def get_nodes(
-    oid: str, request: NodesRequest, imports: bool = IMPORTS_PARAM, lang: Optional[str] = LANG_PARAM
+async def get_nodes(
+    oid: str, request: Request, imports: bool = IMPORTS_PARAM, lang: Optional[str] = LANG_PARAM
 ) -> dict:
     """POST /{oid}/nodes {"iris": [...]} -> the entities asked for and their links.
 
@@ -718,9 +737,23 @@ def get_nodes(
     came back. An IRI that is not an entity is left out, never a 404: a
     result row names predicates and values as well as entities. Read-only,
     from the cached viz like /neighborhood.
+
+    The body is read here, not by FastAPI: its own reader takes a chunked
+    body whole before validation sees it, so the cap is applied while
+    reading (code review). Validation still answers 422 as before.
     """
-    ontology = _get_or_404(oid)
-    return nodes_viz(_viz(ontology, imports, lang), request.iris, NODES_LIMIT)
+    payload = await read_json_capped(request, NODES_MAX_BYTES, NODES_TOO_LARGE)
+    try:
+        asked = NodesRequest.model_validate(payload)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+
+    def answer() -> dict:
+        ontology = _get_or_404(oid)
+        return nodes_viz(_viz(ontology, imports, lang), asked.iris, NODES_LIMIT)
+
+    # The viz may still be built or parsed lazily: off the event loop.
+    return await run_in_threadpool(answer)
 
 
 @router.get("/{oid}/node")
