@@ -255,9 +255,11 @@ describe("Query's layout (explore-and-query-layout 5.4, AC-6; 5.5, AC-7)", () =>
   /** Every rule as [selector, body]. */
   const rules = [...RULES.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => [m[1].trim(), m[2]] as const);
 
-  it("the builder panel is 60 % of the width, never under 520 px", () => {
+  // query-page-rework 5.1 (D-118) superseded the 60 % of 5.4: half the
+  // window, so the graph that shows the answers is as wide as the query.
+  it("the builder panel is 50 % of the width, never under 520 px (AC-1)", () => {
     const panel = block(".query-panel");
-    expect(panel).toMatch(/(?<![-\w])width:\s*60%;/);
+    expect(panel).toMatch(/(?<![-\w])width:\s*50%;/);
     expect(panel).toMatch(/min-width:\s*520px;/);
     // No narrower width for a smaller window, which would undercut the floor.
     expect(RULES).not.toMatch(/\.query-panel\s*\{[^}]*width:\s*4\d\dpx/);

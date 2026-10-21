@@ -7,7 +7,10 @@ SUMMARY
     Tests GET /{oid}/neighborhood: what one entity's neighbourhood contains,
     how its neighbours are ranked when there are more than the limit, what it
     reports about the ones it left out, what it does with an IRI that is not a
-    node, and the two performance limits the endpoint has to hold.
+    node, and the two performance limits the endpoint has to hold. Also
+    POST /{oid}/nodes (query-page-rework 5.2): the entities a query's
+    results name, drawn up to 200 with the true total, and its Section 10
+    limits.
 
 BASIC IDEA
     Two fixtures. A hub-and-spokes ontology gives one entity a known,
@@ -30,7 +33,7 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - Pass/fail per assertion, covering AC-15 to AC-19 of
-      partial-graph-rendering.md.
+      partial-graph-rendering.md and AC-4 of query-page-rework.md.
 ================================================================================
 """
 
@@ -404,3 +407,91 @@ def test_neighborhood_cost(client, big_oid, dense_oid):
             lambda: neighborhood_viz(viz, center, ontologies.DEFAULT_NEIGHBORHOOD_LIMIT)
         )
         assert elapsed_ms <= limit_ms(50), f"{shape} fixture took {elapsed_ms:.1f} ms"
+
+
+# --- POST /nodes: a query's results drawn (query-page-rework 5.2, AC-4) -----
+
+
+def _nodes(client: TestClient, oid: str, iris: list[str]) -> dict:
+    response = client.post(f"/api/ontologies/{oid}/nodes", json={"iris": iris})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_nodes_answers_the_entities_asked_and_their_links(client, hub_oid):
+    """The entities asked for, in the order asked, with links to what the
+    budget draws: spoke 20's to the hub and its two neighbours, and the one
+    between the two spokes asked, sent once."""
+    body = _nodes(client, hub_oid, [EX + "S0021", EX + "S0020"])
+    assert [n["id"] for n in body["nodes"]] == [EX + "S0021", EX + "S0020"]
+    assert body["total"] == 2 and body["drawn"] == 2
+    pairs = [(e["source"], e["target"]) for e in body["edges"]]
+    assert (EX + "S0020", EX + "Hub") in pairs
+    assert (EX + "S0020", EX + "S0019") in pairs
+    assert pairs.count((EX + "S0021", EX + "S0020")) == 1
+    # Every link touches an entity asked for: nothing else is sent.
+    for source, target in pairs:
+        assert source in {EX + "S0021", EX + "S0020"} or target in {EX + "S0021", EX + "S0020"}
+
+
+def test_nodes_leaves_out_what_is_not_an_entity(client, hub_oid):
+    """A result row names predicates and values too: left out, never a 404,
+    and an IRI named twice counts once."""
+    rdf_type = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+    body = _nodes(client, hub_oid, [EX + "NoSuchEntity", rdf_type, EX + "Hub", EX + "Hub"])
+    assert [n["id"] for n in body["nodes"]] == [EX + "Hub"]
+    assert body["total"] == 1
+    assert _nodes(client, hub_oid, [])["nodes"] == []
+    # An unknown ontology is still the shared lookup's 404.
+    assert client.post("/api/ontologies/no-such-id/nodes", json={"iris": []}).status_code == 404
+
+
+def test_nodes_draws_200_and_says_the_true_total(client, big_oid):
+    """Over 200 entities, 200 come back, the first asked, and the total is
+    every entity among them; the request itself is bounded."""
+    asked = [f"{EX}C{30000 + i}" for i in range(340)]
+    body = _nodes(client, big_oid, asked)
+    assert body["drawn"] == ontologies.NODES_LIMIT == 200
+    assert body["total"] == 340
+    assert [n["id"] for n in body["nodes"]] == asked[:200]
+    too_many = client.post(
+        f"/api/ontologies/{big_oid}/nodes", json={"iris": ["x"] * (ontologies.NODES_MAX_IRIS + 1)}
+    )
+    assert too_many.status_code == 422
+
+
+def test_nodes_caps_a_hubs_links_at_its_most_connected(client, dense_oid):
+    """DHub has 5,000 neighbours; it costs NODES_EDGES_PER_ENTITY links, to
+    the best-connected first, the ones the budget draws."""
+    from app.graph_builder import NODES_EDGES_PER_ENTITY
+    from app.store import store
+
+    body = _nodes(client, dense_oid, [DENSE_HUB])
+    assert len(body["edges"]) == NODES_EDGES_PER_ENTITY
+    degree = {n["id"]: n["degree"] for n in store.get(dense_oid).viz()["nodes"]}
+    others = [e["source"] if e["target"] == DENSE_HUB else e["target"] for e in body["edges"]]
+    kept = min(degree[o] for o in others)
+    left = [n for n in degree if n not in others and n != DENSE_HUB]
+    assert kept >= max(
+        degree[e["source"]] for e in store.get(dense_oid).viz()["edges"]
+        if e["target"] == DENSE_HUB and e["source"] in left
+    )
+
+
+@pytest.mark.perf
+def test_nodes_cost_and_size(client, big_oid):
+    """Section 10: 200 hidden IRIs on the 40,000-node tree in at most 150 ms
+    through the route, the body at most 0.5 MB. The leaves past C20000 have
+    degree 1, so the budget's 2,000 never holds them."""
+    from app.store import store
+
+    asked = [f"{EX}C{30000 + i}" for i in range(200)]
+    store.get(big_oid).viz()  # the viz is cached; the answer is what is timed
+    response = client.post(f"/api/ontologies/{big_oid}/nodes", json={"iris": asked})
+    assert response.json()["drawn"] == 200
+    megabytes = len(response.content) / (1024 * 1024)
+    assert megabytes <= 0.5, f"{megabytes:.3f} MB"
+    elapsed_ms = _median_ms(
+        lambda: client.post(f"/api/ontologies/{big_oid}/nodes", json={"iris": asked})
+    )
+    assert elapsed_ms <= limit_ms(150), f"took {elapsed_ms:.1f} ms"

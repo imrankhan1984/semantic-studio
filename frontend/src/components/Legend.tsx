@@ -45,6 +45,8 @@ INPUTS / INPUT SOURCES (props)
     - edgeKinds: which relation kinds are present.
     - hiddenKinds + onToggleKind: the show/hide filter state and its setter.
     - inQuery: Query's legend, folded at first and remembered nowhere.
+    - resultsRing: whether a query's results are ringed on the graph, for
+      the *Ring: in the results* row (query-page-rework 5.2).
     - localStorage `semantic-studio-legend` and the window's width, read once
       on mount for whether it starts folded.
 
@@ -66,6 +68,9 @@ interface Props {
   hiddenKinds: Set<string>;
   onToggleKind: (kind: string) => void;
   inQuery?: boolean;
+  /** A query's results are ringed on the graph (query-page-rework 5.2):
+   *  the legend says what the ring means while there are any. */
+  resultsRing?: boolean;
 }
 
 const EDGE_LABELS: Record<string, string> = {
@@ -133,6 +138,7 @@ export default function Legend({
   hiddenKinds,
   onToggleKind,
   inQuery = false,
+  resultsRing = false,
 }: Props) {
   const [collapsed, setCollapsedState] = useState(() => inQuery || startsFolded());
   const setCollapsed = (folded: boolean) => {
@@ -189,6 +195,19 @@ export default function Legend({
         <span aria-hidden="true">◂</span>
       </button>
       <div id={PANEL_ID}>
+        {/* Only while results are on the graph: a row about a mark nobody
+            can see would be one more thing to read for nothing. The swatch
+            is the ring itself, the shape the graph draws. */}
+        {resultsRing && (
+          <div className="legend-row static legend-ring-row">
+            <span
+              className="legend-ring"
+              aria-hidden="true"
+              style={{ borderColor: palette.selectedRing }}
+            />
+            <span className="legend-label">Ring: in the results</span>
+          </div>
+        )}
         <div className="legend-section">Nodes — click to show/hide</div>
         {kinds.map(([kind, count]) => (
           // The name is stated rather than left to be computed from contents.

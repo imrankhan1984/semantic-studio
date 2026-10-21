@@ -226,7 +226,7 @@ button.icon-btn {
 /* 28 px: toolbars and the controls on a row. */
 :where(
   button.small, .tool-btn, .pager-btn, .edit-btn, .link-btn, .results-export,
-  .results-clear, .relate-swap, .toggle-pill, .icon-btn, .hierarchy-menu-btn,
+  .results-clear, .results-frame, .relate-swap, .toggle-pill, .icon-btn, .hierarchy-menu-btn,
   .canvas-help-button, .hierarchy-add, .hierarchy-expand, .project-more,
   .validate-btn, .project-header button, .canvas-toolbar button,
   .graph-toolbar button, .source-toolbar button:not(.mode-tab)
@@ -1516,6 +1516,17 @@ button.legend-row:hover {
   cursor: default;
 }
 
+/* The result ring's swatch: the shape the graph draws, a ring and not a
+   dot, so the row reads without its colour (query-page-rework 5.2). */
+.legend-ring {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid;
+  box-sizing: border-box;
+}
+
 /* The RDFS class line under Class (portal-foundations 5.3): set in from the
    rows that filter, so it reads as a note on Class, not a fourth filter. */
 .legend-row.legend-sub {
@@ -2542,10 +2553,11 @@ button.legend-row:hover {
   font-weight: 600;
 }
 
-/* 60 % of the window, never under 520 px (explore-and-query-layout 5.4):
-   in this tab the graph is a picker, and the builder is where the work is. */
+/* Half the window, never under 520 px (query-page-rework 5.1, D-118): the
+   graph shows the answers now, so it is as wide as the query. 60 % left it
+   480 px at 1280 (explore-and-query-layout 5.4, superseded). */
 .query-panel {
-  width: 60%;
+  width: 50%;
   min-width: 520px;
   flex: none;
   border-left: 1px solid var(--border);
@@ -3078,6 +3090,14 @@ button.legend-row:hover {
 
 .results-clear {
   /* Sized by the button set (5.5). */
+}
+
+/* More results were hidden than the graph drew (query-page-rework 5.2):
+   said under the header, as a note, never as an error. */
+.results-graph-note {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
 }
 
 /* Q-2 export controls, sized to sit beside Clear results. Disabled by aria (not

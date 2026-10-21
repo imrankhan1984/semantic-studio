@@ -61,7 +61,11 @@ INPUTS / INPUT SOURCES (props)
     - onSelect: called with a clicked node's IRI (or null on empty click).
     - queryMode / queryPathIris / queryCandidates: Query-mode highlighting.
     - expansion: a neighbourhood to merge in, with a token that changes per
-      expansion; onExpanded reports back what was actually added.
+      expansion; onExpanded reports back what was actually added. A query's
+      hidden results arrive the same way, from /nodes.
+    - queryResults / frameTick: the IRIs a query's results name, ringed and
+      named where drawn, and a tick that frames them (query-page-rework
+      5.2); only an explicit run or Frame on graph bumps it.
     - leftRail: the legend, docked beside the canvas (never an overlay, so it
       cannot swallow clicks meant for nodes beneath it).
 
@@ -85,8 +89,9 @@ import type {
   NodeLabelDrawingFunction,
 } from "sigma/rendering";
 import { downloadAsPNG } from "@sigma/export-image";   // PNG export
-import type { MergeResult, Theme, VizEdge, VizGraph, VizNeighborhood } from "../types";
+import type { MergeResult, Theme, VizEdge, VizGraph, VizNeighborhood, VizNodes } from "../types";
 import { shortLabel } from "../modeling/ruleSentences";
+import { frameTarget } from "../sparql/resultNodes";
 import { PALETTES, edgeColor, nodeColor } from "../types";
 import {
   LabelBoxes,
@@ -149,8 +154,12 @@ function makeDrawNodeHover(
     // The selection ring, before the pill so the pill's shadow settings below
     // cannot bleed into the stroke. Guarded on the flag the reducer sets: a
     // hovered-but-unselected node reaches here with it undefined and gets no
-    // ring, which is the mark that tells the two states apart.
-    if ((data as { selected?: boolean }).selected) {
+    // ring, which is the mark that tells the two states apart. A query's
+    // result carries `result` and gets the same ring (query-page-rework
+    // 5.2): a shape, so being in the results never rests on colour. The two
+    // never meet, as Query mode selects nothing.
+    const flags = data as { selected?: boolean; result?: boolean };
+    if (flags.selected || flags.result) {
       context.beginPath();
       context.arc(data.x, data.y, data.size + SELECTION_RING_GAP, 0, Math.PI * 2);
       context.closePath();
@@ -347,9 +356,16 @@ interface Props {
    * thing an expansion must not do is move what the user is already looking at.
    * The token is what makes two expansions of the same entity two merges.
    */
-  expansion?: { data: VizNeighborhood; token: number } | null;
+  expansion?: { data: VizNeighborhood | VizNodes; token: number } | null;
   /** What the merge actually added — see MergeResult for why only this knows. */
   onExpanded?: (result: MergeResult) => void;
+  /** The IRIs a query's results name (query-page-rework 5.2): each one
+   *  drawn is ringed and named. Only Query mode reads it. */
+  queryResults?: ReadonlySet<string>;
+  /** Bump to frame the drawn result nodes. A tick, like focusTick, and the
+   *  only thing that moves the camera to the results: an automatic re-run
+   *  changes `queryResults` and never this. */
+  frameTick?: number;
   /**
    * Docked beside the canvas (the legend). Rendered as a sibling rather than
    * an overlay so it can never hide or swallow clicks on nodes beneath it.
@@ -516,6 +532,8 @@ export default function GraphView({
   queryCandidates,
   expansion = null,
   onExpanded,
+  queryResults,
+  frameTick = 0,
   leftRail,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -533,6 +551,7 @@ export default function GraphView({
   const queryModeRef = useRef(queryMode);
   const pathRef = useRef<Set<string>>(queryPathIris ?? EMPTY_SET);
   const candidateRef = useRef(queryCandidates);
+  const resultsRef = useRef<ReadonlySet<string>>(queryResults ?? EMPTY_SET);
   // Held in a ref so the merge effect can depend on the token alone. As a
   // dependency the callback's identity would re-run the merge on any App
   // re-render, and a merge that runs twice reports its additions twice.
@@ -598,6 +617,7 @@ export default function GraphView({
   queryModeRef.current = queryMode;
   pathRef.current = queryPathIris ?? EMPTY_SET;
   candidateRef.current = queryCandidates;
+  resultsRef.current = queryResults ?? EMPTY_SET;
   expandedRef.current = onExpanded;
 
   /**
@@ -761,10 +781,11 @@ export default function GraphView({
     const labels = makeLabelDrawers({
       renderer: () => built,
       // The nodes the reducer marks highlighted, which the hover layer pills:
-      // the path and the hovered node in Query mode, else selected and hovered.
+      // the path, the results and the hovered node in Query mode, else
+      // selected and hovered.
       pillNodes: () =>
         queryModeRef.current
-          ? [hoveredRef.current, ...pathRef.current]
+          ? [hoveredRef.current, ...pathRef.current, ...resultsRef.current]
           : [selectedRef.current, hoveredRef.current],
     });
 
@@ -812,11 +833,19 @@ export default function GraphView({
             !candidates ||
             candidates.classes.has(node) ||
             candidates.kinds.has(attrs.kind as string);
+          // A result is ringed and named whether or not the path could step
+          // on it: the answer is what the person asked to see. A boolean on
+          // the object already returned, as `selected` is, so no allocation.
+          if (resultsRef.current.has(node)) {
+            res.highlighted = true;
+            res.zIndex = 3;
+            res.result = true;
+          }
           if (inPath) {
             res.highlighted = true;
             res.zIndex = 3;
             res.size = (attrs.size as number) + 3;
-          } else if (node === hov) {
+          } else if (res.result || node === hov) {
             res.highlighted = true;
             res.zIndex = 3;
           } else if (!isCandidate) {
@@ -1067,7 +1096,10 @@ export default function GraphView({
   useEffect(() => {
     const graph = graphRef.current;
     if (!graph || !expansion) return;
-    const { nodes, edges, stats } = expansion.data;
+    const { nodes, edges } = expansion.data;
+    // A query's results (VizNodes) have no centre: they start from the
+    // graph's middle and the layout pulls each to what it links to.
+    const center = "stats" in expansion.data ? expansion.data.stats.center : null;
 
     // Stop first. The worker respawns itself on every nodeAdded, and the
     // per-frame loop would otherwise be moving nodes while they are placed.
@@ -1079,9 +1111,9 @@ export default function GraphView({
     // dropped — the graph's own centre is the honest fallback.
     let anchorX = 0;
     let anchorY = 0;
-    if (graph.hasNode(stats.center)) {
-      anchorX = graph.getNodeAttribute(stats.center, "x") as number;
-      anchorY = graph.getNodeAttribute(stats.center, "y") as number;
+    if (center !== null && graph.hasNode(center)) {
+      anchorX = graph.getNodeAttribute(center, "x") as number;
+      anchorY = graph.getNodeAttribute(center, "y") as number;
     } else if (graph.order > 0) {
       let sumX = 0;
       let sumY = 0;
@@ -1185,7 +1217,7 @@ export default function GraphView({
     // needing the user to reselect.
     renderer.setSetting("defaultDrawNodeHover", NODE_HOVER_DRAWERS[theme]);
     renderer.refresh({ skipIndexation: true });
-  }, [hiddenKinds, selected, theme, queryMode, queryPathIris, queryCandidates]);
+  }, [hiddenKinds, selected, theme, queryMode, queryPathIris, queryCandidates, queryResults]);
 
   // Honour a change to the motion preference without a reload (AC-11).
   //
@@ -1216,6 +1248,27 @@ export default function GraphView({
     centerOn(sel);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusTick]);
+
+  // Frame the results on an explicit run or Frame on graph (query-page-rework
+  // 5.2). Declared after the merge effect, so a run whose hidden results App
+  // drew in the same render frames what that merge added. Only the drawn
+  // result nodes count, a kind the legend hides included: the camera shows
+  // where they are, and the table is the route to every answer.
+  useEffect(() => {
+    const renderer = sigmaRef.current;
+    const graph = graphRef.current;
+    if (!frameTick || !renderer || !graph) return;
+    const points: { x: number; y: number }[] = [];
+    for (const iri of resultsRef.current) {
+      if (!graph.hasNode(iri)) continue;
+      const display = renderer.getNodeDisplayData(iri);
+      if (display) points.push(display);
+    }
+    const target = frameTarget(points);
+    if (!target) return;
+    renderer.getCamera().animate(target, { duration: moveDuration(CAMERA_DURATION_MS) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [frameTick]);
 
   // Move focus to the partner control when a zoom press disables the one that
   // made it. A disabled button cannot hold focus and the browser drops it to

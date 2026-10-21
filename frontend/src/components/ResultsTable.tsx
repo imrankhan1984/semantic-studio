@@ -27,7 +27,7 @@ BASIC IDEA
     App's state several times over — the neighbourhood, what the merge added,
     the live-region sentence — and every one of those renders QueryPanel again.
     Without the memo the table under the user's cursor would be rebuilt each
-    time for no change at all. It only bites while all four props keep their
+    time for no change at all. It only bites while all its props keep their
     identity, which is why QueryPanel and App hand over callbacks that do.
 
 INPUTS / INPUT SOURCES (props)
@@ -37,6 +37,9 @@ INPUTS / INPUT SOURCES (props)
       first if it is not on the canvas.
     - onViewInSource: show that entity's first line in the raw source.
     - onClear: empty the results area, leaving the query untouched.
+    - onFrame / graphNote: Frame on graph, shown while results are on the
+      graph, and the sentence when more were hidden than drawn
+      (query-page-rework 5.2).
 
 EXPECTED OUTPUT
     - The rendered results table (or an empty-result note), with a line per
@@ -59,6 +62,11 @@ interface Props {
   onPickIri: (iri: string) => void;
   onViewInSource: (iri: string, prefixed?: string) => void;
   onClear: () => void;
+  /** Frame the results on the graph again (query-page-rework 5.2); absent
+   *  while none of them is on the graph. */
+  onFrame?: () => void;
+  /** The sentence when more results were hidden than the graph drew. */
+  graphNote?: string | null;
 }
 
 type ExportFormat = "csv" | "json";
@@ -123,7 +131,15 @@ function ServiceNotes({ services }: { services: ServiceCall[] }) {
   );
 }
 
-function ResultsTable({ results, ontologyName, onPickIri, onViewInSource, onClear }: Props) {
+function ResultsTable({
+  results,
+  ontologyName,
+  onPickIri,
+  onViewInSource,
+  onClear,
+  onFrame,
+  graphNote = null,
+}: Props) {
   const [sort, setSort] = useState<{ column: number; asc: boolean } | null>(null);
   const [page, setPage] = useState(0);
   // The format awaiting the truncation confirmation, or null when no dialog is
@@ -329,6 +345,18 @@ function ResultsTable({ results, ontologyName, onPickIri, onViewInSource, onClea
         {/* "Clear results", not "Clear": the path bar already has a control
             called Clear path, and two controls sharing a word while doing
             different things is a defect in itself. */}
+        {/* The camera only: the rings stay as they are. The one way to bring
+            the results back into view after moving the graph, since an
+            automatic re-run never moves it. */}
+        {onFrame && (
+          <button
+            className="ghost results-frame"
+            onClick={onFrame}
+            title="Move the graph's view to the results"
+          >
+            Frame on graph
+          </button>
+        )}
         <button
           className="ghost results-clear"
           onClick={onClear}
@@ -337,6 +365,7 @@ function ResultsTable({ results, ontologyName, onPickIri, onViewInSource, onClea
           Clear results
         </button>
       </div>
+      {graphNote && <p className="results-graph-note">{graphNote}</p>}
       {results.services && results.services.length > 0 && (
         <ServiceNotes services={results.services} />
       )}

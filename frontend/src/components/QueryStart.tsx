@@ -10,8 +10,9 @@ SUMMARY
 
 BASIC IDEA
     An empty builder tells a newcomer nothing. This turns the schema into
-    concrete first moves: clicking a starter loads a ready QueryState (via
-    onUseStarter), clicking a class begins the path (via onPickClass). The lists
+    concrete first moves: clicking a starter loads a ready QueryState and
+    runs it (via onUseStarter; query-page-rework 5.2), clicking a class
+    begins the path (via onPickClass). The lists
     themselves come from the pure starters module.
 
 INPUTS / INPUT SOURCES (props)

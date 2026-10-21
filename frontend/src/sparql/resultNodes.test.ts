@@ -1,0 +1,88 @@
+/*
+================================================================================
+FILE: frontend/src/sparql/resultNodes.test.ts
+================================================================================
+
+SUMMARY
+    Tests for sparql/resultNodes.ts (query-page-rework 5.2): which IRIs in
+    the rows can be result nodes, the camera target that frames them, and
+    the two sentences.
+
+BASIC IDEA
+    Pure functions over plain data, so each rule is one table of inputs.
+
+INPUTS / INPUT SOURCES
+    - Hand-built SparqlResults and points.
+
+EXPECTED OUTPUT
+    - Pass/fail per assertion, covering parts of AC-2, AC-4 and AC-7.
+================================================================================
+*/
+
+import { describe, expect, it } from "vitest";
+import type { SparqlResults } from "../types";
+import {
+  SINGLE_RESULT_RATIO,
+  frameTarget,
+  resultIris,
+  shownOnGraph,
+  undrawnSentence,
+} from "./resultNodes";
+
+function results(rows: SparqlResults["rows"]): SparqlResults {
+  return { vars: ["a", "b"], rows, rowCount: rows.length, truncated: false, durationMs: 1 };
+}
+
+describe("resultIris", () => {
+  it("names every distinct IRI in row order; literals, blank nodes and unbound cells never", () => {
+    const got = resultIris(
+      results([
+        [{ type: "uri", value: "http://x/B" }, { type: "literal", value: "http://x/L" }],
+        [{ type: "bnode", value: "b0" }, { type: "uri", value: "http://x/A" }],
+        [{ type: "uri", value: "http://x/B" }, null],
+      ]),
+    );
+    expect(got).toEqual(["http://x/B", "http://x/A"]);
+    expect(resultIris(null)).toEqual([]);
+  });
+});
+
+describe("frameTarget", () => {
+  it("centres on the box of the points, the ratio its larger side with a margin", () => {
+    const target = frameTarget([
+      { x: 0.2, y: 0.4 },
+      { x: 0.8, y: 0.5 },
+      { x: 0.5, y: 0.45 },
+    ])!;
+    expect(target.x).toBeCloseTo(0.5, 6);
+    expect(target.y).toBeCloseTo(0.45, 6);
+    expect(target.ratio).toBeGreaterThan(0.6);
+    expect(target.ratio).toBeLessThan(1);
+  });
+
+  it("one result is centred at the zoom a search pick uses", () => {
+    expect(frameTarget([{ x: 0.3, y: 0.7 }])).toEqual({ x: 0.3, y: 0.7, ratio: SINGLE_RESULT_RATIO });
+  });
+
+  it("a tight cluster is never closer than one result, a spread never past the whole graph", () => {
+    expect(frameTarget([{ x: 0.5, y: 0.5 }, { x: 0.501, y: 0.5 }])!.ratio).toBe(SINGLE_RESULT_RATIO);
+    expect(frameTarget([{ x: -2, y: 0 }, { x: 2, y: 0 }])!.ratio).toBeLessThanOrEqual(1.2);
+  });
+
+  it("nothing to frame is null", () => {
+    expect(frameTarget([])).toBeNull();
+  });
+});
+
+describe("the sentences", () => {
+  it("the announcement counts the results on the graph, and says nothing for none", () => {
+    expect(shownOnGraph(12)).toBe("12 results shown on the graph.");
+    expect(shownOnGraph(1)).toBe("1 result shown on the graph.");
+    expect(shownOnGraph(0)).toBeNull();
+  });
+
+  it("the header names the true total only when some were left undrawn", () => {
+    expect(undrawnSentence(200, 340)).toBe("The graph shows 200 of the 340 results it had not drawn.");
+    expect(undrawnSentence(12, 12)).toBeNull();
+  });
+});

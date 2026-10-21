@@ -72,7 +72,7 @@ import { projectStore } from "./state/projectStore";
 // vite.config.ts is what makes this import real rather than "" — see the trap
 // recorded in focus-visible.test.ts.
 import CSS from "./index.css?raw";
-import type { MergeResult, OntologySummary, VizGraph, VizNeighborhood } from "./types";
+import type { MergeResult, OntologySummary, SparqlResults, VizGraph, VizNeighborhood, VizNodes } from "./types";
 
 const {
   listOntologies,
@@ -112,6 +112,7 @@ const {
   reasonProject,
   listData,
   restoreExamples,
+  getResultNodes,
 } = vi.hoisted(() => ({
   listOntologies: vi.fn(),
   getGraph: vi.fn(),
@@ -163,6 +164,8 @@ const {
   listData: vi.fn(),
   // home-and-examples 5.8: the Load dialog's Add the examples back.
   restoreExamples: vi.fn(),
+  // query-page-rework 5.2: a query's hidden results drawn.
+  getResultNodes: vi.fn(),
 }));
 
 // importOriginal rather than a bare factory, so ApiError stays the real class.
@@ -208,10 +211,12 @@ vi.mock("./api", async (importOriginal) => ({
   reasonProject,
   listData,
   restoreExamples,
+  getResultNodes,
 }));
 
 /** Every mocked client function, so a test can count what mount actually did. */
 const ALL_API = {
+  getResultNodes,
   restoreExamples,
   listData,
   listImports,
@@ -283,20 +288,34 @@ vi.mock("./components/GraphView", () => ({
     expansion,
     onExpanded,
     focusTick,
+    queryResults,
+    frameTick,
   }: {
     data: unknown;
     leftRail?: React.ReactNode;
     onSelect: (iri: string | null) => void;
-    expansion?: { data: VizNeighborhood; token: number } | null;
+    expansion?: { data: VizNeighborhood | VizNodes; token: number } | null;
     onExpanded?: (result: MergeResult) => void;
     focusTick: number;
+    queryResults?: ReadonlySet<string>;
+    frameTick?: number;
   }) => {
     graphRenders.count += 1;
     return (
     // focusTick is surfaced because "the camera re-centres" is not otherwise
     // observable from here: the real GraphView watches this prop and moves. Its
     // guard against a target that is not on the canvas is GraphView.test.tsx's.
-    <div data-testid="graph" data-focus-tick={focusTick} data-has-graph={data ? "yes" : "no"}>
+    // The results' rings and the framing tick, which the real GraphView
+    // draws and moves by (query-page-rework 5.2): surfaced as attributes, the
+    // drawing being GraphView.test.tsx's.
+    <div
+      data-testid="graph"
+      data-focus-tick={focusTick}
+      data-has-graph={data ? "yes" : "no"}
+      data-results={[...(queryResults ?? [])].join(" ")}
+      data-frame-tick={frameTick ?? 0}
+      data-expansion={expansion ? expansion.data.nodes.map((n) => n.id).join(" ") : ""}
+    >
       {leftRail}
       <button onClick={() => onSelect("http://x/issuedBy")}>fake node</button>
       {expansion && (
@@ -315,6 +334,9 @@ vi.mock("./components/GraphView", () => ({
     );
   },
 }));
+
+/** What the stubbed panel's runs answer; a test sets the rows. */
+const queryAnswer = vi.hoisted(() => ({ results: null as SparqlResults | null }));
 
 /** Which entity the stubbed result row and search hit point at. Mutable so a
  *  test can aim them at a drawn entity, an undrawn one, or a predicate. */
@@ -339,13 +361,30 @@ vi.mock("./components/QueryPanel", () => ({
     onViewInSource,
     includeImports,
     importsCount,
+    onResults,
+    resultsOnGraph,
+    onFrameResults,
+    resultsNote,
   }: {
     onPickIri: (iri: string) => void;
     onViewInSource: (iri: string, prefixed?: string) => void;
     includeImports?: boolean;
     importsCount?: number | null;
+    onResults?: (results: SparqlResults | null, explicit: boolean) => void;
+    resultsOnGraph?: number;
+    onFrameResults?: () => void;
+    resultsNote?: string | null;
   }) => (
     <div className="query-panel">
+      {/* A run, an Auto re-run and Clear results, as QueryPanel reports
+          them (query-page-rework 5.2); which control is which is
+          QueryPanel.test.tsx's. */}
+      <button onClick={() => onResults?.(queryAnswer.results, true)}>fake explicit run</button>
+      <button onClick={() => onResults?.(queryAnswer.results, false)}>fake auto run</button>
+      <button onClick={() => onResults?.(null, false)}>fake clear results</button>
+      {onFrameResults && <button onClick={onFrameResults}>fake frame</button>}
+      <span data-testid="results-on-graph">{resultsOnGraph ?? 0}</span>
+      <span data-testid="results-note">{resultsNote ?? ""}</span>
       <button onClick={() => onPickIri(pick.iri)}>fake result chip</button>
       <button onClick={() => onViewInSource(pick.iri, pick.prefixed)}>fake source control</button>
       {/* What App hands over for the "Querying ..." sentence (external-access
@@ -3673,5 +3712,164 @@ describe("App status bar (portal-foundations 5.6, AC-9)", () => {
     const options = [...document.querySelectorAll("#ontology-select option")].map((o) => o.textContent);
     expect(options).toContain(`${SUMMARY.name} (${SUMMARY.triples.toLocaleString()} statements)`);
     expect(document.body.textContent).not.toMatch(/\btriples?\b/i);
+  });
+});
+
+describe("App: the graph frames the results (query-page-rework 5.2)", () => {
+  /** Bond and Issuer drawn; Coupon and Rate left out by the budget. */
+  const DRAWN: VizGraph = {
+    nodes: [
+      { id: "http://x/Bond", label: "Bond", kind: "class", degree: 12 },
+      { id: "http://x/Issuer", label: "Issuer", kind: "class", degree: 9 },
+    ],
+    edges: [],
+    stats: {
+      nodeCount: 2,
+      edgeCount: 0,
+      nodeTotal: 18717,
+      edgeTotal: 51446,
+      truncated: true,
+      budget: 2000,
+      kindCounts: { class: 18717 },
+    },
+  };
+
+  const uri = (value: string) => ({ type: "uri" as const, value });
+  const rows = (iris: string[]): SparqlResults => ({
+    vars: ["x", "label"],
+    rows: iris.map((iri) => [uri(iri), { type: "literal" as const, value: iri }]),
+    rowCount: iris.length,
+    truncated: false,
+    durationMs: 3,
+  });
+
+  const graph = () => screen.getByTestId("graph");
+  const rings = () => graph().getAttribute("data-results") ?? "";
+  const frames = () => Number(graph().getAttribute("data-frame-tick"));
+  const liveRegion = () => document.querySelector(".notice-region")!.textContent ?? "";
+  const click = async (name: string) => {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name }));
+    });
+  };
+  const openLegend = () => fireEvent.click(screen.getByRole("button", { name: "Legend and filters" }));
+
+  async function inQuery() {
+    getGraph.mockResolvedValue(DRAWN);
+    await renderAppOpened();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Query" }));
+    });
+  }
+
+  it("an explicit run rings the results, frames them and says how many, once (AC-2, AC-7)", async () => {
+    queryAnswer.results = rows(["http://x/Bond", "http://x/Issuer"]);
+    await inQuery();
+    const before = frames();
+    await click("fake explicit run");
+    // A literal's text that looks like an IRI is never a result node.
+    expect(rings()).toBe("http://x/Bond http://x/Issuer");
+    expect(frames()).toBe(before + 1);
+    expect(liveRegion()).toContain("2 results shown on the graph.");
+    expect(getResultNodes).not.toHaveBeenCalled();
+    // The legend says what the ring is while there are results on the graph.
+    openLegend();
+    expect(screen.getByText("Ring: in the results")).toBeTruthy();
+    expect(screen.getByTestId("results-on-graph").textContent).toBe("2");
+  });
+
+  it("an automatic re-run updates the rings and leaves the camera and the live region alone (AC-3)", async () => {
+    queryAnswer.results = rows(["http://x/Bond"]);
+    await inQuery();
+    await click("fake explicit run");
+    const framed = frames();
+    const said = liveRegion();
+    queryAnswer.results = rows(["http://x/Issuer", "http://x/Coupon"]);
+    await click("fake auto run");
+    expect(rings()).toBe("http://x/Issuer http://x/Coupon");
+    expect(frames()).toBe(framed);
+    expect(liveRegion()).toBe(said);
+    // Hidden results of an Auto re-run are not drawn: only an explicit run asks.
+    expect(getResultNodes).not.toHaveBeenCalled();
+  });
+
+  it("Frame on graph frames again; Clear results removes the rings and the legend row (AC-3)", async () => {
+    queryAnswer.results = rows(["http://x/Bond"]);
+    await inQuery();
+    await click("fake explicit run");
+    const framed = frames();
+    await click("fake frame");
+    expect(frames()).toBe(framed + 1);
+    openLegend();
+    expect(screen.queryByText("Ring: in the results")).toBeTruthy();
+    await click("fake clear results");
+    expect(rings()).toBe("");
+    expect(screen.queryByText("Ring: in the results")).toBeNull();
+    expect(screen.getByTestId("results-on-graph").textContent).toBe("0");
+    // The camera stays where it is.
+    expect(frames()).toBe(framed + 1);
+  });
+
+  it("hidden results are requested once, merged, then framed (AC-4)", async () => {
+    queryAnswer.results = rows(["http://x/Bond", "http://x/Coupon", "http://x/Rate"]);
+    const answer: VizNodes = {
+      nodes: [
+        { id: "http://x/Coupon", label: "Coupon", kind: "class", degree: 1 },
+        { id: "http://x/Rate", label: "Rate", kind: "class", degree: 1 },
+      ],
+      edges: [],
+      total: 2,
+      drawn: 2,
+    };
+    getResultNodes.mockResolvedValue(answer);
+    await inQuery();
+    const before = frames();
+    await click("fake explicit run");
+    expect(getResultNodes).toHaveBeenCalledTimes(1);
+    expect(getResultNodes).toHaveBeenCalledWith("o1", ["http://x/Coupon", "http://x/Rate"], false);
+    expect(graph().getAttribute("data-expansion")).toBe("http://x/Coupon http://x/Rate");
+    expect(frames()).toBe(before + 1);
+    expect(liveRegion()).toContain("3 results shown on the graph.");
+    // Every one was drawn, so the header says nothing about the rest.
+    expect(screen.getByTestId("results-note").textContent).toBe("");
+    // The merge reports itself without an expansion's sentence over the run's.
+    await click("fake merge");
+    expect(liveRegion()).toContain("3 results shown on the graph.");
+    expect(liveRegion()).not.toContain("Added");
+  });
+
+  it("past 200 the header says how many of the hidden ones the graph shows (AC-4)", async () => {
+    const hidden = Array.from({ length: 340 }, (_, i) => `http://x/H${i}`);
+    queryAnswer.results = rows(hidden);
+    getResultNodes.mockResolvedValue({
+      nodes: hidden.slice(0, 200).map((id) => ({ id, label: id, kind: "class", degree: 1 })),
+      edges: [],
+      total: 340,
+      drawn: 200,
+    });
+    await inQuery();
+    await click("fake explicit run");
+    expect(screen.getByTestId("results-note").textContent).toBe(
+      "The graph shows 200 of the 340 results it had not drawn.",
+    );
+    expect(liveRegion()).toContain("200 results shown on the graph.");
+  });
+
+  it("an answer for a run already cleared draws nothing", async () => {
+    queryAnswer.results = rows(["http://x/Coupon"]);
+    let resolve!: (v: VizNodes) => void;
+    getResultNodes.mockReturnValue(new Promise<VizNodes>((r) => (resolve = r)));
+    await inQuery();
+    await click("fake explicit run");
+    await click("fake clear results");
+    await act(async () => {
+      resolve({
+        nodes: [{ id: "http://x/Coupon", label: "Coupon", kind: "class", degree: 1 }],
+        edges: [],
+        total: 1,
+        drawn: 1,
+      });
+    });
+    expect(graph().getAttribute("data-expansion")).toBe("");
   });
 });

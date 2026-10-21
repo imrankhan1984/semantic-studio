@@ -128,6 +128,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   deleteOntology: () => api.deleteOntology("ont-1"),
   getGraph: () => api.getGraph("ont-1"),
   getNeighborhood: () => api.getNeighborhood("ont-1", "http://example.org/a"),
+  getResultNodes: () => api.getResultNodes("ont-1", ["http://example.org/a"]),
   fetchHierarchy: () => api.fetchHierarchy("ont-1"),
   getNodeDetails: () => api.getNodeDetails("ont-1", "http://example.org/a"),
   searchNodes: () => api.searchNodes("ont-1", "ab"),
@@ -242,12 +243,13 @@ describe("api client header (S-6)", () => {
     // wizard four POSTs, a PATCH and a DELETE (csv-data-import); reasoning
     // a POST (Reason) and a DELETE (Stop); the examples one POST (restore);
     // a load's cancel one POST (load-progress 5.3); the reuse plan one POST
-    // (ShareDomain's dry run, attribute-reuse 5.2).
+    // (ShareDomain's dry run, attribute-reuse 5.2); a query's hidden results
+    // one POST (/nodes, query-page-rework 5.2).
     const expected = [
       ...Array(6).fill("DELETE"),
       "PATCH",
       "PATCH",
-      ...Array(30).fill("POST"),
+      ...Array(31).fill("POST"),
       "PUT",
       "PUT",
       "PUT",

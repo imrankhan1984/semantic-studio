@@ -88,6 +88,7 @@ import type {
   SparqlResults,
   VizGraph,
   VizNeighborhood,
+  VizNodes,
   VizNode,
   NetworkActivity,
   NetworkCapability,
@@ -454,6 +455,19 @@ export function getNeighborhood(
       ),
     ),
   ).then((r) => handle<VizNeighborhood>(r));
+}
+
+/**
+ * The entities a query's results name, for drawing those the node budget
+ * left out (query-page-rework 5.2). A POST because 200 IRIs do not fit a
+ * URL; it changes nothing, and carries the client header as every POST does.
+ */
+export function getResultNodes(id: string, iris: string[], imports = false): Promise<VizNodes> {
+  return send(withLang(withImports(`/api/ontologies/${id}/nodes`, imports)), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
+    body: JSON.stringify({ iris }),
+  }).then((r) => handle<VizNodes>(r));
 }
 
 /**

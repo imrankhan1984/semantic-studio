@@ -54,6 +54,8 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - JSON responses (ontology summaries, graph, one entity's neighbourhood,
+      the entities a query's results name, for drawing them (5.2 of
+      query-page-rework),
       node details -- for a project's class, its rules, their warnings and
       the sentence builder's choices (axioms-and-reasoning 5.9), and its
       `properties`, own, shared, both or through a parent (attribute-reuse
@@ -82,7 +84,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 from urllib.parse import urlparse
 
 # FastAPI request-shaping helpers: File/Form/UploadFile for uploads, Query for
@@ -105,6 +107,7 @@ from ..graph_builder import (
     labeler,
     neighborhood_viz,
     node_details,
+    nodes_viz,
     search_nodes,
     term_kind,
 )
@@ -299,6 +302,21 @@ class FetchRequest(BaseModel):
 # near 100 KB. Refused by validation (422) before rdflib sees a character.
 class SparqlRequest(BaseModel):
     query: str = Field(max_length=MAX_QUERY_CHARS)
+
+
+# How many entities one /nodes answer draws (query-page-rework 5.2): the
+# results the node budget left out, at most this many, with the true total.
+NODES_LIMIT = 200
+# What one /nodes request may name. A result holds at most 1,000 rows, so
+# this is room for twenty IRI columns, and it bounds the work a body can ask
+# for; an IRI longer than 4,096 characters names nothing a graph holds.
+NODES_MAX_IRIS = 20000
+
+
+# JSON body for POST /{oid}/nodes: the IRIs a query's results named. A POST
+# because 200 IRIs do not fit a URL; it changes nothing.
+class NodesRequest(BaseModel):
+    iris: list[Annotated[str, Field(max_length=4096)]] = Field(max_length=NODES_MAX_IRIS)
 
 
 # The refusal for chosen import files over the closure's total. Here so the
@@ -678,6 +696,23 @@ def get_neighborhood(
             detail=f"No entity with that IRI is drawn in this ontology: {iri}",
         )
     return result
+
+
+@router.post("/{oid}/nodes")
+def get_nodes(
+    oid: str, request: NodesRequest, imports: bool = IMPORTS_PARAM, lang: Optional[str] = LANG_PARAM
+) -> dict:
+    """POST /{oid}/nodes {"iris": [...]} -> the entities asked for and their links.
+
+    How a query's results the node budget left out get drawn
+    (query-page-rework 5.2): the first NODES_LIMIT entities in the order
+    asked, `total` the entities among everything asked, `drawn` how many
+    came back. An IRI that is not an entity is left out, never a 404: a
+    result row names predicates and values as well as entities. Read-only,
+    from the cached viz like /neighborhood.
+    """
+    ontology = _get_or_404(oid)
+    return nodes_viz(_viz(ontology, imports, lang), request.iris, NODES_LIMIT)
 
 
 @router.get("/{oid}/node")

@@ -347,6 +347,16 @@ export interface VizNeighborhood {
   };
 }
 
+/** POST /nodes (query-page-rework 5.2): the entities a query's results
+ *  name, drawn when the node budget left them out. `total` is every entity
+ *  asked for, `drawn` how many came back (at most 200). */
+export interface VizNodes {
+  nodes: VizNode[];
+  edges: VizEdge[];
+  total: number;
+  drawn: number;
+}
+
 /** What GraphView actually merged, reported back by it. The caller cannot work
  *  this out for itself: only the renderer knows which of the returned nodes and
  *  edges were already on the canvas. */
