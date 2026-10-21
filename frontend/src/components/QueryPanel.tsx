@@ -35,6 +35,12 @@ BASIC IDEA
     list is opened. With the editor never opened, this panel renders and
     requests exactly what it did before, plus the two buttons (AC-1).
 
+    Every change of the results is reported to App with whether a person
+    asked for it (query-page-rework 5.2): Execute, Run, Ctrl+Enter and a
+    starter are explicit and frame the graph; an Auto preview only moves the
+    rings. A starter runs when clicked, and its own state is not previewed
+    as well, as a five-row preview landing late would replace the answer.
+
 INPUTS / INPUT SOURCES (props)
     - ontologyId: the active ontology.
     - theme: colour theme (passed to child chips).
@@ -50,6 +56,11 @@ INPUTS / INPUT SOURCES (props)
       source line, a sample's words included (csv-data-import 5.6).
     - rdfsClasses: the classes the graph draws as RDFS-only, for the path
       bar's colours (portal-foundations 5.3).
+    - questions: a bundled example's ready-made questions, first in Try one
+      of these; a click opens one as a text query and runs it (5.4).
+    - onResults / resultsOnGraph / onFrameResults / resultsNote: the results
+      on the graph (query-page-rework 5.2): each change reported, Frame on
+      graph while any are drawn, and the header's sentence for the undrawn.
 
 EXPECTED OUTPUT
     - The rendered query panel and the side effects of its controls (executing
@@ -71,7 +82,7 @@ import { describeQuery } from "../sparql/describe";
 import { assignVarNames, generateSparql, localName } from "../sparql/generate";
 import {
   MAX_QUERY_BYTES,
-  STARTER_COMMENT,
+  startingText,
   TOO_LARGE_TO_RUN,
   byteLength,
   readQueryFile,
@@ -80,7 +91,16 @@ import {
 import { linkOptionsBetween } from "../sparql/useQueryBuilder";
 import { dataLabel } from "../modeling/dataSentences";
 import type { useQueryBuilder } from "../sparql/useQueryBuilder";
-import type { EmbeddedQueries, EmbeddedQuery, SavedQuery, SparqlResults, Theme, DataSource } from "../types";
+import type { QueryState } from "../sparql/types";
+import type {
+  DataSource,
+  EmbeddedQueries,
+  EmbeddedQuery,
+  ExampleQuestion,
+  SavedQuery,
+  SparqlResults,
+  Theme,
+} from "../types";
 import ClassPropsMenu from "./ClassPropsMenu";
 import NextSteps from "./NextSteps";
 import PathBar from "./PathBar";
@@ -110,6 +130,19 @@ interface Props {
   dataSources?: DataSource[];
   /** Classes the graph draws in the RDFS class colour, for the path bar. */
   rdfsClasses?: ReadonlySet<string>;
+  /** Every change of the results, and whether a person asked for this run
+   *  (Execute, Run, Ctrl+Enter, a starter): only that frames the graph
+   *  (query-page-rework 5.2). An Auto preview is never explicit. */
+  onResults?: (results: SparqlResults | null, explicit: boolean) => void;
+  /** How many of the results are on the graph, for Frame on graph. */
+  resultsOnGraph?: number;
+  /** Frame the results on the graph again; the camera only. */
+  onFrameResults?: () => void;
+  /** The header's sentence when more results were hidden than drawn. */
+  resultsNote?: string | null;
+  /** A bundled example's ready-made questions (query-page-rework 5.4);
+   *  App hands them over only for an example, told by its record. */
+  questions?: ExampleQuestion[];
 }
 
 /** One of the toolbar's four switches: a toggle button that says whether it
@@ -165,6 +198,8 @@ export function embeddedOptions(query: EmbeddedQuery) {
   };
 }
 
+const NO_QUESTIONS: ExampleQuestion[] = [];
+
 /** Above this size a preview is no longer guaranteed to feel immediate. */
 const AUTO_PREVIEW_MAX_TRIPLES = 50000;
 const PREVIEW_ROWS = 5;
@@ -181,6 +216,11 @@ export default function QueryPanel({
   importsCount = null,
   dataSources = [],
   rdfsClasses,
+  onResults,
+  resultsOnGraph = 0,
+  onFrameResults,
+  resultsNote = null,
+  questions = NO_QUESTIONS,
 }: Props) {
   const {
     schema,
@@ -257,6 +297,23 @@ export default function QueryPanel({
     [schema],
   );
 
+  // Every change of the results goes through here, so App's rings follow
+  // the table exactly: what it shows is what the graph rings.
+  //
+  // Only the latest request may show its answer (query-page-rework 5.2):
+  // each run and each preview takes the next number, and so does every
+  // clearing, so a slow starter's answer never lands over a newer preview,
+  // a preview never over Execute, and nothing lands after the ontology
+  // changed or this panel went.
+  const onResultsRef = useRef(onResults);
+  onResultsRef.current = onResults;
+  const latest = useRef(0);
+  const show = useCallback((next: SparqlResults | null, explicit: boolean) => {
+    if (next === null) latest.current += 1;
+    setResults(next);
+    onResultsRef.current?.(next, explicit);
+  }, []);
+
   // Empties the results area only. The query, the path, the pins and the saved
   // queries are untouched — that is the whole distinction from the path bar's
   // Clear path.
@@ -265,7 +322,15 @@ export default function QueryPanel({
   // a fresh identity here would re-render the table on every App render, which
   // is exactly what the memo is there to stop while a graph expansion is in
   // flight underneath it.
-  const clearResults = useCallback(() => setResults(null), []);
+  const clearResults = useCallback(() => show(null, false), [show]);
+  // Leaving Query takes the results with this panel, so the rings go too.
+  useEffect(
+    () => () => {
+      latest.current += 1;
+      onResultsRef.current?.(null, false);
+    },
+    [],
+  );
 
   const refreshSaved = useCallback(() => {
     if (!ontologyId) return;
@@ -276,10 +341,10 @@ export default function QueryPanel({
 
   useEffect(() => {
     refreshSaved();
-    setResults(null);
+    show(null, false);
     setError(null);
     setOpenMenu(null);
-  }, [refreshSaved]);
+  }, [refreshSaved, show]);
 
   // The stored queries belong to one ontology and one view of it. The key is
   // also what a response is checked against when it lands: one started for
@@ -324,19 +389,43 @@ export default function QueryPanel({
 
   const scope = queryScopeText(includeImports, importsCount);
 
-  const execute = async () => {
-    if (!ontologyId || !sparql) return;
+  // An explicit run: Execute, Run, Ctrl+Enter, a starter. Its results
+  // frame the graph; an Auto preview's never do.
+  const runExplicit = async (text: string) => {
+    if (!ontologyId) return;
+    const run = ++latest.current;
     setRunning(true);
     setError(null);
     try {
-      setResults(await runSparql(ontologyId, preview, includeImports));
+      const answer = await runSparql(ontologyId, text, includeImports);
+      if (run !== latest.current) return;
       setIsPreview(false);
+      show(answer, true);
     } catch (e: unknown) {
-      setResults(null);
+      if (run !== latest.current) return;
+      show(null, false);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setRunning(false);
+      if (run === latest.current) setRunning(false);
     }
+  };
+
+  const execute = async () => {
+    if (!sparql) return;
+    await runExplicit(preview);
+  };
+
+  // A starter is run at once, as a click on it asks for the answer
+  // (query-page-rework 5.2). Its own state is not previewed as well: a five
+  // row preview landing after the full answer would replace it.
+  const skipPreviewFor = useRef<object | null>(null);
+  const runStarter = (next: QueryState, title: string) => {
+    setState(next);
+    setOpenQuery(null);
+    setSaveName(title);
+    skipPreviewFor.current = next;
+    const text = schema ? generateSparql(next, schema.namespaces) : "";
+    if (text) void runExplicit(text);
   };
 
   // Small ontologies preview themselves as the query is built, so a
@@ -351,6 +440,7 @@ export default function QueryPanel({
     if (inText || !autoPreviewable || !ontologyId || state.steps.length === 0 || !schema) {
       return;
     }
+    if (skipPreviewFor.current === state) return;
     const previewQuery = generateSparql(
       { ...state, limit: PREVIEW_ROWS },
       schema.namespaces,
@@ -358,12 +448,13 @@ export default function QueryPanel({
     if (!previewQuery) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
+      const run = ++latest.current;
       runSparql(ontologyId, previewQuery, includeImports)
         .then((res) => {
-          if (cancelled) return;
-          setResults(res);
+          if (cancelled || run !== latest.current) return;
           setIsPreview(true);
           setError(null);
+          show(res, false);
         })
         .catch(() => {
           /* a partially built query may not be valid yet; stay quiet */
@@ -373,7 +464,7 @@ export default function QueryPanel({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [inText, autoPreviewable, ontologyId, schema, state, includeImports]);
+  }, [inText, autoPreviewable, ontologyId, schema, state, includeImports, show]);
 
   const doSave = async (name: string) => {
     if (!ontologyId || !name.trim()) return;
@@ -434,17 +525,7 @@ export default function QueryPanel({
       setError(TOO_LARGE_TO_RUN);
       return;
     }
-    setRunning(true);
-    setError(null);
-    try {
-      setResults(await runSparql(ontologyId, text, includeImports));
-      setIsPreview(false);
-    } catch (e: unknown) {
-      setResults(null);
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRunning(false);
-    }
+    await runExplicit(text);
   };
 
   const startText = (text: string, options: Parameters<typeof openTextQuery>[1] = {}) => {
@@ -457,7 +538,11 @@ export default function QueryPanel({
 
   const newTextQuery = () => {
     if (!mayDiscard()) return;
-    startText(STARTER_COMMENT);
+    // The prefixes the ontology uses, and nothing else (5.3): the query is
+    // ready to run the moment a term is written.
+    const text = startingText(schema?.prefixes);
+    // The help line says the prefixes are at the top only when they are.
+    startText(text, { fresh: text !== "" });
   };
 
   const openFile = async (file: File) => {
@@ -509,7 +594,7 @@ export default function QueryPanel({
       loadState(entry.state, { id: entry.id, name: entry.name });
       setEditorOpen(false);
     }
-    setResults(null);
+    show(null, false);
     setError(null);
   };
 
@@ -525,10 +610,20 @@ export default function QueryPanel({
       .catch((e: unknown) => current() && setEmbeddedError(e instanceof Error ? e.message : String(e)));
   };
 
+  // A question opens as a text query, its title the query's name, and runs
+  // (query-page-rework 5.4): the person asked, so the answer comes at once,
+  // framed on the graph, with the SPARQL that found it above. Editing it and
+  // saving makes the person's own; the shipped file never changes.
+  const askQuestion = (question: ExampleQuestion) => {
+    if (inText && !mayDiscard()) return;
+    startText(question.text, { name: question.title });
+    void runText(question.text);
+  };
+
   const openEmbedded = (query: EmbeddedQuery) => {
     if (!mayDiscard()) return;
     startText(query.text, embeddedOptions(query));
-    setResults(null);
+    show(null, false);
   };
 
   const menu = (() => {
@@ -586,11 +681,9 @@ export default function QueryPanel({
         <QueryStart
           schema={schema}
           theme={theme}
-          onUseStarter={(next, title) => {
-            setState(next);
-            setOpenQuery(null);
-            setSaveName(title);
-          }}
+          onUseStarter={runStarter}
+          questions={questions}
+          onAskQuestion={askQuestion}
           onPickClass={addClass}
         />
       )}
@@ -833,6 +926,8 @@ export default function QueryPanel({
             onPickIri={onPickIri}
             onViewInSource={onViewInSource}
             onClear={clearResults}
+            onFrame={resultsOnGraph > 0 ? onFrameResults : undefined}
+            graphNote={resultsNote}
           />
         </>
       )}

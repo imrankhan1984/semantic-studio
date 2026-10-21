@@ -1,0 +1,11 @@
+# A sub-property counts as its parent: landedOn is a kind of target, so rdfs:subPropertyOf* finds both.
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX space: <http://example.org/space#>
+
+SELECT DISTINCT ?mission ?name WHERE {
+  ?p rdfs:subPropertyOf* space:target .
+  ?mission ?p space:Mars ;
+           rdfs:label ?name .
+  FILTER (lang(?name) = "en")
+}
+ORDER BY ?name

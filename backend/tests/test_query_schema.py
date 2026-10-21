@@ -17,19 +17,26 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES
     - examples/space-exploration.ttl.
+    - The library's three bundled examples, for `prefixes`
+      (query-page-rework 5.3), and a generated 100,000-statement file for
+      its cache and its Section 10 limit.
 
 EXPECTED OUTPUT
     - Pass/fail per assertion; failures indicate a query-schema regression.
 ================================================================================
 """
 
+import gc
+import time
 from pathlib import Path
 
 import pytest
 from rdflib import Graph
 from rdflib.namespace import OWL, RDF, SKOS
 
-from app.query_schema import build_query_schema, describe_query_node
+from app.query_schema import build_query_schema, describe_query_node, used_prefixes
+
+from budget import limit_ms
 
 EXAMPLE = Path(__file__).parent.parent.parent / "examples" / "space-exploration.ttl"
 SPACE = "http://example.org/space#"
@@ -258,3 +265,156 @@ def test_a_union_domain_gives_one_link_from_each_member():
     for member in ("Employee", "Contractor"):
         assert _links(schema, UNI + member, UNI + "leads", UNI + "Team"), member
     assert {UNI + "Employee", UNI + "Contractor"} <= _class_iris(schema)
+
+
+# --- prefixes: what a new text query starts with (query-page-rework 5.3) ---
+
+APP = Path(__file__).parent.parent / "app"
+
+
+def _parsed(relative: str, fmt: str) -> Graph:
+    g = Graph()
+    g.parse(APP / relative, format=fmt)
+    return g
+
+
+COMMON = {
+    "dcterms": "http://purl.org/dc/terms/",
+    "owl": "http://www.w3.org/2002/07/owl#",
+    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+}
+
+
+def test_prefixes_for_the_three_examples_are_exactly_5_3s():
+    """AC-5. The bundled examples, as the library holds them."""
+    space = build_query_schema(_parsed("examples/space-exploration.ttl", "turtle"))["prefixes"]
+    assert space == {**COMMON, "space": "http://example.org/space#"}
+    assert list(space) == sorted(space), "sorted by prefix"
+    earth = build_query_schema(_parsed("examples/middle-earth.ttl", "turtle"))["prefixes"]
+    assert set(earth) == set(COMMON) | {"me"}
+    foaf = build_query_schema(_parsed("vocab/foaf.rdf", "xml"))["prefixes"]
+    assert sorted(foaf) == ["dc", "dcterms", "foaf", "owl", "rdf", "rdfs", "skos", "vs", "wot"]
+
+
+def test_an_rdflib_default_the_file_never_uses_is_absent():
+    """rdflib binds brick: into every graph; the namespaces carry it, the
+    prefixes never, until a statement uses it."""
+    g = Graph()
+    g.parse(data='@prefix ex: <http://example.org/p#> . ex:a ex:b "c" .', format="turtle")
+    schema = build_query_schema(g)
+    assert "brick" in schema["namespaces"]
+    assert schema["prefixes"] == {"ex": "http://example.org/p#"}
+    g.parse(data="<http://example.org/p#a> <http://example.org/p#b> <https://brickschema.org/schema/Brick#Site> .", format="turtle")
+    assert "brick" in build_query_schema(g)["prefixes"]
+
+
+def test_a_datatype_counts_as_use_and_a_binding_without_a_separator_matches():
+    g = Graph()
+    g.bind("ex", "http://example.org/q#")
+    g.bind("u", "urn:example:")
+    g.parse(data='<urn:example:a> <http://example.org/q#n> "1"^^<http://www.w3.org/2001/XMLSchema#integer> .', format="turtle")
+    prefixes = used_prefixes(g)
+    assert prefixes["xsd"] == "http://www.w3.org/2001/XMLSchema#"
+    assert prefixes["u"] == "urn:example:"
+    assert prefixes["ex"] == "http://example.org/q#"
+
+
+def test_a_prefix_rdflib_generated_is_never_listed():
+    """Asking for a qname binds `ns1` into the graph (graph_builder.prefixed);
+    the views that ran first must not change what a query starts with."""
+    g = Graph()
+    g.parse(data="<http://example.org/unbound#a> <http://example.org/unbound#b> <http://example.org/unbound#c> .", format="turtle")
+    g.namespace_manager.qname("http://example.org/unbound#a")
+    assert "ns1" in dict(g.namespaces())
+    assert "ns1" not in used_prefixes(g)
+
+
+def _hundred_thousand() -> bytes:
+    """100,000 statements: 25,000 labelled individuals of four classes, each
+    with a value and a link, under one example.org namespace."""
+    ex = "http://example.org/scale#"
+    label = "http://www.w3.org/2000/01/rdf-schema#label"
+    type_ = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+    xsd_int = "http://www.w3.org/2001/XMLSchema#integer"
+    out = []
+    for i in range(25000):
+        out.append(f"<{ex}i{i}> <{type_}> <{ex}C{i % 4}> .")
+        out.append(f'<{ex}i{i}> <{label}> "Item {i}" .')
+        out.append(f'<{ex}i{i}> <{ex}value> "{i}"^^<{xsd_int}> .')
+        out.append(f"<{ex}i{i}> <{ex}next> <{ex}i{(i + 1) % 25000}> .")
+    return ("\n".join(out) + "\n").encode("utf-8")
+
+
+@pytest.fixture(scope="module")
+def scale_client():
+    from fastapi.testclient import TestClient
+
+    from app import main
+
+    client = TestClient(main.app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"})
+    response = client.post(
+        "/api/ontologies/upload", files={"file": ("scale-100k.nt", _hundred_thousand(), "application/n-triples")}
+    )
+    assert response.status_code == 200, response.text
+    return client, response.json()["id"]
+
+
+def test_prefixes_are_cached_with_the_schema_per_revision(scale_client, monkeypatch):
+    """Computed once per revision (D-081): a second request reads the cache."""
+    from app import query_schema
+    from app.store import store
+
+    client, oid = scale_client
+    calls = []
+    real = query_schema.used_prefixes
+    monkeypatch.setattr(query_schema, "used_prefixes", lambda g: calls.append(1) or real(g))
+    ontology = store.get(oid)
+    ontology.schema_cache = None
+    first = client.get(f"/api/ontologies/{oid}/query-schema").json()["prefixes"]
+    second = client.get(f"/api/ontologies/{oid}/query-schema").json()["prefixes"]
+    assert first == second
+    # N-Triples binds nothing, so only what rdflib binds and the file uses.
+    assert set(first) == {"rdf", "rdfs", "xsd"}
+    assert len(calls) == 1
+    # A new revision is a new schema, and so new prefixes.
+    ontology.revision += 1
+    try:
+        client.get(f"/api/ontologies/{oid}/query-schema")
+        assert len(calls) == 2
+    finally:
+        ontology.revision -= 1
+        ontology.schema_cache = None
+
+
+def _median(call, runs: int = 5) -> float:
+    samples = []
+    gc.disable()
+    try:
+        for _ in range(runs):
+            start = time.perf_counter()
+            call()
+            samples.append((time.perf_counter() - start) * 1000)
+    finally:
+        gc.enable()
+    return sorted(samples)[len(samples) // 2]
+
+
+@pytest.mark.perf
+def test_prefixes_cost_on_100000_statements(scale_client):
+    """Section 10: the uses scan at most 400 ms on 100,000 statements, the
+    first request for a revision's share of it; a second request at most
+    5 ms, from the cache. Medians of five, the collector paused (D-024)."""
+    from app.store import store
+
+    client, oid = scale_client
+    graph = store.get(oid).ensure_loaded()
+    assert len(graph) == 100000
+    used_prefixes(graph)  # warm-up
+    first = _median(lambda: used_prefixes(graph))
+    assert first <= limit_ms(400), f"the scan took {first:.1f} ms"
+    client.get(f"/api/ontologies/{oid}/query-schema")  # fills the cache
+    second = _median(lambda: client.get(f"/api/ontologies/{oid}/query-schema"))
+    assert second <= limit_ms(5), f"a cached request took {second:.1f} ms"

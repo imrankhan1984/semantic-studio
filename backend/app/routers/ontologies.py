@@ -54,6 +54,8 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - JSON responses (ontology summaries, graph, one entity's neighbourhood,
+      the entities a query's results name, for drawing them (5.2 of
+      query-page-rework),
       node details -- for a project's class, its rules, their warnings and
       the sentence builder's choices (axioms-and-reasoning 5.9), and its
       `properties`, own, shared, both or through a parent (attribute-reuse
@@ -76,19 +78,21 @@ EXPECTED OUTPUT
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import threading
 import time
 import uuid
 from collections import deque
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 from urllib.parse import urlparse
 
 # FastAPI request-shaping helpers: File/Form/UploadFile for uploads, Query for
 # query params, HTTPException for error responses, APIRouter to group endpoints.
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
-from pydantic import BaseModel, Field  # declares/validates JSON request bodies
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, Field, ValidationError  # declares/validates JSON request bodies
 from rdflib import URIRef
 from starlette.concurrency import run_in_threadpool
 
@@ -105,10 +109,11 @@ from ..graph_builder import (
     labeler,
     neighborhood_viz,
     node_details,
+    nodes_viz,
     search_nodes,
     term_kind,
 )
-from .. import axioms, examples, modeling_checks
+from .. import axioms, examples, library_examples, modeling_checks
 from .. import imports as imports_mod
 from ..imports import imports_service
 from ..net_guard import BlockedAddress
@@ -301,6 +306,26 @@ class SparqlRequest(BaseModel):
     query: str = Field(max_length=MAX_QUERY_CHARS)
 
 
+# How many entities one /nodes answer draws (query-page-rework 5.2): the
+# results the node budget left out, at most this many, with the true total.
+NODES_LIMIT = 200
+# What one /nodes request may name. A result holds at most 1,000 rows, so
+# this is room for twenty IRI columns, and it bounds the work a body can ask
+# for; an IRI longer than 4,096 characters names nothing a graph holds.
+NODES_MAX_IRIS = 20000
+# The body that carries them, refused by its declared length in main.py
+# before anything reads it, and while reading when it declares none:
+# twenty thousand IRIs of 200 characters.
+NODES_MAX_BYTES = 4 * 1024 * 1024
+NODES_TOO_LARGE = "This request names more than 4 MB of IRIs."
+
+
+# JSON body for POST /{oid}/nodes: the IRIs a query's results named. A POST
+# because 200 IRIs do not fit a URL; it changes nothing.
+class NodesRequest(BaseModel):
+    iris: list[Annotated[str, Field(max_length=4096)]] = Field(max_length=NODES_MAX_IRIS)
+
+
 # The refusal for chosen import files over the closure's total. Here so the
 # middleware in main.py and the endpoint say the same sentence.
 IMPORT_FILES_TOO_LARGE = "These files together are larger than the 150 MB imports limit."
@@ -369,8 +394,12 @@ def _get_or_404(oid: str):
 
 @router.get("")
 def list_ontologies() -> list[dict]:
-    """GET /api/ontologies -> the dropdown list (lightweight summaries)."""
-    return [o.summary() for o in store.list()]
+    """GET /api/ontologies -> the dropdown list (lightweight summaries).
+
+    A bundled example's record carries its ready-made questions
+    (query-page-rework 5.4); library_examples attaches them.
+    """
+    return [library_examples.with_questions(o.summary()) for o in store.list()]
 
 
 def too_large_detail(limit: int, variable: str) -> str:
@@ -400,6 +429,22 @@ async def _read_capped(file: UploadFile, limit: int, variable: str) -> bytes:
             raise HTTPException(status_code=413, detail=too_large_detail(limit, variable))
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+async def read_json_capped(request: Request, limit: int, detail: str):
+    """The body as JSON, refused while reading once past `limit`. The check
+    in main.py reads only a declared length; a chunked body declares none."""
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(status_code=413, detail=detail)
+        chunks.append(chunk)
+    try:
+        return json.loads(b"".join(chunks) or b"null")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="The body must be JSON.") from exc
 
 
 CANCELLED_DETAIL = {
@@ -678,6 +723,37 @@ def get_neighborhood(
             detail=f"No entity with that IRI is drawn in this ontology: {iri}",
         )
     return result
+
+
+@router.post("/{oid}/nodes")
+async def get_nodes(
+    oid: str, request: Request, imports: bool = IMPORTS_PARAM, lang: Optional[str] = LANG_PARAM
+) -> dict:
+    """POST /{oid}/nodes {"iris": [...]} -> the entities asked for and their links.
+
+    How a query's results the node budget left out get drawn
+    (query-page-rework 5.2): the first NODES_LIMIT entities in the order
+    asked, `total` the entities among everything asked, `drawn` how many
+    came back. An IRI that is not an entity is left out, never a 404: a
+    result row names predicates and values as well as entities. Read-only,
+    from the cached viz like /neighborhood.
+
+    The body is read here, not by FastAPI: its own reader takes a chunked
+    body whole before validation sees it, so the cap is applied while
+    reading (code review). Validation still answers 422 as before.
+    """
+    payload = await read_json_capped(request, NODES_MAX_BYTES, NODES_TOO_LARGE)
+    try:
+        asked = NodesRequest.model_validate(payload)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+
+    def answer() -> dict:
+        ontology = _get_or_404(oid)
+        return nodes_viz(_viz(ontology, imports, lang), asked.iris, NODES_LIMIT)
+
+    # The viz may still be built or parsed lazily: off the event loop.
+    return await run_in_threadpool(answer)
 
 
 @router.get("/{oid}/node")

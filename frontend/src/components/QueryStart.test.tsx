@@ -7,7 +7,8 @@ FILE: frontend/src/components/QueryStart.test.tsx
 SUMMARY
     QueryStart's first test (explore-and-query-layout 5.6, AC-8): the start
     list draws a class the schema marks RDFS-only in the RDFS class colour,
-    and an OWL class in the class colour, as the graph does.
+    and an OWL class in the class colour, as the graph does; and a bundled
+    example's questions, first in Try one of these (query-page-rework 5.4).
 
 BASIC IDEA
     QueryStart is pure over its props, so it is rendered with a hand-made
@@ -67,5 +68,41 @@ describe("QueryStart's start list colours (explore-and-query-layout 5.6, AC-8)",
     render(<QueryStart schema={SCHEMA} theme="light" onUseStarter={vi.fn()} onPickClass={onPickClass} />);
     fireEvent.click(screen.getByRole("button", { name: /^Plain/ }));
     expect(onPickClass).toHaveBeenCalledWith("http://x/Plain", "Plain");
+  });
+});
+
+describe("Questions for this example (query-page-rework 5.4, AC-8)", () => {
+  const QUESTIONS = [
+    { id: "q-mars", title: "Which missions went to Mars?", about: "A sub-property counts as its parent.", text: "SELECT 1 {}" },
+    { id: "q-moons", title: "Which moons orbit Jupiter?", about: "Two conditions on one subject.", text: "SELECT 2 {}" },
+  ];
+
+  it("come first in Try one of these, under their heading, before the starters", () => {
+    render(<QueryStart schema={SCHEMA} theme="light" onUseStarter={vi.fn()} onPickClass={vi.fn()} questions={QUESTIONS} />);
+    const heading = screen.getByRole("heading", { name: "Questions for this example" });
+    const tryHeading = screen.getByRole("heading", { name: "Try one of these" });
+    const first = screen.getByRole("button", { name: "Which missions went to Mars?" });
+    const starter = document.querySelector(".starter:not(.question)")!;
+    const follows = (a: Element, b: Element) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(follows(tryHeading, heading)).toBe(true);
+    expect(follows(heading, first)).toBe(true);
+    expect(follows(first, starter)).toBe(true);
+  });
+
+  it("each is a button named by its title and described by what it shows; a click asks it", () => {
+    const onAskQuestion = vi.fn();
+    render(
+      <QueryStart schema={SCHEMA} theme="light" onUseStarter={vi.fn()} onPickClass={vi.fn()} questions={QUESTIONS} onAskQuestion={onAskQuestion} />,
+    );
+    const button = screen.getByRole("button", { name: "Which moons orbit Jupiter?" });
+    const describedBy = button.getAttribute("aria-describedby")!;
+    expect(document.getElementById(describedBy)?.textContent).toBe("Two conditions on one subject.");
+    fireEvent.click(button);
+    expect(onAskQuestion).toHaveBeenCalledWith(QUESTIONS[1]);
+  });
+
+  it("with none handed over there is no heading", () => {
+    render(<QueryStart schema={SCHEMA} theme="light" onUseStarter={vi.fn()} onPickClass={vi.fn()} />);
+    expect(screen.queryByRole("heading", { name: "Questions for this example" })).toBeNull();
   });
 });

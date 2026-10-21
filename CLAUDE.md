@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1462 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1717 tests, vitest
+cd backend  && python -m pytest tests    # 1489 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1763 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -62,8 +62,8 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Thirty-five backend tests carry
-`@pytest.mark.perf`; ten frontend tests have `[budget]` in their title. CI runs
+**Timing budgets are separated, not deleted.** Thirty-seven backend tests carry
+`@pytest.mark.perf`; eleven frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
 `network` again. Count-based budgets (renders, calls) are not timings and stay
@@ -154,9 +154,11 @@ backend/app/
   sparql_service.py  SERVICE blocks found, approved, and sent through the broker
   vocab/             Bundled vocabularies, pinned by SHA-256 in manifest.json
   examples/          The library's bundled examples (D-111): two Turtle files
-                     and manifest.json; FOAF is vocab/foaf.rdf itself
+                     and manifest.json; FOAF is vocab/foaf.rdf itself;
+                     questions/, eight pinned .rq files (D-118)
   library_examples.py  Seeds the examples once, under fixed ids; examples.json
-                     in the data folder makes a removal stick; restore
+                     in the data folder makes a removal stick; restore;
+                     attaches each example's ready-made questions when listed
   store.py           In-memory ontology store, disk persistence, lazy parsing;
                      every derived view keyed on the revision (D-081)
   parse_errors.py    A failed load in one plain sentence (D-112): the line,
@@ -416,6 +418,10 @@ leaves one behind.
 - Only `axioms.py` reads a domain's objects, through `domain_of`; `editing.py` writes them. `test_axioms.py` scans for any other read (D-116). [one reader of a domain]
 - No command writes a second `rdfs:domain`: the standards read two as *both*. Sharing is a union of named classes or a shared parent (D-116). [one reader of a domain]
 - A union is never left with one member: UnshareDomain from two writes the plain domain, and replacing or clearing a domain takes the union's blank nodes. [one reader of a domain]
+
+**Query page**
+- Only an explicit run (Execute, Run, Ctrl+Enter, a starter, a question) moves the camera to the results or draws hidden ones; an Auto re-run moves the rings only (D-118). [graph shows the answers]
+- A ready-made question is told by its example's record (`source === "example"`, `example`), never by its name; questions are attached when listed, never stored. [graph shows the answers]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

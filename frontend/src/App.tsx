@@ -64,6 +64,12 @@ BASIC IDEA
     contributed. Replacing the graph response instead would rebuild the canvas
     and lose every settled position.
 
+    A query's results reach the graph the same way (query-page-rework 5.2,
+    D-118). Every change of the results rings what is drawn; an explicit run
+    alone draws the ones the budget hid, up to 200 through one /nodes request
+    merged as an expansion is, frames them all and announces the count once.
+    An Auto re-run moves no camera and draws nothing.
+
     Edit (edit-page-rework, D-107; the mode keeps its id, "hierarchy") is the
     page a project is changed on: the outline on the left, the modeling
     canvas in the middle, and one side panel on the right with two tabs --
@@ -159,6 +165,7 @@ import {
   exportProject,
   getGraph,
   getNeighborhood,
+  getResultNodes,
   grantNetwork,
   listImports,
   listOntologies,
@@ -222,6 +229,9 @@ import { missingExamples } from "./home/libraryOrder";
 import type { SourceTarget } from "./sourceTarget";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type {
+  ExampleQuestion,
+  VizNodes,
+  SparqlResults,
   AppMode,
   ApprovalRequest,
   CanvasLink,
@@ -235,6 +245,7 @@ import type {
   VizGraph,
   VizNeighborhood,
 } from "./types";
+import { resultIris, sendable, shownOnGraph, undrawnSentence } from "./sparql/resultNodes";
 
 // The modeling canvas (visual-modeling 5.4, D-086): its own chunk, React Flow
 // with it, fetched from the local server the first time a canvas opens in a
@@ -367,6 +378,9 @@ interface Expanded {
 
 const NOTHING_EXPANDED: Expanded = { nodes: new Set(), edges: 0 };
 
+const NO_RESULTS: ReadonlySet<string> = new Set();
+const NO_QUESTIONS: ExampleQuestion[] = [];
+
 /**
  * The status-bar count for nodes or edges: "34" normally, "2,000 of 18,717"
  * when the budget dropped something, and "…" while the graph is loading.
@@ -487,11 +501,21 @@ export default function App() {
   // the merges actually added, which only GraphView can know. `expandingIri` is
   // the request in flight, so the control that started it can say so.
   const [expansion, setExpansion] = useState<{
-    data: VizNeighborhood;
+    data: VizNeighborhood | VizNodes;
     token: number;
   } | null>(null);
   const [expanded, setExpanded] = useState<Expanded>(NOTHING_EXPANDED);
   const [expandingIri, setExpandingIri] = useState<string | null>(null);
+  // A query's results on the graph (query-page-rework 5.2): the IRIs the
+  // rows name, which GraphView rings where drawn; a tick that frames them,
+  // bumped by an explicit run and Frame on graph only (an Auto re-run moves
+  // no camera); and the header's sentence when more were hidden than drawn.
+  const [queryResults, setQueryResults] = useState<ReadonlySet<string>>(NO_RESULTS);
+  const [frameTick, setFrameTick] = useState(0);
+  const [resultsNote, setResultsNote] = useState<string | null>(null);
+  // Which run is current, so a /nodes answer for one replaced by a newer
+  // run, or cleared, draws and says nothing.
+  const resultsRun = useRef(0);
   // How many expanded entities the last budget change discarded, reported in the
   // notice beside the counts so the graph shrinking is not a mystery (G-8). Zero
   // when a budget change cleared nothing, and zero on an ontology switch — which
@@ -1277,6 +1301,9 @@ export default function App() {
     const nodes = new Set(expanded.nodes);
     for (const id of result.addedNodes) nodes.add(id);
     setExpanded({ nodes, edges: expanded.edges + result.addedEdges });
+    // A query's hidden results (VizNodes) were announced with the run, as
+    // the results shown; an expansion's sentence would say it twice.
+    if (!("stats" in expansion.data)) return;
     setNotice(
       expansionAnnouncement(
         result.addedNodes.length,
@@ -1305,6 +1332,66 @@ export default function App() {
     },
     [selectAndFocus, onExpand],
   );
+
+  // A query's results changed (query-page-rework 5.2). Every change rings
+  // what is drawn; only an explicit run draws the hidden ones, up to 200 in
+  // one /nodes request merged as an expansion is, then frames them all and
+  // says how many once. An Auto re-run moves no camera and draws nothing, so
+  // a person building a path is not thrown around.
+  const onQueryResults = useCallback((results: SparqlResults | null, explicit: boolean) => {
+    const run = ++resultsRun.current;
+    const iris = resultIris(results);
+    setQueryResults(iris.length ? new Set(iris) : NO_RESULTS);
+    setResultsNote(null);
+    if (!results || !explicit) return;
+    // No graph yet (still loading, or failed): nothing is drawn to count or
+    // frame, and the rings land when it does.
+    const drawn = drawnIdsRef.current;
+    if (!drawn) return;
+    const hidden = drawn ? iris.filter((iri) => !drawn.has(iri)) : [];
+    const shown = iris.length - hidden.length;
+    const finish = (count: number) => {
+      setFrameTick((t) => t + 1);
+      setNotice(shownOnGraph(count));
+    };
+    const id = activeIdRef.current;
+    if (hidden.length === 0 || !id) {
+      finish(shown);
+      return;
+    }
+    getResultNodes(id, sendable(hidden), includeImportsRef.current)
+      .then((answer) => {
+        if (resultsRun.current !== run || activeIdRef.current !== id) return;
+        if (answer.nodes.length > 0) {
+          setExpansion((prev) => ({ data: answer, token: (prev?.token ?? 0) + 1 }));
+        }
+        setResultsNote(undrawnSentence(answer.drawn, answer.total));
+        finish(shown + answer.drawn);
+      })
+      .catch(() => {
+        // The table still holds every answer; frame what is drawn.
+        if (resultsRun.current === run) finish(shown);
+      });
+  }, []);
+
+  const frameResults = useCallback(() => setFrameTick((t) => t + 1), []);
+
+  // A bundled example's ready-made questions (query-page-rework 5.4), told by
+  // its source and its example record, never its name: a project made from
+  // an example, or a file that happens to share its name, has none.
+  const exampleQuestions = useMemo(
+    () => (active?.source === "example" && active.example ? active.example.questions ?? NO_QUESTIONS : NO_QUESTIONS),
+    [active],
+  );
+
+  // How many results are on the graph: the rings drawn, for the legend's row
+  // and Frame on graph.
+  const resultsOnGraph = useMemo(() => {
+    if (!drawnIds || queryResults.size === 0) return 0;
+    let count = 0;
+    for (const iri of queryResults) if (drawnIds.has(iri)) count += 1;
+    return count;
+  }, [drawnIds, queryResults]);
 
   // Searching in Query mode additionally adds the match to the path, so a query
   // can be built by name without hunting for a node in a large graph. That half
@@ -2225,6 +2312,8 @@ export default function App() {
               queryCandidates={builder.candidates}
               expansion={expansion}
               onExpanded={onExpanded}
+              queryResults={mode === "query" ? queryResults : undefined}
+              frameTick={frameTick}
               leftRail={
                 graphData ? (
                   <Legend
@@ -2232,6 +2321,7 @@ export default function App() {
                     // keeps nothing; Explore reads its kept choice again (5.4).
                     key={mode === "query" ? "query" : "explore"}
                     inQuery={mode === "query"}
+                    resultsRing={mode === "query" && resultsOnGraph > 0}
                     theme={theme}
                     kindCounts={graphData.stats.kindCounts}
                     rdfsClassCount={graphData.stats.rdfsClassCount}
@@ -2285,6 +2375,11 @@ export default function App() {
               importsCount={importsCount}
               dataSources={dataSources}
               rdfsClasses={rdfsClasses}
+              onResults={onQueryResults}
+              resultsOnGraph={resultsOnGraph}
+              onFrameResults={frameResults}
+              resultsNote={resultsNote}
+              questions={exampleQuestions}
             />
           ) : mode === "explore" ? (
             // The two halves of the Explore column. Which one shows is decided

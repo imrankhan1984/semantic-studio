@@ -1,0 +1,10 @@
+# Two variables make a table of pairs: each person beside the place they live.
+PREFIX me: <http://example.org/middle-earth#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?person ?name ?place ?placeName WHERE {
+  ?person me:livesIn ?place ;
+          rdfs:label ?name .
+  ?place rdfs:label ?placeName .
+}
+ORDER BY ?placeName ?name

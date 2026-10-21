@@ -180,6 +180,9 @@ export interface TextQuery {
   runBlocked: string | null;
   /** A one-line note shown above the editor, e.g. about $this. */
   note: string | null;
+  /** A new text query, started from the prefixes the ontology uses
+   *  (query-page-rework 5.3): its help line says they are at the top. */
+  fresh: boolean;
   /** Bumped for each new text query, so the editor starts afresh; a fork
    *  keeps the number, so the editor the user is typing in is not replaced. */
   session: number;
@@ -561,6 +564,7 @@ export function useQueryBuilder(
       baseline,
       runBlocked: null,
       note: null,
+      fresh: false,
       session: sessionRef.current,
       // A fork keeps the open saved query: it is the same query, now text,
       // and Update stores it that way with the state to go back to.
@@ -576,7 +580,7 @@ export function useQueryBuilder(
   const openTextQuery = useCallback(
     (
       text: string,
-      options: Partial<Pick<TextQuery, "forkedFrom" | "name" | "runBlocked" | "note">> & {
+      options: Partial<Pick<TextQuery, "forkedFrom" | "name" | "runBlocked" | "note" | "fresh">> & {
         /** The saved text query being opened, if it is one. */
         opened?: { id: string; name: string } | null;
       } = {},
@@ -593,6 +597,7 @@ export function useQueryBuilder(
         baseline: text,
         runBlocked: options.runBlocked ?? null,
         note: options.note ?? null,
+        fresh: options.fresh ?? false,
         session: sessionRef.current,
         resume,
       });

@@ -1,0 +1,9 @@
+# The same shape for a group: everyone who is a member of the Fellowship.
+PREFIX me: <http://example.org/middle-earth#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?member ?name WHERE {
+  ?member me:memberOf me:TheFellowship ;
+          rdfs:label ?name .
+}
+ORDER BY ?name

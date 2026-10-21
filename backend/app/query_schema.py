@@ -29,7 +29,9 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - build_query_schema -> a JSON-ready dict with keys: classes, links,
-      superClasses, dataProperties, namespaces, truncated, embeddedQueryCount.
+      superClasses, dataProperties, namespaces, prefixes (the namespaces the
+      file binds and uses, used_prefixes; query-page-rework 5.3), truncated,
+      embeddedQueryCount.
       A class entry typed rdfs:Class and not owl:Class carries
       `classType: "rdfs"` (graph_builder.py's rule); no other entry does.
       Consumed by frontend/src/sparql/useQueryBuilder.ts.
@@ -46,6 +48,7 @@ from __future__ import annotations
 
 # Counter    - tally instance counts and observed-link frequencies
 # defaultdict - accumulate multi-valued maps (types per subject, parents per class)
+import re
 from collections import Counter, defaultdict
 from typing import Optional
 
@@ -518,6 +521,10 @@ def build_query_schema(graph: Graph) -> dict:
         # The empty prefix is kept: many ontologies declare `@prefix : <...>`
         # for their own terms, and `PREFIX : <...>` / `:Term` is valid SPARQL.
         "namespaces": {prefix: str(ns) for prefix, ns in graph.namespaces()},
+        # The ones the file uses, sorted: what a new text query starts with
+        # (query-page-rework 5.3). Built here, so it is cached with the
+        # schema, per revision.
+        "prefixes": used_prefixes(graph),
         "truncated": truncated,
         # How many queries the file stores in itself (sh:select, sp:text, ...).
         # Carried here rather than fetched by the panel, because Query mode
@@ -526,6 +533,67 @@ def build_query_schema(graph: Graph) -> dict:
         # whose files hold no queries at all.
         "embeddedQueryCount": count_embedded_queries(graph),
     }
+
+
+# The prefixes rdflib makes up for a namespace nothing bound (see used_prefixes).
+_GENERATED = re.compile(r"ns\d+")
+
+
+def used_prefixes(graph: Graph) -> dict[str, str]:
+    """The prefixes the file binds whose namespace it uses: the namespace
+    of at least one IRI or datatype in it (query-page-rework 5.3).
+
+    graph.namespaces() is not enough on its own: rdflib binds brick:, csvw:,
+    odrl: and twenty more into every graph, so a file that never mentions
+    them carries them anyway. Reading what the statements use is the one
+    rule that tells a binding the file needs from one rdflib added.
+
+    One pass over every statement, with each distinct term split once at its
+    last `#` or `/`: the set of namespaces is small however large the file.
+    A binding whose namespace ends in neither (a `urn:` one, say) is matched
+    by prefix against that set. Measured at 2.7 s on 800,000 statements in
+    the sandbox, so it is built with the schema, once per revision (D-081).
+
+    An `nsN` binding is rdflib's, not the file's: graph_builder.prefixed asks
+    rdflib for a qname, and rdflib binds `ns1`, `ns2`... into the shared
+    graph the first time it meets an unbound namespace, so which ones exist
+    depends on which views ran first. A file that itself wrote `ns1:` loses
+    its line here, and Add PREFIX offers it back on the first run that needs it.
+    """
+    seen: set = set()
+    namespaces: set[str] = set()
+
+    def note(term) -> None:
+        if term in seen:
+            return
+        seen.add(term)
+        text = str(term)
+        cut = max(text.rfind("#"), text.rfind("/"))
+        # A term with neither (`urn:example:a`) is kept whole, for the
+        # prefix match below.
+        namespaces.add(text[: cut + 1] if cut >= 0 else text)
+
+    for s, p, o in graph:
+        if isinstance(s, URIRef):
+            note(s)
+        note(p)
+        if isinstance(o, URIRef):
+            note(o)
+        elif isinstance(o, Literal) and o.datatype is not None:
+            note(o.datatype)
+
+    used: dict[str, str] = {}
+    for prefix, ns in graph.namespaces():
+        if _GENERATED.fullmatch(prefix):
+            continue
+        text = str(ns)
+        if text.endswith(("#", "/")):
+            hit = text in namespaces
+        else:
+            hit = any(found.startswith(text) for found in namespaces)
+        if hit:
+            used[prefix] = text
+    return dict(sorted(used.items()))
 
 
 def describe_query_node(graph: Graph, iri: str, schema: dict) -> Optional[dict]:

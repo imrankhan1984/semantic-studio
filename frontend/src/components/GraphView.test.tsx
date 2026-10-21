@@ -43,7 +43,9 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - Pass/fail per assertion, covering AC-1 to AC-5 and AC-12 of
-      visual-defects, and the off-graph selection crash.
+      visual-defects, the off-graph selection crash, and AC-2, AC-3, AC-7
+      and the Section 10 rows of query-page-rework (a query's results
+      ringed, named and framed).
 ================================================================================
 */
 
@@ -52,6 +54,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { PALETTES } from "../types";
 import { EDGES } from "../theme/kinds";
+import { limitMs } from "../budget";
 import type { MergeResult, Theme, VizGraph, VizNeighborhood } from "../types";
 
 // Sigma touches WebGL2RenderingContext when its module is evaluated. Stubbing
@@ -74,10 +77,15 @@ const sigmaCalls = vi.hoisted(() => ({ last: null as any }));
 const cameraMoves = vi.hoisted(() => ({
   to: [] as { x: number; y: number }[],
   durations: [] as number[],
+  // The ratio of each animate, for framing (query-page-rework 5.2).
+  ratios: [] as number[],
   zoomIn: 0,
   zoomOut: 0,
   fit: 0,
 }));
+
+/** How many times GraphView asked Sigma to redraw: a frame each. */
+const sigmaRefreshes = vi.hoisted(() => ({ count: 0, scheduled: 0 }));
 
 // A Sigma that draws nothing and remembers everything it was given. Only the
 // methods GraphView actually calls are implemented; anything else appearing
@@ -116,8 +124,9 @@ vi.mock("sigma", () => {
         ratio: 1,
         on(_event: string, fn: (s: { ratio: number }) => void) { listeners.add(fn); },
         removeListener(_event: string, fn: (s: { ratio: number }) => void) { listeners.delete(fn); },
-        animate(target: { x: number; y: number }, opts?: { duration?: number }) {
+        animate(target: { x: number; y: number; ratio?: number }, opts?: { duration?: number }) {
           cameraMoves.to.push({ x: target.x, y: target.y });
+          if (target.ratio !== undefined) cameraMoves.ratios.push(target.ratio);
           cameraMoves.durations.push(opts?.duration ?? -1);
         },
         animatedReset(opts?: { duration?: number }) {
@@ -144,7 +153,12 @@ vi.mock("sigma", () => {
       this.handlers[event] = fn;
     }
     kill() {}
-    refresh() {}
+    refresh() {
+      sigmaRefreshes.count += 1;
+    }
+    scheduleRefresh() {
+      sigmaRefreshes.scheduled += 1;
+    }
     setSetting() {}
     // The real one returns the node's screen position. Returning the graph's
     // own coordinates is enough for the camera assertions and keeps the stub
@@ -1834,5 +1848,273 @@ describe("rule lines (explore-rules 5.1)", () => {
       }
       view.unmount();
     }
+  });
+});
+
+/* --- a query's results on the graph (query-page-rework 5.2) ------------- */
+
+describe("a query's results on the graph", () => {
+  const RESULTS = new Set(["http://x/Planet", "http://x/NASA"]);
+
+  beforeEach(() => {
+    cameraMoves.to = [];
+    cameraMoves.durations = [];
+    cameraMoves.ratios = [];
+    sigmaRefreshes.count = 0;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal("WebGL2RenderingContext", class {});
+    vi.stubGlobal("WebGLRenderingContext", class {});
+    document.body.innerHTML = "";
+  });
+
+  it("a result node carries the ring flag and its name is drawn; others do not (AC-2, AC-7)", async () => {
+    const { view } = await renderView({ queryMode: true, queryResults: RESULTS });
+    const { nodeReducer } = sigmaCalls.last.settings;
+    const graph = sigmaCalls.last.graph;
+    for (const id of RESULTS) {
+      const res = nodeReducer(id, attrsOf(graph, id));
+      expect(res.result, id).toBe(true);
+      // Highlighted is what the hover layer pills and names, always.
+      expect(res.highlighted, id).toBe(true);
+      expect(res.label, id).toBe(attrsOf(graph, id).label);
+    }
+    const other = nodeReducer("http://x/Celestial", attrsOf(graph, "http://x/Celestial"));
+    expect(other.result).toBeUndefined();
+    view.unmount();
+  });
+
+  it("the ring is drawn for a result as for the selection: a stroked circle", async () => {
+    const rec = await draw("dark", { ...NODE, result: true } as typeof NODE);
+    expect(rec.strokes).toEqual([PALETTES.dark.selectedRing]);
+    const none = await draw("dark", NODE);
+    expect(none.strokes).toEqual([]);
+  });
+
+  it("an IRI that is not drawn is no result node, and Explore draws no ring", async () => {
+    const { view } = await renderView({ queryMode: false, queryResults: RESULTS });
+    const { nodeReducer } = sigmaCalls.last.settings;
+    const graph = sigmaCalls.last.graph;
+    expect(nodeReducer("http://x/Planet", attrsOf(graph, "http://x/Planet")).result).toBeUndefined();
+    view.unmount();
+  });
+
+  it("framing aims the camera at the results' box; a new set of rings alone does not (AC-2, AC-3)", async () => {
+    stubMatchMedia(false);
+    const { view, rerender } = await renderView({ queryMode: true, queryResults: RESULTS, frameTick: 0 });
+    expect(cameraMoves.to).toEqual([]);
+    await rerender({ queryMode: true, queryResults: RESULTS, frameTick: 1 });
+    const graph = sigmaCalls.last.graph;
+    const xs = [...RESULTS].map((id) => graph.getNodeAttribute(id, "x") as number);
+    const ys = [...RESULTS].map((id) => graph.getNodeAttribute(id, "y") as number);
+    expect(cameraMoves.to).toHaveLength(1);
+    expect(cameraMoves.to[0].x).toBeCloseTo((Math.min(...xs) + Math.max(...xs)) / 2, 6);
+    expect(cameraMoves.to[0].y).toBeCloseTo((Math.min(...ys) + Math.max(...ys)) / 2, 6);
+    expect(cameraMoves.durations).toEqual([500]);
+    // An automatic re-run hands over new rings and the same tick: no move.
+    await rerender({ queryMode: true, queryResults: new Set(["http://x/Celestial"]), frameTick: 1 });
+    expect(cameraMoves.to).toHaveLength(1);
+    view.unmount();
+  });
+
+  it("one result is centred at the zoom a search pick uses", async () => {
+    const { view, rerender } = await renderView({ queryMode: true, queryResults: new Set(["http://x/NASA"]) });
+    await rerender({ queryMode: true, queryResults: new Set(["http://x/NASA"]), frameTick: 1 });
+    const graph = sigmaCalls.last.graph;
+    expect(cameraMoves.to).toEqual([
+      { x: graph.getNodeAttribute("http://x/NASA", "x"), y: graph.getNodeAttribute("http://x/NASA", "y") },
+    ]);
+    expect(cameraMoves.ratios).toEqual([0.25]);
+    view.unmount();
+  });
+
+  it("reduced motion jumps", async () => {
+    stubMatchMedia(true);
+    const { view, rerender } = await renderView({ queryMode: true, queryResults: RESULTS });
+    await rerender({ queryMode: true, queryResults: RESULTS, frameTick: 1 });
+    expect(cameraMoves.durations).toEqual([0]);
+    view.unmount();
+  });
+
+  it("nothing drawn to frame moves nothing", async () => {
+    const { view, rerender } = await renderView({ queryMode: true, queryResults: new Set(["http://x/Gone"]) });
+    await rerender({ queryMode: true, queryResults: new Set(["http://x/Gone"]), frameTick: 1 });
+    expect(cameraMoves.to).toEqual([]);
+    view.unmount();
+  });
+
+  /** A graph of `n` classes in a row, every one a result. */
+  function manyResults(n: number) {
+    const nodes = Array.from({ length: n }, (_, i) => ({
+      id: `http://x/R${i}`,
+      label: `Result ${i}`,
+      kind: "class",
+      degree: 1,
+    }));
+    const data: VizGraph = {
+      nodes,
+      edges: [],
+      stats: { ...DATA.stats, nodeCount: n, nodeTotal: n, edgeCount: 0, edgeTotal: 0, kindCounts: { class: n } },
+    };
+    return { data, results: new Set(nodes.map((node) => node.id)) };
+  }
+
+  it("200 result nodes cost one refresh, and a frame one reducer call per drawn node (Section 10)", async () => {
+    // A count, not a timing (D-021). Sigma calls the reducer once per node per
+    // refresh; what GraphView controls is how many refreshes a change asks for
+    // and that the reducer does no graph work per result.
+    const { data, results } = manyResults(200);
+    const { view, rerender } = await renderView({ data, queryMode: true });
+    sigmaRefreshes.count = 0;
+    await rerender({ data, queryMode: true, queryResults: results });
+    expect(sigmaRefreshes.count).toBe(1);
+    const { nodeReducer } = sigmaCalls.last.settings;
+    const graph = sigmaCalls.last.graph;
+    let calls = 0;
+    const counted = (id: string, attrs: unknown) => {
+      calls += 1;
+      return nodeReducer(id, attrs);
+    };
+    let neighbourCalls = 0;
+    const orig = graph.areNeighbors.bind(graph);
+    graph.areNeighbors = (a: string, b: string) => {
+      neighbourCalls += 1;
+      return orig(a, b);
+    };
+    graph.forEachNode((id: string, attrs: unknown) => counted(id, attrs));
+    expect(calls).toBe(graph.order);
+    expect(neighbourCalls).toBe(0);
+    view.unmount();
+  });
+
+  it("[budget] frames 200 result nodes within 50 ms", async () => {
+    const { data, results } = manyResults(200);
+    const { view, rerender } = await renderView({ data, queryMode: true, queryResults: results });
+    // A warm-up, then the median of seven: jsdom gives no hold on the collector.
+    await rerender({ data, queryMode: true, queryResults: results, frameTick: 1 });
+    const samples: number[] = [];
+    for (let tick = 2; tick < 9; tick += 1) {
+      const start = performance.now();
+      await rerender({ data, queryMode: true, queryResults: results, frameTick: tick });
+      samples.push(performance.now() - start);
+    }
+    expect(cameraMoves.to).toHaveLength(8);
+    samples.sort((a, b) => a - b);
+    expect(samples[3]).toBeLessThanOrEqual(limitMs(50));
+    view.unmount();
+  });
+});
+
+describe("the canvas follows its box (query-page-rework 5.1)", () => {
+  /** The container's size, which jsdom, having no layout, reports as 0. */
+  const box = { width: 600, height: 400 };
+  const real = {
+    width: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth")!,
+    height: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight")!,
+  };
+
+  beforeEach(() => {
+    box.width = 600;
+    box.height = 400;
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
+      configurable: true,
+      get() {
+        return (this as HTMLElement).classList.contains("graph-container") ? box.width : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get() {
+        return (this as HTMLElement).classList.contains("graph-container") ? box.height : 0;
+      },
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", real.width);
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", real.height);
+    vi.unstubAllGlobals();
+    vi.stubGlobal("WebGL2RenderingContext", class {});
+    vi.stubGlobal("WebGLRenderingContext", class {});
+    document.body.innerHTML = "";
+  });
+
+  it("a new size of the box schedules one redraw; the mount notification, the same size and an empty box none", async () => {
+    // Opening the legend narrows the canvas's box with no window resize, and
+    // Sigma measures only when it renders: the canvas kept its width and
+    // spilled over the Query panel (found in Chrome at 1280x720).
+    const observers: { target: Element | null; fire: () => void; disconnected: boolean }[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        record: { target: Element | null; fire: () => void; disconnected: boolean };
+        constructor(callback: () => void) {
+          this.record = { target: null, fire: callback, disconnected: false };
+          observers.push(this.record);
+        }
+        observe(target: Element) {
+          this.record.target = target;
+        }
+        disconnect() {
+          this.record.disconnected = true;
+        }
+      },
+    );
+    const { view } = await renderView();
+    expect(observers).toHaveLength(1);
+    expect(observers[0].target).toBe(sigmaCalls.last.container);
+    sigmaRefreshes.count = 0;
+    sigmaRefreshes.scheduled = 0;
+    // What observe() delivers at once, at the size just drawn: nothing to do.
+    observers[0].fire();
+    expect(sigmaRefreshes.scheduled).toBe(0);
+    box.width = 432;
+    observers[0].fire();
+    expect(sigmaRefreshes.scheduled).toBe(1);
+    observers[0].fire();
+    expect(sigmaRefreshes.scheduled).toBe(1);
+    // Squeezed to nothing: left alone, as Sigma cannot draw into it.
+    box.width = 0;
+    observers[0].fire();
+    expect(sigmaRefreshes.scheduled).toBe(1);
+    // Its old size coming back is a change: Sigma drew at one pixel meanwhile.
+    box.width = 432;
+    observers[0].fire();
+    expect(sigmaRefreshes.scheduled).toBe(2);
+    // Scheduled, never a synchronous full refresh inside the callback.
+    expect(sigmaRefreshes.count).toBe(0);
+    view.unmount();
+    expect(observers[0].disconnected).toBe(true);
+  });
+
+  it("Sigma is told an empty box is allowed, so it never throws from its own render", async () => {
+    const { view } = await renderView();
+    expect(sigmaCalls.last.settings.allowInvalidContainer).toBe(true);
+    view.unmount();
+  });
+});
+
+describe("many results (query-page-rework 5.2, code review)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("past 200 results each is ringed and named by the overlap rule, never pilled, never dimmed", async () => {
+    const nodes = Array.from({ length: 201 }, (_, i) => ({ id: `http://x/M${i}`, label: `M ${i}`, kind: "class", degree: 1 }));
+    const data: VizGraph = { nodes, edges: [], stats: { ...DATA.stats, nodeCount: 201, nodeTotal: 201, kindCounts: { class: 201 } } };
+    const results = new Set(nodes.map((n) => n.id));
+    // Candidates that exclude every node: without the rule, all would dim.
+    const { view } = await renderView({ data, queryMode: true, queryResults: results, queryCandidates: { classes: new Set(), kinds: new Set() } });
+    const { nodeReducer } = sigmaCalls.last.settings;
+    const graph = sigmaCalls.last.graph;
+    const res = nodeReducer("http://x/M0", attrsOf(graph, "http://x/M0"));
+    expect(res.result).toBe(true);
+    expect(res.highlighted).toBeUndefined();
+    expect(res.forceLabel).toBe(true);
+    expect(res.label).toBe("M 0");
+    expect(res.color).not.toBe(PALETTES.dark.dimNode);
+    view.unmount();
   });
 });

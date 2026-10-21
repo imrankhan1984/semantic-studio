@@ -30,7 +30,8 @@ BASIC IDEA
 INPUTS / INPUT SOURCES
     - An rdflib.Graph produced by store.parse_rdf (build_viz_graph, node_details).
     - The pre-built viz dict for label/IRI search (search_nodes), for the node
-      budget (budget_viz) and for one entity's neighbourhood (neighborhood_viz).
+      budget (budget_viz), for one entity's neighbourhood (neighborhood_viz)
+      and for the entities a query's results name (nodes_viz).
     - A specific entity IRI for the detail panel (node_details) and for the
       centre of a neighbourhood (neighborhood_viz).
 
@@ -49,6 +50,9 @@ EXPECTED OUTPUT
     - neighborhood_viz -> the same shape again, holding one entity and its
       highest-degree neighbours, so the browser can grow a budgeted graph
       outwards without refetching all of it.
+    - nodes_viz -> the entities a query's results name, up to 200, with
+      their links and the true total, so results the budget left out can be
+      drawn (query-page-rework 5.2).
     - node_details -> every outgoing/incoming statement for one IRI (or None),
       and `explain` (explain-panel 5.2, D-114): its kind as the graph draws
       it (node_kind), its authors' description, and the facts the file
@@ -721,6 +725,70 @@ def neighborhood_viz(viz: dict, iri: str, limit: int) -> Optional[dict]:
             "rdfsClassCount": viz["stats"].get("rdfsClassCount", 0),
         },
     }
+
+
+# How many of one asked entity's links nodes_viz returns: those to its most
+# connected neighbours, ranked as the budget ranks. The browser holds the
+# highest-degree nodes (budget_viz), so these are the links most likely to
+# reach something drawn, and a hub among the results costs 50 edges rather
+# than every one it has.
+NODES_EDGES_PER_ENTITY = 50
+
+
+def nodes_viz(viz: dict, iris: Sequence[str], limit: int) -> dict:
+    """The entities among `iris`, in the order asked, up to `limit`, and
+    their links (query-page-rework 5.2): what a query's results need to be
+    drawn when the node budget left them out.
+
+    The server does not know what the browser has drawn, so each entity's
+    links go to its NODES_EDGES_PER_ENTITY most connected neighbours, and the
+    merge keeps the ones whose other end is on the canvas, as it already
+    does for a neighbourhood. An IRI that is no entity here (a predicate, a
+    literal's text, a typo) is left out rather than refused: a result row
+    names all of those. `total` counts every entity asked for, so the
+    interface can say how many it did not draw (house rule 6).
+    """
+    by_id = {n["id"]: n for n in viz["nodes"]}
+    found: list[dict] = []
+    seen: set[str] = set()
+    for iri in iris:
+        node = by_id.get(iri)
+        if node is None or iri in seen:
+            continue
+        seen.add(iri)
+        found.append(node)
+    kept = found[:limit]
+    kept_ids = {n["id"] for n in kept}
+
+    # One pass over the edges, every link touching a kept entity collected
+    # under it; the ranking below is per entity, so a hub's links never
+    # crowd out a leaf's.
+    touching: dict[str, list[dict]] = {iri: [] for iri in kept_ids}
+    for edge in viz["edges"]:
+        source, target = edge["source"], edge["target"]
+        if source in kept_ids:
+            touching[source].append(edge)
+        if target in kept_ids and target != source:
+            touching[target].append(edge)
+
+    def other_degree(iri: str, edge: dict) -> tuple:
+        other = edge["target"] if edge["source"] == iri else edge["source"]
+        node = by_id.get(other)
+        return (-(node["degree"] if node else 0), other)
+
+    edges: list[dict] = []
+    # An edge between two kept entities is collected under both; it is sent
+    # once.
+    sent: set[int] = set()
+    for node in kept:
+        ranked = sorted(touching[node["id"]], key=lambda e: other_degree(node["id"], e))
+        for edge in ranked[:NODES_EDGES_PER_ENTITY]:
+            if id(edge) in sent:
+                continue
+            sent.add(id(edge))
+            edges.append(edge)
+
+    return {"nodes": kept, "edges": edges, "total": len(found), "drawn": len(kept)}
 
 
 # --- node details -----------------------------------------------------------

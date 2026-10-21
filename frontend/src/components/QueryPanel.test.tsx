@@ -24,7 +24,9 @@ INPUTS / INPUT SOURCES
       calls return nothing.
 
 EXPECTED OUTPUT
-    - Pass/fail per assertion, covering AC-8.
+    - Pass/fail per assertion, covering AC-8, and AC-1 and AC-2 of
+      query-page-rework (the starter that runs, which runs are explicit,
+      Frame on graph).
 ================================================================================
 */
 
@@ -487,5 +489,196 @@ describe("a name already used (explore-and-query-layout 5.7, U-4, AC-10)", () =>
     });
     expect(screen.queryByText(NOTE)).toBeNull();
     expect(saveQuery.mock.calls[0][0]).toMatchObject({ id: "q1", name: "Bonds" });
+  });
+});
+
+/* --- query-page-rework 5.1 and 5.2 ------------------------------------- */
+
+describe("QueryPanel and the graph (query-page-rework 5.1, 5.2)", () => {
+  const SCHEMA = {
+    classes: [
+      { iri: "http://example.org/Mission", label: "Robotic mission", prefixed: "ex:Mission", instances: 12, kind: "class" },
+    ],
+    links: [],
+    superClasses: {},
+    dataProperties: {},
+    namespaces: { ex: "http://example.org/" },
+    truncated: false,
+  };
+
+  /** A builder with nothing picked, whose setState really sets, so a
+   *  starter's state is what the panel then renders. */
+  function Harness(props: { onResults: (r: unknown, explicit: boolean) => void; triples?: number }) {
+    const [state, setState] = useState<QueryState>({ ...STATE, steps: [] });
+    const builder = {
+      ...builderStub(),
+      schema: SCHEMA,
+      state,
+      setState,
+      sparql: state.steps.length ? "SELECT ?s WHERE { ?s a <http://example.org/Mission> }" : "",
+    } as unknown as ReturnType<typeof useQueryBuilder>;
+    return (
+      <QueryPanel
+        ontologyId="ont-1"
+        theme="light"
+        builder={builder}
+        onPickIri={vi.fn()}
+        onViewInSource={vi.fn()}
+        ontologyTriples={props.triples ?? 0}
+        onResults={props.onResults}
+        resultsOnGraph={1}
+        onFrameResults={vi.fn()}
+      />
+    );
+  }
+
+  const before = (a: Element, b: Element) =>
+    (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+
+  it("with nothing picked, Execute comes first and the first starter next (AC-1)", () => {
+    render(<Harness onResults={vi.fn()} />);
+    const execute = screen.getByRole("button", { name: /Execute/ });
+    const starter = document.querySelector(".starter")!;
+    expect(starter).not.toBeNull();
+    expect(before(execute, starter)).toBe(true);
+    // Nothing but the pinned block's own controls between the two: the
+    // builder's first content is the starting list (the pixels are a Chrome row).
+    const between = [...document.querySelectorAll("button")].filter(
+      (b) => before(execute, b) && before(b, starter) && !b.closest(".query-pinned"),
+    );
+    expect(between).toEqual([]);
+  });
+
+  it("a starter runs at once, as an explicit run, and no preview replaces it (AC-2)", async () => {
+    vi.useFakeTimers();
+    try {
+      const onResults = vi.fn();
+      render(<Harness onResults={onResults} triples={100} />);
+      await act(async () => {
+        fireEvent.click(document.querySelector(".starter")!);
+      });
+      expect(runSparql).toHaveBeenCalledTimes(1);
+      expect(runSparql.mock.calls[0][1]).toContain("ex:Mission");
+      expect(onResults).toHaveBeenLastCalledWith(RESULTS, true);
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+      // The Auto preview of the starter's own state would be a second call.
+      expect(runSparql).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("Execute is explicit, an Auto preview is not, and Clear results reports none", async () => {
+    vi.useFakeTimers();
+    try {
+      const onResults = vi.fn();
+      render(
+        <QueryPanel
+          ontologyId="ont-1"
+          theme="light"
+          builder={builderStub()}
+          onPickIri={vi.fn()}
+          onViewInSource={vi.fn()}
+          ontologyTriples={100}
+          onResults={onResults}
+          resultsOnGraph={1}
+          onFrameResults={vi.fn()}
+        />,
+      );
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(onResults).toHaveBeenLastCalledWith(RESULTS, false);
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /Execute/ }));
+      });
+      expect(onResults).toHaveBeenLastCalledWith(RESULTS, true);
+      fireEvent.click(screen.getByRole("button", { name: "Clear results" }));
+      expect(onResults).toHaveBeenLastCalledWith(null, false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("Frame on graph is a button in the results header while results are on the graph", async () => {
+    const onFrameResults = vi.fn();
+    const props = {
+      ontologyId: "ont-1",
+      theme: "light" as const,
+      builder: builderStub(),
+      onPickIri: vi.fn(),
+      onViewInSource: vi.fn(),
+      ontologyTriples: 0,
+      onFrameResults,
+      resultsNote: "The graph shows 200 of the 340 results it had not drawn.",
+    };
+    const view = render(<QueryPanel {...props} resultsOnGraph={3} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Execute/ }));
+    });
+    const header = document.querySelector(".results-header")!;
+    fireEvent.click(within(header as HTMLElement).getByRole("button", { name: "Frame on graph" }));
+    expect(onFrameResults).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("The graph shows 200 of the 340 results it had not drawn.")).toBeTruthy();
+    view.rerender(<QueryPanel {...props} resultsOnGraph={0} />);
+    expect(screen.queryByRole("button", { name: "Frame on graph" })).toBeNull();
+  });
+});
+
+describe("only the latest answer is shown (query-page-rework 5.2)", () => {
+  function deferred() {
+    let resolve!: (value: unknown) => void;
+    const promise = new Promise((r) => (resolve = r));
+    return { promise, resolve };
+  }
+
+  it("an Execute answer that lands after Clear results shows nothing and reports nothing", async () => {
+    const pending = deferred();
+    runSparql.mockReturnValueOnce(pending.promise);
+    const onResults = vi.fn();
+    render(
+      <QueryPanel ontologyId="ont-1" theme="light" builder={builderStub()} onPickIri={vi.fn()}
+        onViewInSource={vi.fn()} ontologyTriples={0} onResults={onResults} />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Execute/ }));
+    });
+    // A newer run supersedes it: here, the panel leaving with its results.
+    cleanup();
+    onResults.mockClear();
+    await act(async () => {
+      pending.resolve(RESULTS);
+    });
+    expect(onResults).not.toHaveBeenCalled();
+  });
+
+  it("an Auto preview that lands after Execute never replaces Execute's answer", async () => {
+    vi.useFakeTimers();
+    try {
+      const preview = deferred();
+      const full = { ...RESULTS, rowCount: 7 };
+      runSparql.mockReset().mockReturnValueOnce(preview.promise).mockResolvedValueOnce(full);
+      const onResults = vi.fn();
+      render(
+        <QueryPanel ontologyId="ont-1" theme="light" builder={builderStub()} onPickIri={vi.fn()}
+          onViewInSource={vi.fn()} ontologyTriples={100} onResults={onResults} />,
+      );
+      await act(async () => {
+        vi.advanceTimersByTime(500); // the preview is sent, and waits
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /Execute/ }));
+      });
+      expect(onResults).toHaveBeenLastCalledWith(full, true);
+      await act(async () => {
+        preview.resolve(RESULTS);
+      });
+      expect(onResults).toHaveBeenLastCalledWith(full, true);
+      expect(document.querySelector(".results-header .count")?.textContent).toBe("7");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

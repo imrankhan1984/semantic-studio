@@ -5,8 +5,10 @@ FILE: frontend/src/sparql/textQuery.ts
 
 SUMMARY
     The rules behind writing SPARQL as text (spec sparql-text-and-query-files):
-    the 100 KB size limit, the starter comment, inserting PREFIX lines, the
-    .rq file name for a download, and reading a chosen .rq file.
+    the 100 KB size limit, the text a new query starts with (the prefixes
+    the ontology uses, query-page-rework 5.3), the prefix a failed run was
+    missing and the one line Add PREFIX writes, the .rq file name for a
+    download, and reading a chosen .rq file.
 
 BASIC IDEA
     Kept out of SparqlEditor for the same reason sparql/ exists: each of these
@@ -19,7 +21,8 @@ BASIC IDEA
     never fewer than one byte, so anything accepted here is accepted there.
 
 INPUTS / INPUT SOURCES
-    - Query text, the query schema's prefix map, a query name, a File.
+    - Query text, the query schema's `prefixes`, a server error sentence,
+      a query name, a File.
 
 EXPECTED OUTPUT
     - Strings, byte counts, and a read result that is either the file's text
@@ -29,9 +32,6 @@ EXPECTED OUTPUT
 
 /** The same 100 KB the server holds query text to. */
 export const MAX_QUERY_BYTES = 100 * 1024;
-
-export const STARTER_COMMENT =
-  "# Write a SELECT query. Prefixes from this ontology are available below.\n";
 
 export const TOO_LARGE_TO_RUN =
   "This query is larger than the 100 KB limit, so it was not run.";
@@ -43,68 +43,53 @@ export function byteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
-/**
- * Prefixes rdflib 7 binds into every graph whether or not the file mentions
- * them. The query schema carries a graph's bindings as they are, so without
- * this a space-exploration ontology offered `brick:`, `sosa:` and twenty more
- * -- measured in Chrome, 30 lines for a file that declares 5. The four core
- * vocabularies are not listed: every ontology can use those.
- */
-const RDFLIB_DEFAULTS: Record<string, string> = {
-  brick: "https://brickschema.org/schema/Brick#",
-  csvw: "http://www.w3.org/ns/csvw#",
-  dc: "http://purl.org/dc/elements/1.1/",
-  dcam: "http://purl.org/dc/dcam/",
-  dcat: "http://www.w3.org/ns/dcat#",
-  dcmitype: "http://purl.org/dc/dcmitype/",
-  dcterms: "http://purl.org/dc/terms/",
-  doap: "http://usefulinc.com/ns/doap#",
-  foaf: "http://xmlns.com/foaf/0.1/",
-  geo: "http://www.opengis.net/ont/geosparql#",
-  odrl: "http://www.w3.org/ns/odrl/2/",
-  org: "http://www.w3.org/ns/org#",
-  prof: "http://www.w3.org/ns/dx/prof/",
-  prov: "http://www.w3.org/ns/prov#",
-  qb: "http://purl.org/linked-data/cube#",
-  schema: "https://schema.org/",
-  sh: "http://www.w3.org/ns/shacl#",
-  skos: "http://www.w3.org/2004/02/skos/core#",
-  sosa: "http://www.w3.org/ns/sosa/",
-  ssn: "http://www.w3.org/ns/ssn/",
-  time: "http://www.w3.org/2006/time#",
-  vann: "http://purl.org/vocab/vann/",
-  void: "http://rdfs.org/ns/void#",
-  wgs: "https://www.w3.org/2003/01/geo/wgs84_pos#",
-  xml: "http://www.w3.org/XML/1998/namespace",
-};
+/** The help line under the editor of a new text query (query-page-rework
+ *  5.3): visible, as it says what is already in the box. */
+export const STARTED_HELP =
+  "The prefixes this ontology uses are already at the top. Ctrl+Enter runs the query.";
+export const RUN_HELP = "Ctrl+Enter runs the query.";
 
 /**
- * The text with a PREFIX line added for every namespace the ontology declares
- * and the text does not. Added after any leading comment lines, so the
- * starter comment stays on top, and before everything else.
- *
- * A binding identical to one of rdflib's defaults cannot be told apart from
- * one the file declared, so it is added only when the text already uses the
- * prefix: a file that declares `skos:` and a query that says `skos:Concept`
- * get the line, and nobody gets `brick:` for nothing.
+ * What a new text query starts with: one PREFIX line for each namespace the
+ * ontology uses, as the server lists them (the schema's `prefixes`, sorted),
+ * then a blank line, the caret going at the end. Nothing else: the starter
+ * comment it replaces said the prefixes were "available below", which was
+ * only half true (query-page-rework 5.3).
  */
-export function insertPrefixes(text: string, namespaces: Record<string, string>): string {
-  const declared = new Set<string>();
-  for (const match of text.matchAll(/^\s*PREFIX\s+([A-Za-z][\w.-]*)?:/gim)) {
-    declared.add(match[1] ?? "");
-  }
-  const used = (prefix: string) => new RegExp(`(^|[^\\w.-])${prefix}:`).test(text);
-  const lines = Object.entries(namespaces)
-    .filter(([prefix]) => !declared.has(prefix))
-    .filter(([prefix, ns]) => RDFLIB_DEFAULTS[prefix] !== ns || used(prefix))
+export function startingText(prefixes: Record<string, string> | undefined): string {
+  const lines = Object.entries(prefixes ?? {})
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([prefix, ns]) => `PREFIX ${prefix}: <${ns}>`);
-  if (lines.length === 0) return text;
+  return lines.length ? `${lines.join("\n")}\n\n` : "";
+}
 
+/**
+ * The prefix a failed run was missing, read from the server's sentence
+ * ("Unknown namespace prefix : space"), or null for any other failure. The
+ * empty prefix (`:Term`) comes back as "": many ontologies bind `:`.
+ * Read with indexOf and a fixed pattern after it, never a RegExp built from
+ * the text: the message carries what the person typed.
+ */
+export function unknownPrefix(error: string | null): string | null {
+  if (!error) return null;
+  const marker = "Unknown namespace prefix";
+  const at = error.indexOf(marker);
+  if (at < 0) return null;
+  const match = /^\s*:\s*([A-Za-z][\w.-]*)?/.exec(error.slice(at + marker.length));
+  return match ? match[1] ?? "" : null;
+}
+
+/**
+ * The text with one `PREFIX p: <ns>` line added, after any leading comment
+ * lines and before everything else: what Add PREFIX does to a query that
+ * came from a file, a saved query or the ontology (5.3), which otherwise
+ * open exactly as written.
+ */
+export function addPrefixLine(text: string, prefix: string, ns: string): string {
   const all = text.split("\n");
   let at = 0;
   while (at < all.length && /^\s*#/.test(all[at])) at += 1;
-  return [...all.slice(0, at), ...lines, ...all.slice(at)].join("\n");
+  return [...all.slice(0, at), `PREFIX ${prefix}: <${ns}>`, ...all.slice(at)].join("\n");
 }
 
 /**

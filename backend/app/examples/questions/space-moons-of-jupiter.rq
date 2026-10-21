@@ -1,0 +1,11 @@
+# Two conditions on one subject: it is a moon, and it orbits Jupiter.
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX space: <http://example.org/space#>
+
+SELECT ?moon ?name WHERE {
+  ?moon a space:Moon ;
+        space:orbits space:Jupiter ;
+        rdfs:label ?name .
+  FILTER (lang(?name) = "en")
+}
+ORDER BY ?name

@@ -159,6 +159,9 @@ export interface QuerySchema {
   superClasses: Record<string, string[]>;
   dataProperties: Record<string, SchemaDataProp[]>;
   namespaces: Record<string, string>;
+  /** The namespaces the file binds and uses, sorted by prefix: what a new
+   *  text query starts with (query-page-rework 5.3). */
+  prefixes?: Record<string, string>;
   truncated: boolean;
   /** Queries the file stores in itself. Carried on the schema so Query mode
    *  needs no request of its own to know whether to list them. */
@@ -347,6 +350,16 @@ export interface VizNeighborhood {
   };
 }
 
+/** POST /nodes (query-page-rework 5.2): the entities a query's results
+ *  name, drawn when the node budget left them out. `total` is every entity
+ *  asked for, `drawn` how many came back (at most 200). */
+export interface VizNodes {
+  nodes: VizNode[];
+  edges: VizEdge[];
+  total: number;
+  drawn: number;
+}
+
 /** What GraphView actually merged, reported back by it. The caller cannot work
  *  this out for itself: only the renderer knows which of the returned nodes and
  *  edges were already on the canvas. */
@@ -399,7 +412,18 @@ export interface OntologySummary {
   /** A bundled example's key and one-line purpose (home-and-examples 5.1),
    *  which its card shows in place of the counted sentence and the date.
    *  Null for everything else, absent from a server that predates it. */
-  example?: { key: string; purpose: string } | null;
+  example?: { key: string; purpose: string; questions?: ExampleQuestion[] } | null;
+}
+
+/** One of a bundled example's ready-made questions (query-page-rework 5.4):
+ *  the application's, read-only, shown first in Query's Try one of these. */
+export interface ExampleQuestion {
+  id: string;
+  title: string;
+  /** What it shows the learner: the file's own first comment line. */
+  about: string;
+  /** The SPARQL, exactly as the file holds it. */
+  text: string;
 }
 
 /* --- hierarchy view ------------------------------------------------------ */
