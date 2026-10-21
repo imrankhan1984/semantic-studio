@@ -226,7 +226,7 @@ button.icon-btn {
 /* 28 px: toolbars and the controls on a row. */
 :where(
   button.small, .tool-btn, .pager-btn, .edit-btn, .link-btn, .results-export,
-  .results-clear, .results-frame, .relate-swap, .toggle-pill, .icon-btn, .hierarchy-menu-btn,
+  .results-clear, .results-frame, .add-prefix, .relate-swap, .toggle-pill, .icon-btn, .hierarchy-menu-btn,
   .canvas-help-button, .hierarchy-add, .hierarchy-expand, .project-more,
   .validate-btn, .project-header button, .canvas-toolbar button,
   .graph-toolbar button, .source-toolbar button:not(.mode-tab)
@@ -3337,6 +3337,27 @@ button.legend-row:hover {
   font-size: var(--fs-xs);
   font-weight: 600;
   overflow-wrap: anywhere;
+}
+
+/* The help line under the editor, visible (query-page-rework 5.3): it
+   says what is already in the box. */
+.sparql-editor-help {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+/* A failed run's sentence, and Add PREFIX beside it when the ontology
+   binds the prefix it was missing (5.3). */
+.sparql-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.sparql-error p {
+  margin: 0;
 }
 
 .fork-notice {

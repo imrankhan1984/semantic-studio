@@ -80,7 +80,7 @@ import { describeQuery } from "../sparql/describe";
 import { assignVarNames, generateSparql, localName } from "../sparql/generate";
 import {
   MAX_QUERY_BYTES,
-  STARTER_COMMENT,
+  startingText,
   TOO_LARGE_TO_RUN,
   byteLength,
   readQueryFile,
@@ -503,7 +503,9 @@ export default function QueryPanel({
 
   const newTextQuery = () => {
     if (!mayDiscard()) return;
-    startText(STARTER_COMMENT);
+    // The prefixes the ontology uses, and nothing else (5.3): the query is
+    // ready to run the moment a term is written.
+    startText(startingText(schema?.prefixes), { fresh: true });
   };
 
   const openFile = async (file: File) => {

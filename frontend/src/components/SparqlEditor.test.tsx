@@ -44,7 +44,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import QueryPanel, { CUT_SHORT, DISCARD_TEXT, ONLY_SELECT, SHACL_VARIABLES_NOTE } from "./QueryPanel";
 import { FORK_NOTICE } from "./SparqlEditor";
 import { generateSparql } from "../sparql/generate";
-import { MAX_QUERY_BYTES, NOT_UTF8, STARTER_COMMENT, TOO_LARGE_TO_OPEN } from "../sparql/textQuery";
+import { MAX_QUERY_BYTES, NOT_UTF8, RUN_HELP, STARTED_HELP, TOO_LARGE_TO_OPEN } from "../sparql/textQuery";
 import { useQueryBuilder } from "../sparql/useQueryBuilder";
 import type { QueryState } from "../sparql/types";
 import type { EmbeddedQuery, SavedQuery } from "../types";
@@ -80,9 +80,14 @@ const SCHEMA = {
   superClasses: {},
   dataProperties: {},
   namespaces: NAMESPACES,
+  // What the file uses, which is less than it binds: rdfs is bound, unused.
+  prefixes: { ex: EX },
   truncated: false,
   embeddedQueryCount: 0,
 };
+
+/** What a new text query starts with for SCHEMA (query-page-rework 5.3). */
+const STARTED = `PREFIX ex: <${EX}>\n\n`;
 
 let rowReads = 0;
 function countingResults() {
@@ -318,21 +323,78 @@ describe("running (AC-6)", () => {
   });
 });
 
-describe("a text query from nothing (AC-7)", () => {
-  it("opens empty with the starter comment, offers prefixes, and has no way back", async () => {
+describe("a text query from nothing (AC-7; query-page-rework 5.3, AC-5)", () => {
+  it("starts with the prefixes the ontology uses, a blank line and the caret on it; no way back", async () => {
     await setup({}, null);
     fireEvent.click(screen.getByRole("button", { name: "New text query" }));
-    expect(textarea().value).toBe(STARTER_COMMENT);
+    expect(textarea().value).toBe(STARTED);
+    expect(textarea().selectionStart).toBe(STARTED.length);
+    expect(document.activeElement).toBe(textarea());
+    // No starter comment and no Insert prefixes: the text is ready to run.
+    expect(textarea().value).not.toContain("#");
+    expect(screen.queryByRole("button", { name: "Insert prefixes" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Back to the visual version" })).toBeNull();
+    // The help line is visible, and says what is in the box.
+    const help = document.getElementById("sparql-editor-help")!;
+    expect(help.className).not.toContain("visually-hidden");
+    expect(help.textContent).toContain(STARTED_HELP);
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "Insert prefixes" }));
-    const lines = textarea().value.split("\n");
-    expect(lines[0]).toBe(STARTER_COMMENT.trim());
-    expect(lines).toContain(`PREFIX ex: <${EX}>`);
-    expect(lines).toContain("PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>");
-    // Pressed again, nothing is declared twice.
-    fireEvent.click(screen.getByRole("button", { name: "Insert prefixes" }));
-    expect(textarea().value.match(/PREFIX ex:/g)).toHaveLength(1);
+  it("a saved, a file's or the ontology's query opens exactly as written", async () => {
+    const text = "SELECT ?m WHERE { ?m a ex:Bond }";
+    api.listSavedQueries.mockResolvedValue([
+      { id: "q1", name: "Bonds", ontologyId: "ont-1", ontologyName: "o", state: null, sparql: text, mode: "text", createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z" },
+    ]);
+    await setup({}, null);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Bonds" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Bonds" }));
+    expect(textarea().value).toBe(text);
+    expect(document.getElementById("sparql-editor-help")!.textContent).toContain(RUN_HELP);
+    expect(document.getElementById("sparql-editor-help")!.textContent).not.toContain(STARTED_HELP);
+  });
+});
+
+describe("Add PREFIX (query-page-rework 5.3, AC-6)", () => {
+  const UNKNOWN = (prefix: string) =>
+    Object.assign(new Error(`Could not parse the SPARQL query: Unknown namespace prefix : ${prefix}`), { status: 400 });
+
+  async function openText(text: string) {
+    api.listSavedQueries.mockResolvedValue([
+      { id: "q1", name: "Mine", ontologyId: "ont-1", ontologyName: "o", state: null, sparql: text, mode: "text", createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z" },
+    ]);
+    await setup({}, null);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Mine" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Mine" }));
+  }
+
+  it("a prefix the ontology binds is offered, added after the leading comments, and run again", async () => {
+    const text = "# Bonds\nSELECT ?b WHERE { ?b a rdfs:Resource }";
+    await openText(text);
+    api.runSparql.mockRejectedValueOnce(UNKNOWN("rdfs"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Run/ }));
+    });
+    const add = await screen.findByRole("button", { name: "Add PREFIX rdfs:" });
+    // It takes focus as the error shows.
+    expect(document.activeElement).toBe(add);
+    api.runSparql.mockResolvedValueOnce(countingResults());
+    await act(async () => {
+      fireEvent.click(add);
+    });
+    const added = "# Bonds\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?b WHERE { ?b a rdfs:Resource }";
+    expect(textarea().value).toBe(added);
+    expect(api.runSparql).toHaveBeenLastCalledWith("ont-1", added, false);
+    expect(document.activeElement).toBe(textarea());
+  });
+
+  it("a prefix the ontology does not bind gets no button", async () => {
+    await openText("SELECT ?b WHERE { ?b a nope:Thing }");
+    api.runSparql.mockRejectedValueOnce(UNKNOWN("nope"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Run/ }));
+    });
+    await screen.findByText(/Unknown namespace prefix : nope/);
+    expect(screen.queryByRole("button", { name: /Add PREFIX/ })).toBeNull();
   });
 });
 
@@ -360,7 +422,7 @@ describe(".rq files (AC-8)", () => {
     fireEvent.click(screen.getByRole("button", { name: "New text query" }));
     await act(async () => choose(new File(["#".repeat(MAX_QUERY_BYTES + 1)], "big.rq")));
     await waitFor(() => expect(screen.getByText(TOO_LARGE_TO_OPEN)).toBeTruthy());
-    expect(textarea().value).toBe(STARTER_COMMENT);
+    expect(textarea().value).toBe(STARTED);
   });
 
   it("accepts a file of exactly 100 KB", async () => {

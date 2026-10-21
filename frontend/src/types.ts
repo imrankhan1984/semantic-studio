@@ -159,6 +159,9 @@ export interface QuerySchema {
   superClasses: Record<string, string[]>;
   dataProperties: Record<string, SchemaDataProp[]>;
   namespaces: Record<string, string>;
+  /** The namespaces the file binds and uses, sorted by prefix: what a new
+   *  text query starts with (query-page-rework 5.3). */
+  prefixes?: Record<string, string>;
   truncated: boolean;
   /** Queries the file stores in itself. Carried on the schema so Query mode
    *  needs no request of its own to know whether to list them. */
