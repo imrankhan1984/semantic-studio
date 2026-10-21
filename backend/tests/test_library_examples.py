@@ -795,3 +795,21 @@ def test_a_listed_example_carries_its_questions_and_nothing_else_does(no_example
         assert listed[copy]["example"] is None
     finally:
         client.delete(f"/api/ontologies/{copy}")
+
+
+def test_a_question_that_cannot_be_read_is_left_out_never_a_failed_listing(monkeypatch, tmp_path):
+    manifest = json.loads(json.dumps(MANIFEST))
+    manifest["examples"][0]["questions"].append(
+        {"id": "gone", "title": "Gone?", "file": "examples/questions/no-such-file.rq", "sha256": "0" * 64}
+    )
+    monkeypatch.setattr(library_examples, "load_manifest", lambda: manifest["examples"])
+    library_examples._questions.cache_clear()
+    try:
+        listed = library_examples.with_questions(
+            {"source": "example", "example": {"key": "space", "purpose": "p"}}
+        )
+        assert [q["id"] for q in listed["example"]["questions"]] == [
+            q["id"] for q in MANIFEST["examples"][0]["questions"]
+        ]
+    finally:
+        library_examples._questions.cache_clear()

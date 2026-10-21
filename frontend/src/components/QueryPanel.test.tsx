@@ -626,3 +626,59 @@ describe("QueryPanel and the graph (query-page-rework 5.1, 5.2)", () => {
     expect(screen.queryByRole("button", { name: "Frame on graph" })).toBeNull();
   });
 });
+
+describe("only the latest answer is shown (query-page-rework 5.2)", () => {
+  function deferred() {
+    let resolve!: (value: unknown) => void;
+    const promise = new Promise((r) => (resolve = r));
+    return { promise, resolve };
+  }
+
+  it("an Execute answer that lands after Clear results shows nothing and reports nothing", async () => {
+    const pending = deferred();
+    runSparql.mockReturnValueOnce(pending.promise);
+    const onResults = vi.fn();
+    render(
+      <QueryPanel ontologyId="ont-1" theme="light" builder={builderStub()} onPickIri={vi.fn()}
+        onViewInSource={vi.fn()} ontologyTriples={0} onResults={onResults} />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Execute/ }));
+    });
+    // A newer run supersedes it: here, the panel leaving with its results.
+    cleanup();
+    onResults.mockClear();
+    await act(async () => {
+      pending.resolve(RESULTS);
+    });
+    expect(onResults).not.toHaveBeenCalled();
+  });
+
+  it("an Auto preview that lands after Execute never replaces Execute's answer", async () => {
+    vi.useFakeTimers();
+    try {
+      const preview = deferred();
+      const full = { ...RESULTS, rowCount: 7 };
+      runSparql.mockReset().mockReturnValueOnce(preview.promise).mockResolvedValueOnce(full);
+      const onResults = vi.fn();
+      render(
+        <QueryPanel ontologyId="ont-1" theme="light" builder={builderStub()} onPickIri={vi.fn()}
+          onViewInSource={vi.fn()} ontologyTriples={100} onResults={onResults} />,
+      );
+      await act(async () => {
+        vi.advanceTimersByTime(500); // the preview is sent, and waits
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /Execute/ }));
+      });
+      expect(onResults).toHaveBeenLastCalledWith(full, true);
+      await act(async () => {
+        preview.resolve(RESULTS);
+      });
+      expect(onResults).toHaveBeenLastCalledWith(full, true);
+      expect(document.querySelector(".results-header .count")?.textContent).toBe("7");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

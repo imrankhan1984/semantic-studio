@@ -297,6 +297,23 @@ export default function QueryPanel({
     [schema],
   );
 
+  // Every change of the results goes through here, so App's rings follow
+  // the table exactly: what it shows is what the graph rings.
+  //
+  // Only the latest request may show its answer (query-page-rework 5.2):
+  // each run and each preview takes the next number, and so does every
+  // clearing, so a slow starter's answer never lands over a newer preview,
+  // a preview never over Execute, and nothing lands after the ontology
+  // changed or this panel went.
+  const onResultsRef = useRef(onResults);
+  onResultsRef.current = onResults;
+  const latest = useRef(0);
+  const show = useCallback((next: SparqlResults | null, explicit: boolean) => {
+    if (next === null) latest.current += 1;
+    setResults(next);
+    onResultsRef.current?.(next, explicit);
+  }, []);
+
   // Empties the results area only. The query, the path, the pins and the saved
   // queries are untouched — that is the whole distinction from the path bar's
   // Clear path.
@@ -305,17 +322,15 @@ export default function QueryPanel({
   // a fresh identity here would re-render the table on every App render, which
   // is exactly what the memo is there to stop while a graph expansion is in
   // flight underneath it.
-  // Every change of the results goes through here, so App's rings follow
-  // the table exactly: what it shows is what the graph rings.
-  const onResultsRef = useRef(onResults);
-  onResultsRef.current = onResults;
-  const show = useCallback((next: SparqlResults | null, explicit: boolean) => {
-    setResults(next);
-    onResultsRef.current?.(next, explicit);
-  }, []);
   const clearResults = useCallback(() => show(null, false), [show]);
   // Leaving Query takes the results with this panel, so the rings go too.
-  useEffect(() => () => onResultsRef.current?.(null, false), []);
+  useEffect(
+    () => () => {
+      latest.current += 1;
+      onResultsRef.current?.(null, false);
+    },
+    [],
+  );
 
   const refreshSaved = useCallback(() => {
     if (!ontologyId) return;
@@ -378,17 +393,20 @@ export default function QueryPanel({
   // frame the graph; an Auto preview's never do.
   const runExplicit = async (text: string) => {
     if (!ontologyId) return;
+    const run = ++latest.current;
     setRunning(true);
     setError(null);
     try {
       const answer = await runSparql(ontologyId, text, includeImports);
+      if (run !== latest.current) return;
       setIsPreview(false);
       show(answer, true);
     } catch (e: unknown) {
+      if (run !== latest.current) return;
       show(null, false);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setRunning(false);
+      if (run === latest.current) setRunning(false);
     }
   };
 
@@ -430,9 +448,10 @@ export default function QueryPanel({
     if (!previewQuery) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
+      const run = ++latest.current;
       runSparql(ontologyId, previewQuery, includeImports)
         .then((res) => {
-          if (cancelled) return;
+          if (cancelled || run !== latest.current) return;
           setIsPreview(true);
           setError(null);
           show(res, false);
@@ -521,7 +540,9 @@ export default function QueryPanel({
     if (!mayDiscard()) return;
     // The prefixes the ontology uses, and nothing else (5.3): the query is
     // ready to run the moment a term is written.
-    startText(startingText(schema?.prefixes), { fresh: true });
+    const text = startingText(schema?.prefixes);
+    // The help line says the prefixes are at the top only when they are.
+    startText(text, { fresh: text !== "" });
   };
 
   const openFile = async (file: File) => {

@@ -65,7 +65,8 @@ export function startingText(prefixes: Record<string, string> | undefined): stri
 
 /**
  * The prefix a failed run was missing, read from the server's sentence
- * ("Unknown namespace prefix : space"), or null for any other failure.
+ * ("Unknown namespace prefix : space"), or null for any other failure. The
+ * empty prefix (`:Term`) comes back as "": many ontologies bind `:`.
  * Read with indexOf and a fixed pattern after it, never a RegExp built from
  * the text: the message carries what the person typed.
  */
@@ -74,8 +75,8 @@ export function unknownPrefix(error: string | null): string | null {
   const marker = "Unknown namespace prefix";
   const at = error.indexOf(marker);
   if (at < 0) return null;
-  const match = /^\s*:\s*([A-Za-z][\w.-]*)/.exec(error.slice(at + marker.length));
-  return match ? match[1] : null;
+  const match = /^\s*:\s*([A-Za-z][\w.-]*)?/.exec(error.slice(at + marker.length));
+  return match ? match[1] ?? "" : null;
 }
 
 /**

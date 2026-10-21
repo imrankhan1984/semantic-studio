@@ -3911,3 +3911,32 @@ describe("App: a bundled example's questions (query-page-rework 5.4, AC-8)", () 
     expect(screen.getByTestId("questions").textContent).toBe("");
   });
 });
+
+describe("App: a run before the graph is drawn (query-page-rework 5.2)", () => {
+  it("rings what will be drawn but announces, frames and requests nothing", async () => {
+    let resolveGraph!: (g: VizGraph) => void;
+    getGraph.mockReturnValue(new Promise<VizGraph>((r) => (resolveGraph = r)));
+    queryAnswer.results = {
+      vars: ["x"],
+      rows: [[{ type: "uri", value: "http://x/Bond" }]],
+      rowCount: 1,
+      truncated: false,
+      durationMs: 1,
+    };
+    await renderAppOpened();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Query" }));
+    });
+    const before = Number(screen.getByTestId("graph").getAttribute("data-frame-tick"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "fake explicit run" }));
+    });
+    expect(screen.getByTestId("graph").getAttribute("data-results")).toBe("http://x/Bond");
+    expect(Number(screen.getByTestId("graph").getAttribute("data-frame-tick"))).toBe(before);
+    expect(document.querySelector(".notice-region")!.textContent).not.toContain("shown on the graph");
+    expect(getResultNodes).not.toHaveBeenCalled();
+    await act(async () => {
+      resolveGraph(TRUNCATED);
+    });
+  });
+});

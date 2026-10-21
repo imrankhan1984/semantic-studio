@@ -39,6 +39,14 @@ BASIC IDEA
     words it, and stored under its rule's key, since two rules can join the
     same two classes. No edge program of our own: Sigma's arrow draws it.
 
+    A query's results (query-page-rework 5.2, D-118) are ringed as the
+    selection is, on a `result` flag the reducer sets, and named: up to 200
+    with a pill each, past that through the overlap rule. The camera moves
+    to them only on `frameTick`, which App bumps for an explicit run and
+    Frame on graph. The canvas follows its own box through a
+    ResizeObserver: Sigma measures only when it renders, and a legend
+    opening in Query narrowed the box with no window resize.
+
     Two things here are for people who are not using a mouse or who have asked
     the machine to stop moving. The container carries role="img" and a label
     saying how much of the ontology is drawn and where the keyboard route is,
@@ -496,6 +504,11 @@ function edgeWords(edge: VizEdge): string {
 
 const EMPTY_SET: Set<string> = new Set();
 
+/** Up to this many results each carry a pill with its name, as the path
+ *  does; past it they are ringed and named where the overlap rule places
+ *  them (query-page-rework 5.2; D-110). The number /nodes draws. */
+const RESULT_PILLS = 200;
+
 /**
  * Which node the view dims around, or null when there is nothing to dim around.
  *
@@ -785,7 +798,11 @@ export default function GraphView({
       // selected and hovered.
       pillNodes: () =>
         queryModeRef.current
-          ? [hoveredRef.current, ...pathRef.current, ...resultsRef.current]
+          ? [
+              hoveredRef.current,
+              ...pathRef.current,
+              ...(resultsRef.current.size <= RESULT_PILLS ? resultsRef.current : EMPTY_SET),
+            ]
           : [selectedRef.current, hoveredRef.current],
     });
 
@@ -813,6 +830,10 @@ export default function GraphView({
       labelRenderedSizeThreshold: 5,
       minCameraRatio: MIN_CAMERA_RATIO,
       maxCameraRatio: MAX_CAMERA_RATIO,
+      // A box squeezed to nothing (Query's panel and an open legend in a
+      // narrow window) is drawn at one pixel rather than thrown on: Sigma
+      // throws from inside its own render otherwise, past every boundary.
+      allowInvalidContainer: true,
       defaultEdgeType: "arrow",
       zIndex: true,
       nodeReducer: (node, attrs) => {
@@ -836,8 +857,12 @@ export default function GraphView({
           // A result is ringed and named whether or not the path could step
           // on it: the answer is what the person asked to see. A boolean on
           // the object already returned, as `selected` is, so no allocation.
+          // Past RESULT_PILLS results the names go through the one overlap
+          // rule instead (D-110): a pill per result would stack hundreds of
+          // names and measure each one every frame.
           if (resultsRef.current.has(node)) {
-            res.highlighted = true;
+            if (resultsRef.current.size <= RESULT_PILLS) res.highlighted = true;
+            else res.forceLabel = true;
             res.zIndex = 3;
             res.result = true;
           }
@@ -845,10 +870,11 @@ export default function GraphView({
             res.highlighted = true;
             res.zIndex = 3;
             res.size = (attrs.size as number) + 3;
-          } else if (res.result || node === hov) {
+          } else if (node === hov) {
             res.highlighted = true;
             res.zIndex = 3;
-          } else if (!isCandidate) {
+          } else if (!res.result && !isCandidate) {
+            // A result is never dimmed, whether or not the path can step on it.
             res.color = palette.dimNode;
             res.label = "";
             res.zIndex = 0;
@@ -1054,6 +1080,31 @@ export default function GraphView({
     };
     camera.on("updated", onCameraUpdate);
 
+    // Redraw when the canvas's own box changes size without the window
+    // changing: Sigma measures its container only when it renders, so
+    // opening the legend in Query (query-page-rework 5.1, its 50/50 split)
+    // left the canvas at its old width, spilling 176 px over the panel.
+    // scheduleRefresh is what Sigma's own window-resize handler calls (the
+    // label grid is rebuilt) and coalesces with it into one frame. The size
+    // is compared, so the notification observe() sends at once, for the
+    // size the constructor just drew at, costs nothing; an empty box is
+    // left alone. jsdom has no ResizeObserver, hence the guard.
+    let drawnAt = { width: container.offsetWidth, height: container.offsetHeight };
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            const width = container.offsetWidth;
+            const height = container.offsetHeight;
+            if (width === drawnAt.width && height === drawnAt.height) return;
+            // Remembered even when empty, so the box's size coming back is a
+            // change: Sigma drew at one pixel meanwhile.
+            drawnAt = { width, height };
+            if (width === 0 || height === 0) return;
+            renderer.scheduleRefresh();
+          });
+    resizeObserver?.observe(container);
+
     // No worker under reduced motion: nothing would ever start it, and the
     // layout it exists to animate has already been applied above.
     if (!syncModeRef.current && !reduceMotionRef.current) {
@@ -1076,6 +1127,7 @@ export default function GraphView({
       // renderer is the leak the performance budget's second row exists to
       // catch, and it is invisible until several ontologies have been opened.
       camera.removeListener("updated", onCameraUpdate);
+      resizeObserver?.disconnect();
       workerLayoutRef.current?.kill();
       workerLayoutRef.current = null;
       renderer.kill();

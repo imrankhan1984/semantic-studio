@@ -245,7 +245,7 @@ import type {
   VizGraph,
   VizNeighborhood,
 } from "./types";
-import { RESULT_IRIS_SENT, resultIris, shownOnGraph, undrawnSentence } from "./sparql/resultNodes";
+import { resultIris, sendable, shownOnGraph, undrawnSentence } from "./sparql/resultNodes";
 
 // The modeling canvas (visual-modeling 5.4, D-086): its own chunk, React Flow
 // with it, fetched from the local server the first time a canvas opens in a
@@ -1344,7 +1344,10 @@ export default function App() {
     setQueryResults(iris.length ? new Set(iris) : NO_RESULTS);
     setResultsNote(null);
     if (!results || !explicit) return;
+    // No graph yet (still loading, or failed): nothing is drawn to count or
+    // frame, and the rings land when it does.
     const drawn = drawnIdsRef.current;
+    if (!drawn) return;
     const hidden = drawn ? iris.filter((iri) => !drawn.has(iri)) : [];
     const shown = iris.length - hidden.length;
     const finish = (count: number) => {
@@ -1356,7 +1359,7 @@ export default function App() {
       finish(shown);
       return;
     }
-    getResultNodes(id, hidden.slice(0, RESULT_IRIS_SENT), includeImportsRef.current)
+    getResultNodes(id, sendable(hidden), includeImportsRef.current)
       .then((answer) => {
         if (resultsRun.current !== run || activeIdRef.current !== id) return;
         if (answer.nodes.length > 0) {

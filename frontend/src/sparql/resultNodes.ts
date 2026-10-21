@@ -31,9 +31,33 @@ EXPECTED OUTPUT
 
 import type { SparqlResults } from "../types";
 
-/** At most this many IRIs go in one /nodes request: the server's own
- *  bound (NODES_MAX_IRIS), room for twenty IRI columns of 1,000 rows. */
+/** What one /nodes request may carry: the server's own bounds
+ *  (NODES_MAX_IRIS, an IRI's 4,096 characters, NODES_MAX_BYTES). */
 export const RESULT_IRIS_SENT = 20000;
+const MAX_IRI_CHARS = 4096;
+/** The body's bound, less room for the envelope `{"iris":[]}`. */
+const MAX_BODY_BYTES = 4 * 1024 * 1024 - 1024;
+
+/**
+ * The hidden IRIs a /nodes request can carry, in order: one longer than the
+ * server takes is left out rather than failing the whole request (no graph
+ * entity is named by one), and the list stops before the body would pass
+ * the server's 4 MB, counted in UTF-8 bytes with the quotes and comma each
+ * IRI adds. JSON escapes only quotes and backslashes, which an IRI cannot
+ * hold unescaped, so this is the body's size.
+ */
+export function sendable(iris: string[]): string[] {
+  const encoder = new TextEncoder();
+  const out: string[] = [];
+  let size = 0;
+  for (const iri of iris) {
+    if (iri.length > MAX_IRI_CHARS) continue;
+    size += encoder.encode(iri).length + 3;
+    if (out.length >= RESULT_IRIS_SENT || size > MAX_BODY_BYTES) break;
+    out.push(iri);
+  }
+  return out;
+}
 
 /** The ratio a search pick centres at (GraphView's centerOn). */
 export const SINGLE_RESULT_RATIO = 0.25;
@@ -83,7 +107,7 @@ export function frameTarget(points: Iterable<{ x: number; y: number }>): CameraT
   if (count === 0) return null;
   const x = (minX + maxX) / 2;
   const y = (minY + maxY) / 2;
-  if (count === 1) return { x, y, ratio: SINGLE_RESULT_RATIO };
+  // One node has no span, so the floor below is what centres it.
   const span = Math.max(maxX - minX, maxY - minY) * FRAME_MARGIN;
   return { x, y, ratio: Math.min(MAX_FRAME_RATIO, Math.max(SINGLE_RESULT_RATIO, span)) };
 }

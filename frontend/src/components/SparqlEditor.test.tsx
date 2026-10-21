@@ -853,3 +853,33 @@ describe("a ready-made question (query-page-rework 5.4, AC-8)", () => {
     expect(api.saveQuery).not.toHaveBeenCalled();
   });
 });
+
+describe("the help line and Add PREFIX at their edges (query-page-rework 5.3)", () => {
+  it("an ontology that uses no prefix starts empty, and the help line does not claim any", async () => {
+    api.getQuerySchema.mockResolvedValue({ ...SCHEMA, prefixes: {} });
+    await setup({}, null);
+    fireEvent.click(screen.getByRole("button", { name: "New text query" }));
+    expect(textarea().value).toBe("");
+    expect(document.getElementById("sparql-editor-help")!.textContent).not.toContain(STARTED_HELP);
+  });
+
+  it("the empty prefix the ontology binds is offered as Add PREFIX :", async () => {
+    api.getQuerySchema.mockResolvedValue({ ...SCHEMA, namespaces: { ...NAMESPACES, "": EX } });
+    api.listSavedQueries.mockResolvedValue([
+      { id: "q1", name: "Mine", ontologyId: "ont-1", ontologyName: "o", state: null, sparql: "SELECT ?b WHERE { ?b a :Bond }", mode: "text", createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z" },
+    ]);
+    await setup({}, null);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Mine" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Mine" }));
+    api.runSparql.mockRejectedValueOnce(new Error("Could not parse the SPARQL query: Unknown namespace prefix : "));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Run/ }));
+    });
+    const add = await screen.findByRole("button", { name: "Add PREFIX :" });
+    api.runSparql.mockResolvedValueOnce(countingResults());
+    await act(async () => {
+      fireEvent.click(add);
+    });
+    expect(textarea().value).toBe(`PREFIX : <${EX}>\nSELECT ?b WHERE { ?b a :Bond }`);
+  });
+});

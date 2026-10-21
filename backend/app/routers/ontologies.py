@@ -311,6 +311,10 @@ NODES_LIMIT = 200
 # this is room for twenty IRI columns, and it bounds the work a body can ask
 # for; an IRI longer than 4,096 characters names nothing a graph holds.
 NODES_MAX_IRIS = 20000
+# The body that carries them, refused by its declared length in main.py
+# before anything reads it: twenty thousand IRIs of 200 characters.
+NODES_MAX_BYTES = 4 * 1024 * 1024
+NODES_TOO_LARGE = "This request names more than 4 MB of IRIs."
 
 
 # JSON body for POST /{oid}/nodes: the IRIs a query's results named. A POST

@@ -119,7 +119,13 @@ def _questions() -> dict[str, list[dict]]:
     for entry in load_manifest():
         questions = []
         for question in entry.get("questions", []):
-            text = (APP_DIR / question["file"]).read_text(encoding="utf-8")
+            # A question that cannot be read is left out, never a failed
+            # listing: Home lists the library on every start (as a failed
+            # seed never stops the server).
+            try:
+                text = (APP_DIR / question["file"]).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
             # The file's first line is its one-line comment, what it shows.
             first = text.split("\n", 1)[0]
             about = first[1:].strip() if first.startswith("#") else ""

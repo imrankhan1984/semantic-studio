@@ -2266,3 +2266,49 @@ EXPECTED OUTPUT
   extra line is warned of, without a Fix. A replaced suggestion search is
   aborted, its details with it (CF-4). Not changed: each suggestion still
   costs one `/node` request, at most five per pause.
+
+- **Query: the graph shows the answers** (2026-10-21, spec
+  `query-page-rework`, backlog Q-12, decision D-118). Query splits the
+  window 50/50; a run rings, names and frames its results on the graph,
+  drawing up to 200 the node budget hid; a new text query starts with the
+  prefixes the ontology uses; each bundled example ships ready-made
+  questions.
+
+  **Only an explicit run moves the camera to the results.** QueryPanel
+  reports every change of its results to App with an `explicit` flag:
+  Execute, Run, Ctrl+Enter, a starter and a question set it; an Auto
+  preview never does. Every change moves the rings; only an explicit one
+  asks `/nodes` for the hidden results, bumps `frameTick` and announces the
+  count. Built the other way, an Auto preview, which lands 450 ms after
+  each pick, would move the camera every time a person added a step to a
+  path, which is exactly when they are looking at it. A starter's own
+  state is not previewed as well (`skipPreviewFor`): a five-row preview
+  landing after the full answer replaced it. A `/nodes` answer is applied
+  only for the run that asked (`resultsRun`), so Clear results or a newer
+  run is never overwritten by a late one.
+
+  **A question is told by its example record, never by its name.** App
+  hands the questions to Query only for `source === "example"` with its
+  `example` record, as Home tells an example (D-111). A file the person
+  loaded under the same name, and a project made from an example, have
+  none. The questions are attached to the record when the library is
+  listed (`library_examples.with_questions`), never stored with the entry,
+  so a library seeded before they shipped gains them.
+
+  **The canvas follows its own box.** Sigma measures its container only
+  when it renders. Opening the legend in Query narrows the canvas with no
+  window resize, and at 1280×720 the canvas kept 608 px in a 432 px box
+  and drew over the panel (found in the Chrome rows; it predates this
+  spec). A `ResizeObserver` on the container redraws.
+
+  **`prefixes` never lists an `nsN` binding.** `graph_builder.prefixed`
+  asks rdflib for a qname, and rdflib binds `ns1`, `ns2`... into the shared
+  graph the first time it meets an unbound namespace, so which ones exist
+  depends on which views ran first (FOAF gained `ns1` once its viz was
+  built). `used_prefixes` skips them; a file that wrote `ns1:` itself gets
+  the line back from Add PREFIX.
+
+  **`/nodes` cannot know what is drawn.** Its body is the IRIs only, so each
+  entity's links go to its 50 best-connected neighbours, the ones the
+  budget draws first, and GraphView's merge keeps those whose other end is
+  on the canvas, as it does for a neighbourhood.

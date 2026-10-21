@@ -72,6 +72,8 @@ describe("unknownPrefix and addPrefixLine (query-page-rework 5.3, AC-6)", () => 
     expect(unknownPrefix("Unknown namespace prefix: me")).toBe("me");
     expect(unknownPrefix("Could not parse the SPARQL query: Expected end of text")).toBeNull();
     expect(unknownPrefix(null)).toBeNull();
+    // The empty prefix, `:Term`, is a prefix too.
+    expect(unknownPrefix("Could not parse the SPARQL query: Unknown namespace prefix : ")).toBe("");
   });
 
   it("adds one line after the leading comments, and changes nothing else", () => {

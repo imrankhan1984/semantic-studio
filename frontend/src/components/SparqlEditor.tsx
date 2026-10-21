@@ -174,7 +174,7 @@ export default function SparqlEditor({
           <p>{error}</p>
           {missing !== null && missingNs !== null && (
             <button ref={addRef} className="ghost add-prefix" onClick={addPrefix}>
-              Add PREFIX {missing}:
+              {`Add PREFIX ${missing}:`}
             </button>
           )}
         </div>

@@ -136,7 +136,8 @@ async def refuse_oversized_bodies(request: Request, call_next):
     is the same input as an uploaded file and keeps the upload cap. The canvas
     layout (visual-modeling Stage 2) is a fourth, at 1 MB. A data file for
     the import wizard (csv-data-import Section 9) is a fifth, at 5 MB, on the
-    four routes that take one; an edited mapping a sixth, at 1 MB.
+    four routes that take one; an edited mapping a sixth, at 1 MB. The IRIs
+    a query's results send to /nodes are a seventh, at 4 MB.
     """
     if request.method not in ("POST", "PUT", "PATCH"):
         return await call_next(request)
@@ -155,6 +156,9 @@ async def refuse_oversized_bodies(request: Request, call_next):
     elif request.method == "PATCH":
         if _DATA_PATCH_PATH.match(path) and _declared(request) > data.PATCH_MAX_BYTES:
             return JSONResponse(status_code=413, content={"detail": data.PATCH_TOO_LARGE})
+    elif _NODES_PATH.match(path) and _declared(request) > ontologies.NODES_MAX_BYTES:
+        # A JSON body, so the exact cap, as the layout's (query-page-rework 5.2).
+        return JSONResponse(status_code=413, content={"detail": ontologies.NODES_TOO_LARGE})
     elif _DATA_FILE_PATH.match(path):
         limit = tabular.MAX_BYTES
         detail = {"message": data.FILE_TOO_LARGE, "kind": "too-large"}
@@ -182,6 +186,7 @@ _LAYOUT_PATH = re.compile(r"^/api/projects/[^/]+/documents/[^/]+/layout$")
 # The data wizard's file routes: inspect, preview, import and refresh.
 _DATA_FILE_PATH = re.compile(r"^/api/projects/[^/]+/data(/inspect|/preview|/[^/]+/refresh)?$")
 _DATA_PATCH_PATH = re.compile(r"^/api/projects/[^/]+/data/[^/]+$")
+_NODES_PATH = re.compile(r"^/api/ontologies/[^/]+/nodes$")
 
 
 def _declared(request: Request) -> int:

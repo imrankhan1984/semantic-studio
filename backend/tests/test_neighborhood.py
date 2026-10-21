@@ -495,3 +495,14 @@ def test_nodes_cost_and_size(client, big_oid):
         lambda: client.post(f"/api/ontologies/{big_oid}/nodes", json={"iris": asked})
     )
     assert elapsed_ms <= limit_ms(150), f"took {elapsed_ms:.1f} ms"
+
+
+def test_nodes_refuses_a_body_declared_over_4_mb(client, hub_oid):
+    """Refused by its declared length before anything reads it, as the
+    layout's body is (main.py's refuse_oversized_bodies)."""
+    big = b'{"iris": ["' + b"x" * (ontologies.NODES_MAX_BYTES + 10) + b'"]}'
+    response = client.post(
+        f"/api/ontologies/{hub_oid}/nodes", content=big, headers={"Content-Type": "application/json"}
+    )
+    assert response.status_code == 413
+    assert response.json()["detail"] == ontologies.NODES_TOO_LARGE

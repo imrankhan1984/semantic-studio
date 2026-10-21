@@ -25,6 +25,7 @@ import {
   SINGLE_RESULT_RATIO,
   frameTarget,
   resultIris,
+  sendable,
   shownOnGraph,
   undrawnSentence,
 } from "./resultNodes";
@@ -84,5 +85,22 @@ describe("the sentences", () => {
   it("the header names the true total only when some were left undrawn", () => {
     expect(undrawnSentence(200, 340)).toBe("The graph shows 200 of the 340 results it had not drawn.");
     expect(undrawnSentence(12, 12)).toBeNull();
+  });
+});
+
+describe("sendable (the /nodes body's bounds)", () => {
+  it("leaves out an IRI longer than the server takes, never the whole request", () => {
+    const long = `http://x/${"a".repeat(5000)}`;
+    expect(sendable(["http://x/A", long, "http://x/B"])).toEqual(["http://x/A", "http://x/B"]);
+  });
+
+  it("stops before 4 MB, counted in UTF-8 bytes", () => {
+    // 2,000 IRIs of 1,100 two-byte characters: 4.4 MB in bytes, 2.2 M characters.
+    const wide = Array.from({ length: 2000 }, (_, i) => `http://x/${i}/${"é".repeat(1100)}`);
+    const sent = sendable(wide);
+    expect(sent.length).toBeGreaterThan(1500);
+    expect(sent.length).toBeLessThan(2000);
+    const bytes = new TextEncoder().encode(JSON.stringify({ iris: sent })).length;
+    expect(bytes).toBeLessThanOrEqual(4 * 1024 * 1024);
   });
 });

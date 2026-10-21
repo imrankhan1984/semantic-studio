@@ -85,7 +85,7 @@ const cameraMoves = vi.hoisted(() => ({
 }));
 
 /** How many times GraphView asked Sigma to redraw: a frame each. */
-const sigmaRefreshes = vi.hoisted(() => ({ count: 0 }));
+const sigmaRefreshes = vi.hoisted(() => ({ count: 0, scheduled: 0 }));
 
 // A Sigma that draws nothing and remembers everything it was given. Only the
 // methods GraphView actually calls are implemented; anything else appearing
@@ -155,6 +155,9 @@ vi.mock("sigma", () => {
     kill() {}
     refresh() {
       sigmaRefreshes.count += 1;
+    }
+    scheduleRefresh() {
+      sigmaRefreshes.scheduled += 1;
     }
     setSetting() {}
     // The real one returns the node's screen position. Returning the graph's
@@ -2000,6 +2003,118 @@ describe("a query's results on the graph", () => {
     expect(cameraMoves.to).toHaveLength(8);
     samples.sort((a, b) => a - b);
     expect(samples[3]).toBeLessThanOrEqual(limitMs(50));
+    view.unmount();
+  });
+});
+
+describe("the canvas follows its box (query-page-rework 5.1)", () => {
+  /** The container's size, which jsdom, having no layout, reports as 0. */
+  const box = { width: 600, height: 400 };
+  const real = {
+    width: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth")!,
+    height: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight")!,
+  };
+
+  beforeEach(() => {
+    box.width = 600;
+    box.height = 400;
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
+      configurable: true,
+      get() {
+        return (this as HTMLElement).classList.contains("graph-container") ? box.width : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get() {
+        return (this as HTMLElement).classList.contains("graph-container") ? box.height : 0;
+      },
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", real.width);
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", real.height);
+    vi.unstubAllGlobals();
+    vi.stubGlobal("WebGL2RenderingContext", class {});
+    vi.stubGlobal("WebGLRenderingContext", class {});
+    document.body.innerHTML = "";
+  });
+
+  it("a new size of the box schedules one redraw; the mount notification, the same size and an empty box none", async () => {
+    // Opening the legend narrows the canvas's box with no window resize, and
+    // Sigma measures only when it renders: the canvas kept its width and
+    // spilled over the Query panel (found in Chrome at 1280x720).
+    const observers: { target: Element | null; fire: () => void; disconnected: boolean }[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        record: { target: Element | null; fire: () => void; disconnected: boolean };
+        constructor(callback: () => void) {
+          this.record = { target: null, fire: callback, disconnected: false };
+          observers.push(this.record);
+        }
+        observe(target: Element) {
+          this.record.target = target;
+        }
+        disconnect() {
+          this.record.disconnected = true;
+        }
+      },
+    );
+    const { view } = await renderView();
+    expect(observers).toHaveLength(1);
+    expect(observers[0].target).toBe(sigmaCalls.last.container);
+    sigmaRefreshes.count = 0;
+    sigmaRefreshes.scheduled = 0;
+    // What observe() delivers at once, at the size just drawn: nothing to do.
+    observers[0].fire();
+    expect(sigmaRefreshes.scheduled).toBe(0);
+    box.width = 432;
+    observers[0].fire();
+    expect(sigmaRefreshes.scheduled).toBe(1);
+    observers[0].fire();
+    expect(sigmaRefreshes.scheduled).toBe(1);
+    // Squeezed to nothing: left alone, as Sigma cannot draw into it.
+    box.width = 0;
+    observers[0].fire();
+    expect(sigmaRefreshes.scheduled).toBe(1);
+    // Its old size coming back is a change: Sigma drew at one pixel meanwhile.
+    box.width = 432;
+    observers[0].fire();
+    expect(sigmaRefreshes.scheduled).toBe(2);
+    // Scheduled, never a synchronous full refresh inside the callback.
+    expect(sigmaRefreshes.count).toBe(0);
+    view.unmount();
+    expect(observers[0].disconnected).toBe(true);
+  });
+
+  it("Sigma is told an empty box is allowed, so it never throws from its own render", async () => {
+    const { view } = await renderView();
+    expect(sigmaCalls.last.settings.allowInvalidContainer).toBe(true);
+    view.unmount();
+  });
+});
+
+describe("many results (query-page-rework 5.2, code review)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("past 200 results each is ringed and named by the overlap rule, never pilled, never dimmed", async () => {
+    const nodes = Array.from({ length: 201 }, (_, i) => ({ id: `http://x/M${i}`, label: `M ${i}`, kind: "class", degree: 1 }));
+    const data: VizGraph = { nodes, edges: [], stats: { ...DATA.stats, nodeCount: 201, nodeTotal: 201, kindCounts: { class: 201 } } };
+    const results = new Set(nodes.map((n) => n.id));
+    // Candidates that exclude every node: without the rule, all would dim.
+    const { view } = await renderView({ data, queryMode: true, queryResults: results, queryCandidates: { classes: new Set(), kinds: new Set() } });
+    const { nodeReducer } = sigmaCalls.last.settings;
+    const graph = sigmaCalls.last.graph;
+    const res = nodeReducer("http://x/M0", attrsOf(graph, "http://x/M0"));
+    expect(res.result).toBe(true);
+    expect(res.highlighted).toBeUndefined();
+    expect(res.forceLabel).toBe(true);
+    expect(res.label).toBe("M 0");
+    expect(res.color).not.toBe(PALETTES.dark.dimNode);
     view.unmount();
   });
 });
