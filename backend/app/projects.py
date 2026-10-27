@@ -48,6 +48,12 @@ BASIC IDEA
     first time it is opened. The kind changes the tools the interface
     offers, never the model: changing it rewrites nothing but the manifest.
 
+    The manifest's `classType` (attribute-reuse 5.6, D-117) is the kind of
+    class, OWL or RDFS, the project's last new class was made as: the next
+    form's default, "owl" while it is absent. editing.py writes it, only
+    when a CreateClass chooses the other kind; like `kind`, it is never the
+    model and moves no revision.
+
     Each document may have a layout file beside it, <doc>.layout.json, holding
     where the modeling canvas draws each box (visual-modeling 5.5, D-087). It
     is not the model: writing it touches neither the revision nor the dirty
@@ -446,6 +452,10 @@ class ProjectStore:
             # The data snapshots, for the card's line (csv-data-import 5.7);
             # written by snapshots.py whenever one changes.
             "data": manifest.get("data", []),
+            # The kind of class the last one was made as (attribute-reuse
+            # 5.6, D-117), the next form's default; None until one differs
+            # from owl, as no project had it before.
+            "classType": manifest.get("classType"),
         }
 
     def list(self) -> list[dict]:

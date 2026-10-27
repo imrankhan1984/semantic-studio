@@ -39,7 +39,9 @@ BASIC IDEA
 
     A new class (step 2) and a new attribute (step 3) are model changes, so
     each is one command through the project store: one undo step, announced
-    like any other. Everything else here is a snapshot action, which is not
+    like any other. A new class is of the project's default kind, OWL or
+    RDFS (attribute-reuse 5.6), said beside its name and again in the
+    preview, the summary step. Everything else here is a snapshot action, which is not
     a model change and never touches the undo history (5.7).
 
     The wizard is one region with a heading per step, and the heading takes
@@ -91,8 +93,10 @@ import {
   sheetOption,
   unmatchedLines,
 } from "../modeling/dataSentences";
-import { projectStore } from "../state/projectStore";
+import { wizardKindLine, wizardKindNote } from "../modeling/sentences";
+import { defaultClassType, projectStore, useProjectSelector } from "../state/projectStore";
 import type {
+  ClassType,
   ColumnChoice,
   DataChoices,
   DataField,
@@ -184,6 +188,8 @@ export default function DataWizard({
     taxonomy ? CONCEPT : (earlier?.classIri ?? (start.kind === "new" ? null : start.snapshot.classIri)),
   );
   const [idColumn, setIdColumn] = useState<string | null>(earlier ? earlier.idColumn : null);
+  // The class step 2 made, and its kind, for the summary step to name.
+  const [madeClass, setMadeClass] = useState<{ iri: string; type: ClassType } | null>(null);
   const [rowNumber, setRowNumber] = useState(earlier ? earlier.idColumn === null : false);
   const [previous, setPrevious] = useState<Record<string, ColumnChoice> | null>(earlier?.columns ?? null);
   // The class reading, with the class and identifier it was read for.
@@ -477,6 +483,7 @@ export default function DataWizard({
             setColumns(null);
             setSuggested([]);
           }}
+          onMade={(iri, type) => setMadeClass({ iri, type })}
           onIdColumn={(column) => {
             setIdColumn(column);
             setRowNumber(false);
@@ -519,7 +526,14 @@ export default function DataWizard({
           onError={setError}
         />
       )}
-      {step === 4 && <PreviewStep preview={preview} inspection={inspection} busy={busy} />}
+      {step === 4 && (
+        <PreviewStep
+          preview={preview}
+          inspection={inspection}
+          busy={busy}
+          madeKind={madeClass && madeClass.iri === classIri ? madeClass.type : null}
+        />
+      )}
       {step === "report" && done && (
         <ImportReport snapshot={done} announce onValidate={onValidate} onShowData={onShowData} />
       )}
@@ -872,6 +886,7 @@ function RowStep({
   rowNumber,
   basis,
   onClass,
+  onMade,
   onIdColumn,
   onRowNumber,
   onError,
@@ -884,10 +899,14 @@ function RowStep({
   rowNumber: boolean;
   basis: DataPreview | null;
   onClass: (iri: string) => void;
+  onMade: (iri: string, type: ClassType) => void;
   onIdColumn: (column: string) => void;
   onRowNumber: (on: boolean) => void;
   onError: (message: string) => void;
 }) {
+  // A class made here is of the project's default kind (attribute-reuse
+  // 5.6): no choice in the wizard, but the kind is said.
+  const kind = useProjectSelector((s) => defaultClassType(s.project));
   const [classes, setClasses] = useState<{ iri: string; label: string }[]>([]);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -918,11 +937,14 @@ function RowStep({
     const label = newName.trim();
     if (!label) return;
     try {
-      const result = await projectStore.command("CreateClass", { label }, undefined, "model");
+      const result = await projectStore.command("CreateClass", { label, type: kind }, undefined, "model");
       setCreating(false);
       setNewName("");
       setLoadToken((t) => t + 1);
-      if (result.created) onClass(result.created);
+      if (result.created) {
+        onMade(result.created, kind);
+        onClass(result.created);
+      }
     } catch (e: unknown) {
       onError(message(e));
     }
@@ -972,7 +994,8 @@ function RowStep({
           <input id={newId} value={newName} onChange={(e) => setNewName(e.target.value)} />{" "}
           <button type="button" aria-disabled={!newName.trim()} onClick={() => void createClass()}>
             Create class
-          </button>
+          </button>{" "}
+          <span className="detail-note">{wizardKindNote(kind)}</span>
         </p>
       )}
       {inspection && (
@@ -1183,10 +1206,13 @@ function PreviewStep({
   preview,
   inspection,
   busy,
+  madeKind,
 }: {
   preview: DataPreview | null;
   inspection: DataInspection | null;
   busy: boolean;
+  /** The kind the class was made as, when step 2 made it (5.6). */
+  madeKind: ClassType | null;
 }) {
   if (!preview?.rows || !preview.report) {
     return (
@@ -1207,6 +1233,7 @@ function PreviewStep({
         {report.statements.toLocaleString("en-US")} statements
         {sample ? ` (${sample})` : ""}
       </p>
+      {madeKind && <p className="detail-note">{wizardKindLine(className, madeKind)}</p>}
       <ol className="wizard-preview">
         {preview.rows.map((row) => (
           <li key={row.row}>{previewSentences(row, className).join(" ")}</li>

@@ -11,7 +11,10 @@ SUMMARY
     never; an answer older than the latest dropped; Enter still Create; the
     live region saying the count once, never the list; the suggestions'
     buttons in the tab order between the name and More options; and the
-    choice a refused Create gives.
+    choice a refused Create gives. And the *Kind of class* group of
+    attribute-reuse 5.6 (AC-13): a fieldset and legend, two radios with
+    what each means, the default and its hint, the kind sent with Create,
+    and aria-disabled while a command runs.
 
 BASIC IDEA
     The form is rendered alone with the api mocked: searchNodes and
@@ -28,6 +31,7 @@ EXPECTED OUTPUT
 */
 
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NodeDetails } from "../types";
 import NewEntityForm from "./NewEntityForm";
@@ -232,5 +236,84 @@ describe("a Create refused because the name exists (5.1)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Choose another name" }));
     expect(onAnother).toHaveBeenCalled();
     expect(document.activeElement).toBe(screen.getByLabelText("Name (en)"));
+  });
+});
+
+/** What a screen reader reads after an element's name: its description. */
+function described(el: HTMLElement): string {
+  const ids = (el.getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean);
+  return ids.map((id) => document.getElementById(id)?.textContent?.trim() ?? "").join(" ");
+}
+
+describe("the Kind of class group (attribute-reuse 5.6, AC-13)", () => {
+  function Holder({ start, remembered, busy = false }: { start: "owl" | "rdfs"; remembered: "owl" | "rdfs" | null; busy?: boolean }) {
+    const [value, onChange] = useState<"owl" | "rdfs">(start);
+    return (
+      <NewEntityForm
+        title="New class"
+        primaryLanguage="en"
+        busy={busy}
+        classKind={{ value, onChange, remembered }}
+        onSubmit={onSubmit}
+        onCancel={() => undefined}
+      />
+    );
+  }
+
+  it("is a fieldset named by its legend, two radios with what each means, the default checked", () => {
+    render(<Holder start="owl" remembered={null} />);
+    const group = screen.getByRole("group", { name: "Kind of class" });
+    expect(group.tagName).toBe("FIELDSET");
+    const owl = screen.getByRole("radio", { name: "OWL class" }) as HTMLInputElement;
+    const rdfs = screen.getByRole("radio", { name: "RDFS class" }) as HTMLInputElement;
+    expect(owl.checked).toBe(true);
+    expect(rdfs.checked).toBe(false);
+    // One group for the arrow keys: the same name, so one tab stop.
+    expect(owl.name).toBe(rdfs.name);
+    expect(described(owl)).toBe("Can take rules, and works with the reasoner.");
+    expect(described(rdfs)).toBe("The simpler standard. No rules.");
+    // No remembered choice, no hint: OWL, as a project always had.
+    expect(described(group)).toBe("");
+  });
+
+  it("starts on the project's last choice and says so", () => {
+    render(<Holder start="rdfs" remembered="rdfs" />);
+    expect((screen.getByRole("radio", { name: "RDFS class" }) as HTMLInputElement).checked).toBe(true);
+    expect(described(screen.getByRole("group", { name: "Kind of class" }))).toBe("RDFS class, as last time.");
+  });
+
+  it("sends the kind chosen with Create, and Enter in the name still creates", () => {
+    render(<Holder start="owl" remembered={null} />);
+    fireEvent.change(screen.getByLabelText("Name (en)"), { target: { value: "Receipt" } });
+    fireEvent.click(screen.getByRole("radio", { name: "RDFS class" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(onSubmit).toHaveBeenLastCalledWith({ name: "Receipt", type: "rdfs" });
+    fireEvent.submit(screen.getByLabelText("Name (en)"));
+    expect(onSubmit).toHaveBeenCalledTimes(2);
+  });
+
+  it("sits between the name and More options in the tab order", () => {
+    render(<Holder start="owl" remembered={null} />);
+    const order = Array.from(document.querySelectorAll<HTMLElement>("input, button, select, textarea"));
+    const name = order.indexOf(screen.getByLabelText("Name (en)"));
+    const owl = order.indexOf(screen.getByRole("radio", { name: "OWL class" }));
+    const more = order.indexOf(screen.getByRole("button", { name: "More options" }));
+    expect(name).toBeLessThan(owl);
+    expect(owl).toBeLessThan(more);
+  });
+
+  it("while a command runs it is aria-disabled, never disabled, and ignores a change", () => {
+    render(<Holder start="owl" remembered={null} busy />);
+    const group = screen.getByRole("group", { name: "Kind of class" });
+    expect(group.getAttribute("aria-disabled")).toBe("true");
+    const rdfs = screen.getByRole("radio", { name: "RDFS class" }) as HTMLInputElement;
+    expect(rdfs.disabled).toBe(false);
+    fireEvent.click(rdfs);
+    expect((screen.getByRole("radio", { name: "OWL class" }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("is not offered by a form that makes something else", () => {
+    show();
+    expect(screen.queryByRole("group", { name: "Kind of class" })).toBeNull();
   });
 });

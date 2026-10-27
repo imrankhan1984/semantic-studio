@@ -38,6 +38,10 @@ BASIC IDEA
     that a change brings is also said in the project's live region, once; the
     ones already there when the form opens are read with the form.
 
+    *Pointers* leads to a rule on the start class; when that class is an
+    RDFS class it offers to make it an OWL class instead (attribute-reuse
+    5.8), as the class's own Rules block does.
+
     While a change is saving the checkboxes are aria-disabled: a click then
     would be dropped, and a screen reader says why instead of nothing.
 
@@ -56,6 +60,9 @@ EXPECTED OUTPUT
 import { useEffect, useId, useRef, useState } from "react";
 import { domainLabel, sharedDomain, type EntityModel, type Ref } from "../modeling/entity";
 import {
+  RULES_NEED_OWL,
+  kindChangedAnnouncement,
+  makeClassKind,
   attributeSentence,
   CHARACTERISTICS,
   characteristicExample,
@@ -478,7 +485,27 @@ export default function RelationshipForm({
       </Block>
 
       <Block title="Pointers">
-        {model.domain ? (
+        {model.domain && model.domainReading?.classes[0]?.type === "rdfs" ? (
+          // attribute-reuse 5.8: an RDFS class has no words for a rule, so
+          // the pointer offers to make it an OWL class first.
+          <p className="detail-note">
+            {RULES_NEED_OWL}{" "}
+            <button
+              type="button"
+              className="link-btn"
+              aria-disabled={busy}
+              onClick={() =>
+                !busy &&
+                void run("kind", "SetClassType", { class: model.domain!.iri, type: "owl" }, () =>
+                  kindChangedAnnouncement(model.domain!.label, "owl"),
+                )
+              }
+            >
+              {makeClassKind(model.domain.label, "owl")}
+            </button>
+            {errors.kind && <span className="edit-error"> {errors.kind}</span>}
+          </p>
+        ) : model.domain ? (
           // axioms 5.9: the pointer is now the way there. It opens the start
           // class's Rules block with this relationship and its end chosen.
           <p className="detail-note">

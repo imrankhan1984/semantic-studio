@@ -191,6 +191,8 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   previewDelete: () => api.previewDelete("prj-1", "model", "http://example.org/A"),
   // attribute-reuse 5.2: ShareDomain's dry run, the reuse plan.
   planShare: () => api.planShare("prj-1", "http://example.org/p", "http://example.org/A"),
+  // attribute-reuse 5.7: SetClassType's dry run, what goes.
+  planClassType: () => api.planClassType("prj-1", "http://example.org/A", "rdfs"),
   getAnnotationProperties: () => api.getAnnotationProperties("prj-1", "model"),
   getCanvas: () => api.getCanvas("prj-1", "model"),
   getLayout: () => api.getLayout("prj-1", "model"),
@@ -244,12 +246,13 @@ describe("api client header (S-6)", () => {
     // a POST (Reason) and a DELETE (Stop); the examples one POST (restore);
     // a load's cancel one POST (load-progress 5.3); the reuse plan one POST
     // (ShareDomain's dry run, attribute-reuse 5.2); a query's hidden results
-    // one POST (/nodes, query-page-rework 5.2).
+    // one POST (/nodes, query-page-rework 5.2); a change of a class's kind
+    // one POST (SetClassType's dry run, attribute-reuse 5.7).
     const expected = [
       ...Array(6).fill("DELETE"),
       "PATCH",
       "PATCH",
-      ...Array(31).fill("POST"),
+      ...Array(32).fill("POST"),
       "PUT",
       "PUT",
       "PUT",

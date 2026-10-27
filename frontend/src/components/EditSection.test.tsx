@@ -327,7 +327,7 @@ describe("Structure (AC-1, AC-3)", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Create" }));
     });
-    expect(lastCommand()).toEqual(["CreateClass", { label: "Credit note", parent: EX + "Invoice", iri: undefined }]);
+    expect(lastCommand()).toEqual(["CreateClass", { label: "Credit note", parent: EX + "Invoice", iri: undefined, type: "owl" }]);
     expect(onSelect).toHaveBeenCalledWith(EX + "CreditNote");
   });
 
@@ -440,7 +440,7 @@ describe("read-only cases (AC-4)", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Create" }));
     });
-    expect(lastCommand()).toEqual(["CreateClass", { label: "Student", parent: EX + "Agent", iri: undefined }]);
+    expect(lastCommand()).toEqual(["CreateClass", { label: "Student", parent: EX + "Agent", iri: undefined, type: "owl" }]);
   });
 
   it("says an entity with no type in this document is defined elsewhere", async () => {

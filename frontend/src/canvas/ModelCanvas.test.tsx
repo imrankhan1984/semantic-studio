@@ -9,7 +9,8 @@ SUMMARY
     draws and how it names it, the empty, too-big and error states, the
     palette, a drop onto a class, the relate menu and its refusals, rename,
     delete, moving a box, the shared selection, and that React Flow is only
-    ever loaded lazily.
+    ever loaded lazily. attribute-reuse 5.8: from an RDFS class, the relate
+    menu's offer makes it an OWL class, then begins the rule.
 
 BASIC IDEA
     React Flow is stubbed, as GraphView's tests stub Sigma: the stub renders
@@ -330,7 +331,7 @@ describe("creating (AC-12)", () => {
     await act(async () => {
       fireEvent.keyDown(field, { key: "Enter" });
     });
-    expect(lastCommand()).toEqual(["CreateClass", { label: "Receipt" }]);
+    expect(lastCommand()).toEqual(["CreateClass", { label: "Receipt", type: "owl" }]);
     expect(onSelect).toHaveBeenCalledWith(EX + "Receipt");
     const saved = putLayout.mock.calls[putLayout.mock.calls.length - 1][2];
     expect(saved.positions[EX + "Receipt"]).toBeDefined();
@@ -436,7 +437,7 @@ describe("creating (AC-12)", () => {
     await act(async () => {
       fireEvent.keyDown(field, { key: "Enter" });
     });
-    expect(lastCommand()).toEqual(["CreateClass", { label: "Letter", parent: EX + "Document" }]);
+    expect(lastCommand()).toEqual(["CreateClass", { label: "Letter", parent: EX + "Document", type: "owl" }]);
   });
 
   it("a concept dropped onto a concept is a narrower concept", async () => {
@@ -1611,6 +1612,29 @@ describe("rule lines and boxes (axioms-and-reasoning 5.9, AC-11)", () => {
     expect(projectStore.getSnapshot().ruleDraft).toMatchObject({ cls: EX + "Document", filler: EX + "Invoice" });
     expect(screen.queryByRole("menu")).toBeNull();
     expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("from an RDFS class the entry makes it an OWL class, then begins the rule (attribute-reuse 5.8)", async () => {
+    const base = viewOf();
+    await renderCanvas({
+      ...base,
+      nodes: base.nodes.map((n) => (n.iri === EX + "Document" ? { ...n, classType: "rdfs" as const } : n)),
+    });
+    await act(async () => {
+      flow.props.onConnect({ source: EX + "Document", target: EX + "Invoice", sourceHandle: null, targetHandle: null });
+      flow.props.onConnectEnd({ clientX: 40, clientY: 50 });
+    });
+    expect(screen.queryByRole("menuitem", { name: "Every Document has at least one… (a rule)" })).toBeNull();
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("menuitem", {
+          name: "Rules need an OWL class; RDFS has no words for them. Make Document an OWL class",
+        }),
+      );
+    });
+    expect(lastCommand()).toEqual(["SetClassType", { class: EX + "Document", type: "owl" }]);
+    expect(projectStore.getSnapshot().ruleDraft).toMatchObject({ cls: EX + "Document", filler: EX + "Invoice" });
+    expect(onSelect).toHaveBeenCalledWith(EX + "Document");
   });
 });
 

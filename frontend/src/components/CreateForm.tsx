@@ -27,6 +27,10 @@ BASIC IDEA
     control the creation began from. Nothing here is `disabled`: Create is
     aria-disabled while the name is empty (NewEntityForm).
 
+    A new class has a *Kind of class*, OWL or RDFS (attribute-reuse 5.6),
+    kept in the draft beside its name, the project's last choice until one
+    is made here, so the canvas box's Enter makes the kind chosen here.
+
 INPUTS / INPUT SOURCES (props)
     - ontologyId: the model, for the pickers' searches.
     - primaryLanguage: the language a name is written in.
@@ -39,7 +43,7 @@ EXPECTED OUTPUT
 */
 
 import { useState } from "react";
-import { projectStore, useProjectSelector, type Creating } from "../state/projectStore";
+import { defaultClassType, projectStore, useProjectSelector, type Creating } from "../state/projectStore";
 import type { CreatingKind } from "../types";
 import EntityPicker from "./EntityPicker";
 import NewEntityForm from "./NewEntityForm";
@@ -105,6 +109,18 @@ function DraftForm({ ontologyId, primaryLanguage, focusName = true, creating }: 
   const [picking, setPicking] = useState<null | "parent" | "domain" | "range" | "cls">(null);
   const { kind, parent } = creating;
   const box = kind === "class" || kind === "concept";
+  // A class's kind lives in the draft, so Enter in the canvas's box makes
+  // the kind chosen here (attribute-reuse 5.6); the project's default until
+  // one is chosen.
+  const remembered = useProjectSelector((s) => s.project?.classType ?? null);
+  const classKind =
+    kind === "class"
+      ? {
+          value: creating.extra.classType ?? defaultClassType(),
+          onChange: (classType: "owl" | "rdfs") => projectStore.setCreatingExtra({ classType }),
+          remembered,
+        }
+      : undefined;
 
   const picker = (label: string, onPick: (p: Pick) => void) => (
     <EntityPicker
@@ -154,6 +170,7 @@ function DraftForm({ ontologyId, primaryLanguage, focusName = true, creating }: 
         error={error}
         missing={missing}
         datatypes={kind === "datatypeProperty"}
+        classKind={classKind}
         name={creating.name}
         onNameChange={(name) => projectStore.setCreatingName(name)}
         focusName={focusName}

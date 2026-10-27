@@ -25,6 +25,11 @@ SUMMARY
     who else gains a property moved up, the canvas's *Share* entry and its
     two-way Delete question, and what the live region says after.
 
+    Stage B of attribute-reuse (5.6 to 5.8) adds the *Kind of class*
+    group's words and its hint, what goes when a class becomes an RDFS
+    class, and the one line that stands in place of a rule on an RDFS class
+    (*Rules need an OWL class; RDFS has no words for them.*).
+
     And the two grammar rules every sentence shares (X-12, T-18, T-19): *a*
     or *an* before a name, and a relationship's label read as a verb, after
     a subject or after *must*. backend/app/sentences.py holds the same two,
@@ -56,6 +61,8 @@ EXPECTED OUTPUT
     - Strings.
 ================================================================================
 */
+
+import type { ClassType } from "../types";
 
 // Letters whose names start with a vowel sound: "an F", "an H", "an X".
 const VOWEL_NAMED_LETTERS = "AEFHILMNORSX";
@@ -492,4 +499,74 @@ export function shareEntry(name: string, from: string, to: string): string {
 /** Delete on one line of a shared relationship (5.3). */
 export function memberDeleteQuestion(member: string, name: string): string {
   return `Remove ${member} from ${name}, or delete ${name}?`;
+}
+
+// --- OWL or RDFS for each class (attribute-reuse 5.6 to 5.8, D-117) -----------------
+
+/** The *Kind of class* radio group (5.6): each choice and what it means. */
+export const CLASS_KIND_LEGEND = "Kind of class";
+export const CLASS_KINDS: { id: ClassType; name: string; means: string }[] = [
+  { id: "owl", name: "OWL class", means: "Can take rules, and works with the reasoner." },
+  { id: "rdfs", name: "RDFS class", means: "The simpler standard. No rules." },
+];
+
+export function classKindName(type: ClassType): string {
+  return type === "rdfs" ? "RDFS class" : "OWL class";
+}
+
+/** The hint under the group: the default named once it came from a choice
+ *  made before (*RDFS class, as last time.*); null for a project that has
+ *  never chosen, whose default is OWL as it always was. */
+export function classKindHint(remembered: ClassType | null): string | null {
+  return remembered ? `${classKindName(remembered)}, as last time.` : null;
+}
+
+/** The class form's *Kind of class* block (5.7): what it is, and the other. */
+export function makeItKind(type: ClassType): string {
+  return `Make it ${a(classKindName(type))}`;
+}
+export function makeClassKind(cls: string, type: ClassType): string {
+  return `Make ${cls} ${a(classKindName(type))}`;
+}
+export const CHECKING_KIND = "Checking what changes…";
+
+/** OWL to RDFS, from the dry run: what goes, before anything does. */
+export function becomesRdfs(cls: string, goes: number): string {
+  const head = `${cls} becomes ${a(classKindName("rdfs"))}.`;
+  if (goes === 0) return `${head} Nothing else changes: it has no rules.`;
+  return `${head} ${goes === 1 ? "This goes" : "These go"} with it, because RDFS has no words for ${goes === 1 ? "it" : "them"}:`;
+}
+
+/** The live region once the kind has changed. */
+export function kindChangedAnnouncement(cls: string, type: ClassType): string {
+  return `${cls} is now ${a(classKindName(type))}.`;
+}
+
+/** 5.8: in place of the rule builder on an RDFS class, the relate menu's
+ *  rule entry and a relationship's *Add a rule*. */
+export const RULES_NEED_OWL = "Rules need an OWL class; RDFS has no words for them.";
+/** What stays available: a shape targets any class (5.0 row 2). */
+export function checkInDataNote(cls: string, hasRules: boolean): string {
+  return hasRules
+    ? "To check your data instead, use Check it in data too."
+    : `To check your data instead, give ${cls} a shape in Shapes (SHACL).`;
+}
+
+/** 5.8: an OWL statement a file makes about an RDFS class, shown read-only. */
+export function rdfsRuleNote(cls: string, count: number): string {
+  return `${count === 1 ? "This rule is" : "These rules are"} about ${a(classKindName("rdfs"))}. OWL tools such as Protégé will not read ${cls} as a class until it is ${a(classKindName("owl"))}.`;
+}
+
+/** The relate menu's entry in place of *a rule* when the start is RDFS. */
+export function makeOwlEntry(cls: string): string {
+  return `${RULES_NEED_OWL} ${makeClassKind(cls, "owl")}`;
+}
+
+/** The data wizard makes a class of the project's default kind (5.6), and
+ *  says which beside the name and again in its summary step. */
+export function wizardKindNote(type: ClassType): string {
+  return `It is made as ${a(classKindName(type))}, the project's default.`;
+}
+export function wizardKindLine(cls: string, type: ClassType): string {
+  return `${cls} is ${a(`new ${classKindName(type)}`)}, the project's default kind of class.`;
 }

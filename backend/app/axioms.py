@@ -65,6 +65,9 @@ EXPECTED OUTPUT
       which properties a class has, and how (own, shared, both, through).
     - reuse_plan(view, own, prop, cls, name) -> the case of 5.2 for using a
       property on one more class, with the choices it offers.
+    - class_type(graph, cls) -> owl or rdfs; owl_about(view, own, cls, name)
+      -> what an RDFS class cannot carry (attribute-reuse 5.7, D-117), as
+      the Rules block's items and the statements holding them.
 
     A property's domain is read here and nowhere else but editing.py, which
     writes it (test_axioms.py scans). Two rdfs:domain values mean *both*
@@ -795,6 +798,47 @@ def class_type(g: Graph, cls) -> str:
     if (cls, RDF.type, RDFS.Class) in g and (cls, RDF.type, OWL.Class) not in g:
         return "rdfs"
     return "owl"
+
+
+# What else, beside a restriction, disjointness and equivalence, says in OWL
+# what a class is: an RDFS class has no words for any of it (D-117).
+_OWL_ON_CLASS = (OWL.disjointUnionOf, OWL.unionOf, OWL.intersectionOf, OWL.oneOf, OWL.complementOf, OWL.hasKey)
+
+
+def owl_about(view: Graph, own: Graph, cls, name: Name) -> tuple[list[dict], list]:
+    """The OWL statements this document makes about `cls` (attribute-reuse
+    5.7, D-117): its restrictions, the classes it is disjoint with or the
+    same as, either way round, and any other OWL expression on it, as the
+    Rules block's items in the same order, with each statement that holds
+    one. A blank node's own statements are the caller's to sweep, as
+    DeleteEntity sweeps them. An owl:AllDisjointClasses is not here: it
+    names other classes too, so no command takes it apart (D-105)."""
+    items: list[dict] = []
+    statements: list = []
+    read = set()
+    rules = contents(own, cls)
+    rules.sort(key=lambda r: (r[2].form != "every", name(r[2].property).casefold(), KINDS.index(r[2].kind), r[2].n or 0))
+    for predicate, node, content in rules:
+        read.add(node)
+        items.append(restriction_json(view, content, name, True))
+        statements.append((cls, predicate, node))
+    for predicate, word in ((OWL.equivalentClass, "equivalent"), (OWL.disjointWith, "disjoint")):
+        for other in named_pairs(own, cls, predicate):
+            items.append({"type": word, "other": _ref(other, name), "editable": True})
+            statements += [t for t in ((cls, predicate, other), (other, predicate, cls)) if t in own]
+    outside = []
+    for predicate in (RDFS.subClassOf, OWL.equivalentClass, OWL.disjointWith, *_OWL_ON_CLASS):
+        for node in own.objects(cls, predicate):
+            # A named parent is RDFS's own; a named pair is read above, but
+            # a class the same as or disjoint with itself is still OWL's.
+            named = isinstance(node, URIRef) and predicate in (RDFS.subClassOf, OWL.equivalentClass, OWL.disjointWith)
+            if node in read or (named and (predicate == RDFS.subClassOf or node != cls)):
+                continue
+            statement = (cls, predicate, node)
+            outside.append({"type": "turtle", "turtle": turtle_of(own, [statement, *closure(own, node)]), "editable": False})
+            statements.append(statement)
+    outside.sort(key=lambda i: i["turtle"])
+    return items + outside, statements
 
 
 def _datatype_name(rng) -> Optional[str]:

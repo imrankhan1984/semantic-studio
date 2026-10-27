@@ -14,7 +14,9 @@ SUMMARY
     a rule outside the form read-only with Edit in Turtle; Check it in data
     too on shapes.ttl; a rule begun on the canvas opening the builder; and
     focus, which goes back to Add a rule after an add, to the next rule
-    after a remove, and never to the page.
+    after a remove, and never to the page. And an RDFS class (attribute-
+    reuse 5.8): the one line and its offer in place of the builder, the
+    note on Check in data, and a file's OWL statement about it read-only.
 
 BASIC IDEA
     The block is rendered with its runner, the api mocked as the other form
@@ -332,6 +334,45 @@ describe("the Rules block (5.9)", () => {
   it("never disables a control: every one keeps its focus (aria-disabled)", async () => {
     await show(rulesOf([some(), disjoint]));
     fireEvent.click(screen.getByRole("button", { name: "Add a rule" }));
+    expect(document.querySelectorAll(".rules-block [disabled]").length).toBe(0);
+  });
+});
+
+describe("an RDFS class (attribute-reuse 5.8, AC-13)", () => {
+  const rdfs = (items: RuleItem[]) => rulesOf(items, { choices: null, classType: "rdfs" });
+
+  it("shows the one line and its offer in place of the builder", async () => {
+    await show(rdfs([]));
+    expect(screen.queryByRole("button", { name: "Add a rule" })).toBeNull();
+    const block = document.querySelector(".rules-block")!;
+    expect(block.textContent).toContain("Rules need an OWL class; RDFS has no words for them.");
+    // Check in data stays available, and the note says so (5.8).
+    expect(block.textContent).toContain("To check your data instead, give Order a shape in Shapes (SHACL).");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Make Order an OWL class" }));
+    });
+    expect(runCommand.mock.calls[0].slice(1)).toEqual(["model", "SetClassType", { class: EX + "Order", type: "owl" }]);
+    expect(said()).toBe("Order is now an OWL class.");
+  });
+
+  it("lists an OWL statement a file makes about it read-only, with 5.8's note, and keeps Check it in data too", async () => {
+    await show(rdfs([some()]));
+    const block = document.querySelector(".rules-block")!;
+    expect(block.textContent).toContain(
+      "This rule is about an RDFS class. OWL tools such as Protégé will not read Order as a class until it is an OWL class.",
+    );
+    expect(block.textContent).toContain("(read-only)");
+    expect(screen.queryByRole("button", { name: /^Edit:/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Remove:/ })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Make Order an OWL class" })).toHaveLength(1);
+    expect(block.textContent).toContain("To check your data instead, use Check it in data too.");
+    expect(screen.getByRole("button", { name: /^Check it in data too:/ })).toBeTruthy();
+  });
+
+  it("a rule begun on the canvas does not open a builder on it", async () => {
+    projectStore.startRule(EX + "Order", EX + "Person");
+    await show(rdfs([]));
+    expect(screen.queryByRole("group", { name: /Every Order/ })).toBeNull();
     expect(document.querySelectorAll(".rules-block [disabled]").length).toBe(0);
   });
 });

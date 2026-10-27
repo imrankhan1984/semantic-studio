@@ -33,6 +33,12 @@ BASIC IDEA
     the project store; the block of that class opens the builder on it,
     with its class at the other end, and spends it.
 
+    An RDFS class takes no rules (attribute-reuse 5.8, D-117): in place of
+    the builder, one line, *Rules need an OWL class; RDFS has no words for
+    them*, with *Make Manager an OWL class*, and a note that Check in data
+    works on either kind. What a file says about it in OWL is listed
+    read-only, with the note that OWL tools will not read it as a class.
+
 INPUTS / INPUT SOURCES (props)
     - iri, name: the class.
     - rules: its rules, warnings and the builder's choices, from /node.
@@ -45,6 +51,13 @@ EXPECTED OUTPUT
 */
 
 import { useEffect, useRef, useState } from "react";
+import {
+  RULES_NEED_OWL,
+  checkInDataNote,
+  kindChangedAnnouncement,
+  makeClassKind,
+  rdfsRuleNote,
+} from "../modeling/sentences";
 import {
   EMPTY_BUILDER,
   itemKey,
@@ -155,6 +168,12 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
     (w) => !w.disjoint || !items.some((i) => i.type === "disjoint" && i.other.iri === w.disjoint),
   );
   const canEdit = rules.choices !== null;
+  // 5.8: an RDFS class of the project gets the offer instead of the builder.
+  const rdfs = rules.classType === "rdfs";
+  const makeOwl = async () => {
+    if (busy) return;
+    await run("kind", "SetClassType", { class: iri, type: "owl" }, () => kindChangedAnnouncement(name, "owl"), say);
+  };
 
   return (
     <section className="rules-block" aria-labelledby={`rules-${cssId(iri)}`}>
@@ -224,7 +243,7 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
                         </button>
                       </span>
                     ) : (
-                      !item.editable && <span className="detail-note"> (read-only)</span>
+                      (!item.editable || rdfs) && <span className="detail-note"> (read-only)</span>
                     )}
                     {mine.length > 0 && (
                       <ul className="form-warnings" aria-label="Warnings">
@@ -238,7 +257,7 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
                     {item.type === "restriction" && (
                       <div className="rule-note">
                         <p className="detail-note">{openWorldNote(name, partsOf(item))}</p>
-                        {item.editable && canEdit && (
+                        {item.editable && (canEdit || rdfs) && (
                           <button
                             type="button"
                             className="link-btn"
@@ -280,6 +299,19 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
             );
           })}
         </ul>
+      )}
+      {rdfs && (
+        <div className="rules-rdfs">
+          {items.length > 0 && <p className="detail-note">{rdfsRuleNote(name, items.length)}</p>}
+          <p className="detail-note">
+            {RULES_NEED_OWL}{" "}
+            <button type="button" className="link-btn" aria-disabled={busy} onClick={() => void makeOwl()}>
+              {makeClassKind(name, "owl")}
+            </button>
+          </p>
+          <p className="detail-note">{checkInDataNote(name, items.some((i) => i.type === "restriction" && i.editable))}</p>
+          {errors.kind && <p className="edit-error">{errors.kind}</p>}
+        </div>
       )}
       {open && !open.replacing ? (
         <RuleBuilder

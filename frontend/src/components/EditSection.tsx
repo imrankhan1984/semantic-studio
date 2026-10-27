@@ -32,7 +32,9 @@ BASIC IDEA
     for them.
 
     A class's structure carries its rules, RulesBlock.tsx (axioms 5.9):
-    the sentences of 5.8, the builder, and Check it in data too.
+    the sentences of 5.8, the builder, and Check it in data too. Its *Kind
+    of class* is ClassKindBlock (attribute-reuse 5.7); the subclass offered
+    for an imported class takes the same choice as every new class (5.6).
 
     A class's form lists its examples and offers *Add an example*
     (shacl-authoring 5.8); an example's form shows, in place of a class's
@@ -74,6 +76,7 @@ import { otherKindReason } from "../modeling/sentences";
 import { describeValue, typeOfValue, valueProblem, toValue } from "../modeling/values";
 import type { CanvasSet, NodeDetails, ProjectKind } from "../types";
 import AnnotationAdder, { ValueInput } from "./AnnotationAdder";
+import { useClassKind } from "./ClassKindChoice";
 import DeleteDialog from "./DeleteDialog";
 import { Block, InlineText, useCopy, useReturnFocus, useRunner, type Runner } from "./EditParts";
 import EditStructure from "./EditStructure";
@@ -128,6 +131,8 @@ export default function EditSection({
   const [deleting, setDeleting] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [subclassOfImport, setSubclassOfImport] = useState(false);
+  // The import picker's Add subclass makes a class too (attribute-reuse 5.6).
+  const importSubKind = useClassKind();
   const [addingExample, setAddingExample] = useState(false);
   const iri = details.iri;
   const name = details.label;
@@ -162,12 +167,13 @@ export default function EditSection({
               primaryLanguage={primaryLanguage}
               busy={busy}
               error={errors.importSub}
+              classKind={importSubKind}
               onCancel={() => {
                 setSubclassOfImport(false);
                 returnToImport();
               }}
-              onSubmit={async ({ name: label, iri: chosen }) => {
-                const result = await run("importSub", "CreateClass", { label, parent: iri, iri: chosen });
+              onSubmit={async ({ name: label, iri: chosen, type }) => {
+                const result = await run("importSub", "CreateClass", { label, parent: iri, iri: chosen, type });
                 follow(result?.created);
               }}
             />

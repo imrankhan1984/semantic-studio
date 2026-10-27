@@ -9,6 +9,8 @@ SUMMARY
     5.4 (AC-6, AC-9): *From* listing a shared start's every class with
     Remove (UnshareDomain) and *Add a class*; *Change from* only for one
     class; and two domain lines warned of under *From*, with **Share it**.
+    Stage B (5.8): from an RDFS class, *Pointers* offers to make it an OWL
+    class in place of *add a rule*.
 
 BASIC IDEA
     The form is rendered for an entity model built by entityModel from
@@ -185,5 +187,22 @@ describe("found in code review", () => {
     expect(swap.getAttribute("aria-disabled")).toBe("true");
     await act(async () => swap.click());
     expect(runCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe("Pointers, from an RDFS class (attribute-reuse 5.8, AC-13)", () => {
+  it("offers to make the start an OWL class in place of Add a rule", async () => {
+    await show({ form: "one", classes: [{ ...ref("Employee"), type: "rdfs" }] });
+    expect(screen.queryByRole("button", { name: "add a rule to Employee" })).toBeNull();
+    expect(screen.getByText(/Rules need an OWL class; RDFS has no words for them\./)).toBeTruthy();
+    await act(async () => screen.getByRole("button", { name: "Make Employee an OWL class" }).click());
+    expect(runCommand.mock.calls[0].slice(1)).toEqual(["model", "SetClassType", { class: HR + "Employee", type: "owl" }]);
+    expect(projectStore.getSnapshot().announcement.text).toBe("Employee is now an OWL class.");
+  });
+
+  it("keeps add a rule for an OWL start", async () => {
+    await show({ form: "one", classes: [{ ...ref("Employee"), type: "owl" }] });
+    expect(screen.getByRole("button", { name: "add a rule to Employee" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Make Employee an OWL class" })).toBeNull();
   });
 });

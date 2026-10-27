@@ -11,6 +11,8 @@ SUMMARY
     relationships Stage A: each choice labelled by its sentence, the other
     direction asked by swapping the ends, a class linked to itself by a
     relationship only, and the other kind's boxes refused by the kind.
+    attribute-reuse 5.8: from an RDFS class, the offer to make it an OWL
+    class in place of a rule.
 
 BASIC IDEA
     A hand-built canvas view, as the server returns it.
@@ -70,6 +72,21 @@ describe("relateChoices", () => {
     expect(result.choices[2]).toMatchObject({ kind: "rule" });
     expect(result.choices[3]).toMatchObject({ kind: "existing", setDomain: true, setRange: true });
     expect(result.choices[4]).toMatchObject({ kind: "existing", setDomain: false, setRange: true });
+  });
+
+  it("from an RDFS class, offers to make it an OWL class in place of a rule (attribute-reuse 5.8)", () => {
+    const rdfs = { ...view, nodes: view.nodes.map((n) => (n.iri === "Order" ? { ...n, classType: "rdfs" as const } : n)) };
+    const result = relateChoices(rdfs, "Order", "Inv");
+    if ("refusal" in result) throw new Error(result.refusal);
+    expect(result.choices.some((c) => c.kind === "rule")).toBe(false);
+    expect(result.choices[2]).toEqual({
+      kind: "makeOwl",
+      label: "Rules need an OWL class; RDFS has no words for them. Make Order an OWL class",
+    });
+    // Only the start decides: a rule is about the class it starts at.
+    const toRdfs = relateChoices(rdfs, "Inv", "Order");
+    if ("refusal" in toRdfs) throw new Error(toRdfs.refusal);
+    expect(toRdfs.choices.some((c) => c.kind === "rule")).toBe(true);
   });
 
   it("never offers to complete one already linking other classes, and says so", () => {
