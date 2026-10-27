@@ -614,3 +614,8 @@ def test_rule_choices_are_none_for_an_rdfs_class(kinds):
     assert [i["type"] for i in note["items"]] == ["restriction"]
     team = _project_node(kinds, HR + "Team")["rules"]
     assert team["classType"] == "owl" and team["choices"] is not None
+    # Each class at the other end carries its kind and whether it is the
+    # document's own, for the builder's offer (Stage B review).
+    classes = {c["label"]: c for c in team["choices"]["classes"]["items"]}
+    assert classes["Note"]["type"] == "rdfs" and classes["Note"]["own"] is True
+    assert classes["Team"]["type"] == "owl"

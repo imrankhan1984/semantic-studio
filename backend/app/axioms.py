@@ -639,9 +639,12 @@ def choices(g: Graph, own: Graph, name: Name) -> dict:
     for t in examples.CLASS_TYPES:
         classes |= {s for s in g.subjects(RDF.type, t) if isinstance(s, URIRef)}
     things = examples.examples(g, own)
+    # Each class's kind (D-117): a rule's class at the other end must be an
+    # OWL class, so the builder offers to convert an RDFS one before Add --
+    # only one of this document's (`own`), the kind SetClassType changes.
     return {
         "properties": capped(properties),
-        "classes": capped([_ref(c, name) for c in classes]),
+        "classes": capped([{**_ref(c, name), "type": kind_of(g, own, c), "own": defined(own, c)} for c in classes]),
         "things": capped([_ref(t, name) for t in things]),
     }
 

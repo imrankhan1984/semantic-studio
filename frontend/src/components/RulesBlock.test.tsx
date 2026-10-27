@@ -398,3 +398,48 @@ describe("an RDFS class, the code review's fixes (attribute-reuse 5.8)", () => {
     expect(screen.getAllByText("Order is an OWL class already.")).toHaveLength(1);
   });
 });
+
+describe("a rule pointing to an RDFS class (attribute-reuse 5.8, Stage B review)", () => {
+  const withNote = (type: "rdfs" | "owl", own = true) =>
+    rulesOf([], {
+      choices: {
+        ...CHOICES,
+        classes: { items: [...CHOICES.classes.items, { ...ref("Note", "Note"), type, own }], total: 4 },
+      },
+    });
+
+  async function chooseNote() {
+    fireEvent.click(screen.getByRole("button", { name: "Add a rule" }));
+    const group = screen.getByRole("group", { name: "Every Order …" });
+    fireEvent.change(within(group).getByRole("combobox", { name: "Relationship or attribute" }), { target: { value: EX + "hasLine" } });
+    fireEvent.change(within(group).getByRole("combobox", { name: "What is true of it" }), { target: { value: "some" } });
+    fireEvent.change(within(group).getByRole("combobox", { name: "That is a (class)" }), { target: { value: EX + "Note" } });
+    return group;
+  }
+
+  it("shows 5.8's line and the offer for the class at the other end, and Add waits", async () => {
+    await show(withNote("rdfs"));
+    const group = await chooseNote();
+    expect(group.textContent).toContain("Rules need an OWL class; RDFS has no words for them.");
+    const add = within(group).getByRole("button", { name: "Add" });
+    expect(add.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(add);
+    expect(runCommand).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(within(group).getByRole("button", { name: "Make Note an OWL class" }));
+    });
+    expect(runCommand.mock.calls[0].slice(1)).toEqual(["model", "SetClassType", { class: EX + "Note", type: "owl" }]);
+    // The refetch says Note is an OWL class: the line goes, Add takes focus.
+    await refetch(withNote("owl"));
+    expect(group.textContent).not.toContain("Rules need an OWL class");
+    expect(add.getAttribute("aria-disabled")).toBe("false");
+    expect(document.activeElement).toBe(add);
+  });
+
+  it("an imported RDFS class gets the line without an offer it could not keep", async () => {
+    await show(withNote("rdfs", false));
+    const group = await chooseNote();
+    expect(group.textContent).toContain("Rules need an OWL class; RDFS has no words for them.");
+    expect(within(group).queryByRole("button", { name: "Make Note an OWL class" })).toBeNull();
+  });
+});

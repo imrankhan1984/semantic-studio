@@ -711,7 +711,9 @@ export interface RuleChoice extends RuleRef {
 
 export interface RuleChoices {
   properties: { items: RuleChoice[]; total: number };
-  classes: { items: RuleRef[]; total: number };
+  // Each class's kind (attribute-reuse 5.8): a rule's class at the other
+  // end must be an OWL class, so the builder offers to convert an RDFS one.
+  classes: { items: (RuleRef & { type?: ClassType; own?: boolean })[]; total: number };
   things: { items: RuleRef[]; total: number };
 }
 

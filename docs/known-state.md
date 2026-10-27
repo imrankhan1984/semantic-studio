@@ -2375,6 +2375,18 @@ EXPECTED OUTPUT
   manifest that cannot be written no longer fails a CreateClass that has
   already made the class.
 
+  **A rule never points to an RDFS class** (the analyst's Stage B review).
+  A restriction names its class at the other end (`owl:someValuesFrom`,
+  `owl:allValuesFrom`, a qualified count's `owl:onClass`) as much as its
+  subject, so AddRestriction and ReplaceRestriction refuse an RDFS filler
+  (`_owl_filler`) with 5.8's sentence naming it, and the builder shows the
+  line and *Make Note an OWL class* before Add; its class choices carry
+  `type` and `own`, so an imported RDFS class gets the line without an
+  offer it could not keep. SetClassType to RDFS is refused while another
+  class's rule points at the class, naming the rule in words
+  (`_rule_words`, through the one verb rule): *Every Manager manages some
+  Team names Team …*.
+
   **The radio group is the browser's.** Native radios with one `name` in a
   fieldset and legend: the accessibility tree reads *Kind of class, group*
   and each radio's name and description, Tab stops once on the checked

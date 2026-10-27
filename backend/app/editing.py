@@ -1996,6 +1996,16 @@ def _owl_only(ctx: Context, *classes) -> None:
             raise CommandError(_rdfs_rule_refusal(_rule_name(ctx, cls)))
 
 
+def _owl_filler(ctx: Context, content: axioms.Content) -> None:
+    """A rule's class at the other end -- *some*, *only*, a qualified
+    count's class -- is named in an OWL restriction too, so it must be an
+    OWL class (D-117, 5.0 row 7; the Stage B review). A *has value* names a
+    thing, and a type of value is no class: neither is asked."""
+    filler = content.filler
+    if content.kind != "value" and isinstance(filler, URIRef) and not axioms.is_datatype(filler):
+        _owl_only(ctx, filler)
+
+
 def _rdfs_rule_refusal(name: str) -> str:
     return f"Rules need an OWL class; RDFS has no words for them. Make {name} an OWL class first."
 
@@ -2179,6 +2189,7 @@ def cmd_add_restriction(ctx: Context, a: dict) -> Change:
     cls = _own_class(ctx, a)
     _owl_only(ctx, cls)
     content = _restriction_args(ctx, a)
+    _owl_filler(ctx, content)
     _check_restriction(ctx, cls, content)
     return _change(
         ctx.graph, f"Added a rule on {_rule_name(ctx, content.property)} to {ctx.name(cls)}",
@@ -2195,6 +2206,7 @@ def cmd_replace_restriction(ctx: Context, a: dict) -> Change:
     old_key = _restriction_key(ctx, a.get("restriction"))
     predicate, node = _found(ctx, cls, old_key)
     content = _restriction_args(ctx, a)
+    _owl_filler(ctx, content)
     old = next(c for p, n, c in axioms.contents(ctx.graph, cls) if n == node)
     if old.same(content):
         raise CommandError("That would change nothing.")
@@ -2293,6 +2305,32 @@ def cmd_remove_equivalent_class(ctx: Context, a: dict) -> Change:
 # --- OWL or RDFS for a class (attribute-reuse 5.7, D-117) ----------------------------
 
 
+_QUANTITY = {"some": "some", "only": "only", "exactly": "exactly", "atLeast": "at least", "atMost": "at most"}
+
+
+def _rules_naming(ctx: Context, cls: URIRef) -> list[tuple]:
+    """(subject, Content) for every rule of another class in the document
+    whose class at the other end is `cls`, in IRI order."""
+    g = ctx.graph
+    subjects = {s for s in (*g.subjects(RDFS.subClassOf), *g.subjects(OWL.equivalentClass))
+                if isinstance(s, URIRef) and s != cls}
+    return [
+        (s, content) for s in sorted(subjects, key=str) for _, _, content in axioms.contents(g, s)
+        if content.kind != "value" and content.filler == cls
+    ]
+
+
+def _rule_words(ctx: Context, subject: URIRef, content: axioms.Content) -> str:
+    """A rule in the person's names for a refusal: *Every Manager manages
+    some Team*, through the one verb rule (sentences.py)."""
+    name = _share_name(ctx)
+    count = f" {content.n}" if content.kind in axioms.COUNT_KINDS else ""
+    said = f"{sentences.verb(name(content.property))} {_QUANTITY[content.kind]}{count} {name(content.filler)}"
+    if content.form == "every":
+        return f"Every {name(subject)} {said}"
+    return f"{sentences.a(name(subject))} is whatever {said}"
+
+
 def _names(words: list) -> str:
     """*Employee and Manager*, *Employee, Manager and Contractor*."""
     return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
@@ -2333,6 +2371,15 @@ def _class_type_plan(ctx: Context, a: dict) -> tuple[dict, list]:
                 f"Give them a shared parent first, or keep {c} an OWL class."
             )
             return plan, []
+    # Another class's rule pointing at the class names it in an OWL
+    # restriction: refused, naming the rule, as a union member's is (the
+    # Stage B review). A rule on the class itself goes with it below.
+    for subject, content in _rules_naming(ctx, cls):
+        plan["refused"] = (
+            f"{_rule_words(ctx, subject, content)} names {c}, which an RDFS class cannot be part of. "
+            f"Remove that rule first, or keep {c} an OWL class."
+        )
+        return plan, []
     # A group of disjoint classes names the others too; no command takes it
     # apart (D-105), so it is the person's to change in Turtle. A group
     # naming no other class still refuses, without a list (code review).

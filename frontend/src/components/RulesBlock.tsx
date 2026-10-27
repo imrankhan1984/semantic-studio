@@ -179,6 +179,10 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
   const rdfs = rules.classType === "rdfs";
   // Its own key: the Kind of class block shares this runner, and one
   // refusal was shown under both (code review).
+  // A class at the other end of a rule made an OWL class from the builder
+  // (5.8): one command, its refusal under the builder.
+  const makeEndOwl = async (end: { iri: string; label: string }) =>
+    (await run("rule", "SetClassType", { class: end.iri, type: "owl" }, () => kindChangedAnnouncement(end.label, "owl"), say)) !== null;
   const makeOwl = async () => {
     if (busy) return;
     const done = await run("rulesKind", "SetClassType", { class: iri, type: "owl" }, () => kindChangedAnnouncement(name, "owl"), say);
@@ -300,6 +304,7 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
                     replacing={open.replacing}
                     busy={busy}
                     error={errors.rule || null}
+                    onMakeOwl={makeEndOwl}
                     onCancel={() => close(key)}
                     onSubmit={async (command, said) => {
                       const result = await run("rule", command.name, command.args, (r) => `Changed: ${said}. ${r.label}.`, say);
@@ -334,6 +339,7 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
           initial={open.initial}
           busy={busy}
           error={errors.rule || null}
+          onMakeOwl={makeEndOwl}
           onCancel={() => close("add")}
           onSubmit={async (command, said) => {
             const result = await run("rule", command.name, command.args, (r) => `Added: ${said}. ${r.label}.`, say);

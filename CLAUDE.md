@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1501 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1795 tests, vitest
+cd backend  && python -m pytest tests    # 1503 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1797 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -421,9 +421,9 @@ leaves one behind.
 
 **OWL or RDFS for each class**
 - A class is typed `owl:Class` or `rdfs:Class`, never both: CreateClass and SetClassType write one. Its kind is `axioms.kind_of`, the document's own typing first, for the commands and `/node` alike (D-117). [OWL or RDFS for each class]
-- No command writes a rule, a disjointness or an equivalence about an RDFS class, on either side of a pair (`_owl_only`); Remove stays allowed. [OWL or RDFS for each class]
+- No command writes a rule, a disjointness or an equivalence about an RDFS class, on either side of a pair (`_owl_only`), nor a rule pointing to one (`_owl_filler`); Remove stays allowed. [OWL or RDFS for each class]
 - The manifest's `classType` is written only by `_remember_class_type`, only on a change: no revision, no dirty flag, no undo step. [OWL or RDFS for each class]
-- SetClassType's dry run and its change read `axioms.owl_about` once, together; a class named in another class's OWL list (a union domain, a disjoint group, a disjoint union) is refused, never rewritten. [OWL or RDFS for each class]
+- SetClassType's dry run and its change read `axioms.owl_about` once, together; a class named in another class's OWL list (a union domain, a disjoint group, a disjoint union) or rule is refused, never rewritten. [OWL or RDFS for each class]
 
 **Query page**
 - Only an explicit run (Execute, Run, Ctrl+Enter, a starter, a question) moves the camera to the results or draws hidden ones; an Auto re-run moves the rings only (D-118). [graph shows the answers]
