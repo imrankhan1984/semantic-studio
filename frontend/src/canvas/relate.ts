@@ -25,7 +25,8 @@ BASIC IDEA
     *narrower than* between two related concepts. A class and a concept cannot be
     linked here at all. Class to class also offers *a rule* (axioms 5.9),
     which opens the sentence builder in the form with both classes filled
-    in. A line that would change an imported box is refused
+    in; from an RDFS class, the one-line offer to make it an OWL class
+    stands in its place (attribute-reuse 5.8). A line that would change an imported box is refused
     with a sentence. A link that already exists is not offered again.
 
     A relationship that already ends at the line's end, from another class,
@@ -55,7 +56,7 @@ EXPECTED OUTPUT
 */
 
 import { moreRulesText } from "../modeling/ruleSentences";
-import { article, existingSentence, linkSentence, shareEntry } from "../modeling/sentences";
+import { article, existingSentence, linkSentence, makeOwlEntry, shareEntry } from "../modeling/sentences";
 import type { CanvasNode, CanvasView } from "../types";
 import { kindWord } from "./kindColours";
 
@@ -67,6 +68,9 @@ export type RelateChoice =
   // A rule (axioms 5.9): opens the from class's sentence builder with the
   // to class at the other end.
   | { kind: "rule"; label: string }
+  // In place of a rule when the start is an RDFS class (attribute-reuse
+  // 5.8): make it an OWL class, then the rule as above.
+  | { kind: "makeOwl"; label: string }
   | {
       kind: "existing";
       label: string;
@@ -153,7 +157,10 @@ export function relateChoices(view: CanvasView, fromIri: string, toIri: string):
     choices.push({ kind: "subClassOf", label: linkSentence("subClassOf", from.label, to.label) });
   }
   choices.push({ kind: "newRelationship", label: "new relationship…" });
-  choices.push({ kind: "rule", label: `Every ${from.label} has at least one… (a rule)` });
+  // An RDFS class has no words for a rule (5.8, D-117): the one-line offer
+  // to make it an OWL class stands in the rule's place.
+  if (from.classType === "rdfs") choices.push({ kind: "makeOwl", label: makeOwlEntry(from.label) });
+  else choices.push({ kind: "rule", label: `Every ${from.label} has at least one… (a rule)` });
   for (const u of view.undrawn) {
     // An end that is an expression is set, not missing: completing it would
     // replace what it says.

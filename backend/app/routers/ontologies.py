@@ -799,6 +799,13 @@ def get_node(
                 axioms.domain_of(ontology.graph if own_property else graph, URIRef(iri)),
                 labeler(graph, ontology.label_langs(lang)),
             )
+            # Each class's kind (attribute-reuse 5.8): a pointer to add a
+            # rule to an RDFS class offers to make it an OWL class instead.
+            # `own`: only the document's own class can be changed here; an
+            # imported RDFS class gets the line without the offer.
+            for member in details["domain"]["classes"]:
+                member["type"] = axioms.kind_of(graph, ontology.graph, URIRef(member["iri"]))
+                member["own"] = axioms.defined(ontology.graph, URIRef(member["iri"]))
         # A project's class carries its rules (axioms-and-reasoning 5.9):
         # the sentences of 5.8 read from the view, so an import's rule shows
         # read-only, the warnings of 5.10, and the builder's choices when
@@ -806,11 +813,15 @@ def get_node(
         if details is not None and ontology.editable and details.get("kind") == "class":
             name = labeler(graph, ontology.label_langs(lang))
             cls = URIRef(iri)
+            # An RDFS class takes no rules (attribute-reuse 5.8, D-117): no
+            # builder, and what a file says about it in OWL is read-only.
+            class_type = axioms.kind_of(graph, ontology.graph, cls)
             details["rules"] = {
                 "items": axioms.class_rules(graph, cls, ontology.graph, name),
                 "warnings": modeling_checks.never_members(graph, cls, name),
                 "choices": _rule_choices(ontology, graph, imports, lang, name)
-                if examples.is_class(ontology.graph, cls) else None,
+                if examples.is_class(ontology.graph, cls) and class_type == "owl" else None,
+                "classType": class_type,
             }
             # What the class has and how: its own, shared, both (two domain
             # lines) and through a parent (attribute-reuse 5.3).

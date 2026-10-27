@@ -10,6 +10,8 @@ SUMMARY
     and a label read as a verb, against sentences.table.json -- the table
     backend/tests/test_sentences.py reads too -- with a scan that fails if
     any other module defines its own; and an attribute's type after *as*.
+    attribute-reuse 5.6 to 5.8: the Kind of class words, a change of kind,
+    and the line in place of a rule on an RDFS class.
 
 BASIC IDEA
     Pure strings, so every case is one line. The scan reads every
@@ -250,5 +252,45 @@ describe("a domain in words (attribute-reuse 5.3)", () => {
     expect(S.domainWords("union", ["Employee", "Contractor"])).toBe("Employee or Contractor");
     expect(S.domainWords("union", ["Employee", "Intern", "Manager"])).toBe("Employee, Intern or Manager");
     expect(S.domainWords("separate", ["Employee", "Manager"])).toBe("Employee and Manager");
+  });
+});
+
+describe("OWL or RDFS for each class (attribute-reuse 5.6 to 5.8)", () => {
+  it("words the Kind of class group and its hint", () => {
+    expect(S.CLASS_KIND_LEGEND).toBe("Kind of class");
+    expect(S.CLASS_KINDS).toEqual([
+      { id: "owl", name: "OWL class", means: "Can take rules, and works with the reasoner." },
+      { id: "rdfs", name: "RDFS class", means: "The simpler standard. No rules." },
+    ]);
+    expect(S.classKindHint("rdfs")).toBe("RDFS class, as last time.");
+    expect(S.classKindHint("owl")).toBe("OWL class, as last time.");
+    expect(S.classKindHint(null)).toBeNull();
+  });
+
+  it("words a change of kind through the one a/an rule", () => {
+    expect(S.makeItKind("rdfs")).toBe("Make it an RDFS class");
+    expect(S.makeItKind("owl")).toBe("Make it an OWL class");
+    expect(S.makeClassKind("Manager", "owl")).toBe("Make Manager an OWL class");
+    expect(S.becomesRdfs("Manager", 2)).toBe(
+      "Manager becomes an RDFS class. These go with it, because RDFS has no words for them:",
+    );
+    expect(S.becomesRdfs("Manager", 1)).toBe("Manager becomes an RDFS class. This goes with it, because RDFS has no words for it:");
+    expect(S.becomesRdfs("Manager", 0)).toBe("Manager becomes an RDFS class. Nothing else changes: it has no rules.");
+    expect(S.kindChangedAnnouncement("Invoice", "rdfs")).toBe("Invoice is now an RDFS class.");
+  });
+
+  it("words 5.8's line, its note and the relate menu's entry", () => {
+    expect(S.RULES_NEED_OWL).toBe("Rules need an OWL class; RDFS has no words for them.");
+    expect(S.rdfsRuleNote("Manager", 1)).toBe(
+      "This rule is about an RDFS class. OWL tools such as Protégé will not read Manager as a class until it is an OWL class.",
+    );
+    expect(S.rdfsRuleNote("Manager", 2)).toMatch(/^These rules are about an RDFS class\./);
+    expect(S.checkInDataNote("Manager", true)).toBe("To check your data instead, use Check it in data too.");
+    expect(S.checkInDataNote("Manager", false)).toBe("To check your data instead, give Manager a shape in Shapes (SHACL).");
+    expect(S.makeOwlEntry("Contractor")).toBe(
+      "Rules need an OWL class; RDFS has no words for them. Make Contractor an OWL class",
+    );
+    expect(S.wizardKindNote("owl")).toBe("It is made as an OWL class, the project's default.");
+    expect(S.wizardKindLine("Ticket", "rdfs")).toBe("Ticket is a new RDFS class, the project's default kind of class.");
   });
 });

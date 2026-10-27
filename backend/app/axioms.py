@@ -65,6 +65,11 @@ EXPECTED OUTPUT
       which properties a class has, and how (own, shared, both, through).
     - reuse_plan(view, own, prop, cls, name) -> the case of 5.2 for using a
       property on one more class, with the choices it offers.
+    - class_type(graph, cls) -> owl or rdfs, and kind_of(view, own, cls) as
+      the document says it; lists_naming(graph, cls) -> the OWL lists that
+      name a class; owl_about(view, own, cls, name)
+      -> what an RDFS class cannot carry (attribute-reuse 5.7, D-117), as
+      the Rules block's items and the statements holding them.
 
     A property's domain is read here and nowhere else but editing.py, which
     writes it (test_axioms.py scans). Two rdfs:domain values mean *both*
@@ -634,9 +639,12 @@ def choices(g: Graph, own: Graph, name: Name) -> dict:
     for t in examples.CLASS_TYPES:
         classes |= {s for s in g.subjects(RDF.type, t) if isinstance(s, URIRef)}
     things = examples.examples(g, own)
+    # Each class's kind (D-117): a rule's class at the other end must be an
+    # OWL class, so the builder offers to convert an RDFS one before Add --
+    # only one of this document's (`own`), the kind SetClassType changes.
     return {
         "properties": capped(properties),
-        "classes": capped([_ref(c, name) for c in classes]),
+        "classes": capped([{**_ref(c, name), "type": kind_of(g, own, c), "own": defined(own, c)} for c in classes]),
         "things": capped([_ref(t, name) for t in things]),
     }
 
@@ -795,6 +803,88 @@ def class_type(g: Graph, cls) -> str:
     if (cls, RDF.type, RDFS.Class) in g and (cls, RDF.type, OWL.Class) not in g:
         return "rdfs"
     return "owl"
+
+
+# What else, beside a restriction, disjointness and equivalence, says in OWL
+# what a class is: an RDFS class has no words for any of it (D-117).
+_OWL_ON_CLASS = (OWL.disjointUnionOf, OWL.unionOf, OWL.intersectionOf, OWL.oneOf, OWL.complementOf, OWL.hasKey)
+
+
+def kind_of(view: Graph, own: Graph, cls) -> str:
+    """A class's kind as the person can change it (D-117): the document's
+    own typing when it defines the class, else the view's. An import typing
+    the same IRI owl:Class does not make the document's rdfs:Class an OWL
+    class, which SetClassType, the rule commands and /node must agree on
+    (code review)."""
+    return class_type(own if defined(own, cls) else view, cls)
+
+
+# The OWL lists that name classes: a member of one is in an OWL statement.
+_CLASS_LISTS = (OWL.unionOf, OWL.intersectionOf, OWL.disjointUnionOf, OWL.members)
+
+
+def lists_naming(g: Graph, cls) -> list[tuple]:
+    """Every OWL class list in `g` that names `cls`, as (owner, predicate):
+    the named node the list hangs from, through blank nodes, or None for a
+    list nothing named holds (an owl:AllDisjointClasses). The walks stop
+    on a revisit, as a loaded list is attacker-shaped (Section 9)."""
+    found = []
+    for cell in set(g.subjects(RDF.first, cls)):
+        head, seen = cell, {cell}
+        while True:
+            before = next((s for s in g.subjects(RDF.rest, head) if s not in seen), None)
+            if before is None:
+                break
+            seen.add(before)
+            head = before
+        for holder, predicate in g.subject_predicates(head):
+            if predicate not in _CLASS_LISTS:
+                continue
+            owner, climbed = holder, {holder}
+            while isinstance(owner, BNode):
+                up = next((s for s, _ in g.subject_predicates(owner) if s not in climbed), None)
+                if up is None:
+                    break
+                climbed.add(up)
+                owner = up
+            found.append((owner if isinstance(owner, URIRef) else None, predicate))
+    return found
+
+
+def owl_about(view: Graph, own: Graph, cls, name: Name) -> tuple[list[dict], list]:
+    """The OWL statements this document makes about `cls` (attribute-reuse
+    5.7, D-117): its restrictions, the classes it is disjoint with or the
+    same as, either way round, and any other OWL expression on it, as the
+    Rules block's items in the same order, with each statement that holds
+    one. A blank node's own statements are the caller's to sweep, as
+    DeleteEntity sweeps them. An owl:AllDisjointClasses is not here: it
+    names other classes too, so no command takes it apart (D-105)."""
+    items: list[dict] = []
+    statements: list = []
+    read = set()
+    rules = contents(own, cls)
+    rules.sort(key=lambda r: (r[2].form != "every", name(r[2].property).casefold(), KINDS.index(r[2].kind), r[2].n or 0))
+    for predicate, node, content in rules:
+        read.add(node)
+        items.append(restriction_json(view, content, name, True))
+        statements.append((cls, predicate, node))
+    for predicate, word in ((OWL.equivalentClass, "equivalent"), (OWL.disjointWith, "disjoint")):
+        for other in named_pairs(own, cls, predicate):
+            items.append({"type": word, "other": _ref(other, name), "editable": True})
+            statements += [t for t in ((cls, predicate, other), (other, predicate, cls)) if t in own]
+    outside = []
+    for predicate in (RDFS.subClassOf, OWL.equivalentClass, OWL.disjointWith, *_OWL_ON_CLASS):
+        for node in own.objects(cls, predicate):
+            # A named parent is RDFS's own; a named pair is read above, but
+            # a class the same as or disjoint with itself is still OWL's.
+            named = isinstance(node, URIRef) and predicate in (RDFS.subClassOf, OWL.equivalentClass, OWL.disjointWith)
+            if node in read or (named and (predicate == RDFS.subClassOf or node != cls)):
+                continue
+            statement = (cls, predicate, node)
+            outside.append({"type": "turtle", "turtle": turtle_of(own, [statement, *closure(own, node)]), "editable": False})
+            statements.append(statement)
+    outside.sort(key=lambda i: i["turtle"])
+    return items + outside, statements
 
 
 def _datatype_name(rng) -> Optional[str]:

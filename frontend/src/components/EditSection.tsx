@@ -32,7 +32,9 @@ BASIC IDEA
     for them.
 
     A class's structure carries its rules, RulesBlock.tsx (axioms 5.9):
-    the sentences of 5.8, the builder, and Check it in data too.
+    the sentences of 5.8, the builder, and Check it in data too. Its *Kind
+    of class* is ClassKindBlock (attribute-reuse 5.7); the subclass offered
+    for an imported class takes the same choice as every new class (5.6).
 
     A class's form lists its examples and offers *Add an example*
     (shacl-authoring 5.8); an example's form shows, in place of a class's
@@ -78,7 +80,7 @@ import DeleteDialog from "./DeleteDialog";
 import { Block, InlineText, useCopy, useReturnFocus, useRunner, type Runner } from "./EditParts";
 import EditStructure from "./EditStructure";
 import ExampleForm from "./ExampleForm";
-import NewEntityForm from "./NewEntityForm";
+import NewEntityForm, { NewClassForm } from "./NewEntityForm";
 import { PropertyHead } from "./RelationshipForm";
 
 interface Props {
@@ -157,7 +159,7 @@ export default function EditSection({
         </p>
         {model.kind === "class" &&
           (subclassOfImport ? (
-            <NewEntityForm
+            <NewClassForm
               title={`New subclass of ${name}`}
               primaryLanguage={primaryLanguage}
               busy={busy}
@@ -166,8 +168,8 @@ export default function EditSection({
                 setSubclassOfImport(false);
                 returnToImport();
               }}
-              onSubmit={async ({ name: label, iri: chosen }) => {
-                const result = await run("importSub", "CreateClass", { label, parent: iri, iri: chosen });
+              onSubmit={async ({ name: label, iri: chosen, type }) => {
+                const result = await run("importSub", "CreateClass", { label, parent: iri, iri: chosen, type });
                 follow(result?.created);
               }}
             />

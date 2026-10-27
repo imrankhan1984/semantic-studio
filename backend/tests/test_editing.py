@@ -13,6 +13,12 @@ SUMMARY
     And the nine shape commands of shacl-authoring Stage A on shapes.ttl:
     exact triples, refusals that change nothing, one undo step each, save
     and reload (row S20), and the first one creating the file.
+    attribute-reuse Stage B (5.6, 5.7, D-117): CreateClass's one type triple
+    and the manifest's classType, which moves no revision; SetClassType both
+    ways, its dry run, its refusals; and no command writing an OWL
+    statement about an RDFS class. The Stage B review: a rule never points
+    to an RDFS class, and a class another class's rule points to is not
+    made RDFS, the rule named.
 
 BASIC IDEA
     Through the HTTP API, as the frontend drives it, with the service's state
@@ -285,6 +291,11 @@ COMMAND_CASES = [
     ("RemoveEquivalentClass", {"a": "shop:Invoice", "b": "shop:Organization"},
      [], [(U("Invoice"), OWL.equivalentClass, U("Organization"))],
      "Removed that Bill and Organization mean the same thing"),
+    # attribute-reuse 5.7: either way, one type for the other.
+    ("SetClassType", {"class": "shop:Invoice", "type": "rdfs"},
+     [(U("Invoice"), RDF.type, RDFS.Class)], [(U("Invoice"), RDF.type, OWL.Class)], "Made Bill an RDFS class"),
+    ("SetClassType", {"class": "shop:Invoice", "type": "owl"},
+     [(U("Invoice"), RDF.type, OWL.Class)], [(U("Invoice"), RDF.type, RDFS.Class)], "Made Bill an OWL class"),
 ]
 
 
@@ -1521,3 +1532,279 @@ def test_two_first_shape_commands_at_once_make_shapes_ttl_once(bare):
     assert answers == [200, 200]
     assert [d["role"] for d in project_store.manifest(pid)["documents"]].count("shapes") == 1
     assert len(list(shapes_graph(pid).subjects(RDF.type, SH.NodeShape))) == 2
+
+
+# --- OWL or RDFS for each class (attribute-reuse Stage B, 5.6 to 5.8, D-117) ----------
+
+KIND_MODEL = f"""@prefix shop: <{EX}> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+shop:Employee a owl:Class ; rdfs:label "Employee"@en .
+shop:Manager a owl:Class ; rdfs:label "Manager"@en ; rdfs:subClassOf shop:Employee ,
+        [ a owl:Restriction ; owl:onProperty shop:manages ; owl:minQualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+          owl:onClass shop:Team ] ;
+    owl:disjointWith shop:Contractor .
+shop:Boss a owl:Class ; rdfs:label "Boss"@en ; owl:equivalentClass shop:Manager .
+shop:Contractor a owl:Class ; rdfs:label "Contractor"@en .
+shop:Team a owl:Class ; rdfs:label "Team"@en .
+shop:Note a rdfs:Class ; rdfs:label "Note"@en .
+shop:manages a owl:ObjectProperty ; rdfs:label "manages"@en ; rdfs:domain shop:Manager ; rdfs:range shop:Team .
+shop:hasName a owl:DatatypeProperty ; rdfs:label "hasName"@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( shop:Employee shop:Contractor ) ] .
+"""
+
+
+# The same model with Manager's rule pointing at Boss, not Team, for the
+# tests that make Team an RDFS class for other reasons.
+UNPOINTED = KIND_MODEL.replace("owl:onClass shop:Team", "owl:onClass shop:Boss")
+
+
+@pytest.fixture
+def kinds(pid) -> str:
+    assert apply(pid, KIND_MODEL).status_code == 200
+    return pid
+
+
+def _listed(pid: str) -> dict:
+    return next(p for p in client.get("/api/projects").json() if p["id"] == pid)
+
+
+def _types(pid: str, iri: str) -> set:
+    return set(doc(pid).graph.objects(U(iri), RDF.type))
+
+
+def test_create_class_writes_exactly_one_type_of_the_kind_chosen(pid):
+    """AC-13, 5.0 row 7: one type triple, owl:Class or rdfs:Class, never both."""
+    ok(pid, "CreateClass", label="Invoice", type="owl")
+    ok(pid, "CreateClass", label="Receipt", type="rdfs")
+    assert _types(pid, "Invoice") == {OWL.Class}
+    assert _types(pid, "Receipt") == {RDFS.Class}
+    # Neither kind given: the project's default, its last choice (rdfs now).
+    ok(pid, "CreateClass", label="Ledger")
+    assert _types(pid, "Ledger") == {RDFS.Class}
+    response = run(pid, "CreateClass", label="Bad", type="skos")
+    assert response.status_code == 422 and '"owl" or "rdfs"' in response.json()["detail"]
+    assert (U("Bad"), None, None) not in doc(pid).graph
+
+
+def test_the_manifest_class_type_follows_the_last_choice_and_moves_no_revision(pid):
+    """5.6 and 5.0 row 8: classType is the last choice, written only when it
+    changes, a manifest write: no revision, no dirty flag, no undo step."""
+    assert "classType" not in project_store.manifest(pid)
+    assert _listed(pid)["classType"] is None
+    created = ok(pid, "CreateClass", label="Invoice", type="owl")
+    assert created["classType"] == "owl"
+    # owl is the default already: nothing written.
+    assert "classType" not in project_store.manifest(pid)
+    before = revision(pid)
+    undo_depth = len(doc(pid).undo)
+    created = ok(pid, "CreateClass", label="Receipt", type="rdfs")
+    assert created["classType"] == "rdfs"
+    assert project_store.manifest(pid)["classType"] == "rdfs"
+    assert _listed(pid)["classType"] == "rdfs"
+    # The class is one step; the default rode along with it, not as another.
+    assert revision(pid) == before + 1 and len(doc(pid).undo) == undo_depth + 1
+    # Undo takes the class back and leaves the default where it is.
+    assert client.post(f"/api/projects/{pid}/documents/model/undo").status_code == 200
+    assert project_store.manifest(pid)["classType"] == "rdfs"
+    ok(pid, "CreateClass", label="Invoice2", type="owl")
+    assert project_store.manifest(pid)["classType"] == "owl"
+    # A refused create changes no default.
+    assert run(pid, "CreateClass", label="Invoice", type="rdfs").status_code == 422
+    assert project_store.manifest(pid)["classType"] == "owl"
+
+
+def test_set_class_type_rdfs_to_owl_replaces_the_type_and_loses_nothing(kinds):
+    pid = kinds
+    before = graph_copy(pid)
+    plan = run(pid, "SetClassType", dry_run=True, **{"class": EX + "Note", "type": "owl"}).json()["plan"]
+    assert plan["type"] == "rdfs" and plan["to"] == "owl" and plan["goes"] == [] and plan["refused"] is None
+    assert isomorphic(doc(pid).graph, before), "a dry run changes nothing"
+    result = ok(pid, "SetClassType", **{"class": EX + "Note", "type": "owl"})
+    assert result["label"] == "Made Note an OWL class"
+    assert _types(pid, "Note") == {OWL.Class}
+    assert len(result["delta"]["added"]) == 1 and len(result["delta"]["removed"]) == 1
+    # A class typed both ways (a loaded file) is made rdfs:Class alone.
+    assert apply(pid, KIND_MODEL + "shop:Both a owl:Class , rdfs:Class .\n").status_code == 200
+    ok(pid, "SetClassType", **{"class": EX + "Both", "type": "rdfs"})
+    assert _types(pid, "Both") == {RDFS.Class}
+
+
+def test_set_class_type_owl_to_rdfs_lists_then_removes_every_owl_statement_in_one_step(kinds):
+    """AC-13: the dry run names what goes; the change takes the restriction,
+    the disjointness and the equivalence (stated on the other class), and
+    their blank nodes, with the type; one undo step restores it exactly."""
+    pid = kinds
+    before = graph_copy(pid)
+    plan = run(pid, "SetClassType", dry_run=True, **{"class": EX + "Manager", "type": "rdfs"}).json()["plan"]
+    assert plan["refused"] is None
+    goes = plan["goes"]
+    assert [g["type"] for g in goes] == ["restriction", "equivalent", "disjoint"]
+    assert goes[0]["property"]["label"] == "manages" and goes[0]["kind"] == "atLeast" and goes[0]["n"] == 1
+    assert goes[1]["other"]["label"] == "Boss" and goes[2]["other"]["label"] == "Contractor"
+    assert isomorphic(doc(pid).graph, before)
+    rev = revision(pid)
+    ok(pid, "SetClassType", **{"class": EX + "Manager", "type": "rdfs"})
+    g = doc(pid).graph
+    assert _types(pid, "Manager") == {RDFS.Class}
+    assert not any(isinstance(o, BNode) for o in g.objects(U("Manager"), RDFS.subClassOf))
+    assert (U("Manager"), RDFS.subClassOf, U("Employee")) in g, "a named parent is RDFS's own"
+    assert (U("Boss"), OWL.equivalentClass, U("Manager")) not in g
+    assert (U("Manager"), OWL.disjointWith, U("Contractor")) not in g
+    assert not list(g.subjects(RDF.type, OWL.Restriction)), "the restriction's blank node went with it"
+    assert revision(pid) == rev + 1
+    assert client.post(f"/api/projects/{pid}/documents/model/undo").status_code == 200
+    assert isomorphic(doc(pid).graph, before)
+
+
+def test_set_class_type_to_rdfs_takes_an_owl_expression_outside_the_sentences_too(kinds):
+    pid = kinds
+    text = UNPOINTED + (
+        "shop:Team rdfs:subClassOf [ a owl:Class ; owl:intersectionOf ( shop:Employee shop:Contractor ) ] ;"
+        " owl:hasKey ( shop:hasName ) .\n"
+    )
+    assert apply(pid, text).status_code == 200
+    plan = run(pid, "SetClassType", dry_run=True, **{"class": EX + "Team", "type": "rdfs"}).json()["plan"]
+    assert [g["type"] for g in plan["goes"]] == ["turtle", "turtle"]
+    assert any("owl:intersectionOf" in g["turtle"] for g in plan["goes"])
+    ok(pid, "SetClassType", **{"class": EX + "Team", "type": "rdfs"})
+    g = doc(pid).graph
+    assert set(g.predicates(U("Team"), None)) == {RDF.type, RDFS.label}
+    assert not list(g.subjects(OWL.intersectionOf, None)), "the expression's blank nodes went with it"
+    assert len(list(g.subjects(OWL.unionOf, None))) == 1, "hasName's union is not Team's"
+
+
+def test_set_class_type_to_rdfs_is_refused_for_a_union_member_and_a_disjoint_group(kinds):
+    """5.7: a member of a union domain is refused with its sentence; so is
+    one in a group of disjoint classes, which no command takes apart."""
+    pid = kinds
+    before = graph_copy(pid)
+    plan = run(pid, "SetClassType", dry_run=True, **{"class": EX + "Contractor", "type": "rdfs"}).json()["plan"]
+    sentence = (
+        "hasName is shared by Employee and Contractor in an OWL list, which an RDFS class cannot be part of. "
+        "Give them a shared parent first, or keep Contractor an OWL class."
+    )
+    assert plan["refused"] == sentence and plan["goes"] == []
+    refused = run(pid, "SetClassType", **{"class": EX + "Contractor", "type": "rdfs"})
+    assert refused.status_code == 422 and refused.json()["detail"] == sentence
+    assert isomorphic(doc(pid).graph, before)
+    group = UNPOINTED + "[] a owl:AllDisjointClasses ; owl:members ( shop:Team shop:Note shop:Boss ) .\n"
+    assert apply(pid, group).status_code == 200
+    refused = run(pid, "SetClassType", **{"class": EX + "Team", "type": "rdfs"})
+    assert refused.status_code == 422
+    assert refused.json()["detail"].startswith("Team is disjoint with Note and Boss through a group")
+    assert (U("Team"), RDF.type, OWL.Class) in doc(pid).graph
+    # The kind it is already, and a class not in the document, say so.
+    assert "already" in run(pid, "SetClassType", **{"class": EX + "Note", "type": "rdfs"}).json()["detail"]
+    assert run(pid, "SetClassType", **{"class": EX + "Nothing", "type": "owl"}).status_code == 422
+
+
+def test_no_command_writes_an_owl_statement_about_an_rdfs_class(kinds):
+    """5.0 row 7: a rule, a disjointness, an equivalence, a union are refused
+    whichever side the RDFS class is on; removing one stays possible."""
+    pid = kinds
+    before = graph_copy(pid)
+    attempts = [
+        ("AddRestriction", {"class": EX + "Note", "property": EX + "manages", "kind": "some", "filler": EX + "Team"}),
+        ("AddDisjointWith", {"a": EX + "Note", "b": EX + "Team"}),
+        ("AddDisjointWith", {"a": EX + "Team", "b": EX + "Note"}),
+        ("AddEquivalentClass", {"a": EX + "Team", "b": EX + "Note"}),
+        ("ShareDomain", {"property": EX + "hasName", "class": EX + "Note", "how": "union"}),
+    ]
+    for command, args in attempts:
+        response = run(pid, command, **args)
+        assert response.status_code == 422, (command, response.text)
+        assert "RDFS" in response.json()["detail"], (command, response.json()["detail"])
+    assert run(pid, "AddRestriction", **attempts[0][1]).json()["detail"] == (
+        "Rules need an OWL class; RDFS has no words for them. Make Note an OWL class first."
+    )
+    assert isomorphic(doc(pid).graph, before)
+    # A file's OWL statement about an RDFS class can still be taken away.
+    assert apply(pid, KIND_MODEL + "shop:Note owl:disjointWith shop:Team .\n").status_code == 200
+    ok(pid, "RemoveDisjointWith", a=EX + "Note", b=EX + "Team")
+
+
+def test_set_class_type_refuses_any_other_owl_list_naming_the_class(kinds):
+    """Code review: a disjoint union or another class's union naming the
+    class is that class's statement, refused like a union domain; a group
+    naming no other class refuses with its sentence, never a 500."""
+    pid = kinds
+    cases = [
+        ("shop:Pet owl:disjointUnionOf ( shop:Team shop:Note ) .",
+         "Team is named in an OWL list of Pet (owl:disjointUnionOf)"),
+        ("shop:Pet owl:equivalentClass [ a owl:Class ; owl:unionOf ( shop:Team shop:Note ) ] .",
+         "Team is named in an OWL list of Pet (owl:unionOf)"),
+        ("[] a owl:AllDisjointClasses ; owl:members ( shop:Team shop:Team ) .",
+         "Team is disjoint through a group of classes written in Turtle"),
+    ]
+    for line, start in cases:
+        assert apply(pid, UNPOINTED + "shop:Pet a owl:Class .\n" + line + "\n").status_code == 200
+        before = graph_copy(pid)
+        plan = run(pid, "SetClassType", dry_run=True, **{"class": EX + "Team", "type": "rdfs"})
+        assert plan.status_code == 200, plan.text
+        assert plan.json()["plan"]["refused"].startswith(start), plan.json()["plan"]["refused"]
+        refused = run(pid, "SetClassType", **{"class": EX + "Team", "type": "rdfs"})
+        assert refused.status_code == 422 and refused.json()["detail"].startswith(start)
+        assert isomorphic(doc(pid).graph, before)
+    # The class's own list goes with it, and refuses nothing.
+    assert apply(pid, UNPOINTED + "shop:Team owl:disjointUnionOf ( shop:Note shop:Boss ) .\n").status_code == 200
+    ok(pid, "SetClassType", **{"class": EX + "Team", "type": "rdfs"})
+    assert not list(doc(pid).graph.subjects(OWL.disjointUnionOf, None))
+
+
+def test_a_manifest_that_cannot_be_written_does_not_fail_the_create(pid, monkeypatch):
+    """Code review: the class is made and its step pushed before the default
+    is kept, so a failed write answers 200 with the default unchanged."""
+    def refuse(*_a, **_k):
+        raise OSError("locked")
+
+    monkeypatch.setattr(project_store, "update_manifest", refuse)
+    created = ok(pid, "CreateClass", label="Receipt", type="rdfs")
+    assert created["classType"] == "owl"
+    assert _types(pid, "Receipt") == {RDFS.Class}
+
+
+def test_a_rule_never_points_to_an_rdfs_class(kinds):
+    """Stage B review (D-117, 5.0 row 7): a rule's class at the other end --
+    some, only, a qualified count's -- is refused when it is an RDFS class,
+    with 5.8's sentence naming it; Add and Replace alike."""
+    pid = kinds
+    before = graph_copy(pid)
+    sentence = "Rules need an OWL class; RDFS has no words for them. Make Note an OWL class first."
+    for kind, n in (("some", None), ("only", None), ("atLeast", 2)):
+        args = {"class": EX + "Team", "property": EX + "manages", "kind": kind, "filler": EX + "Note"}
+        if n is not None:
+            args["n"] = n
+        refused = run(pid, "AddRestriction", **args)
+        assert refused.status_code == 422 and refused.json()["detail"] == sentence, (kind, refused.text)
+    replaced = run(pid, "ReplaceRestriction", **{
+        "class": EX + "Manager", "property": EX + "manages", "kind": "some", "filler": EX + "Note",
+        "restriction": {"form": "every", "property": EX + "manages", "kind": "atLeast", "filler": EX + "Team", "n": 1},
+    })
+    assert replaced.status_code == 422 and replaced.json()["detail"] == sentence
+    assert isomorphic(doc(pid).graph, before)
+    # An OWL class at the other end is fine, and a count with no class too.
+    ok(pid, "AddRestriction", **{"class": EX + "Team", "property": EX + "manages", "kind": "some", "filler": EX + "Boss"})
+    ok(pid, "AddRestriction", **{"class": EX + "Team", "property": EX + "manages", "kind": "atMost", "n": 3})
+
+
+def test_set_class_type_to_rdfs_is_refused_while_another_class_s_rule_names_it(kinds):
+    """Stage B review: making Team an RDFS class while Manager's rule points
+    at it is refused, the rule named, in the dry run and the command; once
+    the rule is gone the change goes through."""
+    pid = kinds
+    before = graph_copy(pid)
+    sentence = (
+        "Every Manager manages at least 1 Team names Team, which an RDFS class cannot be part of. "
+        "Remove that rule first, or keep Team an OWL class."
+    )
+    plan = run(pid, "SetClassType", dry_run=True, **{"class": EX + "Team", "type": "rdfs"}).json()["plan"]
+    assert plan["refused"] == sentence and plan["goes"] == []
+    refused = run(pid, "SetClassType", **{"class": EX + "Team", "type": "rdfs"})
+    assert refused.status_code == 422 and refused.json()["detail"] == sentence
+    assert isomorphic(doc(pid).graph, before)
+    ok(pid, "RemoveRestriction", **{"class": EX + "Manager", "restriction": {
+        "form": "every", "property": EX + "manages", "kind": "atLeast", "filler": EX + "Team", "n": 1}})
+    ok(pid, "SetClassType", **{"class": EX + "Team", "type": "rdfs"})
+    assert _types(pid, "Team") == {RDFS.Class}

@@ -33,6 +33,12 @@ BASIC IDEA
     the project store; the block of that class opens the builder on it,
     with its class at the other end, and spends it.
 
+    An RDFS class takes no rules (attribute-reuse 5.8, D-117): in place of
+    the builder, one line, *Rules need an OWL class; RDFS has no words for
+    them*, with *Make Manager an OWL class*, and a note that Check in data
+    works on either kind. What a file says about it in OWL is listed
+    read-only, with the note that OWL tools will not read it as a class.
+
 INPUTS / INPUT SOURCES (props)
     - iri, name: the class.
     - rules: its rules, warnings and the builder's choices, from /node.
@@ -45,6 +51,13 @@ EXPECTED OUTPUT
 */
 
 import { useEffect, useRef, useState } from "react";
+import {
+  RULES_NEED_OWL,
+  checkInDataNote,
+  kindChangedAnnouncement,
+  makeClassKind,
+  rdfsRuleNote,
+} from "../modeling/sentences";
 import {
   EMPTY_BUILDER,
   itemKey,
@@ -88,6 +101,13 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
   const pending = useRef<{ gone: string; next: string } | null>(null);
   const items = rules.items;
   useWarningAnnouncer(iri, rules.warnings);
+  const pendingAdd = useRef(false);
+  useEffect(() => {
+    if (pendingAdd.current && rules.choices && addRef.current) {
+      pendingAdd.current = false;
+      addRef.current.focus();
+    }
+  }, [rules.choices]);
 
   // A rule begun on the canvas for this class: open the builder on it once.
   const draft = useProjectSelector((s) => s.ruleDraft);
@@ -155,6 +175,21 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
     (w) => !w.disjoint || !items.some((i) => i.type === "disjoint" && i.other.iri === w.disjoint),
   );
   const canEdit = rules.choices !== null;
+  // 5.8: an RDFS class of the project gets the offer instead of the builder.
+  const rdfs = rules.classType === "rdfs";
+  // Its own key: the Kind of class block shares this runner, and one
+  // refusal was shown under both (code review).
+  // A class at the other end of a rule made an OWL class from the builder
+  // (5.8): one command, its refusal under the builder.
+  const makeEndOwl = async (end: { iri: string; label: string }) =>
+    (await run("rule", "SetClassType", { class: end.iri, type: "owl" }, () => kindChangedAnnouncement(end.label, "owl"), say)) !== null;
+  const makeOwl = async () => {
+    if (busy) return;
+    const done = await run("rulesKind", "SetClassType", { class: iri, type: "owl" }, () => kindChangedAnnouncement(name, "owl"), say);
+    // The pressed button goes with the line: focus to Add a rule once the
+    // refetch has drawn it, never to the page (code review).
+    if (done) pendingAdd.current = true;
+  };
 
   return (
     <section className="rules-block" aria-labelledby={`rules-${cssId(iri)}`}>
@@ -224,7 +259,7 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
                         </button>
                       </span>
                     ) : (
-                      !item.editable && <span className="detail-note"> (read-only)</span>
+                      (!item.editable || rdfs) && <span className="detail-note"> (read-only)</span>
                     )}
                     {mine.length > 0 && (
                       <ul className="form-warnings" aria-label="Warnings">
@@ -238,7 +273,7 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
                     {item.type === "restriction" && (
                       <div className="rule-note">
                         <p className="detail-note">{openWorldNote(name, partsOf(item))}</p>
-                        {item.editable && canEdit && (
+                        {item.editable && (canEdit || rdfs) && (
                           <button
                             type="button"
                             className="link-btn"
@@ -269,6 +304,7 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
                     replacing={open.replacing}
                     busy={busy}
                     error={errors.rule || null}
+                    onMakeOwl={makeEndOwl}
                     onCancel={() => close(key)}
                     onSubmit={async (command, said) => {
                       const result = await run("rule", command.name, command.args, (r) => `Changed: ${said}. ${r.label}.`, say);
@@ -281,6 +317,19 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
           })}
         </ul>
       )}
+      {rdfs && (
+        <div className="rules-rdfs">
+          {items.length > 0 && <p className="detail-note">{rdfsRuleNote(name, items.length)}</p>}
+          <p className="detail-note">
+            {RULES_NEED_OWL}{" "}
+            <button type="button" className="link-btn" aria-disabled={busy} onClick={() => void makeOwl()}>
+              {makeClassKind(name, "owl")}
+            </button>
+          </p>
+          <p className="detail-note">{checkInDataNote(name, items.some((i) => i.type === "restriction" && i.editable))}</p>
+          {errors.rulesKind && <p className="edit-error">{errors.rulesKind}</p>}
+        </div>
+      )}
       {open && !open.replacing ? (
         <RuleBuilder
           key={open.token}
@@ -290,6 +339,7 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
           initial={open.initial}
           busy={busy}
           error={errors.rule || null}
+          onMakeOwl={makeEndOwl}
           onCancel={() => close("add")}
           onSubmit={async (command, said) => {
             const result = await run("rule", command.name, command.args, (r) => `Added: ${said}. ${r.label}.`, say);

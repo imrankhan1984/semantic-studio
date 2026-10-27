@@ -570,7 +570,10 @@ export type DomainForm = "none" | "one" | "union" | "separate" | "expression";
 
 export interface DomainReading {
   form: DomainForm;
-  classes: { iri: string; label: string }[];
+  // `type` on a project property's details (attribute-reuse 5.8): an RDFS
+  // class's pointer offers to make it an OWL class before a rule.
+  // `own`: the document's own class, the only kind SetClassType changes.
+  classes: { iri: string; label: string; type?: ClassType; own?: boolean }[];
 }
 
 /** ShareDomain's dry run (attribute-reuse 5.2): the case the server
@@ -708,7 +711,9 @@ export interface RuleChoice extends RuleRef {
 
 export interface RuleChoices {
   properties: { items: RuleChoice[]; total: number };
-  classes: { items: RuleRef[]; total: number };
+  // Each class's kind (attribute-reuse 5.8): a rule's class at the other
+  // end must be an OWL class, so the builder offers to convert an RDFS one.
+  classes: { items: (RuleRef & { type?: ClassType; own?: boolean })[]; total: number };
   things: { items: RuleRef[]; total: number };
 }
 
@@ -718,6 +723,9 @@ export interface ClassRules {
   // the class of the disjoint rule it stands under; without it, the block.
   warnings: { text: string; disjoint?: string }[];
   choices: RuleChoices | null;
+  // An RDFS class takes no rules (attribute-reuse 5.8): choices are null,
+  // and anything a file says about it in OWL is shown read-only.
+  classType?: ClassType;
 }
 
 export interface ExampleInfo {
@@ -923,6 +931,19 @@ export interface ProjectSummary {
   // The data snapshots, for the card's line (csv-data-import 5.7). Absent
   // from a server that predates them.
   data?: (DataSource & { enabled: boolean })[];
+  // The kind of class the last new one was made as (attribute-reuse 5.6,
+  // D-117), the next form's default; null until one differed from OWL.
+  classType?: ClassType | null;
+}
+
+/** SetClassType's dry run (5.7): what the class becomes, what goes with it
+ *  as the Rules block's items, or the sentence refusing the change. */
+export interface ClassTypePlan {
+  class: { iri: string; label: string };
+  type: ClassType;
+  to: ClassType;
+  goes: RuleItem[];
+  refused: string | null;
 }
 
 export type ProjectDocName = "model" | "shapes";
@@ -964,6 +985,8 @@ export interface ChangeResult {
   // A create or rename: the entity's IRI, as the server resolved it, so it
   // can be selected.
   created?: string;
+  // A CreateClass: the kind it was made as, the project's default now.
+  classType?: ClassType;
 }
 
 // The kinds search can be narrowed to (the editing form's pickers).

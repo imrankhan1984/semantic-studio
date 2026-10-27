@@ -70,7 +70,9 @@ BASIC IDEA
     removes it (RemoveRestriction). The relate menu's *a rule* entry selects
     the class and leaves a draft in the project store, which the class's
     Rules block opens its sentence builder on: the rule is written in the
-    form, which is where every canvas action also lives (D-078).
+    form, which is where every canvas action also lives (D-078). From an
+    RDFS class the entry is the offer to make it an OWL class
+    (attribute-reuse 5.8): one SetClassType, then the rule's draft as above.
 
     The project's kind decides the palette (Class for an ontology, Concept
     for a taxonomy) and which boxes the canvas may change (D-089). The other
@@ -444,6 +446,15 @@ function Canvas(props: ModelCanvasProps) {
     // The relationship a line made or completed: selected once it exists, so
     // its details are on screen at once (5.2).
     let relationship: string | null = null;
+    if (choice.kind === "makeOwl") {
+      // 5.8: the class becomes an OWL class (one undo step), and the rule
+      // the person drew the line for is then begun as the rule entry does.
+      if (!(await run("relate", "SetClassType", { class: from, type: "owl" }))) return;
+      projectStore.startRule(from, to);
+      setRelate(null);
+      selectHere(from);
+      return;
+    }
     if (choice.kind === "rule") {
       // The rule is written in the form (D-078): select the class and leave
       // the draft, which its Rules block opens the sentence builder on, with

@@ -18,6 +18,9 @@ SUMMARY
     T-26); the canvas's rule lines; and Check
     it in data too, one undo step in shapes.ttl, read-only in the shapes
     form and never rewritten by it (AC-12, row R13 as the server sees it).
+    attribute-reuse Stage B (D-117): kind_of reads the document's own
+    typing first, and lists_naming finds the OWL lists naming a class,
+    stopping on a cycle.
 
 BASIC IDEA
     Through the HTTP API, as the frontend drives it, with the graph read
@@ -1059,3 +1062,41 @@ def test_only_axioms_and_editing_read_a_domain():
         if found:
             offenders[str(path.relative_to(APP))] = found
     assert offenders == {}
+
+
+def test_kind_of_reads_the_documents_own_typing_first():
+    """Code review: an import typing the same IRI owl:Class does not make the
+    document's rdfs:Class an OWL class; a class the document does not define
+    is read from the view."""
+    from app.axioms import kind_of
+
+    own = Graph()
+    own.add((URIRef(EX + "A"), RDF.type, RDFS.Class))
+    view = Graph()
+    for t in own:
+        view.add(t)
+    view.add((URIRef(EX + "A"), RDF.type, OWL.Class))
+    view.add((URIRef(EX + "B"), RDF.type, RDFS.Class))
+    assert kind_of(view, own, URIRef(EX + "A")) == "rdfs"
+    assert kind_of(view, own, URIRef(EX + "B")) == "rdfs"
+    view.add((URIRef(EX + "C"), RDF.type, OWL.Class))
+    assert kind_of(view, own, URIRef(EX + "C")) == "owl"
+
+
+def test_lists_naming_stops_on_a_cycle_and_names_the_owner():
+    from app.axioms import lists_naming
+
+    g = Graph()
+    g.parse(data=f"""@prefix ex: <{EX}> . @prefix owl: <http://www.w3.org/2002/07/owl#> .
+ex:Pet owl:equivalentClass [ owl:unionOf ( ex:Cat ex:Dog ) ] .
+[] a owl:AllDisjointClasses ; owl:members ( ex:Cat ex:Cow ) .
+""", format="turtle")
+    found = sorted(lists_naming(g, URIRef(EX + "Cat")), key=str)
+    assert (URIRef(EX + "Pet"), OWL.unionOf) in found and (None, OWL.members) in found
+    # A list whose cells point back at each other ends the walk.
+    a, b = BNode(), BNode()
+    loop = Graph()
+    loop.add((a, RDF.first, URIRef(EX + "Cat")))
+    loop.add((a, RDF.rest, b))
+    loop.add((b, RDF.rest, a))
+    assert lists_naming(loop, URIRef(EX + "Cat")) == []

@@ -4572,6 +4572,43 @@ button.legend-row:hover {
   font-weight: 600;
 }
 
+/* The Kind of class group (attribute-reuse 5.6): a fieldset with no frame
+   of its own inside the form's, each choice on its line with what it means. */
+.class-kind {
+  border: none;
+  margin: 4px 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.class-kind legend {
+  padding: 0;
+}
+
+/* The radio and its name on one row, what it means under the name, the
+   same for both choices whatever the panel's width. */
+.class-kind-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 6px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+
+.class-kind-option .detail-note {
+  grid-column: 2;
+  margin: 0;
+}
+
+.class-kind > p.detail-note {
+  margin: 2px 0 0;
+}
+
+.class-kind-block ul {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
 .entity-picker-row {
   display: flex;
   gap: 6px;

@@ -603,7 +603,7 @@ describe("HierarchyView in a project (visual-modeling 5.2, AC-5)", () => {
     await act(async () => {
       await projectStore.createDraft();
     });
-    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateClass", { label: "Delta", parent: EX + "Alpha" });
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateClass", { label: "Delta", parent: EX + "Alpha", type: "owl" });
   });
 
   it("renames in place in the primary language; Escape cancels and sends nothing", async () => {

@@ -15,6 +15,8 @@ SUMMARY
     step 4 naming the links that match no row yet (5.8, 5.9). X-12: a
     refresh through step 1, the class reading keyed on the sheet and header
     row, the announcement's count of things, and a taxonomy's labels.
+    attribute-reuse 5.6: a new class made as the project's default kind,
+    said beside its name and named in the summary step.
 
 BASIC IDEA
     api.ts is mocked; the real project store is opened on a fixed project,
@@ -706,5 +708,51 @@ describe("the X-12 tidy-up", () => {
     expect(sentence.closest("label")).toBeNull();
     const id = screen.getByLabelText(/Each row is identified by column/);
     expect(id.getAttribute("aria-describedby")).toBe(sentence.id);
+  });
+});
+
+describe("the kind of a class the wizard makes (attribute-reuse 5.6, AC-13)", () => {
+  it("makes it the project's default kind, says so beside the name, and names it in the summary step", async () => {
+    openProject.mockResolvedValue({
+      project: { ...PROJECT, classType: "rdfs" }, documents: [MODEL], recovery: { available: false, draftTime: null },
+    });
+    listData.mockResolvedValue({ generation: 1, snapshots: [] });
+    await projectStore.open(PID);
+    fetchHierarchy.mockResolvedValue({
+      classes: { nodes: {}, children: {}, roots: [] }, concepts: { nodes: {}, children: {}, roots: [] },
+      counts: { classes: 0, concepts: 0 }, truncated: false,
+    });
+    previewData.mockResolvedValue(preview({ className: "Ticket" }));
+    await act(async () => {
+      render(<DataWizard projectId={PID} modelOntologyId={`${PID}-model`} taxonomy={false} start={{ kind: "new" }} onClose={vi.fn()} />);
+    });
+    await chooseFile();
+    await press(next());
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Each row is"), { target: { value: "new" } });
+    });
+    expect(screen.getByText("It is made as an RDFS class, the project's default.")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Name of the new class"), { target: { value: "Ticket" } });
+    runCommand.mockResolvedValue({
+      revision: 2, label: "Created class Ticket", state: { ...MODEL, revision: 2 }, created: `${X}Ticket`, classType: "rdfs",
+    });
+    await press(screen.getByRole("button", { name: "Create class" }));
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateClass", { label: "Ticket", type: "rdfs" });
+    await press(next());
+    await press(next());
+    expect(screen.getByText("Ticket is a new RDFS class, the project's default kind of class.")).toBeTruthy();
+  });
+
+  it("names no kind in the summary step for a class that was there already", async () => {
+    await setup();
+    await chooseFile();
+    await press(next());
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Each row is"), { target: { value: `${X}Person` } });
+    });
+    await press(next());
+    await press(next());
+    expect(screen.getByText("1 row → 3 statements")).toBeTruthy();
+    expect(screen.queryByText(/the project's default kind of class/)).toBeNull();
   });
 });

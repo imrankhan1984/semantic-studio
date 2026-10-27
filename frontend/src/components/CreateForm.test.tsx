@@ -9,6 +9,9 @@ SUMMARY
     every kind a draft makes, its name the store's (so the canvas's draft
     box shows it too), one command per Create, the server's refusal under the
     name, and the draft ended by Cancel, Escape, or focus leaving it empty.
+    And a new class's *Kind of class* (attribute-reuse 5.6): the project's
+    default, the kind chosen sent by whichever Enter, and the next form's
+    hint once the server has kept it.
 
 BASIC IDEA
     api.ts is mocked; the project store is real, opened on a mocked project,
@@ -147,7 +150,7 @@ describe("CreateForm", () => {
     await act(async () => {
       await projectStore.createDraft();
     });
-    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateClass", { label: "Invoice", definition: "A bill.", iri: X + "Bill" });
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateClass", { label: "Invoice", type: "owl", definition: "A bill.", iri: X + "Bill" });
   });
 
   it("a relationship waits for the class it points to, as the class form's does", async () => {
@@ -230,5 +233,40 @@ describe("CreateForm", () => {
     expect(projectStore.getSnapshot().creating).toBeNull();
     elsewhere.remove();
     box.remove();
+  });
+});
+
+describe("a new class's kind (attribute-reuse 5.6, AC-13)", () => {
+  it("starts on the project's default, sends the kind chosen whichever place pressed Enter, and the next form starts there", async () => {
+    act(() => {
+      projectStore.startCreating("class");
+    });
+    form();
+    expect((screen.getByRole("radio", { name: "OWL class" }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.queryByText(/as last time/)).toBeNull();
+    fireEvent.change(nameField(), { target: { value: "Receipt" } });
+    fireEvent.click(screen.getByRole("radio", { name: "RDFS class" }));
+    runCommand.mockResolvedValueOnce({ revision: 3, label: "Created class Receipt", state: STATE, created: X + "Receipt", classType: "rdfs" });
+    // The canvas's Enter: the store's createDraft, with the kind the form chose.
+    await act(async () => {
+      await projectStore.createDraft();
+    });
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateClass", { label: "Receipt", type: "rdfs" });
+    // The server wrote the new default; the summary follows, and the next
+    // form says so.
+    expect(projectStore.getSnapshot().project?.classType).toBe("rdfs");
+    act(() => {
+      projectStore.startCreating("class");
+    });
+    expect((screen.getByRole("radio", { name: "RDFS class" }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText("RDFS class, as last time.")).toBeTruthy();
+  });
+
+  it("is offered for a class only", () => {
+    act(() => {
+      projectStore.startCreating("concept");
+    });
+    form();
+    expect(screen.queryByRole("group", { name: "Kind of class" })).toBeNull();
   });
 });

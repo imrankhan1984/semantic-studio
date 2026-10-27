@@ -7,7 +7,8 @@ SUMMARY
     GET /{id}/node for a library ontology's class: its rules as the Edit
     page reads them, every one read-only (explore-rules 5.3, AC-3). And
     every entity's `explain`, the structure the In plain words block is
-    written from (explain-panel 5.2, AC-1, AC-2, AC-4).
+    written from (explain-panel 5.2, AC-1, AC-2, AC-4). attribute-reuse
+    Stage B (5.8, AC-13): an RDFS class's rule choices are None.
 
 BASIC IDEA
     Upload a small library ontology with one rule of each reading -- a
@@ -541,8 +542,10 @@ def test_a_class_has_nothing_it_is_not_under(hr):
 
 def test_a_property_carries_its_domain_as_the_reader_reads_it(hr):
     domain = _project_node(hr, HR + "hasName")["domain"]
+    # Each with its kind (attribute-reuse 5.8), for the pointer to a rule.
     assert domain == {"form": "union", "classes": [
-        {"iri": HR + "Manager", "label": "Manager"}, {"iri": HR + "Contractor", "label": "Contractor"},
+        {"iri": HR + "Manager", "label": "Manager", "type": "owl", "own": True},
+        {"iri": HR + "Contractor", "label": "Contractor", "type": "owl", "own": True},
     ]}
     assert _project_node(hr, HR + "badge")["domain"]["form"] == "separate"
 
@@ -585,3 +588,34 @@ def test_node_details_with_200_properties_budget():
         assert median <= limit_ms(50), f"the node details took {median:.1f} ms (median of 5)"
     finally:
         editing_service.close_all()
+
+
+# --- rules only on OWL classes (attribute-reuse Stage B, 5.8, D-117) ------------------
+
+KIND_MODEL = HR_MODEL + f"""hr:Note a rdfs:Class ; rdfs:label "Note"@en ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty hr:leads ; owl:someValuesFrom hr:Team ] .
+"""
+
+
+@pytest.fixture
+def kinds():
+    from app.editing import editing_service
+
+    yield _open_project(KIND_MODEL)
+    editing_service.close_all()
+
+
+def test_rule_choices_are_none_for_an_rdfs_class(kinds):
+    """AC-13: an RDFS class gets no sentence builder; an OWL class keeps it.
+    What a file says about the RDFS class in OWL still comes, for the block
+    to show read-only with 5.8's note."""
+    note = _project_node(kinds, HR + "Note")["rules"]
+    assert note["classType"] == "rdfs" and note["choices"] is None
+    assert [i["type"] for i in note["items"]] == ["restriction"]
+    team = _project_node(kinds, HR + "Team")["rules"]
+    assert team["classType"] == "owl" and team["choices"] is not None
+    # Each class at the other end carries its kind and whether it is the
+    # document's own, for the builder's offer (Stage B review).
+    classes = {c["label"]: c for c in team["choices"]["classes"]["items"]}
+    assert classes["Note"]["type"] == "rdfs" and classes["Note"]["own"] is True
+    assert classes["Team"]["type"] == "owl"

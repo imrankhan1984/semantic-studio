@@ -35,6 +35,10 @@ INPUTS / INPUT SOURCES (props)
     - initial: the state to open on (an edit, or a rule begun on the canvas).
     - replacing: the key of an existing rule being changed (Save, not Add).
     - busy, error: the command in flight and the server's refusal.
+    - onMakeOwl: a class at the other end that is an RDFS class cannot be
+      named in an OWL rule (attribute-reuse 5.8, D-117): 5.8's line stands
+      in the builder with *Make Note an OWL class* for the document's own
+      class, Add waits, and Add takes focus once it is an OWL class.
     - onSubmit(command, sentence), onCancel.
 
 EXPECTED OUTPUT
@@ -42,7 +46,8 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { RULES_NEED_OWL, makeClassKind } from "../modeling/sentences";
 import {
   EMPTY_BUILDER,
   RULE_TYPES,
@@ -69,6 +74,9 @@ interface Props {
   error?: string | null;
   onSubmit: (command: { name: string; args: Record<string, unknown> }, sentence: string) => void;
   onCancel: () => void;
+  /** Make a class at the other end an OWL class (attribute-reuse 5.8):
+   *  resolves true once it is one. */
+  onMakeOwl?: (cls: { iri: string; label: string }) => Promise<boolean>;
 }
 
 function Options({ list }: { list: RuleRef[] }) {
@@ -103,6 +111,7 @@ export default function RuleBuilder({
   error = null,
   onSubmit,
   onCancel,
+  onMakeOwl,
 }: Props) {
   const id = useId();
   const [state, setState] = useState<BuilderState>(initial ?? EMPTY_BUILDER);
@@ -130,8 +139,24 @@ export default function RuleBuilder({
     set({ property: iri || null, kind: keepKind, filler: sameSort ? state.filler : null, value: sameSort ? state.value : "" });
   };
 
+  // A class at the other end that is an RDFS class cannot be named in an
+  // OWL rule (D-117; the Stage B review): 5.8's line and its offer stand
+  // in the builder, and Add waits until it is an OWL class.
+  const otherEnd = restriction ? (state.kind !== "value" && pkind !== "attribute" ? state.filler : null) : state.other;
+  const rdfsEnd = classes.find((c) => c.iri === otherEnd && c.type === "rdfs") ?? null;
+  const addRef = useRef<HTMLButtonElement>(null);
+  const focusAdd = useRef(false);
+  useEffect(() => {
+    // The offer goes once the refetch says it is an OWL class: focus to Add.
+    if (focusAdd.current && !rdfsEnd) {
+      focusAdd.current = false;
+      addRef.current?.focus();
+    }
+  }, [rdfsEnd]);
+  const blocked = Boolean(problem) || rdfsEnd !== null;
+
   const submit = () => {
-    if (busy || !command) return;
+    if (busy || !command || rdfsEnd) return;
     onSubmit(command, sentence);
   };
 
@@ -283,12 +308,30 @@ export default function RuleBuilder({
           {problem}
         </p>
       )}
+      {rdfsEnd && (
+        <p id={`${id}-rdfs`} className="detail-note">
+          {RULES_NEED_OWL}{" "}
+          {onMakeOwl && rdfsEnd.own && (
+            <button
+              type="button"
+              className="link-btn"
+              aria-disabled={busy}
+              onClick={async () => {
+                if (!busy && (await onMakeOwl(rdfsEnd))) focusAdd.current = true;
+              }}
+            >
+              {makeClassKind(rdfsEnd.label, "owl")}
+            </button>
+          )}
+        </p>
+      )}
       <div className="edit-actions">
         <button
+          ref={addRef}
           type="button"
           className="primary"
-          aria-disabled={busy || Boolean(problem)}
-          aria-describedby={problem ? `${id}-problem` : undefined}
+          aria-disabled={busy || blocked}
+          aria-describedby={problem ? `${id}-problem` : rdfsEnd ? `${id}-rdfs` : undefined}
           onClick={submit}
         >
           {busy ? "Saving change…" : replacing ? "Save rule" : "Add"}

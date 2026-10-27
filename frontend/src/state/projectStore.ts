@@ -74,6 +74,10 @@ BASIC IDEA
     to the class's form, which opens the reuse plan once, as ruleDraft does
     for a rule.
 
+    A new class is made as the project's last choice of kind, OWL or RDFS
+    (attribute-reuse 5.6), unless its form chose: the server keeps that
+    choice in the manifest and the summary here follows its answer.
+
 INPUTS / INPUT SOURCES
     - api.ts, for every project call.
 
@@ -106,6 +110,7 @@ import { failureReason } from "../networkWords";
 import { finishedLine, isStale, staleLine, type ReasoningNow } from "../reasoning/reasonSentences";
 import type {
   ChangeResult,
+  ClassType,
   CreatingKind,
   ProjectDocName,
   ProjectDocumentState,
@@ -208,6 +213,9 @@ export interface CreatingExtra {
   range?: string;
   datatype?: string;
   cls?: string;
+  /** A class's kind, OWL or RDFS (attribute-reuse 5.6); the project's
+   *  default when the form has not chosen. */
+  classType?: ClassType;
 }
 
 const EMPTY: ProjectSnapshot = {
@@ -278,7 +286,10 @@ function draftCommand(draft: Creating, extra: CreatingExtra): [string, Record<st
   };
   switch (draft.kind) {
     case "class":
-      return ["CreateClass", { label: name, ...(draft.parent ? { parent: draft.parent.iri } : {}), ...extras }];
+      return [
+        "CreateClass",
+        { label: name, ...(draft.parent ? { parent: draft.parent.iri } : {}), type: extra.classType ?? defaultClassType(), ...extras },
+      ];
     case "concept":
       return ["CreateConcept", { prefLabel: name, ...(draft.parent ? { broader: draft.parent.iri } : {}), ...extras }];
     case "objectProperty":
@@ -294,6 +305,12 @@ function draftCommand(draft: Creating, extra: CreatingExtra): [string, Record<st
     case "example":
       return ["CreateExample", { class: extra.cls, label: name, ...(extra.iri ? { iri: extra.iri } : {}) }];
   }
+}
+
+/** The kind a new class is made as unless its form says otherwise (5.6):
+ *  the project's last choice, OWL for a project that has made none. */
+export function defaultClassType(project: ProjectSummary | null = snapshot.project): ClassType {
+  return project?.classType ?? "owl";
 }
 
 /** Wait for every registered flush; one failing does not stop the others,
@@ -514,6 +531,11 @@ export const projectStore = {
     const project = requireProject();
     const target = doc ?? snapshot.activeDoc;
     const result = await runCommand(project.id, target, name, args);
+    // The kind a class was made as is the project's next default (5.6): the
+    // server has written it to the manifest; the summary here follows.
+    if (result.classType && snapshot.project?.id === project.id && defaultClassType() !== result.classType) {
+      set({ project: { ...snapshot.project, classType: result.classType } });
+    }
     if (!snapshot.documents.some((d) => d.doc === target)) {
       // The first shape command made shapes.ttl (shacl-authoring 8): track
       // it from a fresh open, as Add shapes.ttl does.

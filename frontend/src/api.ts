@@ -63,6 +63,8 @@ import type {
   CanvasLayout,
   CanvasView,
   SharePlan,
+  ClassType,
+  ClassTypePlan,
   ApprovalRequest,
   ChangeResult,
   DeleteImpact,
@@ -900,6 +902,19 @@ export function planShare(
     headers: JSON_WRITE,
     body: JSON.stringify({ command: "ShareDomain", args: cls ? { property, class: cls } : { property }, dryRun: true }),
   }).then((r) => handle<{ dryRun: true; plan: SharePlan; revision: number }>(r));
+}
+
+// SetClassType's dry run (attribute-reuse 5.7): what goes, nothing changed.
+export function planClassType(
+  pid: string,
+  cls: string,
+  type: ClassType,
+): Promise<{ dryRun: true; plan: ClassTypePlan; revision: number }> {
+  return send(documentUrl(pid, "model", "/commands"), {
+    method: "POST",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ command: "SetClassType", args: { class: cls, type }, dryRun: true }),
+  }).then((r) => handle<{ dryRun: true; plan: ClassTypePlan; revision: number }>(r));
 }
 
 /** The 409 of a create whose name is a property of its kind already. */

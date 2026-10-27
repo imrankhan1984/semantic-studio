@@ -14,7 +14,9 @@ SUMMARY
     (axioms-and-reasoning 5.9) are RulesBlock, between its kinds and its
     attributes and relationships. A class's attributes and relationships
     stand in three groups (attribute-reuse 5.3): its own, those shared with
-    other classes, and those it has through a parent.
+    other classes, and those it has through a parent. Its *Kind of class*,
+    OWL or RDFS, is ClassKindBlock (attribute-reuse 5.7), above its rules,
+    and *Add subclass* offers the same choice for the class it makes (5.6).
 
 BASIC IDEA
     Each list names what is there, as links that select it, with Remove where
@@ -56,10 +58,11 @@ import { structureOf, type EntityModel, type Ref } from "../modeling/entity";
 import { projectStore, useProjectSelector } from "../state/projectStore";
 import type { AlreadyDefined, ClassProperty, ClassRules, ModelWarning, SearchKind } from "../types";
 import AttributeForm from "./AttributeForm";
+import ClassKindBlock from "./ClassKindBlock";
 import ConceptRelations from "./ConceptRelations";
 import { Block, type Runner } from "./EditParts";
 import EntityPicker from "./EntityPicker";
-import NewEntityForm from "./NewEntityForm";
+import NewEntityForm, { NewClassForm } from "./NewEntityForm";
 import RelationshipForm from "./RelationshipForm";
 import ReusePlan from "./ReusePlan";
 import RulesBlock from "./RulesBlock";
@@ -385,19 +388,21 @@ export default function EditStructure({
         <h5>Subclasses</h5>
         <Links refs={model.children} empty="No subclasses." onSelect={onSelect} />
         {open === "subclass" ? (
-          <NewEntityForm
+          <NewClassForm
             title={`New subclass of ${name}`}
             primaryLanguage={primaryLanguage}
             busy={busy}
             error={errors.subclass}
             onCancel={close}
-            onSubmit={({ name: label, iri: chosen }) =>
-              void create("subclass", "CreateClass", { label, parent: iri, iri: chosen })
+            onSubmit={({ name: label, iri: chosen, type }) =>
+              void create("subclass", "CreateClass", { label, parent: iri, iri: chosen, type })
             }
           />
         ) : (
           button("subclass", "Add subclass")
         )}
+
+        {rules?.classType && <ClassKindBlock iri={iri} name={name} classType={rules.classType} runner={runner} />}
 
         {rules && <RulesBlock iri={iri} name={name} rules={rules} runner={runner} onSelect={onSelect} />}
 

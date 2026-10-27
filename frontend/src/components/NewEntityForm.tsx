@@ -42,6 +42,11 @@ INPUTS / INPUT SOURCES (props)
       the name field still creates; the suggestions are buttons between the
       name and More options, and a polite live region says how many match,
       never the list.
+    - classKind: for a new class (attribute-reuse 5.6), the *Kind of
+      class* radio group under the name, its default the project's last
+      choice; onSubmit then carries `type`. NewClassForm is the form with
+      its own choice, mounted when it opens, so a cancelled choice or a
+      default changed meanwhile never carries over (code review).
 
 EXPECTED OUTPUT
     - The form; one onSubmit per Create.
@@ -51,15 +56,19 @@ EXPECTED OUTPUT
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ALREADY_HERE, useOn } from "../modeling/sentences";
 import { DATATYPES } from "../modeling/values";
+import type { ClassType } from "../types";
+import ClassKindChoice, { useClassKind, type ClassKind } from "./ClassKindChoice";
 import { useSuggestions } from "./useSuggestions";
 
 export interface NewEntity {
   name: string;
   iri?: string;
   datatype?: string;
+  /** A class's kind (5.6), when the form offers the choice. */
+  type?: ClassType;
 }
 
-interface Props {
+export interface NewEntityFormProps {
   title: string;
   primaryLanguage: string;
   datatypes?: boolean;
@@ -86,6 +95,8 @@ interface Props {
   /** A create refused because the name is a property already (5.1's 409):
    *  its sentence, and the same choice the suggestions give. */
   existing?: { sentence: string; className: string; onUse: () => void; onAnother: () => void } | null;
+  /** A new class: OWL or RDFS (attribute-reuse 5.6). */
+  classKind?: ClassKind;
 }
 
 export default function NewEntityForm({
@@ -106,7 +117,8 @@ export default function NewEntityForm({
   onMoreChange,
   suggest,
   existing = null,
-}: Props) {
+  classKind,
+}: NewEntityFormProps) {
   const id = useId();
   const [ownName, setOwnName] = useState("");
   // Held outside when the caller shares it (the side panel and the canvas).
@@ -132,6 +144,7 @@ export default function NewEntityForm({
       name: name.trim(),
       ...(iri.trim() ? { iri: iri.trim() } : {}),
       ...(datatypes ? { datatype } : {}),
+      ...(classKind ? { type: classKind.value } : {}),
     });
   };
 
@@ -190,6 +203,7 @@ export default function NewEntityForm({
           </p>
         )
       )}
+      {classKind && <ClassKindChoice {...classKind} busy={busy} />}
       {suggest && suggestions.length > 0 && !existing && (
         <div className="reuse-suggestions">
           <p className="edit-field-label">{ALREADY_HERE}</p>
@@ -275,4 +289,11 @@ export default function NewEntityForm({
       </div>
     </form>
   );
+}
+
+/** The form for a new class, holding its own *Kind of class*: mounted when
+ *  it opens, so it starts on the project's default every time. */
+export function NewClassForm(props: Omit<NewEntityFormProps, "classKind">) {
+  const classKind = useClassKind();
+  return <NewEntityForm {...props} classKind={classKind} />;
 }

@@ -58,6 +58,17 @@ BASIC IDEA
     union's blank nodes with it. A create naming a property of the same kind
     is AlreadyDefined (409), so the form can offer to use it instead.
 
+    Each class is an OWL class or an RDFS class (attribute-reuse 5.6 to
+    5.8, D-117), typed as exactly one. CreateClass takes the kind, the
+    project's last choice when none is sent, and a choice of the other kind
+    becomes the manifest's classType: a manifest write, never part of the
+    step. SetClassType changes it: to OWL replaces rdfs:Class, losing
+    nothing; to RDFS takes the class's restrictions, disjointness and
+    equivalence in the same step, and its dry run lists them first. A
+    member of a union domain, or of a group of disjoint classes, is refused,
+    as converting either would change other classes too. No command writes
+    a rule, a disjointness or an equivalence about an RDFS class.
+
     Examples (shacl-authoring 5.8) are individuals of the model's classes,
     made so a shape has something to check: CreateExample types one with its
     class and owl:NamedIndividual, and SetExampleValue, AddExampleValue and
@@ -572,6 +583,9 @@ class Change:
     # the interface can select it.
     created: Optional[URIRef] = None
     renamed: Optional[tuple] = None
+    # The kind of class a CreateClass chose (D-117): the project's next
+    # default, a manifest write and never part of the step.
+    class_type: Optional[str] = None
 
 
 class Context:
@@ -751,17 +765,35 @@ def _label_triples(ctx: Context, iri: URIRef, predicate: URIRef, lang: str) -> l
     ]
 
 
+# A class is one of the two, and typed as exactly one (D-117): OWL 2 DL
+# declares a class only by owl:Class, and rdfs:Class beside it says nothing.
+CLASS_TYPES = {"owl": OWL.Class, "rdfs": RDFS.Class}
+CLASS_WORDS = {"owl": sentences.a("OWL class"), "rdfs": sentences.a("RDFS class")}
+
+
+def _class_type_arg(ctx: Context, a: dict) -> str:
+    kind = a.get("type")
+    if kind is None:
+        return ctx.manifest.get("classType", "owl")
+    if kind not in CLASS_TYPES:
+        raise CommandError('The kind of class is "owl" or "rdfs".')
+    return kind
+
+
 def cmd_create_class(ctx: Context, a: dict) -> Change:
     label = ctx.primary_label(a)
     iri = ctx.minted(a, label, lower_first=False)
+    kind = _class_type_arg(ctx, a)
     ctx.require_new(iri)
-    adds = [(iri, RDF.type, OWL.Class), (iri, RDFS.label, Literal(label, lang=ctx.primary))]
+    adds = [(iri, RDF.type, CLASS_TYPES[kind]), (iri, RDFS.label, Literal(label, lang=ctx.primary))]
     if a.get("parent"):
         parent = ctx.iri(a["parent"], "parent class")
         ctx.require(parent, "class")
         adds.append((iri, RDFS.subClassOf, parent))
     adds += _definition(ctx, iri, a)
-    return _created(_change(ctx.graph, f"Created class {label}", adds), iri)
+    change = _created(_change(ctx.graph, f"Created class {label}", adds), iri)
+    change.class_type = kind
+    return change
 
 
 def _definition(ctx: Context, iri: URIRef, a: dict) -> list:
@@ -1955,6 +1987,29 @@ def _own_class(ctx: Context, a: dict, key: str = "class") -> URIRef:
     return cls
 
 
+def _owl_only(ctx: Context, *classes) -> None:
+    """No command writes an OWL statement about an RDFS class (D-117): a
+    rule, a disjointness or an equivalence names an OWL class only, since
+    OWL 2 DL does not read rdfs:Class alone as a class at all."""
+    for cls in classes:
+        if axioms.kind_of(_view(ctx), ctx.graph, cls) == "rdfs":
+            raise CommandError(_rdfs_rule_refusal(_rule_name(ctx, cls)))
+
+
+def _owl_filler(ctx: Context, content: axioms.Content) -> None:
+    """A rule's class at the other end -- *some*, *only*, a qualified
+    count's class -- is named in an OWL restriction too, so it must be an
+    OWL class (D-117, 5.0 row 7; the Stage B review). A *has value* names a
+    thing, and a type of value is no class: neither is asked."""
+    filler = content.filler
+    if content.kind != "value" and isinstance(filler, URIRef) and not axioms.is_datatype(filler):
+        _owl_only(ctx, filler)
+
+
+def _rdfs_rule_refusal(name: str) -> str:
+    return f"Rules need an OWL class; RDFS has no words for them. Make {name} an OWL class first."
+
+
 def _view(ctx: Context) -> Graph:
     """The document with its imports when they are resolved: a property, a
     filler or a chain may be an import's (5.10, allowed)."""
@@ -2132,7 +2187,9 @@ def cmd_add_restriction(ctx: Context, a: dict) -> Change:
     """One sentence of 5.8 on a class, in its Turtle shape (5.10)."""
     _rules_doc(ctx)
     cls = _own_class(ctx, a)
+    _owl_only(ctx, cls)
     content = _restriction_args(ctx, a)
+    _owl_filler(ctx, content)
     _check_restriction(ctx, cls, content)
     return _change(
         ctx.graph, f"Added a rule on {_rule_name(ctx, content.property)} to {ctx.name(cls)}",
@@ -2145,9 +2202,11 @@ def cmd_replace_restriction(ctx: Context, a: dict) -> Change:
     one undo step. The new one is checked with the old one set aside."""
     _rules_doc(ctx)
     cls = _own_class(ctx, a)
+    _owl_only(ctx, cls)
     old_key = _restriction_key(ctx, a.get("restriction"))
     predicate, node = _found(ctx, cls, old_key)
     content = _restriction_args(ctx, a)
+    _owl_filler(ctx, content)
     old = next(c for p, n, c in axioms.contents(ctx.graph, cls) if n == node)
     if old.same(content):
         raise CommandError("That would change nothing.")
@@ -2173,6 +2232,7 @@ def _class_pair(ctx: Context, a: dict, predicate) -> tuple[URIRef, URIRef]:
     _rules_doc(ctx)
     first = _own_class(ctx, a, "a")
     second = _rule_class(ctx, a.get("b"), "class")
+    _owl_only(ctx, first, second)
     refusal = modeling_checks.pair_refusal(_view(ctx), first, second, predicate, lambda i: _rule_name(ctx, i))
     if refusal:
         raise CommandError(refusal)
@@ -2242,6 +2302,133 @@ def cmd_remove_equivalent_class(ctx: Context, a: dict) -> Change:
     )
 
 
+# --- OWL or RDFS for a class (attribute-reuse 5.7, D-117) ----------------------------
+
+
+_QUANTITY = {"some": "some", "only": "only", "exactly": "exactly", "atLeast": "at least", "atMost": "at most"}
+
+
+def _rules_naming(ctx: Context, cls: URIRef) -> list[tuple]:
+    """(subject, Content) for every rule of another class in the document
+    whose class at the other end is `cls`, in IRI order."""
+    g = ctx.graph
+    subjects = {s for s in (*g.subjects(RDFS.subClassOf), *g.subjects(OWL.equivalentClass))
+                if isinstance(s, URIRef) and s != cls}
+    return [
+        (s, content) for s in sorted(subjects, key=str) for _, _, content in axioms.contents(g, s)
+        if content.kind != "value" and content.filler == cls
+    ]
+
+
+def _rule_words(ctx: Context, subject: URIRef, content: axioms.Content) -> str:
+    """A rule in the person's names for a refusal: *Every Manager manages
+    some Team*, through the one verb rule (sentences.py)."""
+    name = _share_name(ctx)
+    count = f" {content.n}" if content.kind in axioms.COUNT_KINDS else ""
+    said = f"{sentences.verb(name(content.property))} {_QUANTITY[content.kind]}{count} {name(content.filler)}"
+    if content.form == "every":
+        return f"Every {name(subject)} {said}"
+    return f"{sentences.a(name(subject))} is whatever {said}"
+
+
+def _names(words: list) -> str:
+    """*Employee and Manager*, *Employee, Manager and Contractor*."""
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def class_type_plan(ctx: Context, a: dict) -> dict:
+    """SetClassType's dry run: what the class becomes, what goes with it
+    because RDFS has no words for it, in the Rules block's items, or the
+    sentence that refuses the change. Decided here alone, so the form
+    says exactly what the command will do."""
+    return _class_type_plan(ctx, a)[0]
+
+
+def _class_type_plan(ctx: Context, a: dict) -> tuple[dict, list]:
+    """The plan, and the statements going to RDFS removes: owl_about read
+    once for both, so the list shown is the list taken (code review)."""
+    _rules_doc(ctx)
+    cls = _own_class(ctx, a)
+    to = a.get("type")
+    if to not in CLASS_TYPES:
+        raise CommandError('The kind of class is "owl" or "rdfs".')
+    view, name = _view(ctx), _share_name(ctx)
+    c = name(cls)
+    now = axioms.class_type(ctx.graph, cls)
+    plan = {"class": {"iri": str(cls), "label": c}, "type": now, "to": to, "goes": [], "refused": None}
+    if now == to:
+        plan["refused"] = f"{c} is {CLASS_WORDS[to]} already."
+        return plan, []
+    if to == "owl":
+        return plan, []
+    # A member of a union domain: converting the union too would change two
+    # things the person did not ask about (5.7), so the change is refused.
+    for prop, reading in sorted(axioms.domains(view).items(), key=lambda pr: str(pr[0])):
+        if reading.form == "union" and cls in reading.classes:
+            members = _names([name(m) for m in reading.classes])
+            plan["refused"] = (
+                f"{name(prop)} is shared by {members} in an OWL list, which an RDFS class cannot be part of. "
+                f"Give them a shared parent first, or keep {c} an OWL class."
+            )
+            return plan, []
+    # Another class's rule pointing at the class names it in an OWL
+    # restriction: refused, naming the rule, as a union member's is (the
+    # Stage B review). A rule on the class itself goes with it below.
+    for subject, content in _rules_naming(ctx, cls):
+        plan["refused"] = (
+            f"{_rule_words(ctx, subject, content)} names {c}, which an RDFS class cannot be part of. "
+            f"Remove that rule first, or keep {c} an OWL class."
+        )
+        return plan, []
+    # A group of disjoint classes names the others too; no command takes it
+    # apart (D-105), so it is the person's to change in Turtle. A group
+    # naming no other class still refuses, without a list (code review).
+    for _, members in axioms.disjoint_groups(ctx.graph):
+        if cls in members:
+            others = [name(m) for m in members if m != cls]
+            with_ = f" with {_names(others)}" if others else ""
+            plan["refused"] = (
+                f"{c} is disjoint{with_} through a group of classes written in Turtle, which RDFS has no "
+                f"words for. Take {c} out of the group in Turtle first, or keep {c} an OWL class."
+            )
+            return plan, []
+    # Any other OWL list of the document naming the class (a disjoint union,
+    # another class's union or intersection) is another class's statement:
+    # refused, as a union domain is, never rewritten (code review). The
+    # class's own lists go with it below.
+    for owner, predicate in axioms.lists_naming(ctx.graph, cls):
+        if owner == cls:
+            continue
+        where = f"of {name(owner)}" if owner is not None else "written in Turtle"
+        plan["refused"] = (
+            f"{c} is named in an OWL list {where} ({ctx.short(predicate)}), which an RDFS class cannot be "
+            f"part of. Change it in Turtle first, or keep {c} an OWL class."
+        )
+        return plan, []
+    plan["goes"], statements = axioms.owl_about(view, ctx.graph, cls, name)
+    return plan, statements
+
+
+def cmd_set_class_type(ctx: Context, a: dict) -> Change:
+    """An OWL class made RDFS, or the reverse, as one undo step (5.7).
+    Never both types (5.0 row 7): going to OWL replaces rdfs:Class with
+    owl:Class and loses nothing; going to RDFS takes the class's OWL
+    statements -- restrictions, disjointness, equivalence, any other OWL
+    expression on it -- and their blank nodes with the type."""
+    plan, statements = _class_type_plan(ctx, a)
+    if plan["refused"]:
+        raise CommandError(plan["refused"])
+    cls, to = URIRef(plan["class"]["iri"]), plan["to"]
+    other = RDFS.Class if to == "owl" else OWL.Class
+    removes = {(cls, RDF.type, other)}
+    if to == "rdfs":
+        removes |= set(statements)
+        removes |= _bnode_closure(ctx.graph, [o for _, _, o in statements], removes)
+    return _change(
+        ctx.graph, f"Made {plan['class']['label']} {CLASS_WORDS[to]}", [(cls, RDF.type, CLASS_TYPES[to])], removes
+    )
+
+
 AXIOM_COMMANDS = {
     "AddRestriction": cmd_add_restriction,
     "ReplaceRestriction": cmd_replace_restriction,
@@ -2250,6 +2437,7 @@ AXIOM_COMMANDS = {
     "RemoveDisjointWith": cmd_remove_disjoint_with,
     "AddEquivalentClass": cmd_add_equivalent_class,
     "RemoveEquivalentClass": cmd_remove_equivalent_class,
+    "SetClassType": cmd_set_class_type,
 }
 
 
@@ -3081,9 +3269,12 @@ class EditingService:
             elif name == "ShareDomain" and dry_run:
                 # The reuse plan (attribute-reuse 5.2): nothing changes.
                 return {"dryRun": True, "plan": share_plan(ctx, args), "revision": document.ontology.revision}
+            elif name == "SetClassType" and dry_run:
+                # What goes, before anything does (attribute-reuse 5.7).
+                return {"dryRun": True, "plan": class_type_plan(ctx, args), "revision": document.ontology.revision}
             else:
                 if dry_run:
-                    raise CommandError("Only DeleteEntity and ShareDomain have a dry run.")
+                    raise CommandError("Only DeleteEntity, ShareDomain and SetClassType have a dry run.")
                 change = handler(ctx, args)
                 impact = None
             if not change.added and not change.removed:
@@ -3093,6 +3284,7 @@ class EditingService:
             self._push(document, change, before)
             if change.renamed:
                 self._move_layout(document, *change.renamed)
+            class_type = self._remember_class_type(pid, change)
             result = {
                 "revision": document.ontology.revision,
                 "label": change.label,
@@ -3103,7 +3295,28 @@ class EditingService:
                 result["impact"] = impact
             if change.created is not None:
                 result["created"] = str(change.created)
+            if class_type is not None:
+                result["classType"] = class_type
             return result
+
+    def _remember_class_type(self, pid: str, change: Change) -> Optional[str]:
+        """The kind a new class was made as is the project's next default
+        (5.6), kept as the manifest's classType and written only when it
+        changes. A manifest write, as a kind change is (D-089): no revision,
+        no dirty flag, and nothing an undo takes back. None for any other
+        command; else the default now."""
+        if change.class_type is None:
+            return None
+        before = self.projects.manifest(pid).get("classType", "owl")
+        if before != change.class_type:
+            try:
+                self.projects.update_manifest(pid, classType=change.class_type)
+            except OSError:
+                # The class is made and its step pushed: a default not kept
+                # must not turn that into a failure the person would retry
+                # (code review). The answer says the default is unchanged.
+                return before
+        return change.class_type
 
     def _first_shapes_command(self, pid: str, handler, args: dict, dry_run: bool) -> None:
         """The first shape command creates shapes.ttl (shacl-authoring 8) --
@@ -3112,7 +3325,7 @@ class EditingService:
         file behind, and the file is made under the service lock, so two
         first commands at once make it once (both found in review)."""
         if dry_run:
-            raise CommandError("Only DeleteEntity and ShareDomain have a dry run.")
+            raise CommandError("Only DeleteEntity, ShareDomain and SetClassType have a dry run.")
         model_doc = self._open[pid]["model"]
         manifest = self.projects.manifest(pid)
         with model_doc.lock:
