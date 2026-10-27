@@ -20,6 +20,10 @@ BASIC IDEA
     Either change is one command and one undo step, through the form's
     runner, and the live region says what the class is now.
 
+    A list is for one class, one kind and one revision: any of them moving
+    closes it, and an answer to an older question is dropped, so the list
+    shown is always the one the button will act on.
+
     Focus: the first button takes it when the list or the refusal arrives
     (as the reuse plan's does, 5.5); Cancel, and a finished change, give it
     back to the block's button, drawn again once the form refetches.
@@ -44,7 +48,7 @@ import {
   kindChangedAnnouncement,
   makeItKind,
 } from "../modeling/sentences";
-import { projectStore } from "../state/projectStore";
+import { projectStore, useProjectSelector } from "../state/projectStore";
 import type { ClassType, ClassTypePlan } from "../types";
 import type { Runner } from "./EditParts";
 
@@ -63,9 +67,15 @@ export default function ClassKindBlock({ iri, name, classType, runner }: Props) 
   const opener = useRef<HTMLButtonElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const other: ClassType = classType === "owl" ? "rdfs" : "owl";
-  // A plan is for one class and one kind: another class, or a change made
-  // elsewhere (undo, Turtle), starts afresh.
-  useEffect(() => setAsking(null), [iri, classType]);
+  // A plan is for one class, one kind and one revision: another class, or
+  // any change made meanwhile (an undo, Turtle), starts afresh, and an
+  // answer to an older question is dropped (code review).
+  const revision = useProjectSelector((s) => s.documents.find((d) => d.doc === "model")?.revision ?? 0);
+  const question = useRef(0);
+  useEffect(() => {
+    question.current++;
+    setAsking(null);
+  }, [iri, classType, revision]);
 
   const settled = asking !== null && asking !== "checking";
   useEffect(() => {
@@ -93,11 +103,12 @@ export default function ClassKindBlock({ iri, name, classType, runner }: Props) 
     const project = projectStore.getSnapshot().project;
     if (!project) return;
     setAsking("checking");
+    const asked = ++question.current;
     try {
       const answer = await planClassType(project.id, iri, other);
-      setAsking({ plan: answer.plan });
+      if (asked === question.current) setAsking({ plan: answer.plan });
     } catch (e) {
-      setAsking({ failed: e instanceof Error ? e.message : String(e) });
+      if (asked === question.current) setAsking({ failed: e instanceof Error ? e.message : String(e) });
     }
   };
 

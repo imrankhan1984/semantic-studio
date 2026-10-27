@@ -1716,3 +1716,43 @@ def test_no_command_writes_an_owl_statement_about_an_rdfs_class(kinds):
     # A file's OWL statement about an RDFS class can still be taken away.
     assert apply(pid, KIND_MODEL + "shop:Note owl:disjointWith shop:Team .\n").status_code == 200
     ok(pid, "RemoveDisjointWith", a=EX + "Note", b=EX + "Team")
+
+
+def test_set_class_type_refuses_any_other_owl_list_naming_the_class(kinds):
+    """Code review: a disjoint union or another class's union naming the
+    class is that class's statement, refused like a union domain; a group
+    naming no other class refuses with its sentence, never a 500."""
+    pid = kinds
+    cases = [
+        ("shop:Pet owl:disjointUnionOf ( shop:Team shop:Note ) .",
+         "Team is named in an OWL list of Pet (owl:disjointUnionOf)"),
+        ("shop:Pet owl:equivalentClass [ a owl:Class ; owl:unionOf ( shop:Team shop:Note ) ] .",
+         "Team is named in an OWL list of Pet (owl:unionOf)"),
+        ("[] a owl:AllDisjointClasses ; owl:members ( shop:Team shop:Team ) .",
+         "Team is disjoint through a group of classes written in Turtle"),
+    ]
+    for line, start in cases:
+        assert apply(pid, KIND_MODEL + "shop:Pet a owl:Class .\n" + line + "\n").status_code == 200
+        before = graph_copy(pid)
+        plan = run(pid, "SetClassType", dry_run=True, **{"class": EX + "Team", "type": "rdfs"})
+        assert plan.status_code == 200, plan.text
+        assert plan.json()["plan"]["refused"].startswith(start), plan.json()["plan"]["refused"]
+        refused = run(pid, "SetClassType", **{"class": EX + "Team", "type": "rdfs"})
+        assert refused.status_code == 422 and refused.json()["detail"].startswith(start)
+        assert isomorphic(doc(pid).graph, before)
+    # The class's own list goes with it, and refuses nothing.
+    assert apply(pid, KIND_MODEL + "shop:Team owl:disjointUnionOf ( shop:Note shop:Boss ) .\n").status_code == 200
+    ok(pid, "SetClassType", **{"class": EX + "Team", "type": "rdfs"})
+    assert not list(doc(pid).graph.subjects(OWL.disjointUnionOf, None))
+
+
+def test_a_manifest_that_cannot_be_written_does_not_fail_the_create(pid, monkeypatch):
+    """Code review: the class is made and its step pushed before the default
+    is kept, so a failed write answers 200 with the default unchanged."""
+    def refuse(*_a, **_k):
+        raise OSError("locked")
+
+    monkeypatch.setattr(project_store, "update_manifest", refuse)
+    created = ok(pid, "CreateClass", label="Receipt", type="rdfs")
+    assert created["classType"] == "owl"
+    assert _types(pid, "Receipt") == {RDFS.Class}

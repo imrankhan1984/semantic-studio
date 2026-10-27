@@ -443,6 +443,6 @@ hr:hasName rdfs:domain <{core}Contractor> .
     client.put(f"/api/projects/{pid}/documents/model/source", json={"text": source + "\n<http://example.org/hr> owl:imports <http://example.org/extra> .\n"})
     client.post(f"/api/ontologies/{pid}-model/imports/mapping", json={"iri": "http://example.org/extra", "ontologyId": lib})
     details = client.get(f"/api/ontologies/{pid}-model/node", params={"iri": HR + "hasName", "imports": "true"}).json()
-    assert details["domain"] == {"form": "one", "classes": [{"iri": HR + "Employee", "label": "Employee", "type": "owl"}]}
+    assert details["domain"] == {"form": "one", "classes": [{"iri": HR + "Employee", "label": "Employee", "type": "owl", "own": True}]}
     # The view reads both lines, and warns of them.
     assert any(w.get("code") == "separate" and "fix" not in w for w in details["warnings"])

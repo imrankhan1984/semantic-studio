@@ -65,7 +65,9 @@ EXPECTED OUTPUT
       which properties a class has, and how (own, shared, both, through).
     - reuse_plan(view, own, prop, cls, name) -> the case of 5.2 for using a
       property on one more class, with the choices it offers.
-    - class_type(graph, cls) -> owl or rdfs; owl_about(view, own, cls, name)
+    - class_type(graph, cls) -> owl or rdfs, and kind_of(view, own, cls) as
+      the document says it; lists_naming(graph, cls) -> the OWL lists that
+      name a class; owl_about(view, own, cls, name)
       -> what an RDFS class cannot carry (attribute-reuse 5.7, D-117), as
       the Rules block's items and the statements holding them.
 
@@ -803,6 +805,47 @@ def class_type(g: Graph, cls) -> str:
 # What else, beside a restriction, disjointness and equivalence, says in OWL
 # what a class is: an RDFS class has no words for any of it (D-117).
 _OWL_ON_CLASS = (OWL.disjointUnionOf, OWL.unionOf, OWL.intersectionOf, OWL.oneOf, OWL.complementOf, OWL.hasKey)
+
+
+def kind_of(view: Graph, own: Graph, cls) -> str:
+    """A class's kind as the person can change it (D-117): the document's
+    own typing when it defines the class, else the view's. An import typing
+    the same IRI owl:Class does not make the document's rdfs:Class an OWL
+    class, which SetClassType, the rule commands and /node must agree on
+    (code review)."""
+    return class_type(own if defined(own, cls) else view, cls)
+
+
+# The OWL lists that name classes: a member of one is in an OWL statement.
+_CLASS_LISTS = (OWL.unionOf, OWL.intersectionOf, OWL.disjointUnionOf, OWL.members)
+
+
+def lists_naming(g: Graph, cls) -> list[tuple]:
+    """Every OWL class list in `g` that names `cls`, as (owner, predicate):
+    the named node the list hangs from, through blank nodes, or None for a
+    list nothing named holds (an owl:AllDisjointClasses). The walks stop
+    on a revisit, as a loaded list is attacker-shaped (Section 9)."""
+    found = []
+    for cell in set(g.subjects(RDF.first, cls)):
+        head, seen = cell, {cell}
+        while True:
+            before = next((s for s in g.subjects(RDF.rest, head) if s not in seen), None)
+            if before is None:
+                break
+            seen.add(before)
+            head = before
+        for holder, predicate in g.subject_predicates(head):
+            if predicate not in _CLASS_LISTS:
+                continue
+            owner, climbed = holder, {holder}
+            while isinstance(owner, BNode):
+                up = next((s for s, _ in g.subject_predicates(owner) if s not in climbed), None)
+                if up is None:
+                    break
+                climbed.add(up)
+                owner = up
+            found.append((owner if isinstance(owner, URIRef) else None, predicate))
+    return found
 
 
 def owl_about(view: Graph, own: Graph, cls, name: Name) -> tuple[list[dict], list]:

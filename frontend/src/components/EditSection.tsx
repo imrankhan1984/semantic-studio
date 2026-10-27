@@ -76,12 +76,11 @@ import { otherKindReason } from "../modeling/sentences";
 import { describeValue, typeOfValue, valueProblem, toValue } from "../modeling/values";
 import type { CanvasSet, NodeDetails, ProjectKind } from "../types";
 import AnnotationAdder, { ValueInput } from "./AnnotationAdder";
-import { useClassKind } from "./ClassKindChoice";
 import DeleteDialog from "./DeleteDialog";
 import { Block, InlineText, useCopy, useReturnFocus, useRunner, type Runner } from "./EditParts";
 import EditStructure from "./EditStructure";
 import ExampleForm from "./ExampleForm";
-import NewEntityForm from "./NewEntityForm";
+import NewEntityForm, { NewClassForm } from "./NewEntityForm";
 import { PropertyHead } from "./RelationshipForm";
 
 interface Props {
@@ -131,8 +130,6 @@ export default function EditSection({
   const [deleting, setDeleting] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [subclassOfImport, setSubclassOfImport] = useState(false);
-  // The import picker's Add subclass makes a class too (attribute-reuse 5.6).
-  const importSubKind = useClassKind();
   const [addingExample, setAddingExample] = useState(false);
   const iri = details.iri;
   const name = details.label;
@@ -162,12 +159,11 @@ export default function EditSection({
         </p>
         {model.kind === "class" &&
           (subclassOfImport ? (
-            <NewEntityForm
+            <NewClassForm
               title={`New subclass of ${name}`}
               primaryLanguage={primaryLanguage}
               busy={busy}
               error={errors.importSub}
-              classKind={importSubKind}
               onCancel={() => {
                 setSubclassOfImport(false);
                 returnToImport();

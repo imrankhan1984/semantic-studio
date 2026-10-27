@@ -195,6 +195,25 @@ export default function RelationshipForm({
   warnings = [],
 }: Props) {
   const { busy, errors, run, clear } = runner;
+  // The start's kind (attribute-reuse 5.8). After *Make X an OWL class*
+  // the offer gives way to *add a rule*, which takes the focus the pressed
+  // button had, once the refetch has drawn it (code review).
+  const startKind = model.domain ? model.domainReading?.classes.find((c) => c.iri === model.domain!.iri) : undefined;
+  const ruleLink = useRef<HTMLButtonElement>(null);
+  const focusRule = useRef(false);
+  useEffect(() => {
+    if (focusRule.current && startKind?.type !== "rdfs" && ruleLink.current) {
+      focusRule.current = false;
+      ruleLink.current.focus();
+    }
+  });
+  const makeStartOwl = async () => {
+    if (busy || !model.domain) return;
+    const name = model.domain.label;
+    if (await run("kind", "SetClassType", { class: model.domain.iri, type: "owl" }, () => kindChangedAnnouncement(name, "owl"))) {
+      focusRule.current = true;
+    }
+  };
   const [open, setOpen] = useState<Open>(null);
   const [more, setMore] = useState(() => CHARACTERISTICS.some((c) => c.more && model.characteristics.has(c.id)));
   const [inverseName, setInverseName] = useState("");
@@ -485,24 +504,22 @@ export default function RelationshipForm({
       </Block>
 
       <Block title="Pointers">
-        {model.domain && model.domainReading?.classes[0]?.type === "rdfs" ? (
+        {model.domain && startKind?.type === "rdfs" ? (
           // attribute-reuse 5.8: an RDFS class has no words for a rule, so
-          // the pointer offers to make it an OWL class first.
+          // the pointer offers to make it an OWL class first; an imported
+          // class is not this document's to change, so the line alone.
           <p className="detail-note">
             {RULES_NEED_OWL}{" "}
-            <button
-              type="button"
-              className="link-btn"
-              aria-disabled={busy}
-              onClick={() =>
-                !busy &&
-                void run("kind", "SetClassType", { class: model.domain!.iri, type: "owl" }, () =>
-                  kindChangedAnnouncement(model.domain!.label, "owl"),
-                )
-              }
-            >
-              {makeClassKind(model.domain.label, "owl")}
-            </button>
+            {startKind.own && (
+              <button
+                type="button"
+                className="link-btn"
+                aria-disabled={busy}
+                onClick={() => void makeStartOwl()}
+              >
+                {makeClassKind(model.domain.label, "owl")}
+              </button>
+            )}
             {errors.kind && <span className="edit-error"> {errors.kind}</span>}
           </p>
         ) : model.domain ? (
@@ -511,6 +528,7 @@ export default function RelationshipForm({
           <p className="detail-note">
             To say "every {model.domain.label} has at least one {to ?? "…"}",{" "}
             <button
+              ref={ruleLink}
               type="button"
               className="link-btn"
               onClick={() => {

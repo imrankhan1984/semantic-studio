@@ -59,11 +59,10 @@ import { projectStore, useProjectSelector } from "../state/projectStore";
 import type { AlreadyDefined, ClassProperty, ClassRules, ModelWarning, SearchKind } from "../types";
 import AttributeForm from "./AttributeForm";
 import ClassKindBlock from "./ClassKindBlock";
-import { useClassKind } from "./ClassKindChoice";
 import ConceptRelations from "./ConceptRelations";
 import { Block, type Runner } from "./EditParts";
 import EntityPicker from "./EntityPicker";
-import NewEntityForm from "./NewEntityForm";
+import NewEntityForm, { NewClassForm } from "./NewEntityForm";
 import RelationshipForm from "./RelationshipForm";
 import ReusePlan from "./ReusePlan";
 import RulesBlock from "./RulesBlock";
@@ -216,8 +215,6 @@ export default function EditStructure({
 }: Props) {
   const { busy, errors, run, clear } = runner;
   const [open, setOpen] = useState<Open>(null);
-  // Add subclass's kind of class (attribute-reuse 5.6).
-  const subKind = useClassKind();
   // The button each form was opened from, to give focus back to.
   const openers = useRef<Record<string, HTMLButtonElement | null>>({});
   const [range, setRange] = useState<Ref | null>(null);
@@ -391,12 +388,11 @@ export default function EditStructure({
         <h5>Subclasses</h5>
         <Links refs={model.children} empty="No subclasses." onSelect={onSelect} />
         {open === "subclass" ? (
-          <NewEntityForm
+          <NewClassForm
             title={`New subclass of ${name}`}
             primaryLanguage={primaryLanguage}
             busy={busy}
             error={errors.subclass}
-            classKind={subKind}
             onCancel={close}
             onSubmit={({ name: label, iri: chosen, type }) =>
               void create("subclass", "CreateClass", { label, parent: iri, iri: chosen, type })

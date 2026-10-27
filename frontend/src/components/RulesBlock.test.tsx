@@ -376,3 +376,25 @@ describe("an RDFS class (attribute-reuse 5.8, AC-13)", () => {
     expect(document.querySelectorAll(".rules-block [disabled]").length).toBe(0);
   });
 });
+
+describe("an RDFS class, the code review's fixes (attribute-reuse 5.8)", () => {
+  it("after Make it an OWL class, focus goes to Add a rule once the refetch draws it", async () => {
+    await show(rulesOf([], { choices: null, classType: "rdfs" }));
+    const offer = screen.getByRole("button", { name: "Make Order an OWL class" });
+    offer.focus();
+    await act(async () => {
+      fireEvent.click(offer);
+    });
+    await refetch(rulesOf([], { classType: "owl" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add a rule" }));
+  });
+
+  it("keeps its refusal under its own key, apart from the Kind of class block's", async () => {
+    runCommand.mockRejectedValueOnce(new Error("Order is an OWL class already."));
+    await show(rulesOf([], { choices: null, classType: "rdfs" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Make Order an OWL class" }));
+    });
+    expect(screen.getAllByText("Order is an OWL class already.")).toHaveLength(1);
+  });
+});

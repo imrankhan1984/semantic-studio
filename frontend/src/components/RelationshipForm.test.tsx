@@ -192,7 +192,7 @@ describe("found in code review", () => {
 
 describe("Pointers, from an RDFS class (attribute-reuse 5.8, AC-13)", () => {
   it("offers to make the start an OWL class in place of Add a rule", async () => {
-    await show({ form: "one", classes: [{ ...ref("Employee"), type: "rdfs" }] });
+    await show({ form: "one", classes: [{ ...ref("Employee"), type: "rdfs", own: true }] });
     expect(screen.queryByRole("button", { name: "add a rule to Employee" })).toBeNull();
     expect(screen.getByText(/Rules need an OWL class; RDFS has no words for them\./)).toBeTruthy();
     await act(async () => screen.getByRole("button", { name: "Make Employee an OWL class" }).click());
@@ -204,5 +204,28 @@ describe("Pointers, from an RDFS class (attribute-reuse 5.8, AC-13)", () => {
     await show({ form: "one", classes: [{ ...ref("Employee"), type: "owl" }] });
     expect(screen.getByRole("button", { name: "add a rule to Employee" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Make Employee an OWL class" })).toBeNull();
+  });
+});
+
+describe("Pointers, the code review's fixes (attribute-reuse 5.8)", () => {
+  it("an imported RDFS start gets the line without an offer it could not keep", async () => {
+    await show({ form: "one", classes: [{ ...ref("Employee"), type: "rdfs", own: false }] });
+    expect(screen.getByText(/Rules need an OWL class; RDFS has no words for them\./)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Make Employee an OWL class" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "add a rule to Employee" })).toBeNull();
+  });
+
+  it("after the offer, focus goes to add a rule once the refetch draws it, never to the page", async () => {
+    const rdfs = propertyDetails("objectProperty", { form: "one", classes: [{ ...ref("Employee"), type: "rdfs", own: true }] });
+    const owl = propertyDetails("objectProperty", { form: "one", classes: [{ ...ref("Employee"), type: "owl", own: true }] });
+    let rerender: (ui: React.ReactElement) => void = () => undefined;
+    await act(async () => {
+      rerender = render(<Harness details={rdfs} warnings={[]} />).rerender;
+    });
+    const offer = screen.getByRole("button", { name: "Make Employee an OWL class" });
+    offer.focus();
+    await act(async () => offer.click());
+    await act(async () => rerender(<Harness details={owl} warnings={[]} />));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "add a rule to Employee" }));
   });
 });

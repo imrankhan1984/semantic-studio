@@ -1240,3 +1240,26 @@ describe("concept relations (AC-9)", () => {
     ]);
   });
 });
+
+describe("Add subclass's kind of class (attribute-reuse 5.6, code review)", () => {
+  it("starts on the project's default each time it opens, never a cancelled choice", async () => {
+    await renderForm(invoice());
+    fireEvent.click(screen.getByRole("button", { name: "Add subclass" }));
+    fireEvent.click(screen.getByRole("radio", { name: "RDFS class" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add subclass" }));
+    expect((screen.getByRole("radio", { name: "OWL class" }) as HTMLInputElement).checked).toBe(true);
+  });
+});
+
+describe("an RDFS class's form (attribute-reuse 5.7, 5.8, code review)", () => {
+  it("shows a refused Make it an OWL class once, under the block that was pressed", async () => {
+    runCommand.mockRejectedValueOnce(new Error("Invoice is an OWL class already."));
+    await renderForm({ ...invoice(), rules: { items: [], warnings: [], choices: null, classType: "rdfs" } });
+    expect(document.querySelector(".class-kind-block")!.textContent).toContain("RDFS class");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Make Invoice an OWL class" }));
+    });
+    expect(screen.getAllByText("Invoice is an OWL class already.")).toHaveLength(1);
+  });
+});

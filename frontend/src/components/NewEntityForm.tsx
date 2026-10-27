@@ -44,7 +44,9 @@ INPUTS / INPUT SOURCES (props)
       never the list.
     - classKind: for a new class (attribute-reuse 5.6), the *Kind of
       class* radio group under the name, its default the project's last
-      choice; onSubmit then carries `type`.
+      choice; onSubmit then carries `type`. NewClassForm is the form with
+      its own choice, mounted when it opens, so a cancelled choice or a
+      default changed meanwhile never carries over (code review).
 
 EXPECTED OUTPUT
     - The form; one onSubmit per Create.
@@ -55,7 +57,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ALREADY_HERE, useOn } from "../modeling/sentences";
 import { DATATYPES } from "../modeling/values";
 import type { ClassType } from "../types";
-import ClassKindChoice, { type ClassKind } from "./ClassKindChoice";
+import ClassKindChoice, { useClassKind, type ClassKind } from "./ClassKindChoice";
 import { useSuggestions } from "./useSuggestions";
 
 export interface NewEntity {
@@ -66,7 +68,7 @@ export interface NewEntity {
   type?: ClassType;
 }
 
-interface Props {
+export interface NewEntityFormProps {
   title: string;
   primaryLanguage: string;
   datatypes?: boolean;
@@ -116,7 +118,7 @@ export default function NewEntityForm({
   suggest,
   existing = null,
   classKind,
-}: Props) {
+}: NewEntityFormProps) {
   const id = useId();
   const [ownName, setOwnName] = useState("");
   // Held outside when the caller shares it (the side panel and the canvas).
@@ -287,4 +289,11 @@ export default function NewEntityForm({
       </div>
     </form>
   );
+}
+
+/** The form for a new class, holding its own *Kind of class*: mounted when
+ *  it opens, so it starts on the project's default every time. */
+export function NewClassForm(props: Omit<NewEntityFormProps, "classKind">) {
+  const classKind = useClassKind();
+  return <NewEntityForm {...props} classKind={classKind} />;
 }

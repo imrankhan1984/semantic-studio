@@ -192,3 +192,22 @@ describe("Kind of class (5.7)", () => {
     expect(screen.getByRole("group").textContent).toContain("Manager becomes an RDFS class. Nothing else changes: it has no rules.");
   });
 });
+
+describe("Kind of class, the code review's fixes", () => {
+  it("drops a dry run's answer that arrives after the model moved", async () => {
+    let answer: (v: unknown) => void = () => undefined;
+    planClassType.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    await show("owl");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Make it an RDFS class" }));
+    });
+    // An undo elsewhere moves the revision while the question is out.
+    runCommand.mockResolvedValueOnce({ revision: 9, label: "Undid", state: { ...STATE, revision: 9 } });
+    await act(async () => {
+      await projectStore.command("SetLabel", {});
+    });
+    await act(async () => answer({ dryRun: true, plan: PLAN, revision: 2 }));
+    expect(screen.queryByRole("group")).toBeNull();
+    expect(screen.getByRole("button", { name: "Make it an RDFS class" })).toBeTruthy();
+  });
+});

@@ -544,8 +544,8 @@ def test_a_property_carries_its_domain_as_the_reader_reads_it(hr):
     domain = _project_node(hr, HR + "hasName")["domain"]
     # Each with its kind (attribute-reuse 5.8), for the pointer to a rule.
     assert domain == {"form": "union", "classes": [
-        {"iri": HR + "Manager", "label": "Manager", "type": "owl"},
-        {"iri": HR + "Contractor", "label": "Contractor", "type": "owl"},
+        {"iri": HR + "Manager", "label": "Manager", "type": "owl", "own": True},
+        {"iri": HR + "Contractor", "label": "Contractor", "type": "owl", "own": True},
     ]}
     assert _project_node(hr, HR + "badge")["domain"]["form"] == "separate"
 

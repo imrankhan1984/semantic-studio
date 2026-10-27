@@ -572,7 +572,8 @@ export interface DomainReading {
   form: DomainForm;
   // `type` on a project property's details (attribute-reuse 5.8): an RDFS
   // class's pointer offers to make it an OWL class before a rule.
-  classes: { iri: string; label: string; type?: ClassType }[];
+  // `own`: the document's own class, the only kind SetClassType changes.
+  classes: { iri: string; label: string; type?: ClassType; own?: boolean }[];
 }
 
 /** ShareDomain's dry run (attribute-reuse 5.2): the case the server

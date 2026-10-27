@@ -2312,3 +2312,72 @@ EXPECTED OUTPUT
   entity's links go to its 50 best-connected neighbours, the ones the
   budget draws first, and GraphView's merge keeps those whose other end is
   on the canvas, as it does for a neighbourhood.
+
+- **OWL or RDFS for each class** (2026-10-27, spec `attribute-reuse`
+  Stage B, backlog E-13, decision D-117). Every place that makes a class
+  offers *Kind of class*; a class's form changes it, listing first what
+  RDFS cannot carry; an RDFS class gets an offer to become an OWL class
+  wherever a rule would be begun.
+
+  **One type triple, never both.** OWL 2 DL declares a class only by
+  `owl:Class`, and `rdfs:Class` beside it says nothing (Mapping to RDF
+  Graphs, Section 3), so CreateClass writes the one chosen and SetClassType
+  swaps one for the other; a file typed both ways is read as OWL
+  (`axioms.class_type`, the canvas's and the tree's rule since D-107) and
+  made RDFS alone on a change. `test_editing.py` checks the type set
+  exactly after each.
+
+  **No command writes OWL about an RDFS class.** `_owl_only` runs before
+  AddRestriction, ReplaceRestriction, AddDisjointWith and
+  AddEquivalentClass, on both classes of a pair: `B owl:disjointWith A` is
+  as much about A as about B. Remove stays allowed, as it writes nothing,
+  and the Rules block keeps a file's OWL statement about an RDFS class
+  visible, read-only, with *Check it in data too* on its restrictions.
+
+  **`classType` is a manifest write.** It is the next form's default, not
+  the model, so `_remember_class_type` writes it after the command's step
+  is pushed, only when it differs (`"owl"` when absent), and an undo leaves
+  it: undoing a class does not undo a preference. The answer carries the
+  default and the project store's summary follows the server's, never a
+  guess in the browser.
+
+  **The dry run and the change read one function.** `axioms.owl_about`
+  answers both the items the dry run lists and the statements the change
+  removes, with their blank nodes swept by `_bnode_closure`; written twice,
+  the list could promise less than the change takes. It reads every OWL
+  expression on the class, not only 5.7's three kinds.
+
+  **A change that would rewrite another class is refused.** A member of a
+  union domain (5.7's sentence), a member of an `owl:AllDisjointClasses`
+  group (no command takes a group apart, D-105), and a class named in any
+  other OWL list of the document (`axioms.lists_naming`: another class's
+  union or intersection, a disjoint union) are refused, in the dry run as
+  well as the command, so the form shows the sentence instead of a button.
+  The class's own lists go with it instead.
+
+  **A class's kind is the document's own typing first.** `axioms.kind_of`
+  reads the document when it defines the class, else the view: an import
+  typing the same IRI `owl:Class` must not make the document's
+  `rdfs:Class` look like an OWL class to `/node` while SetClassType reads it
+  as RDFS, nor let a rule be written on it.
+
+  **Found in code review, fixed.** The relationship pointer offered *Make X
+  an OWL class* for an imported start, which SetClassType can only refuse:
+  `/node` now marks each domain class `own`, and an imported one gets the
+  line alone. A disjoint group naming no other class threw a 500 in the
+  dry run. Focus fell to the page after the offer in the Rules block and
+  the pointer: it now goes to *Add a rule* once the refetch draws it. The
+  Rules block and the Kind of class block shared one error key, so one
+  refusal showed twice. Add subclass held its choice for the form's life,
+  so a cancelled RDFS came back: `NewClassForm` holds it and is mounted
+  when the form opens. A dry run's answer is dropped once the class, its
+  kind or the revision has moved. owl_about ran twice per conversion. A
+  manifest that cannot be written no longer fails a CreateClass that has
+  already made the class.
+
+  **The radio group is the browser's.** Native radios with one `name` in a
+  fieldset and legend: the accessibility tree reads *Kind of class, group*
+  and each radio's name and description, Tab stops once on the checked
+  one, and the arrow keys choose (measured in Chrome over the DevTools
+  Protocol at both sizes and themes). Nothing is `disabled` while a
+  command runs: the fieldset is aria-disabled and a change is ignored.

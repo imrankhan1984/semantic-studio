@@ -101,6 +101,13 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
   const pending = useRef<{ gone: string; next: string } | null>(null);
   const items = rules.items;
   useWarningAnnouncer(iri, rules.warnings);
+  const pendingAdd = useRef(false);
+  useEffect(() => {
+    if (pendingAdd.current && rules.choices && addRef.current) {
+      pendingAdd.current = false;
+      addRef.current.focus();
+    }
+  }, [rules.choices]);
 
   // A rule begun on the canvas for this class: open the builder on it once.
   const draft = useProjectSelector((s) => s.ruleDraft);
@@ -170,9 +177,14 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
   const canEdit = rules.choices !== null;
   // 5.8: an RDFS class of the project gets the offer instead of the builder.
   const rdfs = rules.classType === "rdfs";
+  // Its own key: the Kind of class block shares this runner, and one
+  // refusal was shown under both (code review).
   const makeOwl = async () => {
     if (busy) return;
-    await run("kind", "SetClassType", { class: iri, type: "owl" }, () => kindChangedAnnouncement(name, "owl"), say);
+    const done = await run("rulesKind", "SetClassType", { class: iri, type: "owl" }, () => kindChangedAnnouncement(name, "owl"), say);
+    // The pressed button goes with the line: focus to Add a rule once the
+    // refetch has drawn it, never to the page (code review).
+    if (done) pendingAdd.current = true;
   };
 
   return (
@@ -310,7 +322,7 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
             </button>
           </p>
           <p className="detail-note">{checkInDataNote(name, items.some((i) => i.type === "restriction" && i.editable))}</p>
-          {errors.kind && <p className="edit-error">{errors.kind}</p>}
+          {errors.rulesKind && <p className="edit-error">{errors.rulesKind}</p>}
         </div>
       )}
       {open && !open.replacing ? (
