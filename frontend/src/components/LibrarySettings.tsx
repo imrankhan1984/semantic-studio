@@ -84,10 +84,13 @@ export default function LibrarySettings({
   const origin =
     run?.origin.tab === "suggested" ? run.origin : ended?.origin.tab === "suggested" ? ended.origin : null;
 
-  const add = (entry: CatalogueEntry) =>
-    startLoad({ tab: "suggested", entryId: entry.id }, entry.name, null, (options) =>
+  // A new load starts clean: what the examples' restore said is not about it.
+  const add = (entry: CatalogueEntry) => {
+    setRestoredNote("");
+    return startLoad({ tab: "suggested", entryId: entry.id }, entry.name, null, (options) =>
       fetchOntology(entry.url, options),
     );
+  };
 
   const addExamplesBack = async () => {
     if (!onExamplesRestored) return;

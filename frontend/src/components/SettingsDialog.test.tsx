@@ -157,15 +157,35 @@ describe("Settings is a dialog (home-and-settings 5.4, AC-5)", () => {
     expect(document.activeElement).toBe(items[items.length - 1]);
   });
 
-  it("the Network tab is today's panel, its two requests made once", async () => {
+  it("the Network tab is today's panel, its two requests made on opening", async () => {
     await open();
     expect(screen.getByRole("switch", { name: "Work offline" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Allowed and blocked sites" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Recent connections" })).toBeTruthy();
-    fireEvent.click(tab("Library"));
-    fireEvent.click(tab("Network"));
     expect(getNetworkPolicy).toHaveBeenCalledTimes(1);
     expect(getNetworkActivity).toHaveBeenCalledTimes(1);
+    // Library alone asks nothing more of the network panel.
+    fireEvent.click(tab("Library"));
+    expect(getNetworkPolicy).toHaveBeenCalledTimes(1);
+  });
+
+  it("coming back to Network reads both lists again: what happened meanwhile shows (found in review)", async () => {
+    await open();
+    expect(screen.getByText("No sites allowed yet.")).toBeTruthy();
+    getNetworkPolicy.mockResolvedValue({
+      offline: false,
+      grants: [{ id: "g1", capability: "ontology:fetch", host: "spec.edmcouncil.org", decision: "allow", remember: true, grantedAt: "2026-10-28T10:00:00+00:00" }],
+    });
+    fireEvent.click(tab("Library"));
+    await act(async () => {
+      fireEvent.click(tab("Network"));
+    });
+    expect(getNetworkPolicy).toHaveBeenCalledTimes(2);
+    expect(getNetworkActivity).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("spec.edmcouncil.org")).toBeTruthy();
+    // Selecting the tab already shown is not a visit.
+    fireEvent.click(tab("Network"));
+    expect(getNetworkPolicy).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -325,6 +345,22 @@ describe("Library: the examples (home-and-settings 5.4 item 2, AC-6)", () => {
     expect(document.activeElement).toBe(tab("Library"));
     // Nothing is downloaded.
     expect(fetchOntology).not.toHaveBeenCalled();
+  });
+
+  it("a load started afterwards clears what the restore said (found in review)", async () => {
+    restoreExamples.mockResolvedValue({ restored: ["ont-a"], ontologies: [{ ...SUMMARY, id: "ont-a", name: "Space Exploration" }] });
+    fetchOntology.mockRejectedValue(new Error("The address could not be reached."));
+    await open({ examplesMissing: 1 }, "library");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add the examples back" }));
+    });
+    const status = document.querySelector<HTMLElement>(".examples-restored")!;
+    expect(status.textContent).toBe("Added back: Space Exploration.");
+    await act(async () => {
+      fireEvent.click(document.querySelectorAll<HTMLElement>(".catalogue-entry")[0]);
+    });
+    expect(status.textContent).toBe("");
+    expect(screen.getByText("The address could not be reached.")).toBeTruthy();
   });
 
   it("is aria-disabled while it works, never disabled; a failure says why and keeps focus on it", async () => {

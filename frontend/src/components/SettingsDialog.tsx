@@ -24,13 +24,17 @@ BASIC IDEA
     Both panels stay mounted and the hidden one is `hidden`, rather than
     unmounting: a catalogue load running in Library is cancelled by
     unmounting (useLoadRun), and a look at Network must not do that.
-    Network's two requests are made once, when Settings opens.
+    Network reads its two lists again each time its tab is chosen (it is
+    keyed on the visit), so a site allowed or a download made while Library
+    showed is there to see and to revoke.
 
     The key handler is on `document` (a load-bearing rule for every dialog
     here): a click on the panel's own prose blurs focus to <body>, where a
     panel-scoped handler would see nothing. A key pressed while another
-    modal is open over this one is that dialog's: a catalogue load can raise
-    the network approval, and its Escape must not close Settings under it.
+    modal is open over this one is that dialog's: the network approval can
+    open over any screen, since any request may meet a site not yet decided
+    about, and its Escape must not close Settings under it. (A catalogue
+    entry's own download asks nothing: pressing it is the consent.)
 
 INPUTS / INPUT SOURCES (props)
     - initialTab: the tab to open on; Network unless a caller names another.
@@ -103,7 +107,11 @@ export default function SettingsDialog({
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
+  // Each visit to Network mounts its panel afresh, which reads the policy
+  // and the activity again; the first visit is the opening one.
+  const [networkVisit, setNetworkVisit] = useState(0);
   const select = (next: SettingsTab) => {
+    if (next === "network" && tab !== "network") setNetworkVisit((n) => n + 1);
     setTab(next);
     tabRefs.current[next]?.focus();
   };
@@ -172,7 +180,7 @@ export default function SettingsDialog({
           aria-labelledby="settings-tab-network"
           hidden={tab !== "network"}
         >
-          <NetworkPanel />
+          <NetworkPanel key={networkVisit} />
         </div>
         <div
           id="settings-panel-library"
