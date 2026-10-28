@@ -12,11 +12,10 @@ SUMMARY
     while the wizard runs. Past step 3 the ✕ and a tab switch ask "Leave the
     wizard?" as Cancel does (PR #53 review), driven through the real wizard.
     Focus goes to the Data heading when the wizard closes, and only then
-    (csv-data-import X4). Suggested lists schema.org, FIBO and UNESCO, and
-    offers *Add the examples back* only while an example is missing, which
-    calls the restore endpoint and keeps focus on the tab
-    (home-and-examples 5.8, AC-10), aria-disabled while it works and
-    keeping focus when it fails (load-and-shapes 5.6). A failed load shows
+    (csv-data-import X4). There is no Suggested tab, no catalogue and no
+    *Add the examples back* here (home-and-settings 5.3, AC-4): they are in
+    Settings → Library, and SettingsDialog.test.tsx has their tests; the
+    dialog opens on the tab it is asked for. A failed load shows
     the server's sentence with the raw text under a closed Technical
     details (5.1); the dialog is announced as one, Escape closes it or asks
     past the wizard's step 3, and focus goes back to its opener (5.2).
@@ -141,109 +140,30 @@ describe("a failed load (load-and-shapes 5.1, AC-2)", () => {
   });
 });
 
-describe("LoadDialog suggestions (home-and-examples 5.8)", () => {
-  const SUMMARY = {
-    source: "example",
-    format: "turtle",
-    triples: 1,
-    nodes: 1,
-    edges: 0,
-    kindCounts: {},
-    namespaces: {},
-  };
-
-  it("suggests schema.org, FIBO and UNESCO, in that order, and not FOAF", () => {
+describe("no Suggested tab (home-and-settings 5.3, AC-4)", () => {
+  it("has Local file and URL / GitHub, and no Suggested tab, catalogue or examples button", () => {
     render(<LoadDialog onLoaded={() => {}} onClose={() => {}} />);
-    const names = [...document.querySelectorAll(".catalogue-entry")].map((b) => b.textContent ?? "");
-    expect(names).toHaveLength(3);
-    expect(names[0]).toContain("schema.org");
-    expect(names[1]).toContain("FIBO");
-    expect(names[2]).toContain("UNESCO");
-    expect(names.join(" ")).not.toMatch(/FOAF/);
-  });
-
-  it("offers Add the examples back only while an example is missing", () => {
-    const { rerender } = render(
-      <LoadDialog onLoaded={() => {}} onClose={() => {}} examplesMissing={0} onExamplesRestored={() => {}} />,
-    );
+    const tabs = [...document.querySelectorAll(".tabs .tab")].map((b) => b.textContent);
+    expect(tabs).toEqual(["Local file", "URL / GitHub"]);
+    expect(screen.queryByRole("button", { name: "Suggested" })).toBeNull();
+    expect(document.querySelector(".catalogue-entry")).toBeNull();
+    expect(screen.queryByText(/Well-known public ontologies/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Add the examples back" })).toBeNull();
-    rerender(<LoadDialog onLoaded={() => {}} onClose={() => {}} examplesMissing={1} onExamplesRestored={() => {}} />);
-    const button = screen.getByRole("button", { name: "Add the examples back" });
-    // Above the list.
-    const first = document.querySelector(".catalogue-entry")!;
-    expect(button.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // Secondary, not primary.
-    expect(button.className).not.toContain("primary");
   });
 
-  it("calls the restore endpoint, hands App the library, says what came back and keeps focus on the tab", async () => {
-    const result = {
-      restored: ["ont-a", "ont-b"],
-      ontologies: [
-        { ...SUMMARY, id: "ont-a", name: "Space Exploration" },
-        { ...SUMMARY, id: "ont-keep", name: "Mine" },
-        { ...SUMMARY, id: "ont-b", name: "FOAF (Friend of a Friend)" },
-      ],
-    };
-    restoreExamples.mockResolvedValue(result);
-    const onExamplesRestored = vi.fn();
-    const { rerender } = render(
-      <LoadDialog onLoaded={() => {}} onClose={() => {}} examplesMissing={2} onExamplesRestored={onExamplesRestored} />,
-    );
-    // The examples' own region; the load's steps have another (load-progress 5.4).
-    const status = document.querySelector<HTMLElement>(".examples-restored")!;
-    expect(status.getAttribute("role")).toBe("status");
-    expect(status.textContent).toBe("");
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Add the examples back" }));
-    });
-    expect(restoreExamples).toHaveBeenCalledTimes(1);
-    expect(onExamplesRestored).toHaveBeenCalledWith(result);
-    expect(status.textContent).toBe("Added back: Space Exploration, FOAF (Friend of a Friend).");
-    // App's list now has every example, so the button goes; focus is on the
-    // tab, never the page.
-    rerender(
-      <LoadDialog onLoaded={() => {}} onClose={() => {}} examplesMissing={0} onExamplesRestored={onExamplesRestored} />,
-    );
-    expect(screen.queryByRole("button", { name: "Add the examples back" })).toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Suggested" }));
+  it("opens on Local file unless another tab is asked for", () => {
+    render(<LoadDialog onLoaded={() => {}} onClose={() => {}} />);
+    expect(document.querySelector(".tab.active")?.textContent).toBe("Local file");
+    expect(screen.getByText("Drop an ontology file here, or click to browse.")).toBeTruthy();
   });
 
-  it("a failed restore says why and keeps the button", async () => {
-    restoreExamples.mockRejectedValue(new Error("The examples could not be added back."));
-    const onExamplesRestored = vi.fn();
-    render(<LoadDialog onLoaded={() => {}} onClose={() => {}} examplesMissing={1} onExamplesRestored={onExamplesRestored} />);
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Add the examples back" }));
-    });
-    expect(screen.getByText("The examples could not be added back.")).toBeTruthy();
-    expect(onExamplesRestored).not.toHaveBeenCalled();
-    expect((screen.getByRole("button", { name: "Add the examples back" }) as HTMLButtonElement).disabled).toBe(false);
-  });
-
-  it("is aria-disabled while it works, never disabled, and ignores a second click (load-and-shapes 5.6, AC-7)", async () => {
-    let fail!: (e: Error) => void;
-    restoreExamples.mockReturnValue(new Promise((_, reject) => (fail = reject)));
-    render(<LoadDialog onLoaded={() => {}} onClose={() => {}} examplesMissing={1} onExamplesRestored={() => {}} />);
-    const button = screen.getByRole("button", { name: "Add the examples back" }) as HTMLButtonElement;
-    button.focus();
-    await act(async () => {
-      fireEvent.click(button);
-    });
-    expect(button.getAttribute("aria-disabled")).toBe("true");
-    expect(button.disabled).toBe(false);
-    expect(document.activeElement).toBe(button);
-    await act(async () => {
-      fireEvent.click(button);
-    });
-    expect(restoreExamples).toHaveBeenCalledTimes(1);
-    // On failure focus stays on it, and the error shows.
-    await act(async () => {
-      fail(new Error("The examples could not be added back."));
-    });
-    expect(screen.getByText("The examples could not be added back.")).toBeTruthy();
-    expect(document.activeElement).toBe(button);
-    expect(button.getAttribute("aria-disabled")).toBe("false");
+  it("opens on the tab asked for: Local file or URL / GitHub", () => {
+    const { unmount } = render(<LoadDialog onLoaded={() => {}} onClose={() => {}} initialTab="file" />);
+    expect(document.querySelector(".tab.active")?.textContent).toBe("Local file");
+    unmount();
+    render(<LoadDialog onLoaded={() => {}} onClose={() => {}} initialTab="url" />);
+    expect(document.querySelector(".tab.active")?.textContent).toBe("URL / GitHub");
+    expect(screen.getByRole("textbox", { name: "Address of an RDF file" })).toBeTruthy();
   });
 });
 
@@ -371,9 +291,9 @@ describe("the Load dialog is a dialog (load-and-shapes 5.2, AC-3)", () => {
 });
 
 describe("LoadDialog", () => {
-  it("has the three ontology tabs and no Data tab without a project", () => {
+  it("has the two ontology tabs and no Data tab without a project", () => {
     render(<LoadDialog onLoaded={() => {}} onClose={() => {}} />);
-    for (const name of ["Suggested", "Local file", "URL / GitHub"]) {
+    for (const name of ["Local file", "URL / GitHub"]) {
       expect(screen.getByRole("button", { name })).toBeTruthy();
     }
     expect(screen.queryByRole("button", { name: "Data for this project" })).toBeNull();
@@ -420,9 +340,9 @@ describe("LoadDialog", () => {
     });
     const heading = screen.getByRole("heading", { name: "Data" });
     expect(document.activeElement).toBe(heading);
-    const suggested = screen.getByRole("button", { name: "Suggested" });
-    suggested.focus();
-    fireEvent.click(suggested);
+    const local = screen.getByRole("button", { name: "Local file" });
+    local.focus();
+    fireEvent.click(local);
     const data = screen.getByRole("button", { name: "Data for this project" });
     data.focus();
     await act(async () => {
@@ -431,10 +351,10 @@ describe("LoadDialog", () => {
     expect(document.activeElement).toBe(data);
   });
 
-  it("falls back to Suggested when Data is asked for with no project open", () => {
+  it("falls back to Local file when Data is asked for with no project open", () => {
     render(<LoadDialog onLoaded={() => {}} onClose={() => {}} initialTab="data" />);
     expect(screen.getByRole("heading", { name: "Load ontology" })).toBeTruthy();
-    expect(screen.getByText(/Well-known public ontologies/)).toBeTruthy();
+    expect(screen.getByText("Drop an ontology file here, or click to browse.")).toBeTruthy();
   });
 
   describe("leaving a wizard with a mapping (PR #53 review)", () => {
@@ -491,10 +411,10 @@ describe("LoadDialog", () => {
 
     it("asks before another tab drops the wizard", async () => {
       await toStep3();
-      fireEvent.click(screen.getByRole("button", { name: "Suggested" }));
+      fireEvent.click(screen.getByRole("button", { name: "Local file" }));
       expect(screen.getByRole("heading", { name: "Step 3 of 4: the columns" })).toBeTruthy();
       fireEvent.click(within(screen.getByRole("group", { name: "Leave the wizard?" })).getByRole("button", { name: "Leave" }));
-      expect(screen.getByText(/Well-known public ontologies/)).toBeTruthy();
+      expect(screen.getByText("Drop an ontology file here, or click to browse.")).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: "Data for this project" }));
       expect(screen.queryByRole("heading", { name: "Step 3 of 4: the columns" })).toBeNull();
     });
@@ -704,25 +624,6 @@ describe("a load's steps and Cancel (load-progress 5.2 to 5.4)", () => {
     expect(cancelLoad).toHaveBeenCalledTimes(1);
     expect(step()).toBe("Stopped. Nothing was added to your library.");
     expect(onLibraryChanged).not.toHaveBeenCalled();
-  });
-
-  it("a suggested entry's status stands under its row, and Cancel gives the row focus", async () => {
-    hold(fetchOntology);
-    cancelLoad.mockResolvedValue({ stopped: true });
-    render(<LoadDialog onLoaded={vi.fn()} onClose={vi.fn()} />);
-    const row = document.querySelectorAll<HTMLElement>(".catalogue-entry")[1];
-    await act(async () => {
-      fireEvent.click(row);
-    });
-    expect(row.nextElementSibling?.classList.contains("load-status")).toBe(true);
-    expect(step()).toBe("Downloading and reading: 0 seconds so far.");
-    // Every row is aria-disabled, so the row pressed keeps focus.
-    expect(row.getAttribute("aria-disabled")).toBe("true");
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    });
-    expect(document.activeElement).toBe(row);
-    expect(row.nextElementSibling?.textContent).toBe("Stopped. Nothing was added to your library.");
   });
 
   for (const [way, leave] of [

@@ -6,9 +6,10 @@ FILE: frontend/src/components/HomeScreen.tsx
 SUMMARY
     The screen the application opens on, and the screen the Home control returns
     to from anywhere. It shows one library -- the person's projects and loaded
-    files, most recent first, then the three bundled examples -- as cards or as
-    dense rows, headed with New project, a search box and a view toggle, then
-    the two file-loading routes (home-and-examples 5.5).
+    files, most recent first, then the three bundled examples -- as cards,
+    headed with the three ways in, *New project*, *Open a file* and *Load
+    from a URL*, in one row of primary buttons, and a search box
+    (home-and-settings 5.2).
 
 BASIC IDEA
     This is StartScreen's successor. That screen was a list, and three things
@@ -26,31 +27,33 @@ BASIC IDEA
     parse that happened at ingest. Any later change that fetches a graph to
     populate a card breaks that property and should be refused — a home
     screen that parses six ontologies to draw six thumbnails is the FIBO freeze
-    again in a nicer coat.
+    again in a nicer coat. (The thumbnails themselves went in
+    home-and-settings 5.2, unreadable at card size; the rule stands.)
 
     **One library, the person's work first** (home-and-examples 5.5, D-111).
     Projects and loaded files used to sit in two sections, and a suggested
     catalogue below them downloaded from the internet, which fails behind a
     corporate proxy. The examples are now in the library itself, seeded by the
     server with no download, and always after what the person made, so they
-    move down as that work grows; the catalogue lives on in the Load dialog.
+    move down as that work grows; the catalogue lives on in Settings →
+    Library.
     The order is home/libraryOrder.ts's. A file or an example card says
     *Read-only* in words, which the old section heading used to say.
 
-    **Two layouts, and the count is a default rather than a rule.** Nine or
-    fewer entries render cards, ten or more render rows, and a toggle
-    overrides that and is remembered. The toggle is the one addition to what
-    was asked for, and the reason is that a layout which reorganises itself
-    the moment a tenth entry is added is a surprise the user cannot undo.
-    Adding a file is not a request to rearrange the screen.
+    **Three ways in, in one row** (home-and-settings 5.2). The two file
+    routes sat at the foot of the screen under *Or*, as grey buttons, while
+    *New project* was the one blue button at the top; a person who had a
+    file in hand looked for it last. They are now beside *New project*, each
+    primary, and open the Load dialog on the tab each names.
 
-    **Searching does not change the layout.** The automatic choice reads the
-    whole library, examples and projects included, never the filtered subset:
-    switching on the filtered count would flip the screen back and forth while
-    typing, which is worse than either layout. Search filters by NAME only, and
-    the placeholder says so — "What are you looking for?" would invite a
-    concept name, return nothing, and teach the user the feature is broken
-    rather than absent.
+    **Cards only.** Without the thumbnail a card and a row differed by
+    little, and the Cards / Rows switch went with it (home-and-settings 5.2,
+    Section 15 question 2). A layout once saved in this browser is ignored,
+    not migrated.
+
+    Search filters by NAME only, and the placeholder says so — "What are you
+    looking for?" would invite a concept name, return nothing, and teach the
+    user the feature is broken rather than absent.
 
     Each list fails on its own. A backend that cannot list should not stop
     somebody uploading a file, so an error is said in the library and the rest
@@ -59,11 +62,12 @@ BASIC IDEA
 INPUTS / INPUT SOURCES (props)
     - ontologies / loading / error / onRetry: the ontology list App owns, and
       the way to ask for it again.
-    - theme: which palette the cards' miniatures draw in.
+    - theme: which palette the cards' composition bars draw in.
     - pendingMode: a mode chosen from the header with nothing open, so the
       library heading can ask which ontology it should act on.
     - onOpen / onEnterMode / onViewSource / onRemove: what a card's controls do.
-    - onOpenDialog: hand the file and URL routes to the existing Load dialog.
+    - onOpenDialog: hand the file and URL routes to the Load dialog, on the
+      tab each names.
     - projects: the project list, its state, New project and every project
       card's action, all App's.
     - onStartProject: "Start a project from this" on each library card.
@@ -92,21 +96,6 @@ export interface HomeProjects extends ProjectActions {
   busyId: string | null;
   onNew: () => void;
 }
-
-/**
- * Where the automatic layout changes over.
- *
- * Nine rather than an arbitrary number: at the application's typical width that
- * is three rows of three, which fits without meaningful scrolling. It is a
- * constant so it can move after somebody has looked at it.
- */
-export const CARD_LAYOUT_MAX = 9;
-
-/** Where the view choice is remembered. Per user rather than per ontology: it
- *  is a preference about this screen, not about anything on it. */
-const LAYOUT_KEY = "semantic-studio-home-layout";
-
-export type HomeLayout = "cards" | "rows";
 
 /** What the library heading says when a mode was chosen with nothing open. The
  *  header tabs are no longer disabled, so pressing Explore with an empty canvas
@@ -168,18 +157,6 @@ function confirmationHost(source: string): string | null {
   }
 }
 
-/** The remembered view, or null for "let the count decide". Reading localStorage
- *  can throw in a locked-down browser, and a preference is never worth failing a
- *  render over. */
-function storedLayout(): HomeLayout | null {
-  try {
-    const saved = localStorage.getItem(LAYOUT_KEY);
-    return saved === "cards" || saved === "rows" ? saved : null;
-  } catch {
-    return null;
-  }
-}
-
 export default function HomeScreen({
   ontologies,
   loading,
@@ -208,9 +185,6 @@ export default function HomeScreen({
   // The opt-in (DOC-1 D-038): off by default, reset each time the dialog opens,
   // so the safe path is never carried over from a previous export.
   const [docsInclude, setDocsInclude] = useState(false);
-  // null means "follow the count". Read once, in the initialiser, so the choice
-  // survives a reload without costing a localStorage read on every render.
-  const [override, setOverride] = useState<HomeLayout | null>(storedLayout);
 
   const firstControl = useRef<HTMLButtonElement>(null);
   // Where focus starts when the library is empty: New project, or with no
@@ -406,22 +380,6 @@ export default function HomeScreen({
     [entries, needle],
   );
 
-  // The automatic choice reads the WHOLE library, examples and projects
-  // included, never `matching`. Switching on the filtered count would flip the
-  // screen between layouts while the user types, which is worse than either
-  // layout — AC-19.
-  const automatic: HomeLayout = entries.length > CARD_LAYOUT_MAX ? "rows" : "cards";
-  const layout = override ?? automatic;
-
-  const chooseLayout = (next: HomeLayout) => {
-    setOverride(next);
-    try {
-      localStorage.setItem(LAYOUT_KEY, next);
-    } catch {
-      /* a preference is not worth failing over */
-    }
-  };
-
   // One live region, and what it says depends on what just happened.
   // Documentation generation leads — it is a deliberate action the user is
   // waiting on — and its "ready" holds until the next search keystroke clears
@@ -462,19 +420,34 @@ export default function HomeScreen({
           <div className="home-library-head">
             <h2 id="home-library-heading">{heading}</h2>
             <div className="home-controls">
-              {projects && (
+              {/* The three ways in, in reading order, each the primary style:
+                  they differ by their words, never by colour alone
+                  (home-and-settings 5.2, 5.7). */}
+              <div className="home-actions">
+                {projects && (
+                  <button
+                    ref={newProjectRef}
+                    className="primary large"
+                    onClick={projects.onNew}
+                    disabled={projectBusyId !== null}
+                  >
+                    New project
+                  </button>
+                )}
                 <button
-                  ref={newProjectRef}
+                  ref={openFileRef}
                   className="primary large"
-                  onClick={projects.onNew}
-                  disabled={projectBusyId !== null}
+                  disabled={busy}
+                  onClick={() => onOpenDialog("file")}
                 >
-                  New project
+                  Open a file
                 </button>
-              )}
-              {/* Search and the view toggle are absent while the library is
-                  empty: a search box over nothing is a control that cannot do
-                  anything. */}
+                <button className="primary large" disabled={busy} onClick={() => onOpenDialog("url")}>
+                  Load from a URL
+                </button>
+              </div>
+              {/* Search is absent while the library is empty: a search box
+                  over nothing is a control that cannot do anything. */}
               {!listsLoading && entries.length > 0 && (
                 <>
                   <label className="visually-hidden" htmlFor="home-search">
@@ -498,29 +471,13 @@ export default function HomeScreen({
                     // than absent.
                     placeholder="Search your library by name"
                   />
-                  <div className="home-view-toggle" role="group" aria-label="Library view">
-                    <button
-                      className={layout === "cards" ? "active" : undefined}
-                      aria-pressed={layout === "cards"}
-                      onClick={() => chooseLayout("cards")}
-                    >
-                      Cards
-                    </button>
-                    <button
-                      className={layout === "rows" ? "active" : undefined}
-                      aria-pressed={layout === "rows"}
-                      onClick={() => chooseLayout("rows")}
-                    >
-                      Rows
-                    </button>
-                  </div>
                 </>
               )}
             </div>
           </div>
 
           {/* Each list fails alone: what did load is still shown, and the file
-              routes below stay usable. */}
+              routes above stay usable. */}
           {error && (
             <div className="start-error">
               <p className="detail-error">{error}</p>
@@ -536,19 +493,18 @@ export default function HomeScreen({
           ) : entries.length === 0 ? (
             !error && !projects?.error && (
               <p className="start-empty">
-                Nothing here yet. Start a project, or open a file below.
+                Nothing here yet. Start a project, or open a file.
               </p>
             )
           ) : matching.length === 0 ? (
             <p className="start-empty">Nothing in your library matches “{query.trim()}”.</p>
           ) : (
-            <div className={layout === "rows" ? "onto-grid onto-grid-rows" : "onto-grid"}>
+            <div className="onto-grid">
               {matching.map((entry, i) =>
                 entry.kind === "project" && projects ? (
                   <ProjectCard
                     key={entry.id}
                     project={entry.project}
-                    layout={layout === "rows" ? "row" : "card"}
                     busy={projectBusyId === entry.id}
                     disabled={projectBusyId !== null}
                     openRef={i === 0 ? firstControl : undefined}
@@ -564,7 +520,6 @@ export default function HomeScreen({
                     key={entry.id}
                     summary={entry.ontology}
                     theme={theme}
-                    layout={layout === "rows" ? "row" : "card"}
                     busy={busy}
                     working={workingId === entry.id}
                     firstVerbRef={i === 0 ? firstControl : undefined}
@@ -583,18 +538,6 @@ export default function HomeScreen({
               failure, named beneath the library rather than in a way that
               leaves a broken file behind. */}
           {docsError && <p className="detail-error">{docsError}</p>}
-        </section>
-
-        <section className="start-section" aria-labelledby="home-or-heading">
-          <h2 id="home-or-heading">Or</h2>
-          <div className="start-routes">
-            <button ref={openFileRef} disabled={busy} onClick={() => onOpenDialog("file")}>
-              Open a file
-            </button>
-            <button disabled={busy} onClick={() => onOpenDialog("url")}>
-              Load from a URL
-            </button>
-          </div>
         </section>
       </div>
 

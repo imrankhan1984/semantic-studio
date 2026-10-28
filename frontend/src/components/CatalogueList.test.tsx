@@ -5,10 +5,11 @@ FILE: frontend/src/components/CatalogueList.test.tsx
 ================================================================================
 
 SUMMARY
-    Proves the catalogue renders as CATALOGUE says, in the Load dialog's
-    "Suggested" tab, and only there: the home screen's "Try one" section went
-    when the bundled examples came (home-and-examples 5.5), and a test holds
-    Home to showing none of it.
+    Proves the catalogue renders as CATALOGUE says, in Settings → Library,
+    and only there: the home screen's "Try one" section went when the bundled
+    examples came (home-and-examples 5.5), and the Load dialog's "Suggested"
+    tab when Settings came (home-and-settings 5.3); a test holds Home and the
+    dialog to showing none of it.
 
 BASIC IDEA
     The reason this file exists is drift, not rendering. Before CatalogueList
@@ -18,8 +19,8 @@ BASIC IDEA
 
     So the assertion was a comparison, not a snapshot: render both callers
     and check the button names match, element for element, in order. With
-    one caller left, the dialog is compared with the constant, and Home with
-    nothing.
+    one caller left, Library is compared with the constant, and Home and the
+    Load dialog with nothing.
 
     Since 2026-07-30 it also covers backlog L-1's rendering half: that the
     audience line reaches the screen, that it reaches the accessible name, and
@@ -43,6 +44,7 @@ EXPECTED OUTPUT
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import CatalogueList from "./CatalogueList";
+import LibrarySettings from "./LibrarySettings";
 import LoadDialog from "./LoadDialog";
 import HomeScreen from "./HomeScreen";
 import { CATALOGUE } from "../catalogue";
@@ -85,17 +87,24 @@ function renderChooser() {
 }
 
 describe("CatalogueList", () => {
-  it("the dialog lists the catalogue in its order, and Home lists none of it (home-and-examples 5.5)", () => {
-    // AC-15, with one caller left: Home's catalogue went with Try one.
+  it("Settings → Library lists the catalogue in its order; Home and the Load dialog list none of it (home-and-settings 5.3)", () => {
+    // AC-15, with one caller left: Home's catalogue went with Try one, the
+    // Load dialog's with its Suggested tab.
     const chooser = renderChooser();
     expect(entryNames(chooser)).toEqual([]);
     document.body.innerHTML = "";
 
     const dialog = render(<LoadDialog onLoaded={vi.fn()} onClose={vi.fn()} />).container;
-    const fromDialog = entryNames(dialog);
+    expect(entryNames(dialog)).toEqual([]);
+    document.body.innerHTML = "";
 
-    expect(fromDialog).toHaveLength(CATALOGUE.length);
-    CATALOGUE.forEach((entry, i) => expect(fromDialog[i]).toContain(entry.name));
+    const library = render(
+      <LibrarySettings onLoaded={vi.fn()} examplesMissing={0} focusTab={vi.fn()} />,
+    ).container;
+    const fromLibrary = entryNames(library);
+
+    expect(fromLibrary).toHaveLength(CATALOGUE.length);
+    CATALOGUE.forEach((entry, i) => expect(fromLibrary[i]).toContain(entry.name));
   });
 
   it("renders every catalogue entry as a button, in CATALOGUE order", () => {

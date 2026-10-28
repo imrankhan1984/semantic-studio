@@ -84,7 +84,7 @@ one sample.
 per file and `vi.mock` over `api.ts`. For the graph, stub `GraphView` (see
 `App.test.tsx`), stub the two WebGL globals (`GraphView.test.tsx`), or stub the
 `sigma` module and read the settings its constructor was handed, which tests
-the shipped reducers. **Untested:** `Logo.tsx`, `icons.tsx`, `SourceView`
+the shipped reducers. **Untested:** `Logo.tsx`, `SourceView`
 beyond its target, and
 `QueryPanel` beyond a foothold. A change to one adds its first test.
 
@@ -211,8 +211,9 @@ frontend/src/
   explain/           Pure In plain words logic (D-114): the detail panel's
                      sentences (explainSentences.ts) and the one glossary
                      of standard terms (glossary.ts)
-  home/              Pure home-screen logic: the card thumbnail's layout,
-                     the composition bar's bands, and the one library's
+  home/              Pure home-screen logic: the card thumbnail's layout
+                     (no longer drawn, U-17), the composition bar's
+                     bands, and the one library's
                      order, your work first and the examples last
                      (libraryOrder.ts)
   projects/          Pure New project form logic: the two kinds, defaults
@@ -437,25 +438,26 @@ leaves one behind.
 - Removal starts only in a Home card's menu; its ⋮ is `aria-disabled` while counting, and Home refocuses when the card goes. [Portal foundations]
 - Home's start focus is `focus({ preventScroll: true })`. [Portal foundations]
 - Mount makes two requests, the ontology list and the project list; the home screen makes none to `/graph`. [card grid, authoring foundations]
-- Home shows no catalogue and downloads nothing: the examples are library entries (D-111); `CatalogueList` is the Load dialog's alone. [Home and examples]
+- Home shows no catalogue and downloads nothing: the examples are library entries (D-111); `CatalogueList` is Settings → Library's alone. [Home and examples, Home and header]
 - The catalogue order is deliberate, and FOAF is not in it because it is a bundled example; read the comment above `CATALOGUE`. [leads with FOAF, Home and examples]
 - An example is told by `source === "example"` and its `example` record, never its name, and always follows the person's work (`home/libraryOrder.ts`). [Home and examples]
 - A person reads *statements*, never *triples*; `wording.test.ts` scans the source, and code names keep `triples`. [Home and examples]
-- `.onto-card` never clips: its "⋮" menu is longer than a card, and the miniature clips its own corners. [Home and examples]
+- `.onto-card` never clips: its "⋮" menu is longer than a card. [Home and examples]
 - The Load dialog's key handler is on `document`, wraps Tab with `wrapTab`, and leaves every key to a modal open over it; past the wizard's step 3 Escape asks. Its opener is taken at the first render, before autoFocus moves focus. [Load and Shapes]
 - In Query the legend starts folded and writes nothing; App keys it on the mode, so Explore reads its kept choice again. [Load and Shapes]
 - Explore's ranking and sentence stay behind `useMemo`; the ranking never sorts every node. [starting panel]
 - `describeContents` interpolates nothing from the ontology. [starting panel]
 - `removalPrompt`: `null` is not `0`, and the zero case keeps its exact sentence. [saved queries go]
 - Focus a disabled control drops is restored in an effect or given to its partner. [saved queries go]
-- Miniatures are deterministic SVG scaled by one factor, never Sigma. [card grid]
-- The home layout switches on the whole library, not the filtered count. [card grid]
+- A card draws no graph thumbnail; Home is cards only, and a saved layout choice is ignored. [Home and header]
+- Home renders no context row; every other page keeps it. [Home and header]
 - `.onto-menu[hidden] { display: none }` stays. [card grid]
 - `summary()` reads `meta.get("card")`; nothing backfills a sketch. [card grid]
 - No kind colour is written outside `theme/kinds.ts` (`index.css` mirrors the Edit page's, checked by `kindColours.test.ts`); `theme/kinds.test.ts` scans every source (D-109). [Portal foundations]
 - Every lookup by kind is own-key: `kindLabel`, `kindColor`, `nodeColor`, `edgeColor`, never `KIND_LABELS[kind]` (X-6). [Portal foundations]
 - `classType` colours a class; its `kind` stays `class`. [Portal foundations]
 - The About backdrop is the dialog's sibling; its key handler is on `document`. [About panel]
+- The Load dialog and Settings → Library load through one `useLoadRun`; Settings keeps both panels mounted, `hidden`, so a look at Network never cancels a load. [Home and header]
 - The Edit side panel lives in `App.tsx`, the detail panel inside it; property forests hold only `subPropertyOf` ends. [Hierarchy view, Edit page]
 
 **Edit page**

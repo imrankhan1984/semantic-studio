@@ -607,9 +607,10 @@ describe("App startup chooser", () => {
     expect(homeShown()).toBe(true);
     expect(screen.queryByTestId("graph")).toBeNull();
     expect(libraryCard("FIBO")).toBeTruthy();
-    // The context row admits there is nothing open rather than showing an
-    // ontology dropdown with no selection in it.
-    expect(screen.getByText("NO ONTOLOGY OPEN")).toBeTruthy();
+    // No context row at all (home-and-settings 5.2): its NO ONTOLOGY OPEN
+    // said nothing on the page that chooses one.
+    expect(document.querySelector(".context-row")).toBeNull();
+    expect(screen.queryByText("NO ONTOLOGY OPEN")).toBeNull();
   });
 
   it("mode tabs are enabled with nothing open and ask which ontology", async () => {
@@ -625,8 +626,9 @@ describe("App startup chooser", () => {
       expect(tab.disabled, `${name} tab`).toBe(false);
       expect(tab.getAttribute("title")).toBe("Pick an ontology on the home screen first");
     }
-    // Load is the way out of an empty library, so it stays available.
-    expect((screen.getByRole("button", { name: "Load" }) as HTMLButtonElement).disabled).toBe(
+    // The way out of an empty library is Home's Open a file now
+    // (home-and-settings 5.1), and it stays available.
+    expect((screen.getByRole("button", { name: "Open a file" }) as HTMLButtonElement).disabled).toBe(
       false,
     );
   });
@@ -1995,6 +1997,16 @@ describe("App About control", () => {
   });
 });
 
+/** Settings, on its Library tab (home-and-settings 5.4). */
+async function openLibrarySettings() {
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("tab", { name: "Library" }));
+  });
+}
+
 describe("App examples (home-and-examples 5.8)", () => {
   const EXAMPLE = {
     ...SUMMARY,
@@ -2006,7 +2018,7 @@ describe("App examples (home-and-examples 5.8)", () => {
   const LOTR = { ...EXAMPLE, id: "ont-me", name: "The Lord of the Rings", example: { key: "middle-earth", purpose: "p" } };
   const FOAF = { ...EXAMPLE, id: "ont-foaf", name: "FOAF (Friend of a Friend)", example: { key: "foaf", purpose: "p" } };
 
-  it("the Load dialog adds the examples back, and Home shows them after the person's file", async () => {
+  it("Settings → Library adds the examples back, and Home shows them after the person's file", async () => {
     // FOAF stayed; the other two come back.
     listOntologies.mockResolvedValue([SUMMARY, FOAF]);
     restoreExamples.mockResolvedValue({
@@ -2014,9 +2026,7 @@ describe("App examples (home-and-examples 5.8)", () => {
       ontologies: [SUMMARY, FOAF, EXAMPLE, LOTR],
     });
     await renderApp();
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Load" }));
-    });
+    await openLibrarySettings();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Add the examples back" }));
     });
@@ -2024,9 +2034,9 @@ describe("App examples (home-and-examples 5.8)", () => {
     expect(document.querySelector(".examples-restored")!.textContent).toBe("Added back: Space Exploration, The Lord of the Rings.");
     // The dialog stays, focus on its tab, and the button has gone: App's
     // list holds the example now.
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Suggested" }));
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Library" }));
     expect(screen.queryByRole("button", { name: "Add the examples back" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Settings" }));
     const names = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
     expect(names).toEqual([SUMMARY.name, "Space Exploration", "The Lord of the Rings", FOAF.name]);
   });
@@ -2034,27 +2044,46 @@ describe("App examples (home-and-examples 5.8)", () => {
   it("does not offer it while every example is in the library", async () => {
     listOntologies.mockResolvedValue([SUMMARY, EXAMPLE, LOTR, FOAF]);
     await renderApp();
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Load" }));
-    });
-    expect(screen.getByRole("button", { name: "Suggested" })).toBeTruthy();
+    await openLibrarySettings();
+    expect(screen.getByRole("tabpanel", { name: "Library" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Add the examples back" })).toBeNull();
   });
 });
 
 describe("App home screen", () => {
-  it("the Home control appears before Load", async () => {
-    // AC-1. Position, not merely presence: Home is where the application starts
-    // and where every route back leads, so it is the first thing in the nav.
+  it("the header holds the pages, then Settings, About and the theme; no Load, no Network (home-and-settings AC-1)", async () => {
+    // Position, not merely presence: Home is where the application starts and
+    // where every route back leads, so it is the first thing in the nav; the
+    // two dialogs about the application and the theme follow the pages.
     await renderApp();
 
-    const nav = screen.getByRole("tablist");
-    const items = [...nav.querySelectorAll("button")] as HTMLElement[];
-    const home = screen.getByRole("tab", { name: "Home" });
-    const load = screen.getByRole("button", { name: "Load" });
+    const nav = screen.getByRole("tablist", { name: "Workspace" });
+    const tabs = [...nav.querySelectorAll("button")].map((b) => b.textContent);
+    expect(tabs).toEqual(["Home", "View", "Explore", "Edit", "Query"]);
+    const header = document.querySelector(".app-header") as HTMLElement;
+    const after = [...header.querySelectorAll(".nav-row > button")].map(
+      (b) => b.getAttribute("aria-label") ?? b.textContent,
+    );
+    expect(after).toEqual(["Settings", "About", "Toggle colour theme"]);
+    expect(nav.compareDocumentPosition(screen.getByRole("button", { name: "Settings" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(header).queryByRole("button", { name: "Load" })).toBeNull();
+    expect(within(header).queryByRole("button", { name: "Network" })).toBeNull();
+  });
 
-    expect(items.indexOf(home)).toBe(0);
-    expect(items.indexOf(home)).toBeLessThan(items.indexOf(load));
+  it("Home renders no context row; Explore keeps the picker (home-and-settings AC-2)", async () => {
+    await renderAppOpened();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
+    });
+    expect(document.querySelector(".context-row")).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "ONTOLOGY" })).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Home" }));
+    });
+    expect(document.querySelector(".context-row")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "ONTOLOGY" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close this ontology" })).toBeNull();
   });
 
   it("Home from any mode returns without discarding state", async () => {
@@ -2642,29 +2671,46 @@ describe("App network approval (external-access Stage 1)", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("the Network control sits beside About, outside the tablist, and opens the panel", async () => {
+  it("Settings sits before About, outside the tablist, and opens on Network (home-and-settings 5.1, 5.4)", async () => {
     getNetworkPolicy.mockResolvedValue({ offline: false, grants: [] });
     getNetworkActivity.mockResolvedValue([]);
     await renderApp();
     const about = screen.getByRole("button", { name: "About" });
-    const network = screen.getByRole("button", { name: "Network" });
-    expect(screen.getByRole("tablist").contains(network)).toBe(false);
-    expect(network.getAttribute("aria-haspopup")).toBe("dialog");
-    expect(about.compareDocumentPosition(network) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const settings = screen.getByRole("button", { name: "Settings" });
+    expect(screen.getByRole("tablist").contains(settings)).toBe(false);
+    expect(settings.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(settings.compareDocumentPosition(about) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(getNetworkPolicy).not.toHaveBeenCalled();
 
-    network.focus();
+    settings.focus();
     await act(async () => {
-      fireEvent.click(network);
+      fireEvent.click(settings);
     });
-    expect(screen.getByRole("dialog", { name: "Network settings" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Network" }).getAttribute("aria-selected")).toBe("true");
     expect(getNetworkPolicy).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       fireEvent.keyDown(document, { key: "Escape" });
     });
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(document.activeElement).toBe(network);
+    expect(document.activeElement).toBe(settings);
+  });
+
+  it("a catalogue entry added from Settings → Library opens, and Settings closes", async () => {
+    getNetworkPolicy.mockResolvedValue({ offline: false, grants: [] });
+    getNetworkActivity.mockResolvedValue([]);
+    const SCHEMA = { ...SUMMARY, id: "ont-schema", name: "schema.org" };
+    fetchOntology.mockResolvedValue(SCHEMA);
+    await renderApp();
+    await openLibrarySettings();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^schema\.org/ }));
+    });
+    expect(fetchOntology).toHaveBeenCalledTimes(1);
+    expect(fetchOntology.mock.calls[0][0]).toContain("schemaorg-current-https.ttl");
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
+    expect(homeShown()).toBe(false);
   });
 });
 
@@ -2804,7 +2850,7 @@ describe("App projects (authoring-foundations)", () => {
     listProjects.mockResolvedValue([{ ...PROJECT, updatedAt: "2099-01-01T00:00:00Z" }]);
     await renderApp();
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings).toEqual(["Your library", "Or"]);
+    expect(headings).toEqual(["Your library"]);
     const names = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
     expect(names[0]).toBe("Invoices");
     expect(names).toContain(SUMMARY.name);
@@ -3327,14 +3373,15 @@ describe("App Edit page (edit-page-rework)", () => {
       openProject, runCommand, reasonProject, getShapes, validateProject, getDocumentSource]
       .reduce((n, mock) => n + mock.mock.calls.length, 0);
 
-  it("AC-1: the tab is Edit, between Explore and Query; About and Network sit at the right end", async () => {
+  it("AC-1: the tab is Edit, between Explore and Query; Settings and About sit at the right end", async () => {
     await renderApp();
     const tabs = screen.getAllByRole("tab").map((t) => t.textContent);
     expect(tabs).toEqual(["Home", "View", "Explore", "Edit", "Query"]);
     const row = document.querySelector(".nav-row")!;
     const last = [...row.children].slice(-4).map((el) => el.getAttribute("aria-label") ?? el.textContent);
-    // A spacer, then About, Network and the theme switch at the right end.
-    expect(last).toEqual(["", "About", "Network", "Toggle colour theme"]);
+    // A spacer, then Settings, About and the theme switch at the right end
+    // (home-and-settings 5.1: Settings took Network's place).
+    expect(last).toEqual(["", "Settings", "About", "Toggle colour theme"]);
     expect(row.children[row.children.length - 4].className).toBe("spacer");
   });
 

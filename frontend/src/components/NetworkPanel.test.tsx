@@ -7,8 +7,9 @@ FILE: frontend/src/components/NetworkPanel.test.tsx
 SUMMARY
     Tests for Network settings (external-access Stage 1): the offline switch
     and its announced state (AC-10), the remembered decisions and Revoke
-    (AC-9), the recent connections in words (AC-13), the empty states, and
-    Section 6's dialog behaviour (AC-35).
+    (AC-9), the recent connections in words (AC-13) and the empty states.
+    The panel is Settings' Network tab since home-and-settings 5.4; the dialog
+    around it, Section 6's behaviour (AC-35), is SettingsDialog.test.tsx's.
 
 BASIC IDEA
     api.ts is mocked, following the component tests' pattern, so the panel is
@@ -96,11 +97,11 @@ afterEach(() => {
 async function renderPanel(policy = POLICY, activity = ACTIVITY) {
   getNetworkPolicy.mockResolvedValue(structuredClone(policy));
   getNetworkActivity.mockResolvedValue(structuredClone(activity));
-  const onClose = vi.fn();
+  let container!: HTMLElement;
   await act(async () => {
-    render(<NetworkPanel onClose={onClose} />);
+    container = render(<NetworkPanel />).container;
   });
-  return { onClose };
+  return { container };
 }
 
 beforeEach(() => {
@@ -108,12 +109,11 @@ beforeEach(() => {
 });
 
 describe("NetworkPanel", () => {
-  it("is a modal dialog named Network settings, focused on its heading", async () => {
+  it("is the tab's body, not a dialog of its own, and asks once for each list", async () => {
     await renderPanel();
-    expect(screen.getByRole("dialog", { name: "Network settings" })).toBeTruthy();
-    expect(document.activeElement).toBe(
-      screen.getByRole("heading", { level: 2, name: "Network settings" }),
-    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: /close/i })).toBeNull();
+    expect(screen.getByRole("heading", { level: 3, name: "Connections" })).toBeTruthy();
     expect(getNetworkPolicy).toHaveBeenCalledTimes(1);
     expect(getNetworkActivity).toHaveBeenCalledTimes(1);
   });
@@ -186,16 +186,9 @@ describe("NetworkPanel", () => {
     expect(screen.getByText("No connections yet.")).toBeTruthy();
   });
 
-  it("Escape and the close control close it", async () => {
-    const { onClose } = await renderPanel();
-    fireEvent.keyDown(document, { key: "Escape" });
-    fireEvent.click(screen.getByRole("button", { name: "Close Network settings" }));
-    expect(onClose).toHaveBeenCalledTimes(2);
-  });
-
   it("says nothing about proxies or certificates, which are a later stage", async () => {
-    await renderPanel();
-    const text = screen.getByRole("dialog").textContent ?? "";
+    const { container } = await renderPanel();
+    const text = container.textContent ?? "";
     expect(text).not.toMatch(/proxy|certificate/i);
   });
 });

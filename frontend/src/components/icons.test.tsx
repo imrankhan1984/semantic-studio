@@ -33,6 +33,14 @@ describe("icons", () => {
     expect(entries.map(([name]) => name)).toEqual(expect.arrayContaining(["IconHierarchy", "IconShapes", "IconEdit"]));
   });
 
+  // home-and-settings 5.1: Settings took Network's place in the header, with
+  // a gear, hidden from assistive technology beside its word.
+  it("exports the Settings gear", () => {
+    expect(entries.map(([name]) => name)).toContain("IconSettings");
+    const { container } = render(<icons.IconSettings />);
+    expect(container.querySelector("svg")!.getAttribute("aria-hidden")).toBe("true");
+  });
+
   it.each(entries)("%s is one stroked svg in the current colour, with no text", (_name, Icon) => {
     const { container } = render(<Icon />);
     const svg = container.querySelector("svg");

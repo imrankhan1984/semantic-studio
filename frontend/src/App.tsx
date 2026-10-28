@@ -86,12 +86,15 @@ BASIC IDEA
     leads the other way: its second control switches to View mode with that
     entity as the source pane's target.
 
-    The header carries two controls that are about the application rather than
-    about an ontology: About, which opens a static dialog naming the project,
-    its author, its repository and its licence; and Network, which opens the
-    offline switch, the sites allowed or blocked, and the recent connections.
-    Each is held in the same shape as the Load dialog — one boolean, and the
-    panel rendered only while open.
+    The header carries the pages, then two controls that are about the
+    application rather than about an ontology (home-and-settings 5.1):
+    Settings, the one dialog for the application's own choices (Network and
+    Library; Limits in Stage B), and About, a static dialog naming the
+    project, its author, its repository and its licence. Each is held in the
+    same shape as the Load dialog — one boolean, and the panel rendered only
+    while open. There is no Load in the header: bringing a file in starts on
+    Home, one click away from any page. Home renders no context row, since
+    the bar's *No ontology open* said nothing on the page that chooses one.
 
     App is also where a network question is answered (external-access Stage 1).
     On mount it registers a handler with api.ts; when any call meets a 409
@@ -205,7 +208,7 @@ import Legend from "./components/Legend";
 import LoadDialog, { type LoadTab } from "./components/LoadDialog";
 import Logo from "./components/Logo";
 import NetworkApprovalDialog from "./components/NetworkApprovalDialog";
-import NetworkPanel from "./components/NetworkPanel";
+import SettingsDialog, { type SettingsTab } from "./components/SettingsDialog";
 import QueryPanel from "./components/QueryPanel";
 import SearchBox from "./components/SearchBox";
 import SourceView from "./components/SourceView";
@@ -216,10 +219,9 @@ import {
   IconEdit,
   IconShapes,
   IconHome,
-  IconLoad,
   IconMoon,
-  IconNetwork,
   IconQuery,
+  IconSettings,
   IconSun,
   IconView,
 } from "./components/icons";
@@ -439,7 +441,7 @@ export default function App() {
   const [focusPanel, setFocusPanel] = useState(false);                    // panel takes focus?
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set()); // legend filters
   const [dialogOpen, setDialogOpen] = useState(false);                    // Load dialog open?
-  const [dialogTab, setDialogTab] = useState<LoadTab>("suggested");
+  const [dialogTab, setDialogTab] = useState<LoadTab>("file");
   // The tree's Examples section asked for an import: the Data tab opens with
   // the wizard started (csv-data-import 5.1).
   const [dialogImport, setDialogImport] = useState(false);
@@ -448,9 +450,10 @@ export default function App() {
   // The ref is what closing focuses back to — only App holds that element.
   const [aboutOpen, setAboutOpen] = useState(false);
   const aboutRef = useRef<HTMLButtonElement>(null);
-  // Network settings, the same shape again. Focus goes back to the control by
-  // the panel itself (useDialogTrap), because it records what opened it.
-  const [networkOpen, setNetworkOpen] = useState(false);
+  // Settings (home-and-settings 5.4), the same shape again, with the tab it
+  // opens on; closing gives focus back to the Settings button, as About's.
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
+  const settingsRef = useRef<HTMLButtonElement>(null);
   // The question the network broker is waiting on, and the resolver of the
   // api.ts promise that is paused until it is answered.
   const [approval, setApproval] = useState<{
@@ -1141,6 +1144,13 @@ export default function App() {
   const closeAbout = useCallback(() => {
     setAboutOpen(false);
     aboutRef.current?.focus();
+  }, []);
+
+  // Settings closes the same way, on all four routes: the ✕, Escape, the
+  // backdrop, and a catalogue entry that finished loading.
+  const closeSettings = useCallback(() => {
+    setSettingsTab(null);
+    settingsRef.current?.focus();
   }, []);
 
   // Register the approval dialog with api.ts for the life of the app. No
@@ -1842,20 +1852,10 @@ export default function App() {
               aria-selected={tabSelected("home")}
               className={showHome ? "nav-item active" : "nav-item"}
               onClick={goHome}
-              title="Your library, the catalogue and the file routes"
+              title="Your library, and the ways to bring a file in"
             >
               <IconHome />
               <span>Home</span>
-            </button>
-            {/* Load stays enabled with no ontology open: it is the way out of
-                an empty library, so disabling it would be a dead end. */}
-            <button
-              className="nav-item"
-              onClick={() => openDialog("suggested")}
-              title="Load an ontology from a file or a URL"
-            >
-              <IconLoad />
-              <span>Load</span>
             </button>
             {/* No longer disabled with nothing open. Pressing one is now a
                 question the home screen answers — "choose an ontology to
@@ -1927,11 +1927,23 @@ export default function App() {
             )}
           </nav>
           <div className="spacer" />
-          {/* Outside the tablist on purpose. View, Explore and Query select
-              between views of an ontology; About opens a dialog, and joining
-              them would tell a screen reader user there are four views, one of
-              which is a dead end. It stays enabled with nothing open — that is
-              the moment a newcomer most wants to know what this is. */}
+          {/* Settings and About sit outside the tablist on purpose. The tabs
+              select between views of an ontology; these two open dialogs
+              about the application, and joining them would tell a screen
+              reader user there are views that are dead ends. Both stay
+              enabled with nothing open -- that is the moment a newcomer most
+              wants to know what this is. Settings is where Network was
+              (home-and-settings 5.1). */}
+          <button
+            ref={settingsRef}
+            className="nav-item about-item"
+            onClick={() => setSettingsTab("network")}
+            aria-haspopup="dialog"
+            title="Network, and the library itself"
+          >
+            <IconSettings />
+            <span>Settings</span>
+          </button>
           <button
             ref={aboutRef}
             className="nav-item about-item"
@@ -1941,18 +1953,6 @@ export default function App() {
           >
             <IconAbout />
             <span>About</span>
-          </button>
-          {/* Beside About and outside the tablist for the same reason: it
-              opens a dialog about the application, not a view of an
-              ontology. */}
-          <button
-            className="nav-item about-item"
-            onClick={() => setNetworkOpen(true)}
-            aria-haspopup="dialog"
-            title="Work offline, and see which sites Semantic Studio may connect to"
-          >
-            <IconNetwork />
-            <span>Network</span>
           </button>
           <button
             className="header-icon-btn"
@@ -1964,74 +1964,77 @@ export default function App() {
           </button>
         </div>
 
-        <div className="context-row">
-          {/* Keyed off `active`, not the list length: with a saved library and
-              the chooser open there is nothing for the dropdown to select, and
-              a select showing a blank row would look like a defect. */}
-          {editingProjectDoc ? (
-            <ProjectHeader
-              guard={guardEditor}
-              onSwitchDocument={onSwitchDocument}
-              onClose={onCloseProject}
-              onError={(message) => setError(message)}
-              onSaveCopy={onSaveCopy}
-              onTurtle={() => onPickMode("view")}
-              canvas={editingModel ? { on: canvasOn, onToggle: toggleCanvas } : null}
-            />
-          ) : active ? (
-            <>
-              <label className="context-label" htmlFor="ontology-select">
-                ONTOLOGY
-              </label>
-              <select
-                id="ontology-select"
-                value={activeId ?? ""}
-                onChange={(e) => setActiveId(e.target.value || null)}
-                title="Active ontology"
-              >
-                {ontologies.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.name} ({statementCount(o.triples)})
-                  </option>
-                ))}
-              </select>
-              {/* Close only: removing an ontology from the library is in
-                  its card's ⋯ menu on Home, away from the picker it sat
-                  beside (portal-foundations 5.7). */}
-              <button
-                className="ghost icon-btn"
-                onClick={onCloseOntology}
-                title="Close this ontology and return to the home screen"
-                aria-label="Close this ontology"
-              >
-                <IconClose />
-              </button>
-            </>
-          ) : (
-            <span className="context-label">NO ONTOLOGY OPEN</span>
-          )}
-          <div className="spacer" />
-          {/* Absent on Home, where it would search inside an ontology the user
-              is not currently looking at and put its results nowhere. The home
-              screen has its own search, over the library rather than into one
-              ontology, and two search boxes on one screen meaning different
-              things is worse than one. Absent in Hierarchy too: the tree has its
-              own filter, and two search-like inputs meaning different things is
-              the same trap. Absent in Shapes: a pick there would select an
-              entity in a view that is not on screen. */}
-          {!showHome && mode !== "hierarchy" && mode !== "shapes" && (
-            <SearchBox
-              ontologyId={activeId}
-              theme={theme}
-              onPick={onSearchPick}
-              drawnIds={drawnIds}
-              imports={includeImports}
-              placeholder={
-                mode === "query" ? "Search to add a step…" : "Search concepts, properties…"
-              }
-            />
-          )}
-        </div>
+        {/* Not on Home (home-and-settings 5.2): the page that chooses an
+            ontology has nothing to say about the one open, and its *No
+            ontology open* said nothing at all. Every other page keeps it. */}
+        {!showHome && (
+          <div className="context-row">
+            {/* Keyed off `active`, not the list length: with a saved library and
+                the chooser open there is nothing for the dropdown to select, and
+                a select showing a blank row would look like a defect. */}
+            {editingProjectDoc ? (
+              <ProjectHeader
+                guard={guardEditor}
+                onSwitchDocument={onSwitchDocument}
+                onClose={onCloseProject}
+                onError={(message) => setError(message)}
+                onSaveCopy={onSaveCopy}
+                onTurtle={() => onPickMode("view")}
+                canvas={editingModel ? { on: canvasOn, onToggle: toggleCanvas } : null}
+              />
+            ) : active ? (
+              <>
+                <label className="context-label" htmlFor="ontology-select">
+                  ONTOLOGY
+                </label>
+                <select
+                  id="ontology-select"
+                  value={activeId ?? ""}
+                  onChange={(e) => setActiveId(e.target.value || null)}
+                  title="Active ontology"
+                >
+                  {ontologies.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name} ({statementCount(o.triples)})
+                    </option>
+                  ))}
+                </select>
+                {/* Close only: removing an ontology from the library is in
+                    its card's ⋯ menu on Home, away from the picker it sat
+                    beside (portal-foundations 5.7). */}
+                <button
+                  className="ghost icon-btn"
+                  onClick={onCloseOntology}
+                  title="Close this ontology and return to the home screen"
+                  aria-label="Close this ontology"
+                >
+                  <IconClose />
+                </button>
+              </>
+            ) : null}
+            <div className="spacer" />
+            {/* Absent on Home, where it would search inside an ontology the user
+                is not currently looking at and put its results nowhere. The home
+                screen has its own search, over the library rather than into one
+                ontology, and two search boxes on one screen meaning different
+                things is worse than one. Absent in Hierarchy too: the tree has its
+                own filter, and two search-like inputs meaning different things is
+                the same trap. Absent in Shapes: a pick there would select an
+                entity in a view that is not on screen. */}
+            {mode !== "hierarchy" && mode !== "shapes" && (
+              <SearchBox
+                ontologyId={activeId}
+                theme={theme}
+                onPick={onSearchPick}
+                drawnIds={drawnIds}
+                imports={includeImports}
+                placeholder={
+                  mode === "query" ? "Search to add a step…" : "Search concepts, properties…"
+                }
+              />
+            )}
+          </div>
+        )}
         {/* A library ontology in Edit (edit-page-rework 5.9): why nothing
             can be changed, and the way to change a copy -- where a project's
             bar would stand, under the ontology's own row, which keeps its
@@ -2443,15 +2446,27 @@ export default function App() {
 
       {aboutOpen && <AboutPanel onClose={closeAbout} />}
 
-      {networkOpen && <NetworkPanel onClose={() => setNetworkOpen(false)} />}
+      {settingsTab && (
+        <SettingsDialog
+          initialTab={settingsTab}
+          onClose={closeSettings}
+          // A catalogue entry loaded from Library opens as it did from the
+          // Load dialog's Suggested tab, and Settings goes.
+          onLoaded={(summary) => {
+            closeSettings();
+            onLoaded(summary);
+          }}
+          onLibraryChanged={refreshList}
+          examplesMissing={missingExamples(ontologies).length}
+          onExamplesRestored={(result) => setOntologies(result.ontologies)}
+        />
+      )}
 
       {dialogOpen && (
         <LoadDialog
           onLoaded={onLoaded}
           onClose={() => setDialogOpen(false)}
           initialTab={dialogTab}
-          examplesMissing={missingExamples(ontologies).length}
-          onExamplesRestored={(result) => setOntologies(result.ontologies)}
           // A cancelled load that had already finished is in the library now.
           onLibraryChanged={refreshList}
           project={
