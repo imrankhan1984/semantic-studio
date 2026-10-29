@@ -92,7 +92,7 @@ async def lifespan(_app: FastAPI):
     A failure is said in the server's log and the server starts anyway: the
     examples are a convenience, and a data folder that cannot take
     examples.json should not cost the person their own library. What did not
-    come in can be added back from the Load dialog."""
+    come in can be added back from Settings → Library."""
     try:
         library_examples.seed(store)
     except Exception:  # noqa: BLE001 -- any failure here must not stop the server

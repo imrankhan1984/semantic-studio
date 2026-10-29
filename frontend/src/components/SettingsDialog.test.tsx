@@ -390,6 +390,21 @@ describe("Library: bundled with Semantic Studio (home-and-settings 5.4 item 2, A
     expect(fetchOntology).not.toHaveBeenCalled();
   });
 
+  it("says what came back in the order restored, as Missing: said it, not the library list's (PR #71 review)", async () => {
+    restoreExamples.mockResolvedValue({
+      restored: ["ont-space", "ont-qudt"],
+      ontologies: [
+        { ...SUMMARY, id: "ont-qudt", name: "QUDT" },
+        { ...SUMMARY, id: "ont-space", name: "Space Exploration" },
+      ],
+    });
+    await open({ bundledMissing: ["Space Exploration", "QUDT"] }, "library");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add them back" }));
+    });
+    expect(document.querySelector(".examples-restored")!.textContent).toBe("Added back: Space Exploration, QUDT.");
+  });
+
   it("a load started afterwards clears what the restore said (found in review)", async () => {
     restoreExamples.mockResolvedValue({ restored: ["ont-a"], ontologies: [{ ...SUMMARY, id: "ont-a", name: "Space Exploration" }] });
     fetchOntology.mockRejectedValue(new Error("The address could not be reached."));

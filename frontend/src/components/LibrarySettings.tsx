@@ -133,7 +133,11 @@ export default function LibrarySettings({
     setError(null);
     try {
       const result = await restoreExamples();
-      const names = result.ontologies.filter((o) => result.restored.includes(o.id)).map((o) => o.name);
+      // In the order restored, which is the manifest's, as *Missing:* says
+      // them; the library list is in the server's own order.
+      const names = result.restored
+        .map((id) => result.ontologies.find((o) => o.id === id)?.name)
+        .filter((name): name is string => !!name);
       onExamplesRestored(result);
       setRestoredNote(
         names.length ? `Added back: ${names.join(", ")}.` : "Everything bundled is already in your library.",

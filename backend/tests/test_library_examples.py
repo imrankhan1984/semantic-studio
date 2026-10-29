@@ -444,6 +444,21 @@ def test_a_listed_entry_carries_its_group_from_the_manifest(tmp_path, parses):
     assert library_examples.as_listed(own) == own
 
 
+def test_a_failed_entry_does_not_hide_the_ones_restored(tmp_path, parses, monkeypatch):
+    """PR #71 review: QUDT failing, last, must not lose Space and LOTR, which
+    are on disk; it stays missing, and nothing at all is a failure."""
+    store = OntologyStore(tmp_path)
+    library_examples.seed(store)
+    for key in ("space", "middle-earth", "qudt"):
+        store.remove(library_examples.example_id(key))
+    broken = [{**e, "file": str(tmp_path / "gone.ttl")} if e["key"] == "qudt" else e for e in SEEDED]
+    monkeypatch.setattr(library_examples, "load_manifest", lambda: broken)
+    assert library_examples.restore(store) == [library_examples.example_id(k) for k in ("space", "middle-earth")]
+    assert store.get(library_examples.example_id("qudt")) is None
+    with pytest.raises(OSError):
+        library_examples.restore(store)
+
+
 def test_restore_adds_back_only_the_missing_ones(tmp_path, parses):
     store = OntologyStore(tmp_path)
     library_examples.seed(store)

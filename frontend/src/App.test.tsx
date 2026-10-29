@@ -3807,6 +3807,16 @@ describe("App status bar (portal-foundations 5.6, AC-9)", () => {
     expect(parts).not.toContain("example");
 
     cleanup();
+    // A reference ontology says Reference, as its card does (reference-ontologies 5.2).
+    listOntologies.mockResolvedValue([
+      { ...SUMMARY, source: "example", example: { key: "qudt", purpose: "p", group: "reference" } },
+    ]);
+    await renderAppOpened();
+    const reference = [...document.querySelectorAll(".status-bar span")].map((s) => s.textContent);
+    expect(reference).toContain("Reference");
+    expect(reference).not.toContain("Example");
+
+    cleanup();
     listOntologies.mockResolvedValue([{ ...SUMMARY, source: "https://example.org/fibo.ttl" }]);
     await renderAppOpened();
     expect([...document.querySelectorAll(".status-bar span")].map((s) => s.textContent)).toContain(

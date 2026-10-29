@@ -52,8 +52,9 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - seed(store): the examples not yet recorded added; returns their ids.
-    - restore(store): the examples missing from the library added back;
-      returns their ids.
+    - restore(store): the entries missing from the library added back;
+      returns their ids. One that fails is logged and the rest go on; it
+      raises only when none came back.
     - example_id(key): an example's fixed id.
     - as_listed(summary): a listed entry's record with its group and its
       ready-made questions, {id, title, about, text} each, from
@@ -66,6 +67,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import logging
 import threading
 from pathlib import Path
 
@@ -203,10 +205,22 @@ def restore(store: OntologyStore) -> list[str]:
     with _lock:
         seeded = _read_state(store)
         restored: list[str] = []
+        failed: list[Exception] = []
         for entry in load_manifest():
             if _in_library(store, example_id(entry["key"])):
                 continue
-            restored.append(_add(store, entry))
+            # One entry that will not come back (QUDT is large, and last)
+            # must not hide the ones that did: they are on disk, and the
+            # person is told of them; the failed one stays named as missing.
+            try:
+                restored.append(_add(store, entry))
+            except Exception as exc:  # noqa: BLE001 -- said in the log, the rest go on
+                logging.getLogger("uvicorn.error").exception("%s was not added back", entry["name"])
+                failed.append(exc)
+                continue
             seeded[entry["key"]] = entry["sha256"]
             _write_state(store, seeded)
+        # Nothing came back at all: a failure, said as one.
+        if failed and not restored:
+            raise failed[0]
         return restored
