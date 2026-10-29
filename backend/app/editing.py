@@ -124,6 +124,16 @@ BASIC IDEA
     than replaying a journal and survives blank nodes, which a triple journal
     would not.
 
+    A reference ontology (FOAF, QUDT; reference-ontologies 5.6, D-121) is in
+    use while the document declares a prefix bound to its namespace. Each
+    document remembers its own declarations, read from its text by
+    references.py, since rdflib binds foaf: in every graph by default; a
+    visual change keeps them, and clean Turtle writes a declared reference
+    prefix back even before anything uses it. Context.exists accepts a term
+    such a reference defines, as it accepts the well-known vocabularies,
+    and a Turtle apply names any term in a reference namespace that the
+    reference does not define (5.7), after the text has applied.
+
 INPUTS / INPUT SOURCES
     - Project folders and manifests, through projects.ProjectStore.
     - Command names and arguments, and Turtle text, from routers/projects.py.
@@ -177,10 +187,13 @@ from .projects import (
     ProjectStore,
     UnknownDocument,
     document_id,
+    DESCRIPTION_MAX,
     graph_counts,
+    header_of,
+    split_document_id,
     valid_lang,
 )
-from . import axioms, examples, lexical, modeling_checks, reasoning, sentences, settings, shacl, shapes_form
+from . import axioms, examples, lexical, modeling_checks, reasoning, references, sentences, settings, shacl, shapes_form
 from .canvas import build_canvas, restrict, with_inferred
 from .imports import imports_service, load_state
 from .snapshots import SnapshotService
@@ -600,6 +613,7 @@ class Context:
         doc: str = "model",
         model: Optional[Callable[[], Graph]] = None,
         imported_from: Optional[Callable[[], dict]] = None,
+        declared: Optional[Callable[[], dict]] = None,
     ):
         self.graph = graph
         self.manifest = manifest
@@ -613,6 +627,9 @@ class Context:
         self._model = model
         self._model_view: Optional[Graph] = None
         self._imported_from = imported_from
+        # The prefixes the document's text declares: what puts a reference
+        # ontology in use (5.6 item 1).
+        self._declared = declared
 
     @property
     def model(self) -> Graph:
@@ -675,13 +692,18 @@ class Context:
         return (iri, None, None) in g or (None, None, iri) in g or (None, iri, None) in g
 
     def exists(self, iri: URIRef) -> bool:
-        """Mentioned in the document, defined by a resolved import, or a term
-        of a well-known vocabulary (owl:Thing, xsd:string ...)."""
+        """Mentioned in the document, defined by a resolved import, a term
+        of a well-known vocabulary (owl:Thing, xsd:string ...), or a term of
+        a reference ontology in use (foaf:Organization once foaf: is
+        declared, 5.6 item 3). The index is read last: it is built the first
+        time a project needs it, and most targets are found before it."""
         if self.mentioned(iri):
             return True
         if self.imported is not None and (iri, None, None) in self.imported:
             return True
-        return any(str(iri).startswith(ns) for ns in WELL_KNOWN.values())
+        if any(str(iri).startswith(ns) for ns in WELL_KNOWN.values()):
+            return True
+        return self._declared is not None and references.defines(self._declared(), iri)
 
     def require(self, iri: URIRef, what: str) -> None:
         if not self.exists(iri):
@@ -934,6 +956,14 @@ def cmd_set_label(ctx: Context, a: dict) -> Change:
 
 
 def cmd_set_comment(ctx: Context, a: dict) -> Change:
+    # The ontology header's comment is the project's description, held to
+    # New project's limit (reference-ontologies 5.5): the server says it
+    # wherever the form does (CLAUDE.md rule 6).
+    value = a.get("value")
+    if isinstance(value, str) and len(value.strip()) > DESCRIPTION_MAX:
+        iri = ctx.iri(a.get("iri"))
+        if (iri, RDF.type, OWL.Ontology) in ctx.graph:
+            raise CommandError(f"A description can be at most {DESCRIPTION_MAX:,} characters.")
     return _set_text(ctx, a, lambda _iri: RDFS.comment, "comment")
 
 
@@ -2989,6 +3019,10 @@ class OpenDocument:
     save_point: object = None
     saved_text: Optional[str] = None
     _clean: Optional[tuple] = None
+    # (the text they were read from, its prefix declarations): what the
+    # document declares, which a visual change keeps (reference-ontologies
+    # 5.6). Read through declared().
+    _declared: tuple = (None, {})
     # (revision and langs, view, the imports view it was built with): the
     # canvas's boxes and lines (D-081).
     _canvas: Optional[tuple] = None
@@ -2998,16 +3032,37 @@ class OpenDocument:
         return self.ontology.graph
 
     def clean(self) -> str:
-        """longturtle of the current graph, once per revision."""
+        """longturtle of the current graph, once per revision, with the
+        reference prefixes the document declares and does not use yet: a
+        new project's foaf: must survive its first visual change."""
         if self._clean is None or self._clean[0] != self.ontology.revision:
-            self._clean = (self.ontology.revision, clean_turtle(self.graph))
+            text = references.keep_prefixes(clean_turtle(self.graph), self.declared())
+            self._clean = (self.ontology.revision, text)
         return self._clean[1]
+
+    def declared(self) -> dict:
+        """prefix -> namespace as the document's text declares them: the
+        current text's while there is one, else what the last text declared
+        (a command declares nothing). Read once per text, compared by
+        identity, since a search asks on every keystroke."""
+        text = self.last_text
+        if text is not None and self._declared[0] is not text:
+            self._declared = (text, references.declared_prefixes(text))
+        return self._declared[1]
 
     def top(self) -> object:
         return self.undo[-1] if self.undo else BASE
 
     def editor_state(self) -> tuple:
-        return (self.last_text, self.visual_since_save)
+        # The declarations too: undoing an apply that declared qudt: onto a
+        # state with no text must take qudt: away again (code review). Read
+        # before every change, this is also what keeps them past a command,
+        # which clears the text and declares nothing.
+        return (self.last_text, self.visual_since_save, self.declared())
+
+    def restore_state(self, state: tuple) -> None:
+        self.last_text, self.visual_since_save, declared = state
+        self._declared = (self.last_text, declared)
 
     def text(self) -> str:
         """What the editor shows and a draft holds."""
@@ -3027,7 +3082,14 @@ class OpenDocument:
             "canRedo": bool(self.redo),
             "redoLabel": self.redo[-1].label if self.redo else None,
             "triples": len(self.graph),
+            # The ontology header Description… changes (5.5): the
+            # document's owl:Ontology, the first by IRI if it has several.
+            "header": self.header(),
         }
+
+    def header(self) -> Optional[str]:
+        found = header_of(self.graph)
+        return str(found) if found is not None else None
 
 
 # The save point of a document saved (or opened) with nothing to undo.
@@ -3211,7 +3273,28 @@ class EditingService:
         if document.doc != "model":
             model_doc = self._open[document.pid]["model"]
             model = lambda: self._model_view(model_doc)  # noqa: E731
-        return Context(document.graph, manifest, imported, document.doc, model, imported_from)
+        return Context(
+            document.graph, manifest, imported, document.doc, model, imported_from,
+            lambda: self.declared(document),
+        )
+
+    def declared(self, document: OpenDocument) -> dict:
+        """The prefixes that put a reference in use for a document: its own,
+        and for shapes.ttl the model's too, whose classes a shape is about."""
+        own = document.declared()
+        if document.doc == "model":
+            return own
+        model_doc = self._open.get(document.pid, {}).get("model")
+        return {**(model_doc.declared() if model_doc else {}), **own}
+
+    def declared_for(self, oid: str) -> dict:
+        """declared() for an ontology id, or {} for anything not an open
+        project document: a library ontology has no reference terms."""
+        split = split_document_id(oid)
+        documents = self._open.get(split[0]) if split else None
+        if not documents or split[1] not in documents:
+            return {}
+        return self.declared(documents[split[1]])
 
     @contextlib.contextmanager
     def model_reader(self, pid: str):
@@ -3260,6 +3343,10 @@ class EditingService:
         # A shape command reads the model (targets, paths, names) as well:
         # its lock too, always after the shapes document's, so a model edit
         # never changes what the command is checking against.
+        # A command may ask whether a reference defines a term; the first
+        # time, that parses its bundled file (QUDT: seconds), so it is built
+        # here, before the locks every view of the document waits on.
+        references.warm(self.declared(document))
         model_lock = self._open[pid]["model"].lock if doc != "model" else contextlib.nullcontext()
         with document.lock, model_lock:
             ctx = self._context(document)
@@ -3354,12 +3441,18 @@ class EditingService:
             document.last_text = text
             self._apply(document, change, origin="editor")
             self._push(document, change, before)
-            return {
+            result = {
                 "revision": document.ontology.revision,
                 "label": change.label,
                 "delta": _delta_json(change),
                 "state": document.state(),
             }
+            declared = self.declared(document)
+        # Outside the lock: the first check of a QUDT project builds its
+        # index, and the text has applied already (5.7: information, not a
+        # refusal). `parsed` is this request's own graph.
+        result["references"] = references.unknown_terms(parsed, declared)
+        return result
 
     @staticmethod
     def _push(document: OpenDocument, change: Change, before: tuple) -> None:
@@ -3400,7 +3493,7 @@ class EditingService:
                 raise CommandError("There is nothing to undo.")
             step = document.undo.pop()
             self._apply(document, Change(step.label, step.removed, step.added), origin="undo")
-            document.last_text, document.visual_since_save = step.before
+            document.restore_state(step.before)
             if step.renamed:
                 self._move_layout(document, step.renamed[1], step.renamed[0])
             document.redo.append(step)
@@ -3414,7 +3507,7 @@ class EditingService:
                 raise CommandError("There is nothing to redo.")
             step = document.redo.pop()
             self._apply(document, Change(step.label, step.added, step.removed), origin="redo")
-            document.last_text, document.visual_since_save = step.after
+            document.restore_state(step.after)
             if step.renamed:
                 self._move_layout(document, *step.renamed)
             document.undo.append(step)
@@ -3501,6 +3594,7 @@ class EditingService:
                 for t in document.graph:
                     snapshot.add(t)
                 text = None
+            declared = document.declared()
             meta = {
                 "revision": document.ontology.revision,
                 "fromEditor": document.last_text is not None,
@@ -3508,7 +3602,9 @@ class EditingService:
                 "writtenAt": _now(),
             }
         if text is None:
-            text = clean_turtle(snapshot)
+            # As clean() writes it: recovery reads its declarations from
+            # this text, and a dropped foaf: would switch FOAF off.
+            text = references.keep_prefixes(clean_turtle(snapshot), declared)
         # Serialising ran outside the lock, so a save, a discard or a newer
         # change may have happened meanwhile: each moves the generation, and
         # a draft written now would be offered for recovery after the user
@@ -3563,6 +3659,8 @@ class EditingService:
                 document.ontology.revision += 1
                 document.dirty = True
                 document.last_text = text if meta.get("fromEditor") else None
+                # The draft's declarations, whichever text the editor shows.
+                document._declared = (None, references.declared_prefixes(text))
                 document.visual_since_save = bool(meta.get("visualSinceSave", not meta.get("fromEditor")))
         return {"documents": [d.state() for d in documents.values()]}
 

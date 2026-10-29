@@ -63,7 +63,9 @@ EXPECTED OUTPUT
       it and the 5.4 warning for two domain lines; for any
       other ontology's class, its rules read-only (explore-rules 5.3); for a
       project's example, its classes and fields
-      (shacl-authoring 5.8) --, search results, query schema, the queries stored in the
+      (shacl-authoring 5.8) --, search results (for a project document,
+      with `references`, the reference terms it has in use after its own;
+      reference-ontologies 5.6), query schema, the queries stored in the
       file, source text, SPARQL results)
       and appropriate HTTP errors:
       400 for a blocked address or refused query, 413 for a body over the cap,
@@ -113,7 +115,7 @@ from ..graph_builder import (
     search_nodes,
     term_kind,
 )
-from .. import axioms, examples, library_examples, modeling_checks
+from .. import axioms, examples, library_examples, modeling_checks, references
 from .. import imports as imports_mod
 from ..imports import imports_service
 from ..net_guard import BlockedAddress
@@ -843,13 +845,28 @@ def search(
     imports: bool = IMPORTS_PARAM,
     lang: Optional[str] = LANG_PARAM,
     kind: Optional[SearchKind] = Query(default=None),
+    references_: bool = Query(default=False, alias="references"),
 ) -> list[dict]:
     """GET /{oid}/search?q=... -> ranked label/IRI matches for the search box.
 
     In a project every name matches, whatever the display language. `kind`
-    keeps one kind of entity, before the limit (the editing form's pickers)."""
+    keeps one kind of entity, before the limit (the editing form's pickers).
+    `references` adds, after the document's and its imports' matches, the
+    terms of the reference ontologies the document has in use, each
+    marked `fromReference` (reference-ontologies 5.6); a term already
+    answered, imported or the document's own, is not offered twice."""
     ontology = _get_or_404(oid)
-    return search_nodes(_viz(ontology, imports, lang), q, limit, kind)
+    viz = _viz(ontology, imports, lang)
+    found = search_nodes(viz, q, limit, kind)
+    if not references_ or len(found) >= limit:
+        return found
+    declared = editing_service.declared_for(ontology.id)
+    if not declared:
+        return found
+    # Every node of the view, not only the matches: a term the document or
+    # an import has is answered as theirs, never again as a reference's.
+    skip = {n["id"] for n in viz["nodes"]}
+    return found + references.search(declared, q, kind, limit - len(found), skip)
 
 
 @router.get("/{oid}/source")

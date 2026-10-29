@@ -9,8 +9,9 @@ SUMMARY
     project's name, a document switcher, the save status as a dot and a
     word, Undo, Redo and Save; then **Turtle**, which opens the document in
     View's Turtle editor, and a ⋯ menu holding Language (the display-language
-    switch and the missing-translation counts), Add shapes.ttl while there is
-    none, Save a copy, Show canvas and Close project.
+    switch and the missing-translation counts), Description… (reference-
+    ontologies 5.5), Add shapes.ttl while there is none, Save a copy, Show
+    canvas and Close project.
 
 BASIC IDEA
     Reads the project store and calls its actions; App is told only about what
@@ -29,7 +30,10 @@ BASIC IDEA
     through it, Escape closes it and gives focus back to ⋯, and a press
     outside closes it. *Language…* opens the language panel beside it,
     whose Escape gives focus back to ⋯ too. *Show canvas* is a checkbox
-    item: its state is aria-checked and a tick, never colour.
+    item: its state is aria-checked and a tick, never colour. *Description…*
+    gives focus to ⋯ before its dialog opens, so the dialog gives it back
+    there; unapplied Turtle is asked about first, as Undo asks, since a
+    save changes the document under the editor.
 
     Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z) and Ctrl+S work anywhere in the page
     except inside a text field, where the field's own undo wins (Section 6).
@@ -54,6 +58,7 @@ EXPECTED OUTPUT
 
 import { useEffect, useId, useRef, useState } from "react";
 import { addShapesDocument, getLanguageReport } from "../api";
+import DescriptionDialog from "./DescriptionDialog";
 import { validLanguageTag } from "../projects/form";
 import {
   STATUS_WORDS,
@@ -77,7 +82,7 @@ interface Props {
   canvas?: { on: boolean; onToggle: () => void } | null;
 }
 
-type MenuAction = "language" | "shapes" | "copy" | "canvas" | "close";
+type MenuAction = "language" | "description" | "shapes" | "copy" | "canvas" | "close";
 
 /** A text field owns its own undo (Section 6). */
 function inTextField(target: EventTarget | null): boolean {
@@ -118,6 +123,8 @@ export default function ProjectHeader({
   const langPanel = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLUListElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [describing, setDescribing] = useState(false);
+  const model = state.documents.find((d) => d.doc === "model");
 
   const run = (action: () => Promise<unknown>) => {
     action().catch((e: unknown) => onError(e instanceof Error ? e.message : String(e)));
@@ -205,7 +212,13 @@ export default function ProjectHeader({
     }
     // Every other item leaves the menu for a control that is still there.
     langButton.current?.focus();
-    if (action === "shapes") {
+    if (action === "description") {
+      if (!model?.header) {
+        onError("This model has no ontology header (owl:Ontology) to describe. Add one in Turtle first.");
+        return;
+      }
+      guard(() => setDescribing(true));
+    } else if (action === "shapes") {
       run(async () => {
         await addShapesDocument(project.id);
         await projectStore.reload();
@@ -304,7 +317,7 @@ export default function ProjectHeader({
           aria-expanded={menuOpen}
           aria-controls={menuId}
           aria-label="More project actions"
-          title="Language, Save a copy, Show canvas, Close project"
+          title="Language, Description, Save a copy, Show canvas, Close project"
           onClick={() => {
             setLangOpen(false);
             setMenuOpen((open) => !open);
@@ -336,6 +349,11 @@ export default function ProjectHeader({
           <li role="none">
             <button type="button" role="menuitem" tabIndex={-1} onClick={() => chooseMenu("language")}>
               Language: {display}…
+            </button>
+          </li>
+          <li role="none">
+            <button type="button" role="menuitem" tabIndex={-1} onClick={() => chooseMenu("description")}>
+              Description…
             </button>
           </li>
           {!hasShapes && (
@@ -454,6 +472,15 @@ export default function ProjectHeader({
           )}
         </div>
       </div>
+
+      {describing && model?.header && (
+        <DescriptionDialog
+          ontologyId={model.ontologyId}
+          header={model.header}
+          primaryLanguage={project.primaryLanguage}
+          onClose={() => setDescribing(false)}
+        />
+      )}
 
       <div className="visually-hidden" role="status" aria-live="polite">
         {/* Keyed on the counter, so "Undid: … " said twice is heard twice. */}

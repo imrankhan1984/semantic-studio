@@ -2536,3 +2536,47 @@ EXPECTED OUTPUT
   file. The two "every bundled vocabulary" timings in `test_imports.py`
   keep the eleven they were budgeted on: QUDT alone is a 2.6 s parse and
   imports VAEM, which is not bundled.
+
+- **Reference terms** (2026-10-29, spec `reference-ontologies` Stage B,
+  backlog E-12, D-121). *New project* offers *Reuse terms from* FOAF and
+  QUDT for a template: each choice writes its prefix (`foaf:`, `qudt:`) and
+  a `dcterms:requires` naming the ontology, and **never `owl:imports`**:
+  the portal adds no import on its own; importing stays the person's
+  choice in the Imports panel. `test_no_path_writes_owl_imports` reads
+  every mention of `owl:imports` in `app/` and fails on any that is not a
+  read. A description is written as the header's `rdfs:comment` in the
+  primary language, as an rdflib `Literal`; *Description…* in the Edit
+  bar's ⋯ menu changes it later as one `SetComment`.
+
+  **In use means declared, and declared is read from the text.** rdflib
+  binds `foaf:` (and some thirty others) in every `Graph` it makes, so a
+  graph cannot tell a declared `foaf:` from rdflib's default: a project
+  that declared nothing would have been offered every FOAF term. Each
+  `OpenDocument` reads its declarations from its own text
+  (`references.declared_prefixes`, both `@prefix` and `PREFIX`, two to a
+  line), keeps them across a command (which declares nothing) and on both
+  sides of every undo step, and `clean()` and the autosave draft write a
+  declared reference prefix back, because longturtle writes only the
+  prefixes a statement uses: the first visual change of a new project
+  dropped `foaf:` and switched FOAF off before a term was picked.
+  `dcterms:requires` is never read; it records, it switches nothing on.
+
+  **The index is built from bundled files only,** the first time a project
+  needs it, while parsing: `_Within` keeps only statements about the
+  reference's own namespaces (QUDT's 132,166 become about 3,000), which is
+  what brings the first build to 1.6 s on a QUDT-sized fixture against a
+  3 s budget; a full parse is 2.7 s. It is cached in memory and in
+  `<data dir>/references/<sha256>.json`, keyed by the pinned hash and a
+  version, and never sent to the browser: search returns at most the
+  limit, marked `fromReference`, after the document's and its imports'
+  matches; a term the view already has is not offered again. A command
+  builds the indexes it may need before it takes the document's lock, so
+  the first QUDT parse never holds up the views waiting on that lock; a
+  FOAF project never parses QUDT at all. A library copy is made from a
+  copy of the library's graph, never the graph itself: the description
+  once landed in the library entry.
+
+  **A second parse in one process is slower.** On Windows a second rdflib
+  parse of the same file measured 2.6 to 3.5 s after a first of 1.6 s, with
+  no objects left behind to collect, so the first-build budget times each
+  sample in a fresh interpreter, the clock inside it.

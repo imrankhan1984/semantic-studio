@@ -237,3 +237,61 @@ describe("TurtleEditor, found in code review", () => {
     expect(document.activeElement).not.toBe(editor());
   });
 });
+
+describe("TurtleEditor, reference terms on Apply (reference-ontologies 5.7, AC-8)", () => {
+  const QUDT_TEXT = "@prefix qudt: <http://qudt.org/schema/qudt/> .\n:Pump qudt:hasQuantityKnd :x .\n";
+
+  it("names an unknown qudt: term with its closest match, and the text still applies", async () => {
+    applyDocumentSource.mockResolvedValue({
+      revision: 1,
+      label: "Applied Turtle edits",
+      state: state(1),
+      references: {
+        terms: [{ term: "qudt:hasQuantityKnd", reference: "QUDT", suggestion: "qudt:hasQuantityKind" }],
+        more: 0,
+      },
+    });
+    await renderEditor();
+    fireEvent.change(editor(), { target: { value: QUDT_TEXT } });
+    await act(async () => {
+      fireEvent.click(applyButton());
+    });
+    expect(applyDocumentSource).toHaveBeenCalledWith("prj-0123456789ab", "model", QUDT_TEXT);
+    const region = document.querySelector(".turtle-notes")!;
+    expect(region.getAttribute("role")).toBe("status");
+    expect(region.textContent).toBe("qudt:hasQuantityKnd is not a term of QUDT. Did you mean qudt:hasQuantityKind?");
+    // Information, not an error: applied, no alert, the field not invalid.
+    expect(projectStore.getSnapshot().editorDraft).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(editor().getAttribute("aria-invalid")).toBeNull();
+    // The next edit takes the line away.
+    fireEvent.change(editor(), { target: { value: QUDT_TEXT + "\n" } });
+    expect(region.textContent).toBe("");
+  });
+
+  it("says nothing when every term is known, and counts past five", async () => {
+    applyDocumentSource.mockResolvedValueOnce({
+      revision: 1, label: "Applied Turtle edits", state: state(1), references: { terms: [], more: 0 },
+    });
+    await renderEditor();
+    const region = document.querySelector(".turtle-notes")!;
+    expect(region.textContent).toBe("");
+    fireEvent.change(editor(), { target: { value: EDITED } });
+    await act(async () => {
+      fireEvent.click(applyButton());
+    });
+    expect(region.textContent).toBe("");
+    applyDocumentSource.mockResolvedValueOnce({
+      revision: 2, label: "Applied Turtle edits", state: state(2),
+      references: { terms: [{ term: "foaf:Banana", reference: "FOAF", suggestion: null }], more: 3 },
+    });
+    fireEvent.change(editor(), { target: { value: EDITED + "\n" } });
+    await act(async () => {
+      fireEvent.click(applyButton());
+    });
+    expect([...region.querySelectorAll("p")].map((p) => p.textContent)).toEqual([
+      "foaf:Banana is not a term of FOAF.",
+      "And 3 more terms like these.",
+    ]);
+  });
+});

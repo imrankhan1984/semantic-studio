@@ -169,6 +169,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   // authoring-foundations: projects and editing.
   // home-and-examples: the examples added back.
   restoreExamples: () => api.restoreExamples(),
+  listReferences: () => api.listReferences(),
   listProjects: () => api.listProjects(),
   createProject: () => api.createProject({ name: "p", template: "small" }),
   updateProject: () => api.updateProject("prj-1", { name: "q" }),
@@ -486,6 +487,20 @@ describe("the merged-view flag (external-access Stage 2)", () => {
       "/api/ontologies/ont-1/search?q=ab",
       "/api/ontologies/ont-1/search?q=ab&limit=26",
     ]);
+  });
+
+  it("searchNodes asks for reference terms only when told (reference-ontologies 5.6)", async () => {
+    await api.searchNodes("prj-1-model", "org", true, "class");
+    await api.searchNodes("prj-1-model", "org", true, "class", undefined, undefined, true);
+    expect(recorded.map((r) => r.url)).toEqual([
+      "/api/ontologies/prj-1-model/search?q=org&kind=class&imports=true",
+      "/api/ontologies/prj-1-model/search?q=org&kind=class&references=true&imports=true",
+    ]);
+  });
+
+  it("listReferences reads GET /api/references (reference-ontologies 8)", async () => {
+    await api.listReferences();
+    expect(recorded.map((r) => [r.method, r.url])).toEqual([["GET", "/api/references"]]);
   });
 });
 

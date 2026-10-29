@@ -1,5 +1,5 @@
 {
-  "description": "The bundled entries added to the library once, on first start, with no download (home-and-examples 5.1, D-111). Each has a 'group': 'example' (teaching material) or 'reference' (a published vocabulary to build on, reference-ontologies 5.2), which decides its chip; on Home they follow the person's own work, the examples first and then the references, each group in this order. Each file is the application's own and is pinned by SHA-256; test_library_examples.py fails on a mismatch. 'file' is relative to backend/app; FOAF and QUDT are the bundled vocabularies themselves (vocab/), not copies. Change a file and its hash together: a changed hash is what replaces an example already in a library. Each example's 'questions' are ready-made SPARQL files in examples/questions/ (query-page-rework 5.4), pinned the same way and shown first in Query's Try one of these; a question file opens with a one-line comment saying what it shows.",
+  "description": "The bundled entries added to the library once, on first start, with no download (home-and-examples 5.1, D-111). Each has a 'group': 'example' (teaching material) or 'reference' (a published vocabulary to build on, reference-ontologies 5.2), which decides its chip; on Home they follow the person's own work, the examples first and then the references, each group in this order. Each file is the application's own and is pinned by SHA-256; test_library_examples.py fails on a mismatch. 'file' is relative to backend/app; FOAF and QUDT are the bundled vocabularies themselves (vocab/), not copies. Change a file and its hash together: a changed hash is what replaces an example already in a library. Each example's 'questions' are ready-made SPARQL files in examples/questions/ (query-page-rework 5.4), pinned the same way and shown first in Query's Try one of these; a question file opens with a one-line comment saying what it shows. A reference's 'reuse' is what New project offers and the Edit pickers read (reference-ontologies 8, D-121): 'title' names its terms (Organization, from FOAF), 'ontology' is the IRI dcterms:requires names, 'prefixes' the namespaces its classes and properties are defined in, 'purpose' the checkbox's line and 'sentence' the description's. A third reference is an entry like these, its bundled file and a NOTICE row.",
   "examples": [
     {
       "key": "space",
@@ -67,6 +67,13 @@
       "name": "FOAF (Friend of a Friend)",
       "purpose": "A real, published vocabulary for people and their links. By Dan Brickley and Libby Miller, CC BY 1.0.",
       "sha256": "3d859b5d92a2c3d041545d014fa826f682ca06d056af8c7b31e32d930abf2bc5",
+      "reuse": {
+        "title": "FOAF",
+        "ontology": "http://xmlns.com/foaf/0.1/",
+        "prefixes": {"foaf": "http://xmlns.com/foaf/0.1/"},
+        "purpose": "people, organizations and their links",
+        "sentence": "It reuses FOAF for people and organizations."
+      },
       "questions": [
         {
           "id": "foaf-classes",
@@ -89,7 +96,14 @@
       "format": "turtle",
       "name": "QUDT",
       "purpose": "Quantities, units and dimensions: the standard vocabulary for measurements. QUDT.org, CC BY 4.0.",
-      "sha256": "aa11e3a4b6f0cd60327981f992099538a00fbf23281ef679fef8ddca96e65940"
+      "sha256": "aa11e3a4b6f0cd60327981f992099538a00fbf23281ef679fef8ddca96e65940",
+      "reuse": {
+        "title": "QUDT",
+        "ontology": "http://qudt.org/3.5.2/qudt-all",
+        "prefixes": {"qudt": "http://qudt.org/schema/qudt/"},
+        "purpose": "quantities, units and dimensions",
+        "sentence": "It reuses QUDT for quantities and units."
+      }
     }
   ]
 }

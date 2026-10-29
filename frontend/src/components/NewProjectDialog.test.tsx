@@ -10,7 +10,10 @@ SUMMARY
     prefix follow the name until edited, Create is unavailable with its
     reason until the form is valid, an invalid base IRI is said inline, a
     library ontology can be preselected and needs no kind, and the dialog
-    behaves as a dialog.
+    behaves as a dialog. Reference ontologies (reference-ontologies 5.4,
+    AC-4): *Reuse terms from* for a template only, nothing ticked; the
+    description prefilled, following the name and the boxes until edited;
+    its counter past 2,000; a prefix equal to a ticked reference's.
 
 BASIC IDEA
     Rendered alone; onCreate is a spy, so what is asserted is exactly what the
@@ -18,7 +21,7 @@ BASIC IDEA
     at the foot, where they are cheaper to reach than through the form.
 
 INPUTS / INPUT SOURCES
-    - A fixed library list.
+    - A fixed library list; listReferences mocked with FOAF and QUDT.
 
 EXPECTED OUTPUT
     - Pass/fail per assertion.
@@ -30,7 +33,31 @@ EXPECTED OUTPUT
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import NewProjectDialog, { type NewProjectRequest } from "./NewProjectDialog";
-import { defaultBaseIri, defaultPrefix, validate } from "../projects/form";
+import { defaultBaseIri, defaultDescription, defaultPrefix, validate } from "../projects/form";
+import type { ReferenceOntology } from "../types";
+
+const REFERENCES: ReferenceOntology[] = [
+  {
+    key: "foaf",
+    title: "FOAF",
+    prefixes: { foaf: "http://xmlns.com/foaf/0.1/" },
+    purpose: "people, organizations and their links",
+    sentence: "It reuses FOAF for people and organizations.",
+  },
+  {
+    key: "qudt",
+    title: "QUDT",
+    prefixes: { qudt: "http://qudt.org/schema/qudt/" },
+    purpose: "quantities, units and dimensions",
+    sentence: "It reuses QUDT for quantities and units.",
+  },
+];
+const { listReferences } = vi.hoisted(() => ({ listReferences: vi.fn() }));
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  listReferences,
+}));
+listReferences.mockResolvedValue(REFERENCES);
 
 const LIBRARY = [
   { id: "ont-1", name: "foaf.rdf" },
@@ -148,6 +175,8 @@ describe("NewProjectDialog", () => {
       baseIri: "http://example.org/pets#",
       prefix: "pets",
       primaryLanguage: "en",
+      references: [],
+      description: "An ontology for Pets.",
     });
   });
 
@@ -164,6 +193,9 @@ describe("NewProjectDialog", () => {
     });
     expect(onCreate.mock.calls[0][0]).toMatchObject({ fromOntologyId: "ont-2", name: "schema" });
     expect(onCreate.mock.calls[0][0]).not.toHaveProperty("template");
+    // A copy keeps its own file: no references are sent, nor offered.
+    expect(onCreate.mock.calls[0][0]).not.toHaveProperty("references");
+    expect(screen.queryByRole("group", { name: "Reuse terms from" })).toBeNull();
   });
 
   it("a library copy clears the kind, and says how its kind is judged (review)", () => {
@@ -194,6 +226,99 @@ describe("NewProjectDialog", () => {
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
 
+  it("offers Reuse terms from for a template only, each box named by its purpose, none ticked", async () => {
+    renderDialog();
+    await act(async () => undefined);
+    // No template chosen yet: nothing to reuse terms in.
+    expect(screen.queryByRole("group", { name: "Reuse terms from" })).toBeNull();
+    kind("Ontology");
+    const group = screen.getByRole("group", { name: "Reuse terms from" });
+    const boxes = [...group.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[];
+    expect(boxes.map((b) => b.checked)).toEqual([false, false]);
+    expect(screen.getByRole("checkbox", { name: "FOAF: people, organizations and their links" })).toBe(boxes[0]);
+    expect(screen.getByRole("checkbox", { name: "QUDT: quantities, units and dimensions" })).toBe(boxes[1]);
+    // After Start from (5.4 item 1).
+    expect(field("Start from").compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.change(field("Start from"), { target: { value: "library:ont-1" } });
+    expect(screen.queryByRole("group", { name: "Reuse terms from" })).toBeNull();
+  });
+
+  it("the description follows the name and the boxes until edited, then is left alone", async () => {
+    const { onCreate } = renderDialog();
+    await act(async () => undefined);
+    kind("Ontology");
+    const description = () => screen.getByLabelText("Description") as HTMLTextAreaElement;
+    // Under the name.
+    expect(field("Name").compareDocumentPosition(description()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.change(field("Name"), { target: { value: "Plant" } });
+    expect(description().value).toBe("An ontology for Plant.");
+    fireEvent.click(screen.getByRole("checkbox", { name: /^QUDT/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^FOAF/ }));
+    expect(description().value).toBe(
+      "An ontology for Plant. It reuses FOAF for people and organizations. It reuses QUDT for quantities and units.",
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: /^FOAF/ }));
+    expect(description().value).toBe("An ontology for Plant. It reuses QUDT for quantities and units.");
+    fireEvent.change(description(), { target: { value: "Pumps and their units." } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /^FOAF/ }));
+    fireEvent.change(field("Name"), { target: { value: "Plant two" } });
+    expect(description().value).toBe("Pumps and their units.");
+    await act(async () => {
+      fireEvent.click(create());
+    });
+    expect(onCreate.mock.calls[0][0]).toMatchObject({
+      references: ["foaf", "qudt"],
+      description: "Pumps and their units.",
+      template: "small",
+    });
+  });
+
+  it("a cleared description is sent empty, which writes none", async () => {
+    const { onCreate } = renderDialog();
+    kind("Ontology");
+    fireEvent.change(field("Name"), { target: { value: "Plant" } });
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "" } });
+    await act(async () => {
+      fireEvent.click(create());
+    });
+    expect(onCreate.mock.calls[0][0].description).toBe("");
+  });
+
+  it("says the counter only past 2,000 characters, and blocks Create", () => {
+    renderDialog();
+    kind("Ontology");
+    fireEvent.change(field("Name"), { target: { value: "Plant" } });
+    const area = screen.getByLabelText("Description") as HTMLTextAreaElement;
+    const count = document.getElementById("new-project-description-count")!;
+    // A live region, there while empty, so its first words are heard.
+    expect(count.getAttribute("aria-live")).toBe("polite");
+    fireEvent.change(area, { target: { value: "x".repeat(2000) } });
+    expect(count.textContent).toBe("");
+    expect(create().getAttribute("aria-disabled")).toBe("false");
+    fireEvent.change(area, { target: { value: "x".repeat(2001) } });
+    expect(count.textContent).toBe("2,001 of 2,000 characters: shorten it by 1.");
+    expect(area.getAttribute("aria-invalid")).toBe("true");
+    expect(area.getAttribute("aria-describedby")).toContain("new-project-description-count");
+    expect(reasonOf(create())).toBe("A description can be at most 2,000 characters.");
+  });
+
+  it("refuses a prefix equal to a ticked reference's, under the field", async () => {
+    renderDialog();
+    await act(async () => undefined);
+    kind("Ontology");
+    fireEvent.change(field("Name"), { target: { value: "QUDT test" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /^QUDT/ }));
+    // The default, qudttest, is fine.
+    expect(field("Prefix").value).toBe("qudttest");
+    expect(create().getAttribute("aria-disabled")).toBe("false");
+    fireEvent.change(field("Prefix"), { target: { value: "qudt" } });
+    const message = "qudt is QUDT's prefix. Choose another for your project.";
+    expect(document.getElementById(field("Prefix").getAttribute("aria-describedby")!)!.textContent).toBe(message);
+    expect(reasonOf(create())).toBe(message);
+    fireEvent.click(screen.getByRole("checkbox", { name: /^QUDT/ }));
+    expect(create().getAttribute("aria-disabled")).toBe("false");
+  });
+
   it("Escape and Cancel close it", () => {
     const { onClose } = renderDialog();
     fireEvent.keyDown(document, { key: "Escape" });
@@ -219,5 +344,18 @@ describe("the form's rules (projects/form.ts)", () => {
     expect(
       validate({ name: "A", baseIri: "urn:acme:vocab/", prefix: "acme", primaryLanguage: "en-US" }),
     ).toEqual({});
+  });
+
+  it("reads a reference's prefixes as own keys only", () => {
+    const fields = { name: "A", baseIri: "urn:acme:vocab/", prefix: "constructor", primaryLanguage: "en" };
+    expect(validate(fields, REFERENCES)).toEqual({});
+    expect(validate({ ...fields, prefix: "foaf" }, REFERENCES).prefix).toBe(
+      "foaf is FOAF's prefix. Choose another for your project.",
+    );
+  });
+
+  it("writes the default description from the name and the references, in order", () => {
+    expect(defaultDescription("Plant", [])).toBe("An ontology for Plant.");
+    expect(defaultDescription("  ", [REFERENCES[1]])).toBe("It reuses QUDT for quantities and units.");
   });
 });

@@ -18,16 +18,21 @@ BASIC IDEA
     Open question 2 closed as recommended: the base IRI defaults to
     http://example.org/<slug>#, editable, and the prefix to the slug.
 
+    The description (reference-ontologies 5.4 item 3) defaults to a
+    sentence about the name and one per reference ontology chosen, and the
+    project's prefix may not be a chosen reference's (item 4): the server's
+    words, so the form and a refusal say the same thing.
+
 INPUTS / INPUT SOURCES
-    - The form's field values.
+    - The form's field values; the reference ontologies chosen.
 
 EXPECTED OUTPUT
     - KIND_CHOICES; defaults, and a map of field -> sentence for whatever is
-      invalid; the first reason Create is unavailable.
+      invalid; the first reason Create is unavailable; defaultDescription.
 ================================================================================
 */
 
-import type { ProjectKind, ProjectTemplate } from "../types";
+import type { ProjectKind, ProjectTemplate, ReferenceOntology } from "../types";
 
 /** The two kinds a project can be, asked first (relationships 5.1). The
  *  sentences are the spec's, word for word: they are what a learner reads to
@@ -90,16 +95,27 @@ export function validLanguageTag(tag: string): boolean {
   return LANG_TAG.test(tag);
 }
 
+/** The description's limit, the server's (projects.DESCRIPTION_MAX). */
+export const DESCRIPTION_MAX = 2000;
+
+/** What the description says until the person edits it (5.4 item 3): the
+ *  name, then each chosen reference's sentence, in the order offered. */
+export function defaultDescription(name: string, chosen: ReferenceOntology[]): string {
+  const parts = name.trim() ? [`An ontology for ${name.trim()}.`] : [];
+  return [...parts, ...chosen.map((r) => r.sentence)].join(" ");
+}
+
 export interface NewProjectFields {
   name: string;
   baseIri: string;
   prefix: string;
   primaryLanguage: string;
+  description?: string;
 }
 
 export type FieldErrors = Partial<Record<keyof NewProjectFields, string>>;
 
-export function validate(fields: NewProjectFields): FieldErrors {
+export function validate(fields: NewProjectFields, chosen: ReferenceOntology[] = []): FieldErrors {
   const errors: FieldErrors = {};
   if (!fields.name.trim()) errors.name = "Give the project a name.";
   else if (fields.name.trim().length > 120) errors.name = "A name can be at most 120 characters.";
@@ -109,16 +125,22 @@ export function validate(fields: NewProjectFields): FieldErrors {
   }
   if (!PREFIX.test(fields.prefix.trim())) {
     errors.prefix = "The prefix must start with a letter and use only letters, digits, - and _.";
+  } else {
+    const clash = chosen.find((r) => Object.prototype.hasOwnProperty.call(r.prefixes, fields.prefix.trim()));
+    if (clash) errors.prefix = `${fields.prefix.trim()} is ${clash.title}'s prefix. Choose another for your project.`;
   }
   if (!validLanguageTag(fields.primaryLanguage.trim())) {
     errors.primaryLanguage = "Use a language tag such as en, en-US or fr.";
+  }
+  if ((fields.description ?? "").trim().length > DESCRIPTION_MAX) {
+    errors.description = `A description can be at most ${DESCRIPTION_MAX.toLocaleString("en")} characters.`;
   }
   return errors;
 }
 
 /** The first reason Create is unavailable, in field order, or null. */
 export function firstReason(errors: FieldErrors): string | null {
-  for (const key of ["name", "baseIri", "prefix", "primaryLanguage"] as const) {
+  for (const key of ["name", "description", "baseIri", "prefix", "primaryLanguage"] as const) {
     if (errors[key]) return errors[key]!;
   }
   return null;

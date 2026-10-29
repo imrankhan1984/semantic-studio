@@ -6,9 +6,10 @@ FILE: frontend/src/components/NewProjectDialog.tsx
 SUMMARY
     The New project form (authoring-foundations 5.1, relationships 5.1):
     first the kind, Ontology or Taxonomy, each with its sentence; then a
-    name, a starting point (the chosen kind's two templates, or an ontology
-    from the library), a base IRI and a prefix defaulted from the name, and
-    the primary language.
+    name, a description, a starting point (the chosen kind's two templates,
+    or an ontology from the library), for a template the reference
+    ontologies to reuse terms from (reference-ontologies 5.4), a base IRI
+    and a prefix defaulted from the name, and the primary language.
 
 BASIC IDEA
     The base IRI and prefix follow the name until the user edits them, and
@@ -26,6 +27,16 @@ BASIC IDEA
     Taxonomy.* until one is. A library copy needs no choice: the server
     judges its kind from what it holds (D-089).
 
+    *Reuse terms from* is a fieldset of checkboxes, one per reference
+    ontology GET /api/references lists, each labelled by its title and
+    purpose; nothing is ticked at first, and a library copy, which keeps
+    its own file, is not offered it. The description is prefilled -- *An
+    ontology for {name}.* and each ticked reference's sentence -- and follows
+    the name and the boxes until the person types in it, as the base IRI
+    follows the name. Its counter is said only once the limit is passed,
+    through a live region rendered while empty. A prefix equal to a ticked
+    reference's is refused under the field, in the server's words.
+
     The dialog does not create anything itself; it hands the fields to
     onCreate and shows the server's sentence if that fails.
 
@@ -41,17 +52,20 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useCallback, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { listReferences } from "../api";
 import {
   CHOOSE_KIND,
+  DESCRIPTION_MAX,
   defaultBaseIri,
+  defaultDescription,
   defaultPrefix,
   firstReason,
   KIND_CHOICES,
   validate,
   type NewProjectFields,
 } from "../projects/form";
-import type { ProjectKind, ProjectTemplate } from "../types";
+import type { ProjectKind, ProjectTemplate, ReferenceOntology } from "../types";
 import { useDialogTrap } from "./useDialogTrap";
 
 export interface NewProjectRequest {
@@ -61,6 +75,10 @@ export interface NewProjectRequest {
   baseIri: string;
   prefix: string;
   primaryLanguage: string;
+  /** The reference ontologies a template reuses; absent for a copy. */
+  references?: string[];
+  /** The header's rdfs:comment; "" when cleared, which writes none. */
+  description: string;
 }
 
 interface Props {
@@ -99,6 +117,21 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
   const [baseIri, setBaseIri] = useState<string | null>(null);
   const [prefix, setPrefix] = useState<string | null>(null);
   const [primaryLanguage, setPrimaryLanguage] = useState("en");
+  const [references, setReferences] = useState<ReferenceOntology[]>([]);
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  // null while it follows the name and the boxes (5.4 item 3).
+  const [description, setDescription] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    // Without the list there is nothing to offer, and nothing to refuse:
+    // the form is the one it was before references.
+    listReferences()
+      .then((found) => live && setReferences(found))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
   const [touched, setTouched] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,20 +141,38 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
   }, [busy, onClose]);
   useDialogTrap(panelRef, headingRef, escape);
 
+  // A copy keeps its own file: only a template reuses terms.
+  const chosen = fromLibrary ? [] : references.filter((r) => ticked.has(r.key));
   const fields: NewProjectFields = {
     name,
     baseIri: baseIri ?? defaultBaseIri(name),
     prefix: prefix ?? defaultPrefix(name),
     primaryLanguage,
+    description: description ?? defaultDescription(name, chosen),
   };
-  const errors = useMemo(() => validate(fields), [name, baseIri, prefix, primaryLanguage]);
+  const errors = useMemo(
+    () => validate(fields, chosen),
+    [name, baseIri, prefix, primaryLanguage, description, references, ticked, fromLibrary],
+  );
+  const toggle = (key: string) => {
+    // A clash with the prefix is said at once, under the field (5.4 item 4).
+    touch("prefix");
+    setTicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const descriptionLength = (fields.description ?? "").trim().length;
+  const overLimit = descriptionLength > DESCRIPTION_MAX;
   // The kind first: it is the first question the form asks (Section 6).
   const reason = source === "" ? CHOOSE_KIND : firstReason(errors);
   const touch = (field: string) => setTouched((prev) => new Set(prev).add(field));
   const shown = (field: keyof NewProjectFields) => (touched.has(field) ? errors[field] : undefined);
 
   const submit = async () => {
-    setTouched(new Set(["name", "baseIri", "prefix", "primaryLanguage"]));
+    setTouched(new Set(["name", "description", "baseIri", "prefix", "primaryLanguage"]));
     if (reason || busy) return;
     const [from, value] = source.split(/:(.*)/s);
     setBusy(true);
@@ -133,6 +184,8 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
         baseIri: fields.baseIri.trim(),
         prefix: fields.prefix.trim(),
         primaryLanguage: fields.primaryLanguage.trim(),
+        ...(from === "library" ? {} : { references: chosen.map((r) => r.key) }),
+        description: (fields.description ?? "").trim(),
       });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
@@ -214,6 +267,30 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
           </fieldset>
           {field("name", "Name", name, setName)}
           <div className="form-field">
+            <label htmlFor="new-project-description">Description</label>
+            <textarea
+              id="new-project-description"
+              className="new-project-description"
+              rows={3}
+              value={fields.description}
+              onChange={(e) => setDescription(e.target.value)}
+              aria-invalid={overLimit ? true : undefined}
+              aria-describedby="new-project-description-hint new-project-description-count"
+            />
+            <p id="new-project-description-hint" className="form-hint">
+              {fromLibrary
+                ? "Written into the file, where other tools read it. A copy that has a description keeps its own."
+                : "Written into the file, where other tools read it. Clear it to write none."}
+            </p>
+            {/* Rendered while empty, so the counter is heard the moment the
+                limit is passed and not before (5.8). */}
+            <p id="new-project-description-count" className="form-error" aria-live="polite">
+              {overLimit
+                ? `${descriptionLength.toLocaleString("en")} of ${DESCRIPTION_MAX.toLocaleString("en")} characters: shorten it by ${(descriptionLength - DESCRIPTION_MAX).toLocaleString("en")}.`
+                : ""}
+            </p>
+          </div>
+          <div className="form-field">
             <label htmlFor="new-project-source">Start from</label>
             <select
               id="new-project-source"
@@ -252,6 +329,22 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
               </p>
             )}
           </div>
+          {!fromLibrary && source !== "" && references.length > 0 && (
+            <fieldset className="form-field new-project-references">
+              <legend>Reuse terms from</legend>
+              {references.map((r) => (
+                <label key={r.key} className="new-project-reference">
+                  <input type="checkbox" checked={ticked.has(r.key)} onChange={() => toggle(r.key)} />
+                  <span>
+                    <strong>{r.title}</strong>: {r.purpose}
+                  </span>
+                </label>
+              ))}
+              <p className="form-hint">
+                Adds their prefixes, so the Edit pickers offer their terms. Nothing is imported.
+              </p>
+            </fieldset>
+          )}
           {field(
             "baseIri",
             "Base IRI",

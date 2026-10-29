@@ -29,8 +29,8 @@ INPUTS / INPUT SOURCES
     - Environment variable STATIC_DIR: optional override for where the built
       frontend lives. In Docker this is set to /app/static.
     - The upload cap, read from settings.py at request time (D-120).
-    - The seven router modules (ontologies, queries, network, projects, data,
-      examples, settings) which define the actual endpoints.
+    - The eight router modules (ontologies, queries, network, projects, data,
+      examples, references, settings) which define the actual endpoints.
     - The bundled examples, seeded into the library when the server starts
       (library_examples.py, home-and-examples 5.1).
 
@@ -75,7 +75,7 @@ from fastapi.staticfiles import StaticFiles
 from .local_guard import LocalOnlyMiddleware
 from .network_broker import ApprovalRequired, GrantScopeMiddleware, HostBlocked, Offline
 from . import library_examples, settings, tabular
-from .routers import data, examples, network, ontologies, projects, queries
+from .routers import data, examples, network, ontologies, projects, queries, references
 from .routers import settings as settings_router
 from .store import store
 
@@ -222,6 +222,7 @@ app.include_router(network.router)
 app.include_router(projects.router)
 app.include_router(data.router)
 app.include_router(examples.router)
+app.include_router(references.router)
 app.include_router(settings_router.router)
 
 
