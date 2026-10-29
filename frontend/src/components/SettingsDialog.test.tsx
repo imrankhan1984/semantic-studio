@@ -449,6 +449,13 @@ describe("Library: where your work is kept (home-and-settings 5.4 item 3, AC-6)"
     expect(document.querySelector(".settings-copied")!.textContent).toBe("Could not copy. Select the path to copy it.");
   });
 
+  it("says so when the folder cannot be read, never Reading… for ever (code review)", async () => {
+    getSettings.mockRejectedValue(new Error("The server did not answer."));
+    await open({}, "library");
+    expect(document.querySelector(".settings-path")!.textContent).toBe("Could not be read. Close Settings and open it again.");
+    expect(screen.getByRole("button", { name: "Copy path" }).getAttribute("aria-disabled")).toBe("true");
+  });
+
   it("a catalogue entry refused for its size offers Settings, which opens Limits (5.5)", async () => {
     fetchOntology.mockRejectedValue(
       new ApiError("This file is larger than the 50 MB limit. You can raise it in Settings → Limits.", 413, {
@@ -668,6 +675,15 @@ describe("closing with an unsaved limit asks once (home-and-settings 5.4)", () =
     expect(tab("Limits").getAttribute("aria-selected")).toBe("true");
     expect(document.activeElement).toBe(tab("Limits"));
     expect(field(/^Largest file/).value).toBe("75");
+  });
+
+  it("the question goes once the change is saved or put back while it stands (code review)", async () => {
+    await open({}, "limits");
+    type(/^Largest file/, "75");
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.getByRole("group", { name: "Close without saving?" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("group", { name: "Close without saving?" })).toBeNull();
   });
 
   it("asks nothing once the change is saved, or put back", async () => {

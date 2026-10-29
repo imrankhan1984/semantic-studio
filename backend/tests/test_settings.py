@@ -431,3 +431,56 @@ def test_only_settings_reads_the_limit_variables():
         re.M,
     )
     assert [p.name for p in scanned if old_constants.search(p.read_text(encoding="utf-8"))] == []
+
+
+# --- code review fixes ------------------------------------------------------------
+
+
+def test_a_value_equal_to_its_default_is_not_kept():
+    """Reset to defaults then Save means the default, not a pinned copy of it."""
+    _put({"readTime": 300, "firstDrawing": 500})
+    body = _put({"readTime": 60}).json()
+    assert _limit(body, "readTime")["source"] == "default"
+    assert json.loads(_file().read_text(encoding="utf-8")) == {"limits": {"firstDrawing": 500}}
+
+
+def test_both_caps_are_shown_when_one_size_variable_leaves_them_apart(monkeypatch):
+    """A read-only line showing only the variable's number would hide the
+    other path's cap, which the page saved and can no longer change."""
+    _put({"largestFile": 1})
+    monkeypatch.setenv("SEMANTIC_STUDIO_MAX_UPLOAD_BYTES", str(300 * MB))
+    item = _limit(_get(), "largestFile")
+    assert item["byPath"] == {"upload": 300, "fetch": 1}
+    monkeypatch.setenv("SEMANTIC_STUDIO_MAX_FETCH_BYTES", str(300 * MB))
+    assert "byPath" not in _limit(_get(), "largestFile")
+
+
+def test_the_refusal_names_the_administrator_only_for_its_own_variable(monkeypatch):
+    monkeypatch.setenv("SEMANTIC_STUDIO_MAX_FETCH_BYTES", str(100 * MB))
+    detail = settings.too_large_detail(50 * MB, "upload")
+    assert detail["message"] == "This file is larger than the 50 MB limit. Only the administrator can change it."
+    assert detail["settable"] is False
+    detail = settings.too_large_detail(100 * MB, "fetch")
+    assert detail["message"] == "This file is larger than the 100 MB limit, which the administrator set."
+
+
+def test_an_odd_byte_count_never_reads_as_0_mb(monkeypatch):
+    monkeypatch.setenv("SEMANTIC_STUDIO_MAX_UPLOAD_BYTES", "4000")
+    assert settings.too_large_detail(4000)["message"].startswith("This file is larger than the 0.0038 MB limit")
+    assert _limit(_get(), "largestFile")["value"] == 0.0038
+
+
+def test_the_turtle_editors_timeout_says_where_to_raise_it(monkeypatch):
+    """The editor's apply is held to the same read time, so its sentence
+    says the same: where to raise it, or that the administrator set it."""
+    from app.editing import parse_turtle
+    from app.store import ParseTimeout
+
+    text = "".join(f'<{EX}s{i}> <{EX}p> "{i}" .\n' for i in range(20_000))
+    with pytest.raises(ParseTimeout) as caught:
+        parse_turtle(text, 0.001)
+    assert str(caught.value).endswith("seconds to parse and was stopped. You can raise the limit in Settings → Limits.")
+    monkeypatch.setenv("SEMANTIC_STUDIO_PARSE_TIMEOUT", "30")
+    with pytest.raises(ParseTimeout) as caught:
+        parse_turtle(text, 0.001)
+    assert str(caught.value).endswith("The administrator set this limit.")

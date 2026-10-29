@@ -34,6 +34,7 @@ EXPECTED OUTPUT
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from .. import settings
 from .ontologies import read_json_capped
@@ -61,7 +62,9 @@ async def put_settings(request: Request) -> dict:
     if not isinstance(changes, dict):
         raise HTTPException(status_code=422, detail='The body must be JSON: {"limits": {...}}.')
     try:
-        settings.update(changes)
+        # Off the event loop: the write takes a lock and, on Windows, may
+        # retry a refused replace (no async route does that work on the loop).
+        await run_in_threadpool(settings.update, changes)
     except settings.SetByEnvironment as exc:
         raise HTTPException(
             status_code=409,

@@ -113,7 +113,9 @@ def _bounded(work, *args, **kwargs):
             return future.result(timeout=limit)
         except FuturesTimeout as exc:
             raise HTTPException(
-                status_code=504, detail=f"Reading the data took longer than {limit:g} seconds and was stopped."
+                status_code=504,
+                detail=f"Reading the data took longer than {limit:g} seconds and was stopped. "
+                + settings.raise_hint("readTime"),
             ) from exc
     finally:
         pool.shutdown(wait=False, cancel_futures=True)

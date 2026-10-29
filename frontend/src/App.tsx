@@ -1939,7 +1939,7 @@ export default function App() {
             className="nav-item about-item"
             onClick={() => setSettingsTab("network")}
             aria-haspopup="dialog"
-            title="Network, and the library itself"
+            title="Network, the library, and the limits on loading"
           >
             <IconSettings />
             <span>Settings</span>

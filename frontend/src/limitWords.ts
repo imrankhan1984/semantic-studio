@@ -59,8 +59,12 @@ export function administratorLine(limit: LimitSetting): string {
   return `Set by the administrator (${limit.variables.join(", ")}).`;
 }
 
-/** A read-only limit's value, with its unit. */
+/** A read-only limit's value, with its unit; both caps when the two size
+ *  paths differ (one variable set, the other on the saved value). */
 export function shownValue(limit: LimitSetting): string {
+  if (limit.byPath) {
+    return `${count(limit.byPath.upload)} MB for a file you open, ${count(limit.byPath.fetch)} MB for a web address`;
+  }
   return `${count(limit.value)} ${unitWord(limit)}`;
 }
 

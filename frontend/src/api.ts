@@ -697,6 +697,8 @@ export interface LimitSetting {
   max: number;
   source: "default" | "settings" | "environment";
   variables: string[];
+  /** Largest file only, when one size variable is set: each path's cap. */
+  byPath?: { upload: number; fetch: number };
 }
 
 export interface AppSettings {

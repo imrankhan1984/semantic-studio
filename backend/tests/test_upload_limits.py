@@ -89,7 +89,7 @@ def test_upload_over_the_limit_is_refused(monkeypatch):
     detail = response.json()["detail"]
     # The message names the limit and where a person raises it.
     assert detail["message"] == (
-        "This file is larger than the 0.06 MB limit. You can raise it in Settings → Limits."
+        "This file is larger than the 0.062 MB limit. You can raise it in Settings → Limits."
     )
     assert detail["code"] == "limit" and detail["limit"] == "largestFile"
     assert detail["settable"] is True

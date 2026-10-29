@@ -53,8 +53,9 @@ EXPECTED OUTPUT
       default, range, unit and source ("default", "settings", "environment").
     - update(): the new values saved, or LimitOutOfRange (422) or
       SetByEnvironment (409) with nothing written.
-    - too_large_detail() and too_slow_message(): the refusal sentences of 5.5,
-      which say where to raise a limit or that the administrator set it.
+    - too_large_detail(), too_slow_message() and raise_hint(): the refusal
+      sentences of 5.5, which say where to raise a limit or that the
+      administrator set it.
 ================================================================================
 """
 
@@ -296,6 +297,9 @@ def update(changes: dict) -> None:
     with _lock:
         current = dict(_saved) if _saved is not None else _read_file()
         current.update(changes)
+        # A value equal to its default is not kept: Reset to defaults then
+        # means the default, and a default a later release moves applies.
+        current = {key: value for key, value in current.items() if value != LIMITS[key].default}
         _write_file(current)
         _saved = current
 
@@ -333,16 +337,19 @@ def graph_budget() -> int:
 
 def _megabytes(size: int) -> float:
     """Whole megabytes as a whole number; an administrator's odd byte count
-    to two places, never truncated to 0 MB as `//` once did."""
+    to two places, or two significant figures under 1 MB, never 0 MB."""
     mb = size / MB
-    return int(mb) if mb == int(mb) else round(mb, 2)
+    if mb == int(mb):
+        return int(mb)
+    return round(mb, 2) if mb >= 1 else float(f"{mb:.2g}")
 
 
 def _shown(key: str) -> float:
     """The value Settings shows, in the limit's unit."""
     if key == "largestFile":
         # The upload's value when its variable is set, else the fetch's: the
-        # read-only line names whichever variables are set.
+        # read-only line names whichever variables are set, and `byPath`
+        # gives both when they differ.
         size = upload_bytes() if _env(UPLOAD_VARIABLE) is not None else fetch_bytes()
         return _megabytes(size)
     if key == "readTime":
@@ -358,36 +365,55 @@ def describe() -> list[dict]:
     for key, limit in LIMITS.items():
         names = variables_set(key)
         source = "environment" if names else ("settings" if key in saved else "default")
-        out.append(
-            {
-                "key": key,
-                "name": limit.name,
-                "unit": limit.unit,
-                "value": _shown(key),
-                "default": limit.default,
-                "min": limit.minimum,
-                "max": limit.maximum,
-                "source": source,
-                "variables": names,
-            }
-        )
+        item = {
+            "key": key,
+            "name": limit.name,
+            "unit": limit.unit,
+            "value": _shown(key),
+            "default": limit.default,
+            "min": limit.minimum,
+            "max": limit.maximum,
+            "source": source,
+            "variables": names,
+        }
+        # One size variable set and the other path on the page's value:
+        # the two caps differ, and a read-only line showing one would hide
+        # the other (code review).
+        if key == "largestFile" and upload_bytes() != fetch_bytes():
+            item["byPath"] = {"upload": _megabytes(upload_bytes()), "fetch": _megabytes(fetch_bytes())}
+        out.append(item)
     return out
 
 
 # --- the refusals of 5.5 -------------------------------------------------------
 
 
-def too_large_detail(limit_bytes: int) -> dict:
+def raise_hint(key: str) -> str:
+    """Where a limit is raised, or that the administrator set it (5.5)."""
+    if settable(key):
+        return "You can raise the limit in Settings → Limits."
+    return "The administrator set this limit."
+
+
+def too_large_detail(limit_bytes: int, path: str = "upload") -> dict:
     """The 413 detail for a file over the size cap, for every path that has one.
 
+    `path` is "upload" or "fetch", whose variable the sentence asks about.
     `settable` tells the Load dialog whether to offer its Settings button: it
     is false when either variable is set, as the field would be read-only.
+    The administrator is named as setting the number only when this path's
+    own variable is set; with only the other path's set, the number is the
+    page's or the default, and the sentence says no more than that it cannot
+    be changed here (code review).
     """
     mb = _megabytes(limit_bytes)
+    own = UPLOAD_VARIABLE if path == "upload" else FETCH_VARIABLE
     if settable("largestFile"):
         message = f"This file is larger than the {mb} MB limit. You can raise it in Settings → Limits."
-    else:
+    elif _env(own) is not None:
         message = f"This file is larger than the {mb} MB limit, which the administrator set."
+    else:
+        message = f"This file is larger than the {mb} MB limit. Only the administrator can change it."
     return {
         "message": message,
         "code": "limit",
@@ -398,10 +424,7 @@ def too_large_detail(limit_bytes: int) -> dict:
 
 def too_slow_message(seconds: float) -> str:
     """The sentence for a file whose parse ran out of time (store.py)."""
-    first = f"This file took longer than {seconds:g} seconds to read and was stopped."
-    if settable("readTime"):
-        return f"{first} You can raise the limit in Settings → Limits."
-    return f"{first} The administrator set this limit."
+    return f"This file took longer than {seconds:g} seconds to read and was stopped. {raise_hint('readTime')}"
 
 
 def too_slow_detail(message: str) -> dict:

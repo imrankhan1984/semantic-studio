@@ -2487,7 +2487,13 @@ EXPECTED OUTPUT
   header, a foreign Origin, a rebinding Host, 20 KB declared and 1 MB
   chunked, each variable, eight damaged files), every refusal leaving the
   limit in force unchanged and nothing written, and 60 MB loading only
-  once raised; 27 removal checks in a scratch copy, all red.
+  once raised; 35 removal checks in a scratch copy, all red.
+
+  **Two size paths can hold two numbers.** With one size variable set, the
+  other path keeps the page's saved value, which the page can then no
+  longer change; the GET answers `byPath` and the read-only line shows both
+  caps, and a refusal names the administrator only for its own path's
+  variable (code review).
 
   **Messages say where, by code.** A too-large (413) or too-slow (504)
   load answers `{message, code: "limit", limit, settable}`; the Load

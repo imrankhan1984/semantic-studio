@@ -135,6 +135,10 @@ export default function SettingsDialog({
   const [limitsDirty, setLimitsDirty] = useState(false);
   const onDirtyChange = useCallback((dirty: boolean) => setLimitsDirty(dirty), []);
   const [asking, setAsking] = useState(false);
+  // Saved or put back while the question stands: nothing is left to lose.
+  useEffect(() => {
+    if (!limitsDirty) setAsking(false);
+  }, [limitsDirty]);
   const askOrClose = () => {
     if (limitsDirty) setAsking(true);
     else onClose();
@@ -254,6 +258,7 @@ export default function SettingsDialog({
             onExamplesRestored={onExamplesRestored}
             focusTab={() => tabRefs.current.library?.focus()}
             dataDir={settings ? settings.dataDir : null}
+            dataDirFailed={settingsFailed !== null}
             onOpenLimits={() => select("limits")}
           />
         </div>

@@ -582,7 +582,7 @@ async def fetch_ontology(request: FetchRequest) -> dict:
             # Refused before any connection was made to the address in question.
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except TooLarge as exc:
-            raise HTTPException(status_code=413, detail=settings.too_large_detail(limit)) from exc
+            raise HTTPException(status_code=413, detail=settings.too_large_detail(limit, "fetch")) from exc
         except TooManyRedirects as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except FetchFailed as exc:

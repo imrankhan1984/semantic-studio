@@ -78,6 +78,11 @@ describe("the words", () => {
     expect(administratorLine(DRAW)).toBe("Set by the administrator (SEMANTIC_STUDIO_GRAPH_NODE_BUDGET).");
     expect(shownValue(DRAW)).toBe("2,000 items");
   });
+
+  it("show both caps when one size variable leaves the two paths apart (code review)", () => {
+    const split = { ...FILE, source: "environment" as const, value: 300, byPath: { upload: 300, fetch: 1 } };
+    expect(shownValue(split)).toBe("300 MB for a file you open, 1 MB for a web address");
+  });
 });
 
 describe("what a Save sends", () => {

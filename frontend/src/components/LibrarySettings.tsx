@@ -36,7 +36,8 @@ INPUTS / INPUT SOURCES (props)
     - examplesMissing / onExamplesRestored: how many bundled examples are not
       in the library, and what to do with the library the restore answers.
     - focusTab: give focus to the Library tab.
-    - dataDir: the data folder's path; null while Settings reads it.
+    - dataDir: the data folder's path; null while Settings reads it, or
+      when the read failed (dataDirFailed).
     - onOpenLimits: a catalogue entry refused for its size offers Settings →
       Limits, which this switches to.
     Plus CATALOGUE (through CatalogueList), fetchOntology and restoreExamples.
@@ -60,6 +61,7 @@ interface Props {
   onExamplesRestored?: (result: ExamplesRestored) => void;
   focusTab: () => void;
   dataDir?: string | null;
+  dataDirFailed?: boolean;
   onOpenLimits?: () => void;
 }
 
@@ -70,6 +72,7 @@ export default function LibrarySettings({
   onExamplesRestored,
   focusTab,
   dataDir = null,
+  dataDirFailed = false,
   onOpenLimits,
 }: Props) {
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -180,7 +183,9 @@ export default function LibrarySettings({
         <h3 id="settings-folder-heading">Where your work is kept</h3>
         <p className="hint">Projects, the library and saved queries are kept here, on this computer.</p>
         <div className="settings-folder">
-          <code className="settings-path">{dataDir ?? "Reading…"}</code>
+          <code className="settings-path">
+            {dataDir ?? (dataDirFailed ? "Could not be read. Close Settings and open it again." : "Reading…")}
+          </code>
           <button type="button" aria-disabled={!dataDir} onClick={() => void copyPath()}>
             Copy path
           </button>
