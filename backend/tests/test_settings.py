@@ -15,7 +15,11 @@ BASIC IDEA
     by what it leaves, not only by its status: settings.json unwritten and the
     limit in force unchanged. "Applied" is proved by the path itself: a 60 MB
     upload refused at 50 MB and stored at 100 MB, the parse handed the new
-    timeout, a graph drawn at the new budget.
+    timeout, a graph drawn at the new budget. Seven call sites that a route
+    would still serve at the default are proved one by one: each test saves
+    an unusual value (17 s, 3 MB) and watches that site hand it on, and the
+    two middleware checks are sent a declared length with a small body
+    straight into the ASGI app, so only the middleware can refuse it.
 
     The 60 MB file is mostly comment lines, so it is 60 MB on the wire and in
     the cap's count but parses in a moment: the size is what is under test.
@@ -484,3 +488,183 @@ def test_the_turtle_editors_timeout_says_where_to_raise_it(monkeypatch):
     with pytest.raises(ParseTimeout) as caught:
         parse_turtle(text, 0.001)
     assert str(caught.value).endswith("The administrator set this limit.")
+
+
+# --- each call site reads the saved value (PR #70 review) ---------------------------
+#
+# Every test above could pass with one of these sites holding a fixed number:
+# the route would still work, at the default. So each saves a value no default
+# or constant holds (17 s, 3 MB) and watches the site hand that value on. Each
+# was proved by putting a fixed number back at its site and seeing it fail.
+
+
+def _open_project() -> str:
+    response = client.post("/api/projects", json={
+        "name": "Limits", "template": "small", "baseIri": EX, "prefix": "lim"})
+    assert response.status_code == 200, response.text
+    pid = response.json()["id"]
+    assert client.post(f"/api/projects/{pid}/open").status_code == 200
+    return pid
+
+
+@pytest.fixture
+def project():
+    from app.editing import editing_service
+
+    yield _open_project()
+    editing_service.close_all()
+
+
+def _spy(monkeypatch, owner, name: str) -> list:
+    """Record each call's arguments, then do the real work."""
+    calls: list = []
+    real = getattr(owner, name)
+
+    def spy(*args, **kwargs):
+        calls.append((args, kwargs))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(owner, name, spy)
+    return calls
+
+
+def test_the_turtle_apply_is_handed_the_saved_timeout(monkeypatch, project):
+    from app.editing import editing_service
+
+    calls = _spy(monkeypatch, editing_service, "apply_text")
+    assert _put({"readTime": 17}).status_code == 200
+    text = f"<{EX}A> a <http://www.w3.org/2002/07/owl#Class> .\n"
+    response = client.put(f"/api/projects/{project}/documents/model/source", json={"text": text})
+    assert response.status_code == 200, response.text
+    assert [args[3] for args, _ in calls] == [17.0]
+
+
+def test_recover_is_handed_the_saved_timeout(monkeypatch, project):
+    from app.editing import editing_service
+
+    calls = _spy(monkeypatch, editing_service, "recover")
+    assert _put({"readTime": 17}).status_code == 200
+    response = client.post(f"/api/projects/{project}/recover", json={"action": "discard"})
+    assert response.status_code == 200, response.text
+    assert [args[2] for args, _ in calls] == [17.0]
+
+
+def test_a_data_file_is_waited_for_the_saved_time(monkeypatch, project):
+    """The wait itself: the timeout the data route's future is read with."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.routers import data
+
+    waits: list = []
+
+    class Recording(ThreadPoolExecutor):
+        def submit(self, *args, **kwargs):
+            future = super().submit(*args, **kwargs)
+            real = future.result
+
+            def result(timeout=None):
+                waits.append(timeout)
+                return real(timeout)
+
+            future.result = result
+            return future
+
+    monkeypatch.setattr(data, "ThreadPoolExecutor", Recording)
+    assert _put({"readTime": 17}).status_code == 200
+    response = client.post(
+        f"/api/projects/{project}/data/inspect",
+        files={"file": ("people.csv", b"id,name\n1,Ann\n2,Bob\n", "text/csv")},
+    )
+    assert response.status_code == 200, response.text
+    assert waits == [17.0]
+
+
+def test_the_merged_view_is_handed_the_saved_timeout(monkeypatch):
+    from app.routers import ontologies
+
+    oid = _upload(_padded_ntriples(4096), name="merged.nt").json()["id"]
+    try:
+        calls = _spy(monkeypatch, ontologies.imports_mod, "view_viz")
+        assert _put({"readTime": 17}).status_code == 200
+        response = client.get(f"/api/ontologies/{oid}/graph", params={"imports": "true"})
+        assert response.status_code == 200, response.text
+        assert [(args[1], args[2]) for args, _ in calls] == [(True, 17.0)]
+    finally:
+        client.delete(f"/api/ontologies/{oid}")
+
+
+@pytest.mark.parametrize("action", ["resolve", "refresh"])
+def test_imports_are_downloaded_under_the_saved_size(monkeypatch, action):
+    from app.routers import ontologies
+
+    oid = _upload(_padded_ntriples(4096), name="imports.nt").json()["id"]
+    try:
+        calls = _spy(monkeypatch, ontologies.imports_service, "resolve")
+        assert _put({"largestFile": 3, "readTime": 17}).status_code == 200
+        response = client.post(f"/api/ontologies/{oid}/imports/{action}")
+        assert response.status_code == 200, response.text
+        assert [(kw["max_bytes"], kw["parse_timeout"]) for _, kw in calls] == [(3 * MB, 17.0)]
+    finally:
+        client.delete(f"/api/ontologies/{oid}")
+
+
+def _raw_request(method: str, path: str, declared: int, body: bytes) -> tuple[int, dict, bool]:
+    """One request straight into the ASGI app, its Content-Length free to lie.
+
+    A client library writes the true length, so it cannot ask what the
+    middleware does with a declared one alone. Answers the status, the JSON
+    body and whether anything below the middleware asked for the body."""
+    import asyncio
+
+    pulled = []
+    sent: list[dict] = []
+
+    async def receive():
+        pulled.append(True)
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+        "method": method, "scheme": "http", "path": path, "raw_path": path.encode(),
+        "query_string": b"", "root_path": "",
+        "headers": [
+            (b"host", b"localhost"),
+            (b"x-semantic-studio", b"1"),
+            (b"content-type", b"application/json"),
+            (b"content-length", str(declared).encode()),
+        ],
+        "client": ("127.0.0.1", 50000), "server": ("localhost", 80),
+    }
+    asyncio.run(app(scope, receive, send))
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    payload = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+    return start["status"], json.loads(payload or b"null"), bool(pulled)
+
+
+def test_the_size_middleware_holds_a_source_put_to_the_saved_size(project):
+    """main.py's first upload_bytes() branch: a declared length just past the
+    saved 3 MB (and its framing allowance) is refused before the route runs."""
+    from app.routers import ontologies
+
+    assert _put({"largestFile": 3}).status_code == 200
+    text = json.dumps({"text": f"<{EX}A> a <http://www.w3.org/2002/07/owl#Class> .\n"}).encode()
+    path = f"/api/projects/{project}/documents/model/source"
+    status, body, pulled = _raw_request("PUT", path, 3 * MB + ontologies.CHUNK_BYTES + 1, text)
+    assert status == 413
+    assert "3 MB limit" in body["detail"]["message"]
+    assert not pulled  # the route never read a byte
+
+
+def test_a_settings_put_declaring_past_16_kb_is_refused_before_the_route_reads():
+    """A large declared length and a small body: only the middleware can
+    refuse this, as the route's own reading cap would see 30 bytes."""
+    small = json.dumps({"limits": {"readTime": 17}}).encode()
+    status, body, pulled = _raw_request("PUT", "/api/settings", settings.BODY_MAX_BYTES + 1, small)
+    assert status == 413
+    assert body == {"detail": settings.BODY_TOO_LARGE}
+    assert not pulled
+    assert not _file().exists()
+    assert settings.parse_timeout() == 60.0
