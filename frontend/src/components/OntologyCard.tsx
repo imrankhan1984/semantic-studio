@@ -7,7 +7,8 @@ SUMMARY
     One entry in the home screen's library: its name and "⋮" menu, the
     sentence saying what it contains (an example's purpose instead), a
     composition bar, two facts -- how many statements, and when it was added
-    or *Example* -- and *Read-only*, and three verbs (home-and-examples 5.6).
+    or *Example* or *Reference* -- and *Read-only*, and three verbs
+    (home-and-examples 5.6, reference-ontologies 5.2).
 
 BASIC IDEA
     **No picture of the graph** (home-and-settings 5.2). The card used to
@@ -59,6 +60,7 @@ EXPECTED OUTPUT
 
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { describeKindCounts } from "../explore/suggestions";
+import { isReference } from "../home/libraryOrder";
 import { compositionSegments } from "../home/miniature";
 import { statementCount } from "../statusWords";
 import type { AppMode, OntologySummary, Theme } from "../types";
@@ -296,8 +298,11 @@ function OntologyCard({
             whole file's (summary.triples), never what a canvas drew. */}
         <ul className="onto-chips">
           <li className="chip-metric">{statementCount(summary.triples)}</li>
+          {/* A reference ontology (FOAF, QUDT) is a published vocabulary to
+              build on, an example is teaching material: the same chip
+              told them apart by nothing (reference-ontologies 5.2). */}
           {example ? (
-            <li className="chip-state">Example</li>
+            <li className="chip-state">{isReference(summary) ? "Reference" : "Example"}</li>
           ) : (
             added && <li className="chip-state">Added {added}</li>
           )}

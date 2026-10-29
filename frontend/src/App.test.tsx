@@ -2022,37 +2022,51 @@ describe("App examples (home-and-examples 5.8)", () => {
     example: { key: "space", purpose: "Every feature, one ontology." },
   };
   const LOTR = { ...EXAMPLE, id: "ont-me", name: "The Lord of the Rings", example: { key: "middle-earth", purpose: "p" } };
-  const FOAF = { ...EXAMPLE, id: "ont-foaf", name: "FOAF (Friend of a Friend)", example: { key: "foaf", purpose: "p" } };
+  const FOAF = {
+    ...EXAMPLE,
+    id: "ont-foaf",
+    name: "FOAF (Friend of a Friend)",
+    example: { key: "foaf", purpose: "p", group: "reference" },
+  };
+  const QUDT = { ...EXAMPLE, id: "ont-qudt", name: "QUDT", example: { key: "qudt", purpose: "p", group: "reference" } };
 
-  it("Settings → Library adds the examples back, and Home shows them after the person's file", async () => {
-    // FOAF stayed; the other two come back.
-    listOntologies.mockResolvedValue([SUMMARY, FOAF]);
+  it("Settings → Library adds the examples back, and Home shows them after the person's file, the references last", async () => {
+    // FOAF and QUDT stayed; the other two come back.
+    listOntologies.mockResolvedValue([SUMMARY, QUDT, FOAF]);
     restoreExamples.mockResolvedValue({
       restored: ["ont-space", "ont-me"],
-      ontologies: [SUMMARY, FOAF, EXAMPLE, LOTR],
+      ontologies: [SUMMARY, QUDT, FOAF, EXAMPLE, LOTR],
     });
     await renderApp();
     await openLibrarySettings();
+    // App names what is missing, from its own list (reference-ontologies 5.3).
+    expect(screen.getByText("Missing: Space Exploration, The Lord of the Rings.")).toBeTruthy();
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Add the examples back" }));
+      fireEvent.click(screen.getByRole("button", { name: "Add them back" }));
     });
     expect(restoreExamples).toHaveBeenCalledTimes(1);
     expect(document.querySelector(".examples-restored")!.textContent).toBe("Added back: Space Exploration, The Lord of the Rings.");
     // The dialog stays, focus on its tab, and the button has gone: App's
     // list holds the example now.
     expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Library" }));
-    expect(screen.queryByRole("button", { name: "Add the examples back" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add them back" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Close Settings" }));
     const names = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(names).toEqual([SUMMARY.name, "Space Exploration", "The Lord of the Rings", FOAF.name]);
+    expect(names).toEqual([SUMMARY.name, "Space Exploration", "The Lord of the Rings", FOAF.name, "QUDT"]);
   });
 
-  it("does not offer it while every example is in the library", async () => {
+  it("names QUDT when only QUDT is missing, and offers nothing once all four are in", async () => {
     listOntologies.mockResolvedValue([SUMMARY, EXAMPLE, LOTR, FOAF]);
     await renderApp();
     await openLibrarySettings();
+    expect(screen.getByText("Missing: QUDT.")).toBeTruthy();
+    cleanup();
+    listOntologies.mockResolvedValue([SUMMARY, EXAMPLE, LOTR, FOAF, QUDT]);
+    await renderApp();
+    await openLibrarySettings();
     expect(screen.getByRole("tabpanel", { name: "Library" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Add the examples back" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add them back" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Bundled with Semantic Studio" })).toBeNull();
   });
 });
 
@@ -3791,6 +3805,16 @@ describe("App status bar (portal-foundations 5.6, AC-9)", () => {
     const parts = [...document.querySelectorAll(".status-bar span")].map((s) => s.textContent);
     expect(parts).toContain("Example");
     expect(parts).not.toContain("example");
+
+    cleanup();
+    // A reference ontology says Reference, as its card does (reference-ontologies 5.2).
+    listOntologies.mockResolvedValue([
+      { ...SUMMARY, source: "example", example: { key: "qudt", purpose: "p", group: "reference" } },
+    ]);
+    await renderAppOpened();
+    const reference = [...document.querySelectorAll(".status-bar span")].map((s) => s.textContent);
+    expect(reference).toContain("Reference");
+    expect(reference).not.toContain("Example");
 
     cleanup();
     listOntologies.mockResolvedValue([{ ...SUMMARY, source: "https://example.org/fibo.ttl" }]);

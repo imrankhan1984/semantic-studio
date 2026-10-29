@@ -7,7 +7,8 @@ SUMMARY
     Settings (home-and-settings 5.4, D-120): the one dialog for choices about
     the application itself, opened from the header's Settings button. Three
     tabs: Network (today's panel, NetworkPanel), Library (the catalogue,
-    *Add the examples back* and where the work is kept, LibrarySettings) and
+    *Bundled with Semantic Studio* and where the work is kept,
+    LibrarySettings) and
     Limits (the three limits a person can change, LimitsSettings).
 
 BASIC IDEA
@@ -51,7 +52,7 @@ INPUTS / INPUT SOURCES (props)
     - initialTab: the tab to open on; Network unless a caller names another
       (the Load dialog's refusal for a limit names Limits).
     - onClose: every way of closing.
-    - onLoaded / onLibraryChanged / examplesMissing / onExamplesRestored:
+    - onLoaded / onLibraryChanged / bundledMissing / onExamplesRestored:
       passed to the Library tab.
 
 EXPECTED OUTPUT
@@ -82,7 +83,7 @@ interface Props {
   onClose: () => void;
   onLoaded: (summary: OntologySummary) => void;
   onLibraryChanged?: () => void;
-  examplesMissing: number;
+  bundledMissing: string[];
   onExamplesRestored?: (result: ExamplesRestored) => void;
 }
 
@@ -91,7 +92,7 @@ export default function SettingsDialog({
   onClose,
   onLoaded,
   onLibraryChanged,
-  examplesMissing,
+  bundledMissing,
   onExamplesRestored,
 }: Props) {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
@@ -254,7 +255,7 @@ export default function SettingsDialog({
           <LibrarySettings
             onLoaded={onLoaded}
             onLibraryChanged={onLibraryChanged}
-            examplesMissing={examplesMissing}
+            bundledMissing={bundledMissing}
             onExamplesRestored={onExamplesRestored}
             focusTab={() => tabRefs.current.library?.focus()}
             dataDir={settings ? settings.dataDir : null}

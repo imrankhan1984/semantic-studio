@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1572 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1853 tests, vitest
+cd backend  && python -m pytest tests    # 1587 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1861 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -152,13 +152,16 @@ backend/app/
   network_broker.py  The one door out: capability grants, offline, pinning, activity log
   imports.py         owl:imports: resolution chain, closure, cache, MergedView
   sparql_service.py  SERVICE blocks found, approved, and sent through the broker
-  vocab/             Bundled vocabularies, pinned by SHA-256 in manifest.json
-  examples/          The library's bundled examples (D-111): two Turtle files
-                     and manifest.json; FOAF is vocab/foaf.rdf itself;
+  vocab/             Bundled vocabularies, pinned by SHA-256 in manifest.json;
+                     QUDT 3.5.2 the twelfth and largest (E-12)
+  examples/          The library's bundled entries (D-111): two Turtle files
+                     and manifest.json, each entry's group an example or a
+                     reference; FOAF and QUDT are vocab/ files themselves;
                      questions/, eight pinned .rq files (D-118)
-  library_examples.py  Seeds the examples once, under fixed ids; examples.json
-                     in the data folder makes a removal stick; restore;
-                     attaches each example's ready-made questions when listed
+  library_examples.py  Seeds the four bundled entries once, under fixed ids;
+                     examples.json in the data folder makes a removal stick;
+                     restore; attaches each entry's group and ready-made
+                     questions when listed
   store.py           In-memory ontology store, disk persistence, lazy parsing;
                      every derived view keyed on the revision (D-081)
   parse_errors.py    A failed load in one plain sentence (D-112): the line,
@@ -448,6 +451,7 @@ leaves one behind.
 - Home shows no catalogue and downloads nothing: the examples are library entries (D-111); `CatalogueList` is Settings → Library's alone. [Home and examples, Home and header]
 - The catalogue order is deliberate, and FOAF is not in it because it is a bundled example; read the comment above `CATALOGUE`. [leads with FOAF, Home and examples]
 - An example is told by `source === "example"` and its `example` record, never its name, and always follows the person's work (`home/libraryOrder.ts`). [Home and examples]
+- A bundled entry's group (*Example* or *Reference*) is the manifest's, attached when listed, never stored; examples come before references on Home. [Reference library]
 - A person reads *statements*, never *triples*; `wording.test.ts` scans the source, and code names keep `triples`. [Home and examples]
 - `.onto-card` never clips: its "⋮" menu is longer than a card. [Home and examples]
 - The Load dialog's key handler is on `document`, wraps Tab with `wrapTab`, and leaves every key to a modal open over it; past the wizard's step 3 Escape asks. Its opener is taken at the first render, before autoFocus moves focus. [Load and Shapes]

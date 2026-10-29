@@ -227,7 +227,7 @@ import {
 } from "./components/icons";
 import { removalConfirmation, removalPrompt } from "./removalPrompt";
 import { formatName, homeStatus, statementCount } from "./statusWords";
-import { missingExamples } from "./home/libraryOrder";
+import { isReference, missingBundled } from "./home/libraryOrder";
 import type { SourceTarget } from "./sourceTarget";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type {
@@ -607,6 +607,8 @@ export default function App() {
     [openDocName, projectData],
   );
   const modelOntologyId = projectDocuments.find((d) => d.doc === "model")?.ontologyId ?? null;
+  // Settings → Library names these; one array per library, not per render.
+  const bundledMissing = useMemo(() => missingBundled(ontologies).map((b) => b.name), [ontologies]);
   const editingModel = useMemo(
     () =>
       openProjectSummary && openDocName === "model"
@@ -2432,11 +2434,15 @@ export default function App() {
             <span>{countOf(graphData, "node", expanded)} nodes</span>
             <span>{countOf(graphData, "edge", expanded)} edges</span>
             <span className="dim">{formatName(active.format)}</span>
-            {/* A fetched file names where it came from; a bundled example
-                says so in a word, not the code's "example" (home-and-examples
-                5.6: the card's facts are the status bar's once it is open). */}
+            {/* A fetched file names where it came from; a bundled entry says
+                so in a word, the card's, not the code's "example"
+                (home-and-examples 5.6: the card's facts are the status bar's
+                once it is open; reference-ontologies 5.2: FOAF and QUDT are
+                references). */}
             {active.source !== "upload" && active.source !== "project" && (
-              <span className="dim src">{active.source === "example" ? "Example" : active.source}</span>
+              <span className="dim src">
+                {active.source === "example" ? (isReference(active) ? "Reference" : "Example") : active.source}
+              </span>
             )}
           </>
         ) : (
@@ -2457,7 +2463,7 @@ export default function App() {
             onLoaded(summary);
           }}
           onLibraryChanged={refreshList}
-          examplesMissing={missingExamples(ontologies).length}
+          bundledMissing={bundledMissing}
           onExamplesRestored={(result) => setOntologies(result.ontologies)}
         />
       )}

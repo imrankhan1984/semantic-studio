@@ -85,12 +85,14 @@ async def lifespan(_app: FastAPI):
     """Seed the library's examples once the server is up (home-and-examples
     5.1). Here rather than at import, so a test that builds a TestClient
     without starting the app gets the library it set up and nothing else; a
-    first start parses three small files, every later one parses nothing.
+    first start parses three small files and QUDT (reference-ontologies 5.2,
+    3.9 s of the first start on Imran's machine), every later one parses
+    nothing.
 
     A failure is said in the server's log and the server starts anyway: the
     examples are a convenience, and a data folder that cannot take
     examples.json should not cost the person their own library. What did not
-    come in can be added back from the Load dialog."""
+    come in can be added back from Settings → Library."""
     try:
         library_examples.seed(store)
     except Exception:  # noqa: BLE001 -- any failure here must not stop the server

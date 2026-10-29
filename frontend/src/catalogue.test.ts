@@ -7,7 +7,8 @@ SUMMARY
     Locks the order of the suggested-ontology catalogue, and the properties of
     each entry that the reordering must not have disturbed. Since
     home-and-examples 5.8 (AC-10) FOAF is not in it: it is a bundled example,
-    and the catalogue is schema.org, FIBO and UNESCO, in that order.
+    and the catalogue is schema.org, FIBO and UNESCO, in that order, and,
+    since reference-ontologies 5.3 (AC-3), QUDT's SHACL form last.
 
 BASIC IDEA
     The order of CATALOGUE is a product decision, not an implementation detail:
@@ -42,8 +43,8 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - Pass/fail per assertion, covering `catalogue-order` AC-1 to AC-6,
-      `catalogue-skos-replacement` AC-1 to AC-5 and `home-and-examples`
-      AC-10.
+      `catalogue-skos-replacement` AC-1 to AC-5, `home-and-examples`
+      AC-10 and `reference-ontologies` AC-3.
 ================================================================================
 */
 
@@ -55,7 +56,7 @@ import { CATALOGUE } from "./catalogue";
  * list is the specification restated as code: if it and the array disagree,
  * one of them is wrong and a human has to decide which.
  */
-const EXPECTED_ORDER = ["schemaorg", "fibo", "unesco"];
+const EXPECTED_ORDER = ["schemaorg", "fibo", "unesco", "qudt-shacl"];
 
 /**
  * Every entry's url. The first three stood at commit 33d35c7, the commit
@@ -75,6 +76,7 @@ const EXPECTED_URLS: Record<string, string> = {
     "https://github.com/schemaorg/schemaorg/blob/main/data/releases/28.1/schemaorg-current-https.ttl",
   unesco:
     "https://vocabularies.unesco.org/exports/thesaurus/latest/unesco-thesaurus.ttl",
+  "qudt-shacl": "https://qudt.org/3.5.2/shacl/qudt-all",
 };
 
 describe("CATALOGUE", () => {
@@ -89,7 +91,7 @@ describe("CATALOGUE", () => {
     expect(CATALOGUE[0].id).toBe("schemaorg");
   });
 
-  it("lists schemaorg, fibo, unesco in that order", () => {
+  it("lists schemaorg, fibo, unesco, qudt-shacl in that order", () => {
     // catalogue-order AC-2, and catalogue-skos-replacement AC-1. Asserted as
     // ids rather than parsed from `size`; see the header. The name no longer
     // says "by ascending triple count" because since the UNESCO swap that is
@@ -98,10 +100,10 @@ describe("CATALOGUE", () => {
     expect(CATALOGUE.map((e) => e.id)).toEqual(EXPECTED_ORDER);
   });
 
-  it("contains exactly three entries", () => {
+  it("contains exactly four entries", () => {
     // catalogue-order AC-3. A reorder that quietly drops an entry would satisfy
     // the prefix of the assertion above.
-    expect(CATALOGUE).toHaveLength(3);
+    expect(CATALOGUE).toHaveLength(4);
     expect([...CATALOGUE.map((e) => e.id)].sort()).toEqual(
       [...EXPECTED_ORDER].sort(),
     );
@@ -151,6 +153,19 @@ describe("CATALOGUE", () => {
     for (const entry of CATALOGUE) {
       expect(entry.audience.trim().length).toBeGreaterThan(0);
     }
+  });
+
+  it("ends with QUDT's SHACL form, over https, with 5.3's description", () => {
+    // reference-ontologies 5.3 item 1: last, because a second form of a
+    // vocabulary already in every library is for someone who knows why.
+    const last = CATALOGUE[CATALOGUE.length - 1];
+    expect(last.id).toBe("qudt-shacl");
+    expect(last.name).toBe("QUDT 3.5.2, SHACL form");
+    expect(last.url).toBe("https://qudt.org/3.5.2/shacl/qudt-all");
+    expect(last.description).toBe(
+      "The same quantities and units written as SHACL shapes, for projects that validate data against QUDT.",
+    );
+    expect(last.size).toBe("~6.9 MB · 133k statements · ~10s");
   });
 
   it("every entry has a unique id", () => {

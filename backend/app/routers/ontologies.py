@@ -384,7 +384,7 @@ def list_ontologies() -> list[dict]:
     A bundled example's record carries its ready-made questions
     (query-page-rework 5.4); library_examples attaches them.
     """
-    return [library_examples.with_questions(o.summary()) for o in store.list()]
+    return [library_examples.as_listed(o.summary()) for o in store.list()]
 
 
 async def _read_capped(file: UploadFile, limit: int) -> bytes:

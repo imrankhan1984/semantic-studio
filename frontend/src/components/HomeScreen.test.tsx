@@ -8,7 +8,8 @@ SUMMARY
     The first test for HomeScreen. Covers the library's states, the search box
     and what it does and does not filter, the empty state, and the two render
     budgets; since home-and-examples 5.5 (AC-7), the one library: the person's
-    projects and files first, newest first, then the three examples in their
+    projects and files first, newest first, then the examples and, since
+    reference-ontologies 5.2, the reference ontologies, each in their
     fixed order, and no *Try one* catalogue; since home-and-settings 5.2
     (AC-2), the three ways in as one row of primary buttons, no *Or* section,
     and cards only, the Cards / Rows switch gone.
@@ -55,22 +56,29 @@ const API = vi.hoisted(() => ({
 const { downloadDocumentation } = API;
 vi.mock("../api", () => API);
 
-/** A bundled example as the list serves it (home-and-examples 5.1). */
-function example(key: string, name: string, purpose = `What ${name} is for.`): OntologySummary {
+/** A bundled entry as the list serves it (home-and-examples 5.1), with its
+ *  group (reference-ontologies 5.2). */
+function example(
+  key: string,
+  name: string,
+  group: "example" | "reference" = "example",
+  purpose = `What ${name} is for.`,
+): OntologySummary {
   return {
     ...summaries(1)[0],
     id: `ont-${key}`,
     name,
     source: "example",
     triples: 800,
-    example: { key, purpose },
+    example: { key, purpose, group },
   };
 }
 
 const EXAMPLES = [
   example("space", "Space Exploration"),
   example("middle-earth", "The Lord of the Rings"),
-  example("foaf", "FOAF (Friend of a Friend)"),
+  example("foaf", "FOAF (Friend of a Friend)", "reference"),
+  example("qudt", "QUDT", "reference"),
 ];
 
 function project(id: string, name: string, updatedAt: string): ProjectSummary {
@@ -308,7 +316,7 @@ describe("HomeScreen library", () => {
     expect(buttons.every((b) => b.classList.contains("primary"))).toBe(true);
   });
 
-  it("puts the person's projects and files first, newest first, then the examples (AC-7)", () => {
+  it("puts the person's projects and files first, newest first, then the examples, then the references (AC-7; reference-ontologies AC-2)", () => {
     const files: OntologySummary[] = [
       { ...summaries(1)[0], id: "f-old", name: "Old file", addedAt: "2026-01-05T09:00:00Z" },
       { ...summaries(1)[0], id: "f-new", name: "New file", addedAt: "2026-10-10T09:00:00Z" },
@@ -316,7 +324,7 @@ describe("HomeScreen library", () => {
     renderScreen({
       // The list order is scrambled on purpose: the examples come first from
       // the server, and the screen still puts them last.
-      ontologies: [EXAMPLES[2], EXAMPLES[0], ...files, EXAMPLES[1]],
+      ontologies: [EXAMPLES[3], EXAMPLES[2], EXAMPLES[0], ...files, EXAMPLES[1]],
       projects: projects([
         project("prj-a", "Mid project", "2026-06-01T09:00:00Z"),
         project("prj-b", "Newest project", "2026-10-12T09:00:00Z"),
@@ -330,7 +338,16 @@ describe("HomeScreen library", () => {
       "Space Exploration",
       "The Lord of the Rings",
       "FOAF (Friend of a Friend)",
+      "QUDT",
     ]);
+  });
+
+  it("a reference ontology's card says Reference where an example's says Example (reference-ontologies 5.2)", () => {
+    renderScreen({ ontologies: EXAMPLES });
+    const chips = cards().map((card) =>
+      [...card.querySelectorAll(".onto-chips li")].map((li) => li.textContent).filter((t) => t === "Example" || t === "Reference"),
+    );
+    expect(chips).toEqual([["Example"], ["Example"], ["Reference"], ["Reference"]]);
   });
 
   it("an example card says Example and its purpose, and every library card says Read-only", () => {
@@ -346,7 +363,7 @@ describe("HomeScreen library", () => {
   it("ten entries are still cards, examples and projects counted (home-and-settings 5.2)", () => {
     // Ten in all, which used to switch the screen to rows.
     renderScreen({
-      ontologies: [...summaries(4), ...EXAMPLES],
+      ontologies: [...summaries(3), ...EXAMPLES],
       projects: projects([
         project("prj-1", "P1", "2026-10-01T09:00:00Z"),
         project("prj-2", "P2", "2026-10-02T09:00:00Z"),
@@ -363,7 +380,7 @@ describe("HomeScreen library", () => {
       ontologies: [...summaries(2), ...EXAMPLES],
       projects: projects([project("prj-1", "P1", "2026-10-01T09:00:00Z")]),
     });
-    expect(cards()).toHaveLength(6);
+    expect(cards()).toHaveLength(7);
     for (const [name, fn] of Object.entries(API)) {
       expect(fn, `${name} was called by a Home render`).not.toHaveBeenCalled();
     }

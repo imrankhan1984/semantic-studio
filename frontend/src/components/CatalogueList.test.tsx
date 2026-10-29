@@ -99,7 +99,7 @@ describe("CatalogueList", () => {
     document.body.innerHTML = "";
 
     const library = render(
-      <LibrarySettings onLoaded={vi.fn()} examplesMissing={0} focusTab={vi.fn()} />,
+      <LibrarySettings onLoaded={vi.fn()} bundledMissing={[]} focusTab={vi.fn()} />,
     ).container;
     const fromLibrary = entryNames(library);
 
@@ -196,6 +196,8 @@ describe("CatalogueList", () => {
       "schema.org",
       "FIBO",
       "UNESCO Thesaurus",
+      // Last since reference-ontologies 5.3.
+      "QUDT 3.5.2, SHACL form",
     ]);
   });
 
