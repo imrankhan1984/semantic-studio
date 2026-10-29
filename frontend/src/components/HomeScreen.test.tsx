@@ -6,11 +6,12 @@ FILE: frontend/src/components/HomeScreen.test.tsx
 
 SUMMARY
     The first test for HomeScreen. Covers the library's states, the search box
-    and what it does and does not filter, the two layouts and the toggle that
-    overrides them, the empty state, and the two render budgets; since
-    home-and-examples 5.5 (AC-7), the one library: the person's projects and
-    files first, newest first, then the three examples in their fixed order,
-    and no *Try one* catalogue.
+    and what it does and does not filter, the empty state, and the two render
+    budgets; since home-and-examples 5.5 (AC-7), the one library: the person's
+    projects and files first, newest first, then the three examples in their
+    fixed order, and no *Try one* catalogue; since home-and-settings 5.2
+    (AC-2), the three ways in as one row of primary buttons, no *Or* section,
+    and cards only, the Cards / Rows switch gone.
 
 BASIC IDEA
     This is StartScreen.test.tsx's successor and inherits its shape. api.ts is
@@ -18,9 +19,9 @@ BASIC IDEA
     makes no request" is asserted as no call to any of them: the screen reads
     the two lists it is handed and nothing else.
 
-    localStorage is cleared between tests. The layout choice is persisted, and
-    a test that inherited the previous one's preference would pass or fail on
-    execution order.
+    localStorage is cleared between tests. A layout choice saved before
+    home-and-settings is planted by one test to show it is ignored, and a test
+    that inherited it would pass or fail on execution order.
 
 INPUTS / INPUT SOURCES
     - A mocked ../api.
@@ -29,14 +30,14 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - Pass/fail per assertion, covering AC-3, AC-7, AC-8, AC-16, AC-17, AC-18,
-      AC-19 and AC-20 of the home screen's spec, and AC-7 of
-      home-and-examples.
+      AC-19 and AC-20 of the home screen's spec, AC-7 of home-and-examples,
+      and AC-2 and AC-3 of home-and-settings.
 ================================================================================
 */
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import HomeScreen, { CARD_LAYOUT_MAX, type HomeProjects } from "./HomeScreen";
+import HomeScreen, { type HomeProjects } from "./HomeScreen";
 import { CATALOGUE } from "../catalogue";
 import type { OntologySummary, ProjectSummary } from "../types";
 
@@ -211,13 +212,13 @@ describe("HomeScreen library", () => {
     renderScreen({ ontologies: [], projects: projects([]) });
 
     expect(
-      screen.getByText("Nothing here yet. Start a project, or open a file below."),
+      screen.getByText("Nothing here yet. Start a project, or open a file."),
     ).toBeTruthy();
     expect(cards()).toHaveLength(0);
     expect(screen.getByRole("button", { name: "New project" })).toBeTruthy();
     expect(fileRoutes()).toHaveLength(2);
-    // No search box and no toggle over an empty library: controls that cannot
-    // do anything.
+    // No search box over an empty library: a control that cannot do
+    // anything.
     expect(screen.queryByLabelText(/search your library/i)).toBeNull();
   });
 
@@ -261,10 +262,12 @@ describe("HomeScreen library", () => {
     expect(screen.getByRole("heading", { name: "Your library" })).toBeTruthy();
   });
 
-  it("is one library and the file routes: no Try one, no catalogue (home-and-examples AC-7)", () => {
+  it("is one library: no Try one, no catalogue, no Or section (home-and-examples AC-7, home-and-settings 5.2)", () => {
     renderScreen({ ontologies: [...summaries(2), ...EXAMPLES], projects: projects([]) });
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings).toEqual(["Your library", "Or"]);
+    expect(headings).toEqual(["Your library"]);
+    expect(screen.queryByText(/^or$/i)).toBeNull();
+    expect(document.querySelector(".start-routes")).toBeNull();
     expect(catalogueRows()).toHaveLength(0);
     expect(screen.queryByText("Try one")).toBeNull();
     // None of the downloaded catalogue's names is offered on Home.
@@ -280,6 +283,29 @@ describe("HomeScreen library", () => {
     expect(button.className).toContain("primary");
     fireEvent.click(button);
     expect(list.onNew).toHaveBeenCalledTimes(1);
+  });
+
+  it("the three ways in are one row of primary buttons beside the heading, in order (home-and-settings AC-2)", () => {
+    const { onOpenDialog } = renderScreen({ projects: projects([]) });
+    const head = document.querySelector(".home-library-head")!;
+    const row = head.querySelector(".home-actions")!;
+    const buttons = [...row.querySelectorAll("button")];
+    // In reading order, and they differ by their words, never colour alone.
+    expect(buttons.map((b) => b.textContent)).toEqual(["New project", "Open a file", "Load from a URL"]);
+    for (const b of buttons) expect(b.className.split(" ")).toEqual(["primary", "large"]);
+    // Beside the heading: the heading and the row share the library head.
+    expect(head.contains(screen.getByRole("heading", { name: "Your library" }))).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open a file" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load from a URL" }));
+    expect(onOpenDialog.mock.calls).toEqual([["file"], ["url"]]);
+  });
+
+  it("without projects the row holds the two file routes, still primary", () => {
+    renderScreen();
+    const buttons = [...document.querySelectorAll(".home-actions button")];
+    expect(buttons.map((b) => b.textContent)).toEqual(["Open a file", "Load from a URL"]);
+    expect(buttons.every((b) => b.classList.contains("primary"))).toBe(true);
   });
 
   it("puts the person's projects and files first, newest first, then the examples (AC-7)", () => {
@@ -317,9 +343,8 @@ describe("HomeScreen library", () => {
     for (const card of [file, space]) expect(card.textContent).toContain("Read-only");
   });
 
-  it("ten entries give rows, examples and projects counted", () => {
-    // Four files, three examples and three projects: ten in all, so rows,
-    // though no one list holds more than four.
+  it("ten entries are still cards, examples and projects counted (home-and-settings 5.2)", () => {
+    // Ten in all, which used to switch the screen to rows.
     renderScreen({
       ontologies: [...summaries(4), ...EXAMPLES],
       projects: projects([
@@ -329,8 +354,8 @@ describe("HomeScreen library", () => {
       ]),
     });
     expect(cards()).toHaveLength(10);
-    expect(document.querySelector(".onto-grid-rows")).toBeTruthy();
-    expect(cards().every((c) => c.classList.contains("onto-row"))).toBe(true);
+    expect(document.querySelector(".onto-grid-rows")).toBeNull();
+    expect(cards().some((c) => c.classList.contains("onto-row"))).toBe(false);
   });
 
   it("opening Home makes no request, examples included (AC-7, Section 10)", () => {
@@ -426,73 +451,28 @@ describe("HomeScreen search", () => {
   });
 });
 
-describe("HomeScreen layout", () => {
-  it("nine or fewer renders cards", () => {
-    // AC-17. Nine is three rows of three at the application's typical width.
-    renderScreen({ ontologies: summaries(CARD_LAYOUT_MAX) });
-
-    expect(document.querySelector(".onto-grid-rows")).toBeNull();
-    expect(cards().every((c) => !c.classList.contains("onto-row"))).toBe(true);
-  });
-
-  it("ten or more renders rows", () => {
-    // AC-17.
-    renderScreen({ ontologies: summaries(CARD_LAYOUT_MAX + 1) });
-
-    expect(document.querySelector(".onto-grid-rows")).toBeTruthy();
-    expect(cards().every((c) => c.classList.contains("onto-row"))).toBe(true);
-  });
-
-  it("the view toggle overrides the automatic default", () => {
-    // AC-18. This is the one change to what was asked for, and the reason is
-    // that a layout which reorganises itself when a tenth ontology is added is
-    // a surprise the user cannot undo.
-    renderScreen({ ontologies: summaries(3) });
-    expect(document.querySelector(".onto-grid-rows")).toBeNull();
-
-    const rows = screen.getByRole("button", { name: "Rows" });
-    expect(rows.getAttribute("aria-pressed")).toBe("false");
-    fireEvent.click(rows);
-
-    expect(document.querySelector(".onto-grid-rows")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Rows" }).getAttribute("aria-pressed")).toBe(
-      "true",
-    );
-    expect(screen.getByRole("button", { name: "Cards" }).getAttribute("aria-pressed")).toBe(
-      "false",
-    );
-  });
-
-  it("the layout choice survives a reload", () => {
-    // AC-18. Remembered per user, so it is read back on mount rather than held
-    // in the state a reload throws away. Unmounting and rendering again is the
-    // closest jsdom gets to a reload, and it exercises the same code path: the
-    // useState initialiser reading localStorage.
-    renderScreen({ ontologies: summaries(3) });
-    fireEvent.click(screen.getByRole("button", { name: "Rows" }));
-    document.body.innerHTML = "";
-
-    renderScreen({ ontologies: summaries(3) });
-
-    expect(document.querySelector(".onto-grid-rows")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Rows" }).getAttribute("aria-pressed")).toBe(
-      "true",
-    );
-  });
-
-  it("filtering below the threshold does not change layout", () => {
-    // AC-19. Switching on the FILTERED count would flip the screen back and
-    // forth while the user types, which is worse than either layout. The
-    // automatic choice reads the whole library and never `matching`.
+describe("HomeScreen cards only (home-and-settings 5.2, Section 15 question 2)", () => {
+  it("has no Cards / Rows switch", () => {
     renderScreen({ ontologies: summaries(12) });
-    expect(document.querySelector(".onto-grid-rows")).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Library view" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Rows" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cards" })).toBeNull();
+  });
 
-    type("ontology 1");
+  it("a library of any size renders cards", () => {
+    renderScreen({ ontologies: summaries(30) });
+    expect(cards()).toHaveLength(30);
+    expect(document.querySelector(".onto-grid-rows")).toBeNull();
+    expect(cards().some((c) => c.classList.contains("onto-row"))).toBe(false);
+  });
 
-    // Two matches — "Ontology 1" and "Ontology 10" and "Ontology 11" — which is
-    // far below the threshold, and the layout is unchanged.
-    expect(cards().length).toBeLessThanOrEqual(CARD_LAYOUT_MAX);
-    expect(document.querySelector(".onto-grid-rows")).toBeTruthy();
+  it("a rows choice saved before is ignored, not migrated", () => {
+    localStorage.setItem("semantic-studio-home-layout", "rows");
+    renderScreen({ ontologies: summaries(3) });
+    expect(document.querySelector(".onto-grid-rows")).toBeNull();
+    expect(cards().some((c) => c.classList.contains("onto-row"))).toBe(false);
+    // Left where it was: nothing reads it, and nothing rewrites it.
+    expect(localStorage.getItem("semantic-studio-home-layout")).toBe("rows");
   });
 });
 
@@ -601,10 +581,10 @@ describe("HomeScreen keyboard and screen reader", () => {
 
     expect(main.getAttribute("aria-labelledby")).toBe(heading.id);
     expect(heading.textContent).toBe("Semantic Studio");
-    expect(screen.getAllByRole("heading", { level: 2 }).length).toBe(2);
+    expect(screen.getAllByRole("heading", { level: 2 }).length).toBe(1);
   });
 
-  it("tab order runs New project, search, then cards, then the file routes", () => {
+  it("tab order runs New project, Open a file, Load from a URL, search, then cards (home-and-settings 5.7)", () => {
     // Section 6's stated order. Asserted as document order and the absence of
     // tabindex, because jsdom implements neither layout nor sequential focus
     // navigation and a userEvent.tab() loop would test the polyfill. The real
@@ -616,9 +596,10 @@ describe("HomeScreen keyboard and screen reader", () => {
       expect(Number(node.getAttribute("tabindex") ?? 0)).toBeLessThanOrEqual(0);
     }
     const at = (node: Element | null) => focusable.indexOf(node!);
-    expect(at(screen.getByRole("button", { name: "New project" }))).toBeLessThan(at(searchBox()));
+    expect(at(screen.getByRole("button", { name: "New project" }))).toBeLessThan(at(fileRoutes()[0]));
+    expect(at(fileRoutes()[0])).toBeLessThan(at(fileRoutes()[1]));
+    expect(at(fileRoutes()[1])).toBeLessThan(at(searchBox()));
     expect(at(searchBox())).toBeLessThan(at(cards()[0].querySelector("button")));
-    expect(at(cards()[2].querySelector("button"))).toBeLessThan(at(fileRoutes()[0]));
   });
 });
 
@@ -693,14 +674,14 @@ describe("HomeScreen render budget", () => {
 
   it("no Sigma renderer is created on the home screen", () => {
     // AC-16. A browser caps live WebGL contexts at somewhere around sixteen and
-    // a library of twenty would ask for twenty, so every miniature is plain
-    // SVG. Asserted as the absence of a canvas anywhere on the screen: that is
-    // what a renderer needs and it is the thing that could not appear by
-    // accident.
+    // a library of twenty would ask for twenty. Asserted as the absence of a
+    // canvas anywhere on the screen: that is what a renderer needs and it is
+    // the thing that could not appear by accident. The cards draw no picture
+    // of the graph at all now (home-and-settings 5.2).
     const { container } = renderScreen({ ontologies: summaries(12) });
 
     expect(container.querySelectorAll("canvas")).toHaveLength(0);
-    expect(container.querySelectorAll(".onto-mini svg").length).toBe(12);
+    expect(container.querySelectorAll(".onto-mini, .onto-card svg").length).toBe(0);
   });
 });
 

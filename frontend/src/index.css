@@ -802,6 +802,16 @@ select:focus {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Home's three ways in, one row of primary buttons (home-and-settings 5.2).
+   They wrap as a group before the search box does, so the row never splits
+   New project from the two file routes at a narrow width. */
+.home-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .home-search {
@@ -3629,7 +3639,8 @@ button.legend-row:hover {
 }
 
 .approval-dialog,
-.network-panel {
+.network-panel,
+.settings-panel {
   position: fixed;
   top: 10vh;
   left: 50%;
@@ -3646,9 +3657,35 @@ button.legend-row:hover {
   box-shadow: 0 20px 60px var(--shadow);
 }
 
-.network-panel {
+.network-panel,
+.settings-panel {
   z-index: 51;
   width: 620px;
+}
+
+/* Settings (home-and-settings 5.4) scrolls as one: the catalogue's own
+   52vh scroll, right in the Load dialog, would be a scroll inside a scroll
+   here. The tab panels are the Network panel's sections and Library's. */
+.settings-panel .catalogue {
+  max-height: none;
+  overflow: visible;
+}
+
+.settings-tabs {
+  margin: 0 0 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-section + .settings-section {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 12px;
+}
+
+.settings-section h3 {
+  margin: 12px 0 8px;
+  font-size: var(--fs-md);
+  font-weight: 600;
 }
 
 /* A SERVICE question shows query text, which is the whole point of it, so the
@@ -3664,7 +3701,8 @@ button.legend-row:hover {
 }
 
 .approval-heading,
-.network-heading {
+.network-heading,
+.settings-heading {
   margin: 0 0 16px;
   font-size: var(--fs-xl);
   font-weight: 600;

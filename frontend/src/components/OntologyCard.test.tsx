@@ -10,8 +10,9 @@ SUMMARY
     and the date added or *Example*, and *Read-only* in words -- that its
     count describes the whole ontology rather than the canvas, the three
     verbs, the "⋮" disclosure and its focus contract, and that an ontology
-    stored before the sketch existed renders without a picture and without
-    asking for one.
+    stored before the sketch existed renders without asking for one; since
+    home-and-settings 5.2 (AC-3), that no card draws a graph thumbnail and
+    every other part of it stays.
 
 BASIC IDEA
     The card is presentational, so almost everything here is markup and focus,
@@ -19,9 +20,9 @@ BASIC IDEA
     fixture. Nothing on this card is allowed to fetch, and a spy that is never
     called is the only way to assert that from here.
 
-    The two things jsdom cannot see are stated where they matter and measured in
-    a browser instead: whether the miniature is legible at 120x70, and whether
-    the menu opens over the cards below it rather than pushing them down.
+    The one thing jsdom cannot see is stated where it matters and measured in
+    a browser instead: whether the menu opens over the cards below it rather
+    than pushing them down.
 
 INPUTS / INPUT SOURCES
     - Hand-built OntologySummary objects, with and without a `card` sketch.
@@ -92,7 +93,6 @@ function renderCard(over: Partial<OntologySummary> = {}, props = {}) {
     <OntologyCard
       summary={summary(over)}
       theme="dark"
-      layout="card"
       busy={false}
       working={false}
       {...handlers}
@@ -181,21 +181,31 @@ describe("OntologyCard contents", () => {
     expect(bands).toHaveLength(3);
   });
 
-  it("draws the miniature from the stored sketch, without a Sigma renderer", () => {
-    // AC-16. Six WebGL contexts on one screen is a real cost and browsers cap
-    // them, so the picture is plain SVG. Asserted as the absence of a canvas
-    // rather than by mocking sigma: a canvas element is what a renderer needs
-    // and it is the thing that could not be there by accident.
+  it("draws no graph thumbnail, though the sketch is there, and keeps everything else (home-and-settings AC-3)", () => {
+    // The server still writes the sketch at ingest; the card stopped drawing
+    // it, unreadable at card size. No canvas either: a canvas is what a
+    // renderer needs and it is the thing that could not be there by accident.
     const { container } = renderCard();
+    expect(summary().card?.sketch.nodes.length).toBe(SKETCH.nodes.length);
 
-    const svg = container.querySelector(".onto-mini svg")!;
-    expect(svg).toBeTruthy();
-    expect(svg.querySelectorAll("circle")).toHaveLength(SKETCH.nodes.length);
-    expect(svg.querySelectorAll("line")).toHaveLength(SKETCH.edges.length);
+    expect(container.querySelector(".onto-mini")).toBeNull();
+    expect(container.querySelector("svg")).toBeNull();
     expect(container.querySelector("canvas")).toBeNull();
+
+    // Everything else: name, menu, sentence, composition bar, chips, verbs.
+    expect(screen.getByRole("heading", { level: 3 }).textContent).toBe(summary().name);
+    expect(menuButton()).toBeTruthy();
+    expect(container.querySelector(".onto-summary")?.textContent).toBeTruthy();
+    expect(container.querySelectorAll(".onto-bar-band").length).toBeGreaterThan(0);
+    expect(facts(container)).toContain("132,001 statements");
+    expect([...container.querySelectorAll(".onto-verb")].map((b) => b.textContent)).toEqual([
+      "Explore",
+      "Query",
+      "View",
+    ]);
   });
 
-  it("pre-existing ontologies render without a miniature", () => {
+  it("pre-existing ontologies render with no sketch and ask for none", () => {
     // AC-15. An ontology stored before the server wrote a sketch keeps its
     // counts and its verbs and simply has no picture — and, the half that
     // matters, asks for nothing to get one. Backfilling on first render would
@@ -203,8 +213,7 @@ describe("OntologyCard contents", () => {
     // `startup-chooser-screen` exists to hold.
     const { container } = renderCard({ card: null });
 
-    expect(container.querySelector(".onto-mini svg")).toBeNull();
-    expect(container.querySelector(".onto-mini-absent")).toBeTruthy();
+    expect(container.querySelector("svg")).toBeNull();
     expect(container.querySelector(".onto-chips")?.textContent).toContain("132,001 statements");
     expect(screen.getByRole("button", { name: /^Explore /i })).toBeTruthy();
     for (const [name, fn] of Object.entries(api)) {
@@ -223,7 +232,7 @@ describe("OntologyCard contents", () => {
     });
 
     expect(container.querySelector(".onto-bar")).toBeNull();
-    expect(container.querySelector(".onto-mini svg")).toBeNull();
+    expect(container.querySelector("svg")).toBeNull();
     expect(container.querySelector(".onto-summary")?.textContent).toBe(
       "This ontology has no entities to display.",
     );
@@ -396,26 +405,12 @@ describe("OntologyCard menu", () => {
   });
 });
 
-describe("OntologyCard row layout", () => {
-  it("renders the same controls in the dense layout", () => {
-    // The row is the card rearranged, not a second component: the same verbs,
-    // the same menu, the same facts. What changes is CSS, which jsdom cannot
-    // see — the 44px glyph and the 80px composition strip were measured in a
-    // browser.
-    const { container } = renderCard({}, { layout: "row" });
-
-    expect(container.querySelector(".onto-card")?.classList.contains("onto-row")).toBe(true);
-    expect(container.querySelectorAll(".onto-verb")).toHaveLength(3);
-    expect(menuButton()).toBeTruthy();
-    expect(container.querySelector(".onto-mini svg")).toBeTruthy();
-  });
-
-  it("keeps the reading order in both layouts", () => {
-    // The row layout moves the menu to the end with `order`, which is visual
-    // only. Document order is what the tab sequence follows, and it stays name,
-    // verbs, menu in both — asserted here because jsdom implements no
-    // sequential focus navigation and driving Tab would test the polyfill.
-    const { container } = renderCard({}, { layout: "row" });
+describe("OntologyCard reading order", () => {
+  it("keeps the reading order: menu, then the verbs, no tabindex", () => {
+    // Document order is what the tab sequence follows, and it stays name,
+    // menu, verbs -- asserted here because jsdom implements no sequential
+    // focus navigation and driving Tab would test the polyfill.
+    const { container } = renderCard();
     const buttons = [...container.querySelectorAll("button")];
 
     expect(buttons.indexOf(menuButton())).toBe(0);

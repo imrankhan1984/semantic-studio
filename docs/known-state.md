@@ -2393,3 +2393,49 @@ EXPECTED OUTPUT
   one, and the arrow keys choose (measured in Chrome over the DevTools
   Protocol at both sizes and themes). Nothing is `disabled` while a
   command runs: the fieldset is aria-disabled and a change is ignored.
+
+- **Home and header, with Settings** (2026-10-28, spec `home-and-settings`
+  Stage A, backlog U-17; D-120 comes with Stage B). The header holds the
+  pages, then Settings, About and the theme; Home holds the three ways in as
+  one row of primary buttons and draws no context row; cards draw no graph
+  thumbnail; the Load dialog lost its Suggested tab to Settings → Library.
+
+  **Home renders no context row.** The bar under the header said *NO
+  ONTOLOGY OPEN* on the page whose purpose is choosing one, and with an
+  ontology open it offered a picker and a ✕ for a view that was not on
+  screen. App renders `.context-row` only when `!showHome`; every other
+  page keeps it, picker, Close and search as before. `App.test.tsx`
+  asserts both halves, through Explore and back to Home.
+
+  **The catalogue loads through the Load dialog's own code.** Moving the
+  Suggested tab out of the dialog would have meant a second copy of
+  load-progress's cancel rules (an answer applied only while its load is
+  current, a file still sending stopped whatever the server says, an
+  unmount cancelling). They live in `components/useLoadRun.tsx` instead,
+  and both the dialog and `LibrarySettings` use it. Settings keeps both
+  tab panels mounted and hides one (`hidden`), so a look at Network does
+  not unmount Library and cancel a load running there; closing Settings
+  unmounts it, which cancels.
+
+  **A catalogue entry needs no network approval.** Pressing an entry is the
+  person's consent to fetch it, as typing an address is; the approval
+  dialog is for connections the person did not ask for by name (imports,
+  JSON-LD contexts, SERVICE). Measured: schema.org loads from Settings →
+  Library with no question asked, and the activity log records it.
+
+  **Cards only.** The Cards / Rows switch went with the thumbnails (spec
+  Section 15 question 2); the rule that the layout switched on the whole
+  library is retired with it. `semantic-studio-home-layout` in localStorage
+  is ignored, not migrated. `home/miniature.ts` keeps `layoutSketch` and its
+  tests, unused by the card, and the server still writes the sketch: no data
+  shape changed.
+
+  **Chrome rows** at 1280x720 and 1920x1080 in both themes, 63 rows each,
+  over the DevTools Protocol: the header on Home, Explore, Query, View and
+  Edit; the three actions in one row (same top, one colour) beside the
+  heading; each action's dialog and focus back; Settings reached by Tab,
+  its tablist's arrows and Home key, Tab from the tab into the panel,
+  Escape back to Settings with its ring; schema.org loaded from Library;
+  an empty library and *Add the examples back*; the contrast sweep over
+  Home, the cards, the Load dialog, both Settings tabs and every page's
+  header, nothing under 4.5:1.

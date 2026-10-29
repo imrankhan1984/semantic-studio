@@ -4,20 +4,19 @@ FILE: frontend/src/components/OntologyCard.tsx
 ================================================================================
 
 SUMMARY
-    One entry in the home screen's library: a picture of the ontology's own
-    graph, the sentence saying what it contains (an example's purpose instead),
-    a composition bar, two facts -- how many statements, and when it was
-    added or *Example* -- and *Read-only*, three verbs, and a "⋮" menu
-    (home-and-examples 5.6). Renders as a card or as a dense row from the
-    same markup.
+    One entry in the home screen's library: its name and "⋮" menu, the
+    sentence saying what it contains (an example's purpose instead), a
+    composition bar, two facts -- how many statements, and when it was added
+    or *Example* -- and *Read-only*, and three verbs (home-and-examples 5.6).
 
 BASIC IDEA
-    The reference this design borrows from puts a stock icon on each card — a
-    building, a cloud, a list. Semantic Studio can do better than a metaphor,
-    because it already knows how to draw the thing itself. Each card carries a
-    miniature of its own graph in the kind colours the canvas and the legend
-    use, so a user learns the colour language here and carries it into Explore,
-    and six saved ontologies are told apart before they are read.
+    **No picture of the graph** (home-and-settings 5.2). The card used to
+    open with a miniature of its twenty highest-degree entities, and at 75 px
+    it could not be read: the three examples looked alike, a scatter of dots.
+    The server still writes the sketch at ingest (`summary()` reads
+    `meta.get("card")`, and nothing backfills one), so no data shape changed;
+    the card simply stopped drawing it. The kind colours a learner carries
+    into Explore are still here, in the composition bar.
 
     **The verbs live on the card.** The reference has one CONNECT button, so
     choosing what to do is a second step. Here "what to do with what" is one
@@ -25,11 +24,9 @@ BASIC IDEA
     That removes the mode-routing dead end rather than solving it.
 
     **Nothing here fetches.** Every number comes from the OntologySummary App
-    already holds, and the miniature comes from the sketch the server computed
-    during the parse that happened at ingest. An ontology stored before that
-    field existed simply has no picture and no composition bar; it must not
-    trigger a parse to backfill one, which is why there is no fallback path that
-    asks for a graph.
+    already holds. An ontology stored before its counts were kept simply has
+    no composition bar; it must not trigger a parse to backfill one, which is
+    why there is no fallback path that asks for a graph.
 
     **One sentence and two facts.** The card carried seven chips -- triples,
     entities, relations, format, loaded, source, date -- which a learner had
@@ -45,8 +42,7 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES (props)
     - summary: the ontology, from GET /api/ontologies.
-    - theme: which palette the miniature and the composition bar draw in.
-    - layout: "card" or "row".
+    - theme: which palette the composition bar draws in.
     - busy: something on the screen is working; every control is inert.
     - working: THIS entry is the one being worked on.
     - onOpen / onEnterMode / onViewSource / onRemove: what the controls do.
@@ -55,23 +51,22 @@ INPUTS / INPUT SOURCES (props)
       Omitted, the menu item is absent.
 
 EXPECTED OUTPUT
-    - One <article> with a heading, a picture, a sentence, a composition bar,
-      the facts, three mode buttons and a menu, and the side effects of
-      pressing any of them.
+    - One <article> with a heading, a menu, a sentence, a composition bar,
+      the facts and three mode buttons, and the side effects of pressing any
+      of them.
 ================================================================================
 */
 
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { describeKindCounts } from "../explore/suggestions";
-import { CARD_MINIATURE, ROW_MINIATURE, compositionSegments, layoutSketch } from "../home/miniature";
+import { compositionSegments } from "../home/miniature";
 import { statementCount } from "../statusWords";
 import type { AppMode, OntologySummary, Theme } from "../types";
-import { PALETTES, kindColor } from "../types";
+import { kindColor } from "../types";
 
 interface Props {
   summary: OntologySummary;
   theme: Theme;
-  layout: "card" | "row";
   busy: boolean;
   working: boolean;
   /** Set on the first card only, so the screen can take focus on mount without
@@ -106,7 +101,6 @@ function addedOn(iso: string | undefined): string | null {
 function OntologyCard({
   summary,
   theme,
-  layout,
   busy,
   working,
   firstVerbRef,
@@ -142,25 +136,13 @@ function OntologyCard({
     menuButton.current?.focus();
   };
 
-  // Both behind useMemo, keyed on the summary rather than on the derived
-  // objects: `card` and `kindCounts` come straight off the list response and
-  // keep their identity for as long as the entry does. Without this, every
-  // keystroke in the home screen's search box re-runs a spring layout per card,
-  // which is the one place on this screen where work is done rather than
-  // markup emitted.
-  // The box depends on the layout, because the SVG letterboxes a viewBox that
-  // does not match its container: one shared box put the card's picture in a
-  // 130px column down the middle of a 320px strip. See the constants.
-  const box = layout === "row" ? ROW_MINIATURE : CARD_MINIATURE;
-  const miniature = useMemo(
-    () => layoutSketch(summary.card?.sketch, box.width, box.height),
-    [summary.card, box],
-  );
+  // Behind useMemo, keyed on `kindCounts`, which comes straight off the list
+  // response and keeps its identity for as long as the entry does: every
+  // keystroke in the home screen's search box re-renders the screen.
   const segments = useMemo(
     () => compositionSegments(summary.kindCounts),
     [summary.kindCounts],
   );
-  const palette = PALETTES[theme];
   const added = addedOn(summary.addedAt);
   // A bundled example (home-and-examples 5.5) says so where other cards show
   // their date, and its purpose stands for the counted sentence: what it is
@@ -170,7 +152,7 @@ function OntologyCard({
 
   return (
     <article
-      className={layout === "row" ? "onto-card onto-row" : "onto-card"}
+      className="onto-card"
       aria-labelledby={headingId}
       // Escape closes the menu from anywhere inside the card, including from
       // the menu items themselves, which is where focus actually is.
@@ -181,45 +163,6 @@ function OntologyCard({
         }
       }}
     >
-      {/* The ontology's own graph, its twenty highest-degree entities.
-          aria-hidden because it is a picture OF the numbers stated beside it in
-          words — announcing it would repeat the composition bar twice. */}
-      <div className="onto-mini" aria-hidden="true">
-        {miniature ? (
-          <svg
-            viewBox={`0 0 ${box.width} ${box.height}`}
-            preserveAspectRatio="xMidYMid meet"
-            focusable="false"
-          >
-            {miniature.lines.map((line, i) => (
-              <line
-                key={i}
-                x1={line.x1}
-                y1={line.y1}
-                x2={line.x2}
-                y2={line.y2}
-                stroke={palette.defaultEdge}
-                strokeWidth={0.6}
-              />
-            ))}
-            {miniature.points.map((point) => (
-              <circle
-                key={point.id}
-                cx={point.x}
-                cy={point.y}
-                r={point.r}
-                fill={kindColor(point.kind, theme)}
-              />
-            ))}
-          </svg>
-        ) : (
-          // An ontology stored before the sketch existed. A dashed placeholder
-          // rather than a blank space, so the grid does not go ragged, and no
-          // request of any kind to fill it — see AC-15.
-          <div className="onto-mini-absent" />
-        )}
-      </div>
-
       <div className="onto-body">
         <div className="onto-head">
           <h3 id={headingId} className="onto-name" title={summary.name}>

@@ -10,9 +10,12 @@ SUMMARY
     control over, everything the network broker does (external-access Stage 1).
 
 BASIC IDEA
-    A modal like About, opened from a header control beside it. It makes two
-    requests when it opens -- the policy and the activity log -- and none
-    before, so the application's mount budget of one request is untouched.
+    The Network tab of Settings (home-and-settings 5.4), today's panel
+    unchanged inside it; it was a modal of its own, opened from a header
+    control, until Settings took that control's place. It makes two requests
+    when Settings opens -- the policy and the activity log -- and none
+    before, so the application's mount budget is untouched. Changes apply at
+    once, as they always did: there is no Save on this tab.
 
     Three sections, each stated in text:
       * Work offline, a `role="switch"` button whose `aria-checked` is the
@@ -31,13 +34,12 @@ BASIC IDEA
     Changes are announced in a polite live region, so a screen reader user
     hears that offline took effect or that a site was revoked.
 
-INPUTS / INPUT SOURCES (props)
-    - onClose: for the close control, Escape and the backdrop. Focus returns to
-      the control that opened the panel (useDialogTrap).
-    - The policy and activity from api.ts.
+INPUTS / INPUT SOURCES
+    - The policy and activity from api.ts. The dialog around it, its close
+      and its focus, are SettingsDialog's.
 
 EXPECTED OUTPUT
-    - The dialog and its backdrop.
+    - The tab's body.
 ================================================================================
 */
 
@@ -50,28 +52,19 @@ import {
 } from "../api";
 import { outcomeLabel, purposeLabel } from "../networkWords";
 import type { NetworkActivity, NetworkPolicy } from "../types";
-import { useDialogTrap } from "./useDialogTrap";
-
-interface Props {
-  onClose: () => void;
-}
 
 function when(iso: string): string {
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
 }
 
-export default function NetworkPanel({ onClose }: Props) {
-  const panelRef = useRef<HTMLDivElement>(null);
-  const headingRef = useRef<HTMLHeadingElement>(null);
+export default function NetworkPanel() {
   const sitesHeadingRef = useRef<HTMLHeadingElement>(null);
   const [policy, setPolicy] = useState<NetworkPolicy | null>(null);
   const [activity, setActivity] = useState<NetworkActivity[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("");
   const [saving, setSaving] = useState(false);
-
-  useDialogTrap(panelRef, headingRef, onClose);
 
   useEffect(() => {
     let live = true;
@@ -128,106 +121,90 @@ export default function NetworkPanel({ onClose }: Props) {
   const offline = policy?.offline ?? false;
 
   return (
-    <>
-      <div className="modal-backdrop" aria-hidden="true" onClick={onClose} />
-      <div
-        ref={panelRef}
-        className="network-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="network-panel-heading"
-      >
-        <button className="icon-btn about-close" onClick={onClose} aria-label="Close Network settings">
-          ✕
-        </button>
-        <h2 id="network-panel-heading" ref={headingRef} tabIndex={-1} className="network-heading">
-          Network settings
-        </h2>
+    <div className="network-settings">
+      {error && <p className="detail-error">{error}</p>}
+      {!policy && !error && <p className="detail-note">Loading…</p>}
 
-        {error && <p className="detail-error">{error}</p>}
-        {!policy && !error && <p className="detail-note">Loading…</p>}
+      {policy && (
+        <>
+          <section className="network-section" aria-labelledby="network-offline-heading">
+            <h3 id="network-offline-heading">Connections</h3>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={offline}
+              className={offline ? "network-switch on" : "network-switch"}
+              onClick={() => void toggleOffline()}
+            >
+              <span className="network-switch-track" aria-hidden="true">
+                <span className="network-switch-thumb" />
+              </span>
+              Work offline
+            </button>
+            <p className="network-state">
+              {offline
+                ? "Offline. Semantic Studio does not connect to any site, and does not ask."
+                : "Online. Semantic Studio asks before connecting to a site you have not decided about."}
+            </p>
+          </section>
 
-        {policy && (
-          <>
-            <section className="network-section" aria-labelledby="network-offline-heading">
-              <h3 id="network-offline-heading">Connections</h3>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={offline}
-                className={offline ? "network-switch on" : "network-switch"}
-                onClick={() => void toggleOffline()}
-              >
-                <span className="network-switch-track" aria-hidden="true">
-                  <span className="network-switch-thumb" />
-                </span>
-                Work offline
-              </button>
-              <p className="network-state">
-                {offline
-                  ? "Offline. Semantic Studio does not connect to any site, and does not ask."
-                  : "Online. Semantic Studio asks before connecting to a site you have not decided about."}
-              </p>
-            </section>
+          <section className="network-section" aria-labelledby="network-sites-heading">
+            <h3 id="network-sites-heading" ref={sitesHeadingRef} tabIndex={-1}>
+              Allowed and blocked sites
+            </h3>
+            {policy.grants.length === 0 ? (
+              <p className="network-empty">No sites allowed yet.</p>
+            ) : (
+              <ul className="network-list">
+                {policy.grants.map((g) => (
+                  <li key={g.id} className="network-row">
+                    <span className="network-host">{g.host}</span>
+                    <span className="network-purpose">{purposeLabel(g.capability)}</span>
+                    <span className="network-decision">
+                      {g.decision === "allow" ? "Always allowed" : "Blocked"}
+                    </span>
+                    <button
+                      className="ghost"
+                      onClick={() => void revoke(g.id, g.host)}
+                      aria-label={`Revoke your decision for ${g.host}, ${purposeLabel(g.capability)}`}
+                    >
+                      Revoke
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
-            <section className="network-section" aria-labelledby="network-sites-heading">
-              <h3 id="network-sites-heading" ref={sitesHeadingRef} tabIndex={-1}>
-                Allowed and blocked sites
-              </h3>
-              {policy.grants.length === 0 ? (
-                <p className="network-empty">No sites allowed yet.</p>
-              ) : (
-                <ul className="network-list">
-                  {policy.grants.map((g) => (
-                    <li key={g.id} className="network-row">
-                      <span className="network-host">{g.host}</span>
-                      <span className="network-purpose">{purposeLabel(g.capability)}</span>
-                      <span className="network-decision">
-                        {g.decision === "allow" ? "Always allowed" : "Blocked"}
-                      </span>
-                      <button
-                        className="ghost"
-                        onClick={() => void revoke(g.id, g.host)}
-                        aria-label={`Revoke your decision for ${g.host}, ${purposeLabel(g.capability)}`}
-                      >
-                        Revoke
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
+          <section className="network-section" aria-labelledby="network-activity-heading">
+            <h3 id="network-activity-heading">Recent connections</h3>
+            {activity && activity.length === 0 ? (
+              <p className="network-empty">No connections yet.</p>
+            ) : (
+              <ol className="network-list network-activity">
+                {(activity ?? []).map((a, i) => (
+                  <li key={`${a.time}-${i}`} className="network-row">
+                    <span className="network-when">{when(a.time)}</span>
+                    <span className="network-outcome">{outcomeLabel(a.outcome)}</span>
+                    <span className="network-purpose">{purposeLabel(a.capability)}</span>
+                    <span className="network-url" title={a.url}>
+                      {a.url}
+                    </span>
+                    {a.bytes > 0 && (
+                      <span className="network-bytes">{a.bytes.toLocaleString()} bytes</span>
+                    )}
+                    {!a.encrypted && <span className="network-plain">not encrypted</span>}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+        </>
+      )}
 
-            <section className="network-section" aria-labelledby="network-activity-heading">
-              <h3 id="network-activity-heading">Recent connections</h3>
-              {activity && activity.length === 0 ? (
-                <p className="network-empty">No connections yet.</p>
-              ) : (
-                <ol className="network-list network-activity">
-                  {(activity ?? []).map((a, i) => (
-                    <li key={`${a.time}-${i}`} className="network-row">
-                      <span className="network-when">{when(a.time)}</span>
-                      <span className="network-outcome">{outcomeLabel(a.outcome)}</span>
-                      <span className="network-purpose">{purposeLabel(a.capability)}</span>
-                      <span className="network-url" title={a.url}>
-                        {a.url}
-                      </span>
-                      {a.bytes > 0 && (
-                        <span className="network-bytes">{a.bytes.toLocaleString()} bytes</span>
-                      )}
-                      {!a.encrypted && <span className="network-plain">not encrypted</span>}
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </section>
-          </>
-        )}
-
-        <p className="visually-hidden" role="status" aria-live="polite">
-          {status}
-        </p>
-      </div>
-    </>
+      <p className="visually-hidden" role="status" aria-live="polite">
+        {status}
+      </p>
+    </div>
   );
 }
