@@ -30,8 +30,8 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES
     - N-Triples generated in-process, in example.org namespaces.
-    - The FastAPI app driven by TestClient, with the module-level caps
-      monkeypatched down so the tests stay fast.
+    - The FastAPI app driven by TestClient, with settings.py's readers
+      monkeypatched down so the tests stay fast (D-120).
     - httpx.MockTransport, installed as the network broker's transport, for
       the streamed-download cases.
 
@@ -82,20 +82,47 @@ def upload(payload: bytes, name: str = "big.nt"):
 
 
 def test_upload_over_the_limit_is_refused(monkeypatch):
-    """SEC-9 / AC-7."""
-    monkeypatch.setattr("app.routers.ontologies.MAX_UPLOAD_BYTES", 64 * 1024)
+    """SEC-9 / AC-7, and home-and-settings AC-9: the sentence says where."""
+    monkeypatch.setattr("app.settings.upload_bytes", lambda: 64 * 1024)
     response = upload(make_ntriples(5_000))
     assert response.status_code == 413
     detail = response.json()["detail"]
-    # The message names the limit and how to change it.
-    assert "MB limit" in detail
-    assert "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES" in detail
+    # The message names the limit and where a person raises it.
+    assert detail["message"] == (
+        "This file is larger than the 0.06 MB limit. You can raise it in Settings → Limits."
+    )
+    assert detail["code"] == "limit" and detail["limit"] == "largestFile"
+    assert detail["settable"] is True
+    assert "SEMANTIC_STUDIO" not in detail["message"]
+
+
+def test_too_large_says_the_administrator_set_it(monkeypatch):
+    """home-and-settings AC-9: a variable set means no Settings button."""
+    monkeypatch.setenv("SEMANTIC_STUDIO_MAX_UPLOAD_BYTES", str(1024 * 1024))
+    response = upload(make_ntriples(30_000))
+    assert response.status_code == 413
+    detail = response.json()["detail"]
+    assert detail["message"] == "This file is larger than the 1 MB limit, which the administrator set."
+    assert detail["settable"] is False
+
+
+def test_fetch_variable_alone_still_takes_the_button_away(monkeypatch):
+    """5.4: either variable makes Largest file read-only, so no button leads
+    to a field that cannot be changed, even on the upload path whose own
+    variable is not set."""
+    from app import settings
+
+    settings.update({"largestFile": 1})  # saved before the variable was set
+    monkeypatch.setenv("SEMANTIC_STUDIO_MAX_FETCH_BYTES", str(100 * 1024 * 1024))
+    response = upload(make_ntriples(30_000))
+    assert response.status_code == 413
+    assert response.json()["detail"]["settable"] is False
 
 
 def test_upload_just_under_the_limit_still_works(monkeypatch):
     """The cap must not refuse ordinary files. A limit nobody can use is a bug."""
     payload = make_ntriples(200)
-    monkeypatch.setattr("app.routers.ontologies.MAX_UPLOAD_BYTES", len(payload) + 1024)
+    monkeypatch.setattr("app.settings.upload_bytes", lambda: len(payload) + 1024)
     response = upload(payload, name="small.nt")
     assert response.status_code == 200, response.json()
     assert response.json()["triples"] == 200
@@ -130,7 +157,7 @@ def test_read_capped_stops_reading_at_the_limit():
     )
     limit = 64 * 1024
     with pytest.raises(Exception) as caught:
-        asyncio.run(_read_capped(upload_file, limit, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES"))
+        asyncio.run(_read_capped(upload_file, limit))
     assert getattr(caught.value, "status_code", None) == 413
     # Read no more than the limit plus the chunk that crossed it.
     assert consumed["bytes"] <= limit + 64 * 1024
@@ -157,7 +184,7 @@ def test_declared_oversize_is_refused_before_the_body_is_parsed():
         headers={"content-length": str(200 * 1024 * 1024)},
     )
     assert response.status_code == 413
-    assert "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES" in response.json()["detail"]
+    assert "Settings → Limits" in response.json()["detail"]["message"]
 
 
 def test_peak_memory_stays_small_while_rejecting_a_real_oversized_upload(monkeypatch):
@@ -168,7 +195,7 @@ def test_peak_memory_stays_small_while_rejecting_a_real_oversized_upload(monkeyp
     the request. The client's own copy of the payload is built and measured
     before the window opens so what is left is the server's behaviour.
     """
-    monkeypatch.setattr("app.routers.ontologies.MAX_UPLOAD_BYTES", 1024 * 1024)
+    monkeypatch.setattr("app.settings.upload_bytes", lambda: 1024 * 1024)
     payload = b"x" * (30 * 1024 * 1024)
     body = io.BytesIO(payload)
 
@@ -207,7 +234,7 @@ def test_download_aborts_mid_stream_when_the_body_is_too_large(monkeypatch, mock
     The transport hands out 4 MB in 64 KB chunks. With the cap at 256 KB the
     loop must stop after a handful, not drain the response and measure it.
     """
-    monkeypatch.setattr("app.routers.ontologies.MAX_FETCH_BYTES", 256 * 1024)
+    monkeypatch.setattr("app.settings.fetch_bytes", lambda: 256 * 1024)
     monkeypatch.setattr(
         "app.net_guard.resolve_host",
         lambda host: [ipaddress.ip_address("93.184.216.34")],
@@ -233,7 +260,7 @@ def test_download_aborts_mid_stream_when_the_body_is_too_large(monkeypatch, mock
 
 def test_declared_oversize_download_is_refused_before_streaming(monkeypatch, mock_transport):
     """A Content-Length over the cap means there is no point starting."""
-    monkeypatch.setattr("app.routers.ontologies.MAX_FETCH_BYTES", 256 * 1024)
+    monkeypatch.setattr("app.settings.fetch_bytes", lambda: 256 * 1024)
     monkeypatch.setattr(
         "app.net_guard.resolve_host",
         lambda host: [ipaddress.ip_address("93.184.216.34")],
@@ -265,28 +292,32 @@ def test_parse_timeout_raises_rather_than_hanging():
     with pytest.raises(ParseTimeout) as caught:
         parse_rdf(make_ntriples(20_000), "nt", timeout=0.001)
     message = str(caught.value)
-    assert "SEMANTIC_STUDIO_PARSE_TIMEOUT" in message
-    assert "seconds to parse" in message
+    assert message == (
+        "This file took longer than 0.001 seconds to read and was stopped. "
+        "You can raise the limit in Settings → Limits."
+    )
 
 
 def test_upload_timeout_returns_504_and_the_server_keeps_serving(monkeypatch):
     """SEC-11 / AC-8. The second assertion is why the timeout is worth having."""
-    monkeypatch.setattr("app.routers.ontologies.PARSE_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr("app.settings.parse_timeout", lambda: 0.001)
     response = upload(make_ntriples(20_000), name="slow.nt")
     assert response.status_code == 504
     detail = response.json()["detail"]
-    assert "SEMANTIC_STUDIO_PARSE_TIMEOUT" in detail
+    assert "Settings → Limits" in detail["message"]
+    assert detail["code"] == "limit" and detail["limit"] == "readTime"
+    assert detail["settable"] is True
     # A timeout that wedged the process would be no improvement on hanging.
     assert client.get("/api/health").status_code == 200
     # And a normal upload still works immediately afterwards.
-    monkeypatch.setattr("app.routers.ontologies.PARSE_TIMEOUT_SECONDS", 60.0)
+    monkeypatch.setattr("app.settings.parse_timeout", lambda: 60.0)
     assert upload(make_ntriples(50), name="fine.nt").status_code == 200
 
 
 def test_a_timed_out_upload_leaves_nothing_in_the_library(monkeypatch):
     """Nothing is persisted until the parse succeeds, so a refusal leaves no trace."""
     before = len(client.get("/api/ontologies").json())
-    monkeypatch.setattr("app.routers.ontologies.PARSE_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr("app.settings.parse_timeout", lambda: 0.001)
     assert upload(make_ntriples(20_000), name="ghost.nt").status_code == 504
     assert len(client.get("/api/ontologies").json()) == before
 
@@ -334,7 +365,7 @@ def test_chunked_read_is_not_materially_slower_than_one_read():
 
     def chunked():
         f = UploadFile(file=io.BytesIO(payload), filename="x.nt")
-        asyncio.run(_read_capped(f, len(payload) + 1, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES"))
+        asyncio.run(_read_capped(f, len(payload) + 1))
 
     overhead = timed(chunked) - timed(one_read)
     assert overhead < 100, f"chunked read cost {overhead:.1f} ms more for 5 MB"

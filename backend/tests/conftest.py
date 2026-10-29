@@ -58,6 +58,16 @@ PUBLIC_FOR_TESTS = ipaddress.ip_address("127.0.0.1")
 
 
 @pytest.fixture(autouse=True)
+def _default_limits():
+    """Every test starts with no saved limits (settings.json, D-120)."""
+    from app import settings
+
+    settings.reset()
+    yield
+    settings.reset()
+
+
+@pytest.fixture(autouse=True)
 def _fresh_network_policy():
     """Every test starts online, with no grants and an empty activity log."""
     from app.network_broker import broker

@@ -54,7 +54,7 @@ from typing import Optional
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from starlette.concurrency import run_in_threadpool
 
-from .. import tabular
+from .. import settings, tabular
 from ..editing import NotOpen, editing_service
 from ..projects import UnknownProject
 from ..rml import UnsupportedMapping
@@ -105,7 +105,7 @@ def _bounded(work, *args, **kwargs):
     """Run under the parse time limit (Section 9). Not interruptible, as
     neither the csv module nor rdflib is: the thread finishes on its own
     and its result is dropped."""
-    limit = ontologies.PARSE_TIMEOUT_SECONDS
+    limit = settings.parse_timeout()
     pool = ThreadPoolExecutor(max_workers=1)
     try:
         future = pool.submit(contextvars.copy_context().run, work, *args, **kwargs)

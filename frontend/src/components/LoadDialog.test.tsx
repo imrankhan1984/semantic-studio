@@ -140,6 +140,50 @@ describe("a failed load (load-and-shapes 5.1, AC-2)", () => {
   });
 });
 
+describe("a refusal by a limit (home-and-settings 5.5, AC-9)", () => {
+  const TOO_LARGE = "This file is larger than the 50 MB limit. You can raise it in Settings → Limits.";
+  const TOO_SLOW = "This file took longer than 60 seconds to read and was stopped. You can raise the limit in Settings → Limits.";
+  const SET = "This file is larger than the 50 MB limit, which the administrator set.";
+
+  async function refuse(error: Error, onOpenLimits = vi.fn(), onClose = vi.fn()) {
+    uploadOntology.mockRejectedValue(error);
+    render(<LoadDialog onLoaded={() => {}} onClose={onClose} onOpenLimits={onOpenLimits} initialTab="file" />);
+    await act(async () => {
+      fireEvent.change(document.querySelector(".dropzone input[type=file]")!, {
+        target: { files: [new File(["x"], "big.ttl")] },
+      });
+    });
+    return { onOpenLimits, onClose };
+  }
+
+  it("a too-large refusal says where to raise it and offers Settings, which opens Limits", async () => {
+    const { onOpenLimits } = await refuse(
+      new ApiError(TOO_LARGE, 413, { message: TOO_LARGE, code: "limit", limit: "largestFile", settable: true }),
+    );
+    expect(screen.getByText(TOO_LARGE)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(onOpenLimits).toHaveBeenCalledTimes(1);
+  });
+
+  it("a too-slow refusal offers it too", async () => {
+    await refuse(new ApiError(TOO_SLOW, 504, { message: TOO_SLOW, code: "limit", limit: "readTime", settable: true }));
+    expect(screen.getByText(TOO_SLOW)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeTruthy();
+  });
+
+  it("a limit the administrator set says so and offers no button", async () => {
+    await refuse(new ApiError(SET, 413, { message: SET, code: "limit", limit: "largestFile", settable: false }));
+    expect(screen.getByText(SET)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
+  });
+
+  it("is told by the detail's code, never by the sentence", async () => {
+    await refuse(new ApiError(TOO_LARGE, 413, TOO_LARGE));
+    expect(screen.getByText(TOO_LARGE)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
+  });
+});
+
 describe("no Suggested tab (home-and-settings 5.3, AC-4)", () => {
   it("has Local file and URL / GitHub, and no Suggested tab, catalogue or examples button", () => {
     render(<LoadDialog onLoaded={() => {}} onClose={() => {}} />);

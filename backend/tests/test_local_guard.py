@@ -132,6 +132,8 @@ def test_route_discovery_finds_the_known_mutating_routes():
         ("POST", "/api/projects/x/documents/x/commands"),
         ("PUT", "/api/projects/x/documents/x/source"),
         ("POST", "/api/projects/x/documents/x/save"),
+        # home-and-settings Stage B: a limit is changed only from our page.
+        ("PUT", "/api/settings"),
     ]:
         assert expected in routes
 

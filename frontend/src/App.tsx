@@ -2467,6 +2467,12 @@ export default function App() {
           onLoaded={onLoaded}
           onClose={() => setDialogOpen(false)}
           initialTab={dialogTab}
+          // A file refused for its size or time: Settings → Limits takes
+          // the Load dialog's place (home-and-settings 5.5).
+          onOpenLimits={() => {
+            setDialogOpen(false);
+            setSettingsTab("limits");
+          }}
           // A cancelled load that had already finished is in the library now.
           onLibraryChanged={refreshList}
           project={

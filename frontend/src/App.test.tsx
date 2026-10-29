@@ -113,6 +113,7 @@ const {
   listData,
   restoreExamples,
   getResultNodes,
+  getSettings,
 } = vi.hoisted(() => ({
   listOntologies: vi.fn(),
   getGraph: vi.fn(),
@@ -166,6 +167,8 @@ const {
   restoreExamples: vi.fn(),
   // query-page-rework 5.2: a query's hidden results drawn.
   getResultNodes: vi.fn(),
+  // home-and-settings Stage B: read when Settings opens, never on mount.
+  getSettings: vi.fn(),
 }));
 
 // importOriginal rather than a bare factory, so ApiError stays the real class.
@@ -212,10 +215,12 @@ vi.mock("./api", async (importOriginal) => ({
   listData,
   restoreExamples,
   getResultNodes,
+  getSettings,
 }));
 
 /** Every mocked client function, so a test can count what mount actually did. */
 const ALL_API = {
+  getSettings,
   getResultNodes,
   restoreExamples,
   listData,
@@ -445,6 +450,7 @@ beforeEach(() => {
   listOntologies.mockResolvedValue([SUMMARY]);
   listProjects.mockResolvedValue([]);
   listData.mockResolvedValue({ generation: 0, snapshots: [] });
+  getSettings.mockResolvedValue({ dataDir: "/data", limits: [] });
   projectStore._reset();
   getGraph.mockResolvedValue(TRUNCATED);
   listImports.mockResolvedValue({ imports: [], limit: null, resolving: null, offline: false });
@@ -2711,6 +2717,45 @@ describe("App network approval (external-access Stage 1)", () => {
     expect(fetchOntology.mock.calls[0][0]).toContain("schemaorg-current-https.ttl");
     expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
     expect(homeShown()).toBe(false);
+  });
+});
+
+describe("App: a refusal by a limit (home-and-settings 5.5, AC-9)", () => {
+  it("the Load dialog's Settings opens Settings on Limits in its place; closing gives focus to Settings", async () => {
+    const TOO_LARGE = "This file is larger than the 50 MB limit. You can raise it in Settings → Limits.";
+    uploadOntology.mockRejectedValue(
+      new ApiError(TOO_LARGE, 413, { message: TOO_LARGE, code: "limit", limit: "largestFile", settable: true }),
+    );
+    getSettings.mockResolvedValue({
+      dataDir: "/data",
+      limits: [
+        { key: "largestFile", name: "Largest file to load", unit: "MB", value: 50, default: 50, min: 1, max: 200, source: "default", variables: [] },
+      ],
+    });
+    getNetworkPolicy.mockResolvedValue({ offline: false, grants: [] });
+    getNetworkActivity.mockResolvedValue([]);
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open a file" }));
+    });
+    await act(async () => {
+      fireEvent.change(document.querySelector(".dropzone input[type=file]")!, {
+        target: { files: [new File(["x"], "big.ttl")] },
+      });
+    });
+    expect(screen.getByText(TOO_LARGE)).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole("dialog", { name: "Load ontology" })).getByRole("button", { name: "Settings" }));
+    });
+    expect(screen.queryByRole("dialog", { name: "Load ontology" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Limits" }).getAttribute("aria-selected")).toBe("true");
+    expect(getSettings).toHaveBeenCalledTimes(1);
+    expect((screen.getByRole("textbox", { name: /^Largest file/ }) as HTMLInputElement).value).toBe("50");
+    await act(async () => {
+      fireEvent.keyDown(document, { key: "Escape" });
+    });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Settings" }));
   });
 });
 

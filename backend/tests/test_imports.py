@@ -649,10 +649,10 @@ def test_a_path_in_the_file_name_is_never_read_or_written(no_network, tmp_path):
 
 def test_chosen_files_keep_the_upload_cap(monkeypatch, no_network):
     """Each chosen file has the upload path's cap, enforced while reading."""
-    from app.routers import ontologies
+    from app import settings
 
     oid = _upload("m.ttl", _doc("http://example.org/main", imports=("http://example.org/p",)))
-    monkeypatch.setattr(ontologies, "MAX_UPLOAD_BYTES", 100)
+    monkeypatch.setattr(settings, "upload_bytes", lambda: 100)
     r = _choose(oid, [("big.ttl", b"#" * 1000)])
     assert r.status_code == 413
 

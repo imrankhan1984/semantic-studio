@@ -39,7 +39,7 @@ import pytest
 from fastapi.testclient import TestClient
 from rdflib import Graph
 
-from app import main
+from app import main, settings
 from app.graph_builder import budget_viz, build_viz_graph
 from app.routers import ontologies
 
@@ -171,9 +171,9 @@ def _graph(client: TestClient, oid: str, **params) -> dict:
 def test_default_budget_caps_node_count(client, big_oid):
     """AC-1. No `limit` at all must still be bounded, or the cap is optional."""
     body = _graph(client, big_oid)
-    assert body["stats"]["nodeCount"] == ontologies.DEFAULT_GRAPH_NODE_BUDGET
-    assert len(body["nodes"]) == ontologies.DEFAULT_GRAPH_NODE_BUDGET
-    assert body["stats"]["budget"] == ontologies.DEFAULT_GRAPH_NODE_BUDGET
+    assert body["stats"]["nodeCount"] == settings.graph_budget() == 2000
+    assert len(body["nodes"]) == settings.graph_budget()
+    assert body["stats"]["budget"] == settings.graph_budget()
 
 
 def test_limit_parameter_is_honored(client, big_oid):
@@ -275,16 +275,11 @@ def test_limit_above_maximum_is_clamped_and_reported(client, big_oid):
 
 def test_env_var_moves_the_default(client, big_oid, monkeypatch):
     """AC-11. The whole safety argument for the number 2,000 rests on this."""
-    # The constant is read from the environment at import, so read it back the
-    # same way the module does: this is the half that proves the variable is
-    # wired to the right name.
+    # The variable is read on every call (D-120), so setting it is enough:
+    # this proves both that it is wired to the right name and that the
+    # endpoint applies it without reloading the module.
     monkeypatch.setenv("SEMANTIC_STUDIO_GRAPH_NODE_BUDGET", "500")
-    assert ontologies._env_int("SEMANTIC_STUDIO_GRAPH_NODE_BUDGET", 2000) == 500
-
-    # And the half that proves the resolved default is what the endpoint
-    # applies. The handler reads the constant per call, so this takes effect
-    # without reloading the module.
-    monkeypatch.setattr(ontologies, "DEFAULT_GRAPH_NODE_BUDGET", 500)
+    assert settings.graph_budget() == 500
     assert _graph(client, big_oid)["stats"]["nodeCount"] == 500
 
 
@@ -365,7 +360,7 @@ def test_budget_cost_under_fifty_milliseconds(client, dense_oid):
     from app.store import store
 
     viz = store.get(dense_oid).viz()  # warm the cache; the budget is what is timed
-    for budget in (ontologies.DEFAULT_GRAPH_NODE_BUDGET, ontologies.MAX_GRAPH_NODE_BUDGET):
+    for budget in (settings.graph_budget(), ontologies.MAX_GRAPH_NODE_BUDGET):
         budget_viz(viz, budget)  # warm-up, not measured
         samples = []
         gc.disable()

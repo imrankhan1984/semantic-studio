@@ -63,20 +63,25 @@ interface LoadRun {
   total: number;
 }
 
-/** What went wrong, and for a file no parser read, the parsers' own text. */
+/** What went wrong, and for a file no parser read, the parsers' own text.
+ *  `raisable`: refused by a limit a person can raise in Settings → Limits. */
 export interface LoadError {
   message: string;
   technical: string | null;
+  raisable?: boolean;
 }
 
 /** A failed load's `parse_error` carries the raw text apart from its
- *  sentence (load-and-shapes 5.1); anything else is its message alone. */
+ *  sentence (load-and-shapes 5.1); a refusal by a limit says whether the
+ *  limit can be raised here (home-and-settings 5.5), told by its `code`,
+ *  never by the sentence; anything else is its message alone. */
 export function loadError(e: unknown): LoadError {
   const message = e instanceof Error ? e.message : String(e);
   const detail = e instanceof ApiError ? e.detail : null;
   if (detail && typeof detail === "object") {
-    const { code, technical } = detail as { code?: unknown; technical?: unknown };
+    const { code, technical, settable } = detail as { code?: unknown; technical?: unknown; settable?: unknown };
     if (code === "parse_error" && typeof technical === "string" && technical) return { message, technical };
+    if (code === "limit") return { message, technical: null, raisable: settable === true };
   }
   return { message, technical: null };
 }
@@ -263,12 +268,19 @@ export function useLoadRun({ onLoaded, onLibraryChanged, focusOrigin }: Options)
 }
 
 /** A load's failure: the sentence, and the parsers' own text, as text, under
- *  a closed *Technical details* (load-and-shapes 5.1). */
-export function LoadErrorView({ error }: { error: LoadError | null }) {
+ *  a closed *Technical details* (load-and-shapes 5.1). A limit a person can
+ *  raise offers *Settings*, which opens Settings → Limits (home-and-settings
+ *  5.5); one the administrator set offers nothing, its sentence says so. */
+export function LoadErrorView({ error, onOpenLimits }: { error: LoadError | null; onOpenLimits?: () => void }) {
   if (!error) return null;
   return (
     <div className="load-error">
       <p className="detail-error">{error.message}</p>
+      {error.raisable && onOpenLimits && (
+        <button type="button" className="load-error-settings" onClick={onOpenLimits}>
+          Settings
+        </button>
+      )}
       {/* Closed by default; the parsers' text is text, never markup. */}
       {error.technical && (
         <details className="technical-details">

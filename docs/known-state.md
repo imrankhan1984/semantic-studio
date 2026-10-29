@@ -2439,3 +2439,67 @@ EXPECTED OUTPUT
   an empty library and *Add the examples back*; the contrast sweep over
   Home, the cards, the Load dialog, both Settings tabs and every page's
   header, nothing under 4.5:1.
+
+- **Settings limits** (2026-10-29, spec `home-and-settings` Stage B, backlog
+  U-17, D-120). Three limits can be changed by a person in Settings →
+  Limits, within fixed ranges: the largest file to load (1 to 200 MB), the
+  longest time to read a file (10 to 600 s) and the items drawn when a graph
+  opens (100 to 20,000). `GET` and `PUT /api/settings`; the choices in
+  `settings.json` in the data folder; Library shows that folder's path.
+
+  **A limit is read at call time from `settings.py`, never cached at
+  import.** The four numbers used to be module constants in
+  `routers/ontologies.py`, read from the environment once, plus a second
+  copy of the fetch cap in `net_guard.py` for JSON-LD contexts. A constant
+  read at import would miss every change saved since the server started,
+  and two copies of one number drift. Every reader now calls
+  `settings.upload_bytes()`, `fetch_bytes()`, `parse_timeout()` or
+  `graph_budget()` when it runs: the upload and source routes, the size
+  middleware in `main.py`, fetch and the imports' resolve and refresh, the
+  context cap, the parse timeout everywhere it is passed, and the graph's
+  first budget. A test moves a limit by replacing the function, never by
+  setting a constant. `test_settings.py` scans `app/` for any other module
+  naming the four variables, and for the old constant names; the removal
+  check that adds a reader in `store.py` goes red. `MAX_GRAPH_NODE_BUDGET`
+  (20,000) stays a constant on purpose: it is the ceiling Show more climbs
+  to and the top of the range, not a setting.
+
+  **A limit set by an environment variable is never changed from the
+  page.** The variable wins on every read, is not held to the range (an
+  install that needs 300 MB keeps it), and a PUT naming that limit is 409
+  with nothing written, even with the same number. A variable set to
+  nonsense still owns its limit and keeps the old fallback, the default.
+  *Largest file* is one limit over two variables: either makes it
+  read-only, and each path still honours only its own (a set upload
+  variable governs uploads, URL loads take the page's value unless the
+  fetch variable is set too). The refusal sentence offers the Settings
+  button only when no variable of the limit is set, so it never leads to a
+  field that cannot change.
+
+  **The range is the control, held twice.** The PUT refuses a value
+  outside its range or not a whole number (`true`, `50.5`, `"100"`, NaN,
+  1e400) with 422 and the range, and checks every value before keeping
+  any. `settings.json` gets the same check when read, so a hand edit past
+  a ceiling reads as the default, and a damaged file reads as no file:
+  the defaults, never no limit. The PUT takes `local_guard`'s header check
+  and a 16 KB body cap, declared in the middleware and read while reading
+  in the route. Measured in-process: 68 checks (every type trick, no
+  header, a foreign Origin, a rebinding Host, 20 KB declared and 1 MB
+  chunked, each variable, eight damaged files), every refusal leaving the
+  limit in force unchanged and nothing written, and 60 MB loading only
+  once raised; 27 removal checks in a scratch copy, all red.
+
+  **Messages say where, by code.** A too-large (413) or too-slow (504)
+  load answers `{message, code: "limit", limit, settable}`; the Load
+  dialog and Settings → Library offer *Settings* from `code` and
+  `settable`, never from the sentence (as a 404 is told by its status).
+
+  **Chrome rows** at 1280x720 and 1920x1080 in both themes, 37 each: a
+  60 MB file refused at 50 MB, its Settings button opening Limits in the
+  Load dialog's place, raised to 100 MB and the same file loaded; the
+  fields named with their unit and their range in the description; 201
+  refused under its field, Save `aria-disabled`; closing asking once,
+  Escape keeping the value; Reset and Cancel; the folder's path and Copy
+  path into the clipboard; the contrast sweep over every tab, nothing
+  under 4.5:1 or 12 px. With `SEMANTIC_STUDIO_MAX_UPLOAD_BYTES` set,
+  *Largest file* a named read-only group and the PUT 409.

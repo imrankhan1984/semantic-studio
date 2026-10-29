@@ -681,6 +681,45 @@ export function getNetworkActivity(limit = 200): Promise<NetworkActivity[]> {
   );
 }
 
+/* --- Settings (home-and-settings 5.4, D-120) ------------------------------- */
+
+export type LimitKey = "largestFile" | "readTime" | "firstDrawing";
+
+/** One limit as Settings → Limits shows it. `source` "environment" means an
+ *  administrator's variable owns it: shown read-only, never sent back. */
+export interface LimitSetting {
+  key: LimitKey;
+  name: string;
+  unit: string;
+  value: number;
+  default: number;
+  min: number;
+  max: number;
+  source: "default" | "settings" | "environment";
+  variables: string[];
+}
+
+export interface AppSettings {
+  limits: LimitSetting[];
+  /** The data folder's full path: where projects, the library and saved
+   *  queries are kept. */
+  dataDir: string;
+}
+
+// The three limits and the data folder. Read when Settings opens, never on mount.
+export function getSettings(): Promise<AppSettings> {
+  return send("/api/settings").then((r) => handle<AppSettings>(r));
+}
+
+// Save the limits a person changed; only ones no variable owns are sent.
+export function saveLimits(limits: Partial<Record<LimitKey, number>>): Promise<AppSettings> {
+  return send("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
+    body: JSON.stringify({ limits }),
+  }).then((r) => handle<AppSettings>(r));
+}
+
 /* --- owl:imports (external-access Stage 2) --------------------------------- */
 
 // Each import and its status. Reads files on the server; never connects.

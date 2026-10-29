@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1503 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1817 tests, vitest
+cd backend  && python -m pytest tests    # 1559 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1850 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -194,6 +194,9 @@ backend/app/
   hierarchy.py       subClassOf / broader / subPropertyOf forests for the tree view
   docs_export.py     The documentation-site zip (with docs_assets/)
   provenance.py      Activity records for exports
+  settings.py        The three limits Settings → Limits changes (D-120): every
+                     read at call time, the ranges, an environment variable
+                     winning, settings.json in the data folder
   routers/           HTTP layer only; the real work lives in the modules above
 
 frontend/src/
@@ -230,6 +233,8 @@ frontend/src/
                      a Cancel's two endings, and the load id (load-progress)
   statusWords.ts     The status bar's words: Home's count, format names,
                      and statementCount, the one place *statements* is said
+  limitWords.ts      Settings → Limits' words and its one rule: which typed
+                     text is a value, and what a Save sends (D-120)
   canvas/            The modeling canvas (D-086): ModelCanvas on React Flow,
                      its boxes and relate menu, its legend and tip card
                      (CanvasAids.tsx), the colour tokens by kind
@@ -242,7 +247,7 @@ docs/known-state.md  Why each load-bearing rule below exists
 
 `sparql/`, `explore/`, `home/`, `projects/`, `modeling/`, `reasoning/` and `explain/` are the same idea seven times: logic a
 component needs, kept out of the component so it can be tested without
-rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts`, `statusWords.ts`,
+rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts`, `statusWords.ts`, `limitWords.ts`,
 `links.ts` and `catalogue.ts` are the same idea for one function and one constant. Prefer this
 split for anything with a rule in it.
 
@@ -260,6 +265,8 @@ leaves one behind.
 - Only `network_broker.py` connects out; policy is asked before any name resolves. [outbound connection]
 - The broker connects to the judged address (`_pinned_url`), the name in `Host` and SNI. [outbound connection]
 - Workers run in `contextvars.copy_context()`, or a just-once grant never reaches them. [outbound connection]
+- A limit is read at call time from `settings.py`, never cached at import; `test_settings.py` scans for any other reader of its variables (D-120). [Settings limits]
+- A limit set by an environment variable is never changed from the page: the PUT is 409, and either size variable makes *Largest file* read-only (D-120). [Settings limits]
 - The broker's `total_timeout` reads unchunked. [SERVICE]
 - Never read rdflib's `service_string`; blocks come from `find_service_blocks` and `match_blocks`. [SERVICE]
 - The SERVICE handler never raises `NotImplementedError`; that sends local rows as `VALUES`. [SERVICE]
