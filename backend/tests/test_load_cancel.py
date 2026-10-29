@@ -369,7 +369,7 @@ def test_the_table_is_empty_after_a_timeout(client, monkeypatch):
         f'<http://example.org/s{i}> <http://example.org/p> "{i}" .\n'.encode()
         for i in range(20_000)
     )
-    monkeypatch.setattr("app.routers.ontologies.PARSE_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr("app.settings.parse_timeout", lambda: 0.001)
     late = _upload(client, str(uuid.uuid4()), body=body, name="slow.nt")
     assert late.status_code == 504 and len(running_loads) == 0
 

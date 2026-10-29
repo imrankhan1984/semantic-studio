@@ -28,9 +28,9 @@ INPUTS / INPUT SOURCES
       client, routed to the included routers.
     - Environment variable STATIC_DIR: optional override for where the built
       frontend lives. In Docker this is set to /app/static.
-    - The upload cap, read from the ontologies router at request time.
-    - The six router modules (ontologies, queries, network, projects, data,
-      examples) which define the actual endpoints.
+    - The upload cap, read from settings.py at request time (D-120).
+    - The seven router modules (ontologies, queries, network, projects, data,
+      examples, settings) which define the actual endpoints.
     - The bundled examples, seeded into the library when the server starts
       (library_examples.py, home-and-examples 5.1).
 
@@ -74,8 +74,9 @@ from fastapi.staticfiles import StaticFiles
 # (ontologies vs saved queries) keeps this file small.
 from .local_guard import LocalOnlyMiddleware
 from .network_broker import ApprovalRequired, GrantScopeMiddleware, HostBlocked, Offline
-from . import library_examples, tabular
+from . import library_examples, settings, tabular
 from .routers import data, examples, network, ontologies, projects, queries
+from .routers import settings as settings_router
 from .store import store
 
 
@@ -123,8 +124,9 @@ async def refuse_oversized_bodies(request: Request, call_next):
     Measured: rejecting a 30 MB upload against a 1 MB limit from inside the
     handler peaked at 124 MB. Refusing here keeps it flat.
 
-    The cap is read from the router module at call time rather than imported
-    once, so it stays a single source of truth and tests can adjust it.
+    The upload cap is read from settings.py at call time rather than imported
+    once, so a change saved in Settings → Limits applies to the next request
+    and tests can adjust it (D-120).
 
     Two routes take a multipart body: the upload, and the files chosen for
     unresolved imports (external-access Stage 2), whose request as a whole is
@@ -137,7 +139,8 @@ async def refuse_oversized_bodies(request: Request, call_next):
     layout (visual-modeling Stage 2) is a fourth, at 1 MB. A data file for
     the import wizard (csv-data-import Section 9) is a fifth, at 5 MB, on the
     four routes that take one; an edited mapping a sixth, at 1 MB. The IRIs
-    a query's results send to /nodes are a seventh, at 4 MB.
+    a query's results send to /nodes are a seventh, at 4 MB, and a settings
+    change (home-and-settings Section 9) an eighth, at 16 KB.
     """
     if request.method not in ("POST", "PUT", "PATCH"):
         return await call_next(request)
@@ -146,13 +149,16 @@ async def refuse_oversized_bodies(request: Request, call_next):
     detail = ""
     if request.method == "PUT":
         if _SOURCE_PATH.match(path):
-            limit = ontologies.MAX_UPLOAD_BYTES
-            detail = ontologies.too_large_detail(limit, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES")
+            limit = settings.upload_bytes()
+            detail = settings.too_large_detail(limit)
         elif _LAYOUT_PATH.match(path):
             # A JSON body has no multipart framing, so the exact cap applies;
             # the CHUNK_BYTES allowance below is for the upload envelopes.
             if _declared(request) > projects.LAYOUT_MAX_BYTES:
                 return JSONResponse(status_code=413, content={"detail": projects.LAYOUT_TOO_LARGE})
+        elif path == "/api/settings" and _declared(request) > settings.BODY_MAX_BYTES:
+            # Three numbers; the route reads its 16 KB cap again while reading.
+            return JSONResponse(status_code=413, content={"detail": settings.BODY_TOO_LARGE})
     elif request.method == "PATCH":
         if _DATA_PATCH_PATH.match(path) and _declared(request) > data.PATCH_MAX_BYTES:
             return JSONResponse(status_code=413, content={"detail": data.PATCH_TOO_LARGE})
@@ -163,8 +169,8 @@ async def refuse_oversized_bodies(request: Request, call_next):
         limit = tabular.MAX_BYTES
         detail = {"message": data.FILE_TOO_LARGE, "kind": "too-large"}
     elif path == "/api/ontologies/upload":
-        limit = ontologies.MAX_UPLOAD_BYTES
-        detail = ontologies.too_large_detail(limit, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES")
+        limit = settings.upload_bytes()
+        detail = settings.too_large_detail(limit)
     elif _IMPORT_FILES_PATH.match(path):
         limit = ontologies.imports_mod.MAX_TOTAL_BYTES
         detail = ontologies.IMPORT_FILES_TOO_LARGE
@@ -214,6 +220,7 @@ app.include_router(network.router)
 app.include_router(projects.router)
 app.include_router(data.router)
 app.include_router(examples.router)
+app.include_router(settings_router.router)
 
 
 # The broker's three policy decisions, mapped once for every route. They can

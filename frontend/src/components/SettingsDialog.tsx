@@ -4,11 +4,11 @@ FILE: frontend/src/components/SettingsDialog.tsx
 ================================================================================
 
 SUMMARY
-    Settings (home-and-settings 5.4): the one dialog for choices about the
-    application itself, opened from the header's Settings button. Stage A has
-    two tabs, Network (today's panel, NetworkPanel) and Library (the
-    catalogue and *Add the examples back*, LibrarySettings); Limits joins
-    them in Stage B.
+    Settings (home-and-settings 5.4, D-120): the one dialog for choices about
+    the application itself, opened from the header's Settings button. Three
+    tabs: Network (today's panel, NetworkPanel), Library (the catalogue,
+    *Add the examples back* and where the work is kept, LibrarySettings) and
+    Limits (the three limits a person can change, LimitsSettings).
 
 BASIC IDEA
     A modal like About and the Load dialog: role="dialog", aria-modal,
@@ -19,14 +19,25 @@ BASIC IDEA
     The tabs are the ARIA tablist pattern (5.7): one tab stop, the selected
     tab; Left and Right move between tabs and select as they go, Home and End
     go to the ends; Tab leaves the tablist for the panel. Selection follows
-    focus because neither panel costs anything to show.
+    focus because no panel costs anything to show.
 
-    Both panels stay mounted and the hidden one is `hidden`, rather than
+    Every panel stays mounted and the hidden ones are `hidden`, rather than
     unmounting: a catalogue load running in Library is cancelled by
-    unmounting (useLoadRun), and a look at Network must not do that.
+    unmounting (useLoadRun), and a look at Network must not do that; nor
+    must it lose a limit typed but not yet saved.
     Network reads its two lists again each time its tab is chosen (it is
     keyed on the visit), so a site allowed or a download made while Library
     showed is there to see and to revoke.
+
+    GET /api/settings is read once, when the dialog opens (never on the app's
+    mount, whose two requests are a load-bearing rule): Library shows its
+    data folder and Limits its three limits. A Save's answer replaces it.
+
+    Closing with a limit typed but not saved asks once, in the dialog, as the
+    Load dialog asks over a mapping: *Close* closes and discards, *Keep
+    editing* (or Escape again) goes back to Limits. Every way out asks: the
+    ✕, Escape and the backdrop. A catalogue entry that finished loading
+    closes without asking; the person chose that.
 
     The key handler is on `document` (a load-bearing rule for every dialog
     here): a click on the panel's own prose blurs focus to <body>, where a
@@ -37,29 +48,33 @@ BASIC IDEA
     entry's own download asks nothing: pressing it is the consent.)
 
 INPUTS / INPUT SOURCES (props)
-    - initialTab: the tab to open on; Network unless a caller names another.
+    - initialTab: the tab to open on; Network unless a caller names another
+      (the Load dialog's refusal for a limit names Limits).
     - onClose: every way of closing.
     - onLoaded / onLibraryChanged / examplesMissing / onExamplesRestored:
       passed to the Library tab.
 
 EXPECTED OUTPUT
-    - The dialog and its backdrop.
+    - The dialog and its backdrop; GET /api/settings once per opening.
 ================================================================================
 */
 
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import type { ExamplesRestored } from "../api";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { getSettings, type AppSettings, type ExamplesRestored } from "../api";
+import { LEAVE_QUESTION } from "../limitWords";
 import type { OntologySummary } from "../types";
 import LibrarySettings from "./LibrarySettings";
+import LimitsSettings from "./LimitsSettings";
 import NetworkPanel from "./NetworkPanel";
 import { wrapTab } from "./useDialogTrap";
 
-export type SettingsTab = "network" | "library";
+export type SettingsTab = "network" | "library" | "limits";
 
-/** The tabs in their order. Limits is Stage B's (home-and-settings 5.4). */
+/** The tabs in their order (home-and-settings 5.4). */
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: "network", label: "Network" },
   { id: "library", label: "Library" },
+  { id: "limits", label: "Limits" },
 ];
 
 interface Props {
@@ -88,23 +103,22 @@ export default function SettingsDialog({
     headingRef.current?.focus();
   }, []);
 
-  const close = useRef(onClose);
-  close.current = onClose;
+  // The limits and the data folder, read once per opening.
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [settingsFailed, setSettingsFailed] = useState<string | null>(null);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const panel = panelRef.current;
-      if (!panel || e.defaultPrevented) return;
-      const over = [...document.querySelectorAll('[aria-modal="true"]')].some((d) => d !== panel);
-      if (over) return;
-      if (e.key === "Escape") {
-        e.preventDefault();
-        close.current();
-        return;
-      }
-      wrapTab(panel, e);
+    let live = true;
+    getSettings().then(
+      (answer) => {
+        if (live) setSettings(answer);
+      },
+      (e: unknown) => {
+        if (live) setSettingsFailed(`Could not read the settings: ${e instanceof Error ? e.message : String(e)}`);
+      },
+    );
+    return () => {
+      live = false;
     };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
   }, []);
 
   // Each visit to Network mounts its panel afresh, which reads the policy
@@ -115,6 +129,43 @@ export default function SettingsDialog({
     setTab(next);
     tabRefs.current[next]?.focus();
   };
+
+  // A limit typed but not saved; and, once a close was asked for, the
+  // question standing in the dialog.
+  const [limitsDirty, setLimitsDirty] = useState(false);
+  const onDirtyChange = useCallback((dirty: boolean) => setLimitsDirty(dirty), []);
+  const [asking, setAsking] = useState(false);
+  // Saved or put back while the question stands: nothing is left to lose.
+  useEffect(() => {
+    if (!limitsDirty) setAsking(false);
+  }, [limitsDirty]);
+  const askOrClose = () => {
+    if (limitsDirty) setAsking(true);
+    else onClose();
+  };
+  const keepEditing = () => {
+    setAsking(false);
+    select("limits");
+  };
+
+  const escape = useRef(askOrClose);
+  escape.current = () => (asking ? keepEditing() : askOrClose());
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const panel = panelRef.current;
+      if (!panel || e.defaultPrevented) return;
+      const over = [...document.querySelectorAll('[aria-modal="true"]')].some((d) => d !== panel);
+      if (over) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        escape.current();
+        return;
+      }
+      wrapTab(panel, e);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   const onTabKey = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
     const at = TABS.findIndex((t) => t.id === tab);
@@ -137,7 +188,7 @@ export default function SettingsDialog({
     <>
       {/* The backdrop is the dialog's sibling, as About's is: aria-hidden on
           an ancestor would take the dialog out of the accessibility tree. */}
-      <div className="modal-backdrop" aria-hidden="true" onClick={onClose} />
+      <div className="modal-backdrop" aria-hidden="true" onClick={askOrClose} />
       <div
         ref={panelRef}
         className="settings-panel"
@@ -145,12 +196,24 @@ export default function SettingsDialog({
         aria-modal="true"
         aria-labelledby="settings-heading"
       >
-        <button className="icon-btn about-close" onClick={onClose} aria-label="Close Settings">
+        <button className="icon-btn about-close" onClick={askOrClose} aria-label="Close Settings">
           ✕
         </button>
         <h2 id="settings-heading" ref={headingRef} tabIndex={-1} className="settings-heading">
           Settings
         </h2>
+
+        {asking && (
+          <div className="wizard-actions wizard-leave" role="group" aria-label="Close without saving?">
+            <span>{LEAVE_QUESTION}</span>
+            <button type="button" onClick={onClose}>
+              Close
+            </button>
+            <button type="button" className="primary" autoFocus onClick={keepEditing}>
+              Keep editing
+            </button>
+          </div>
+        )}
 
         <div className="tabs settings-tabs" role="tablist" aria-label="Settings">
           {TABS.map((t) => (
@@ -194,6 +257,22 @@ export default function SettingsDialog({
             examplesMissing={examplesMissing}
             onExamplesRestored={onExamplesRestored}
             focusTab={() => tabRefs.current.library?.focus()}
+            dataDir={settings ? settings.dataDir : null}
+            dataDirFailed={settingsFailed !== null}
+            onOpenLimits={() => select("limits")}
+          />
+        </div>
+        <div
+          id="settings-panel-limits"
+          role="tabpanel"
+          aria-labelledby="settings-tab-limits"
+          hidden={tab !== "limits"}
+        >
+          <LimitsSettings
+            settings={settings}
+            failed={settingsFailed}
+            onSaved={setSettings}
+            onDirtyChange={onDirtyChange}
           />
         </div>
       </div>

@@ -157,6 +157,8 @@ const CALLS: Record<string, () => Promise<unknown>> = {
     }),
   revokeNetworkGrant: () => api.revokeNetworkGrant("grant-1"),
   setNetworkOffline: () => api.setNetworkOffline(true),
+  getSettings: () => api.getSettings(),
+  saveLimits: () => api.saveLimits({ largestFile: 100 }),
   getNetworkActivity: () => api.getNetworkActivity(),
   listImports: () => api.listImports("ont-1"),
   resolveImports: () => api.resolveImports("ont-1"),
@@ -247,12 +249,14 @@ describe("api client header (S-6)", () => {
     // a load's cancel one POST (load-progress 5.3); the reuse plan one POST
     // (ShareDomain's dry run, attribute-reuse 5.2); a query's hidden results
     // one POST (/nodes, query-page-rework 5.2); a change of a class's kind
-    // one POST (SetClassType's dry run, attribute-reuse 5.7).
+    // one POST (SetClassType's dry run, attribute-reuse 5.7); Settings →
+    // Limits one PUT (home-and-settings Stage B).
     const expected = [
       ...Array(6).fill("DELETE"),
       "PATCH",
       "PATCH",
       ...Array(32).fill("POST"),
+      "PUT",
       "PUT",
       "PUT",
       "PUT",

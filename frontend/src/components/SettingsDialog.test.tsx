@@ -5,7 +5,7 @@ FILE: frontend/src/components/SettingsDialog.test.tsx
 ================================================================================
 
 SUMMARY
-    The first tests for Settings (home-and-settings 5.4, 5.7, Stage A): a
+    The tests for Settings (home-and-settings 5.4, 5.5, 5.7): a
     modal dialog that opens on Network or on the tab named; the tablist's
     keys, its one tab stop and its hidden panels; Escape, the ✕ and the
     backdrop closing it, an Escape meant for a dialog over it left alone,
@@ -13,7 +13,11 @@ SUMMARY
     catalogue and loading an entry as the Load dialog's Suggested tab did,
     its status, Cancel and focus included, a look at Network not cancelling
     it and closing cancelling it; *Add the examples back* only while one is
-    missing, and what it says and where focus goes. AC-5 and AC-6 (Stage A).
+    missing, and what it says and where focus goes. Stage B: where the work
+    is kept and Copy path; Limits' fields, their ranges, Save waiting on a
+    refused value, Save, Cancel and Reset to defaults, the read-only
+    administrator line, and asking once on closing with a change; a
+    catalogue entry refused for its size offering Limits. AC-5 to AC-7, AC-9.
 
 BASIC IDEA
     api.ts is mocked, the component tests' pattern; a load is held by its
@@ -22,7 +26,8 @@ BASIC IDEA
     App.test.tsx asserts it.
 
 INPUTS / INPUT SOURCES
-    - SettingsDialog, with api.ts's network, fetch and restore calls mocked.
+    - SettingsDialog, with api.ts's network, fetch, restore and settings
+      calls mocked.
 
 EXPECTED OUTPUT
     - Pass/fail per assertion.
@@ -32,13 +37,16 @@ EXPECTED OUTPUT
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getNetworkPolicy, getNetworkActivity, fetchOntology, restoreExamples, cancelLoad } = vi.hoisted(() => ({
-  getNetworkPolicy: vi.fn(),
-  getNetworkActivity: vi.fn(),
-  fetchOntology: vi.fn(),
-  restoreExamples: vi.fn(),
-  cancelLoad: vi.fn(),
-}));
+const { getNetworkPolicy, getNetworkActivity, fetchOntology, restoreExamples, cancelLoad, getSettings, saveLimits } =
+  vi.hoisted(() => ({
+    getNetworkPolicy: vi.fn(),
+    getNetworkActivity: vi.fn(),
+    fetchOntology: vi.fn(),
+    restoreExamples: vi.fn(),
+    cancelLoad: vi.fn(),
+    getSettings: vi.fn(),
+    saveLimits: vi.fn(),
+  }));
 
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
@@ -47,9 +55,11 @@ vi.mock("../api", async (importOriginal) => ({
   fetchOntology,
   restoreExamples,
   cancelLoad,
+  getSettings,
+  saveLimits,
 }));
 
-import type { LoadOptions } from "../api";
+import { ApiError, type AppSettings, type LimitSetting, type LoadOptions } from "../api";
 import { CATALOGUE } from "../catalogue";
 import SettingsDialog, { type SettingsTab } from "./SettingsDialog";
 
@@ -63,7 +73,15 @@ const SUMMARY = {
   namespaces: {},
 };
 
+const LIMITS: LimitSetting[] = [
+  { key: "largestFile", name: "Largest file to load", unit: "MB", value: 50, default: 50, min: 1, max: 200, source: "default", variables: [] },
+  { key: "readTime", name: "Longest time to read a file", unit: "s", value: 60, default: 60, min: 10, max: 600, source: "default", variables: [] },
+  { key: "firstDrawing", name: "Items drawn when a graph opens", unit: "items", value: 2000, default: 2000, min: 100, max: 20000, source: "default", variables: [] },
+];
+const SETTINGS: AppSettings = { limits: LIMITS, dataDir: "/home/learner/.local/share/semantic-studio" };
+
 beforeEach(() => {
+  getSettings.mockResolvedValue(SETTINGS);
   getNetworkPolicy.mockResolvedValue({ offline: false, grants: [] });
   getNetworkActivity.mockResolvedValue([]);
   cancelLoad.mockResolvedValue({ stopped: true });
@@ -75,6 +93,7 @@ afterEach(() => {
   vi.clearAllMocks();
   fetchOntology.mockReset();
   restoreExamples.mockReset();
+  saveLimits.mockReset();
 });
 
 async function open(props: Partial<Parameters<typeof SettingsDialog>[0]> = {}, initialTab?: SettingsTab) {
@@ -108,14 +127,15 @@ describe("Settings is a dialog (home-and-settings 5.4, AC-5)", () => {
     expect(document.activeElement).toBe(screen.getByRole("heading", { level: 2, name: "Settings" }));
   });
 
-  it("has Network and Library tabs in a tablist, and opens on Network", async () => {
+  it("has Network, Library and Limits tabs in a tablist, and opens on Network", async () => {
     await open();
     const list = screen.getByRole("tablist", { name: "Settings" });
-    expect([...list.querySelectorAll('[role="tab"]')].map((t) => t.textContent)).toEqual(["Network", "Library"]);
+    expect([...list.querySelectorAll('[role="tab"]')].map((t) => t.textContent)).toEqual(["Network", "Library", "Limits"]);
     expect(tab("Network").getAttribute("aria-selected")).toBe("true");
     expect(tab("Library").getAttribute("aria-selected")).toBe("false");
     expect(panel("Network").hidden).toBe(false);
     expect(panel("Library").hidden).toBe(true);
+    expect(panel("Limits").hidden).toBe(true);
     expect(screen.getByRole("tabpanel", { name: "Network" })).toBeTruthy();
   });
 
@@ -194,7 +214,8 @@ describe("the tablist (home-and-settings 5.7)", () => {
     await open();
     expect(tab("Network").tabIndex).toBe(0);
     expect(tab("Library").tabIndex).toBe(-1);
-    for (const name of ["Network", "Library"]) {
+    expect(tab("Limits").tabIndex).toBe(-1);
+    for (const name of ["Network", "Library", "Limits"]) {
       expect(panel(name).getAttribute("role")).toBe("tabpanel");
       expect(panel(name).getAttribute("aria-labelledby")).toBe(tab(name).id);
     }
@@ -209,13 +230,15 @@ describe("the tablist (home-and-settings 5.7)", () => {
     expect(tab("Library").tabIndex).toBe(0);
     expect(panel("Library").hidden).toBe(false);
     fireEvent.keyDown(tab("Library"), { key: "ArrowRight" });
+    expect(document.activeElement).toBe(tab("Limits"));
+    fireEvent.keyDown(tab("Limits"), { key: "ArrowRight" });
     expect(document.activeElement).toBe(tab("Network"));
     fireEvent.keyDown(tab("Network"), { key: "ArrowLeft" });
-    expect(document.activeElement).toBe(tab("Library"));
-    fireEvent.keyDown(tab("Library"), { key: "Home" });
+    expect(document.activeElement).toBe(tab("Limits"));
+    fireEvent.keyDown(tab("Limits"), { key: "Home" });
     expect(document.activeElement).toBe(tab("Network"));
     fireEvent.keyDown(tab("Network"), { key: "End" });
-    expect(document.activeElement).toBe(tab("Library"));
+    expect(document.activeElement).toBe(tab("Limits"));
     expect(panel("Network").hidden).toBe(true);
   });
 
@@ -385,5 +408,294 @@ describe("Library: the examples (home-and-settings 5.4 item 2, AC-6)", () => {
     expect(document.activeElement).toBe(button);
     expect(button.getAttribute("aria-disabled")).toBe("false");
     expect(onExamplesRestored).not.toHaveBeenCalled();
+  });
+});
+
+describe("Library: where your work is kept (home-and-settings 5.4 item 3, AC-6)", () => {
+  it("shows the data folder's full path as text, with its sentence, read once per opening", async () => {
+    await open({}, "library");
+    expect(getSettings).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("heading", { name: "Where your work is kept" })).toBeTruthy();
+    expect(screen.getByText("Projects, the library and saved queries are kept here, on this computer.")).toBeTruthy();
+    const path = document.querySelector(".settings-path")!;
+    expect(path.textContent).toBe(SETTINGS.dataDir);
+    // Text, not a field: selectable, never editable.
+    expect(path.tagName).toBe("CODE");
+  });
+
+  it("Copy path copies it and says Path copied in a polite live region", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    await open({}, "library");
+    const said = document.querySelector<HTMLElement>(".settings-copied")!;
+    expect(said.getAttribute("role")).toBe("status");
+    expect(said.textContent).toBe("");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy path" }));
+    });
+    expect(writeText).toHaveBeenCalledWith(SETTINGS.dataDir);
+    expect(said.textContent).toBe("Path copied");
+  });
+
+  it("a refused clipboard says to select the path instead", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+      configurable: true,
+    });
+    await open({}, "library");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy path" }));
+    });
+    expect(document.querySelector(".settings-copied")!.textContent).toBe("Could not copy. Select the path to copy it.");
+  });
+
+  it("says so when the folder cannot be read, never Reading… for ever (code review)", async () => {
+    getSettings.mockRejectedValue(new Error("The server did not answer."));
+    await open({}, "library");
+    expect(document.querySelector(".settings-path")!.textContent).toBe("Could not be read. Close Settings and open it again.");
+    expect(screen.getByRole("button", { name: "Copy path" }).getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("a catalogue entry refused for its size offers Settings, which opens Limits (5.5)", async () => {
+    fetchOntology.mockRejectedValue(
+      new ApiError("This file is larger than the 50 MB limit. You can raise it in Settings → Limits.", 413, {
+        message: "This file is larger than the 50 MB limit. You can raise it in Settings → Limits.",
+        code: "limit",
+        limit: "largestFile",
+        settable: true,
+      }),
+    );
+    await open({}, "library");
+    await act(async () => {
+      fireEvent.click(document.querySelectorAll<HTMLElement>(".catalogue-entry")[0]);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(tab("Limits").getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(tab("Limits"));
+  });
+});
+
+const field = (name: RegExp) => screen.getByRole("textbox", { name }) as HTMLInputElement;
+const type = (name: RegExp, value: string) => fireEvent.change(field(name), { target: { value } });
+const saveButton = () => screen.getByRole("button", { name: "Save" });
+
+describe("Limits (home-and-settings 5.4, AC-7)", () => {
+  it("shows each limit as a field labelled with its name and unit, its default, range and what it changes", async () => {
+    await open({}, "limits");
+    const largest = field(/^Largest file to load \(MB\)$/);
+    expect(largest.value).toBe("50");
+    expect(largest.getAttribute("inputmode")).toBe("numeric");
+    expect(field(/^Longest time to read a file \(seconds\)$/).value).toBe("60");
+    expect(field(/^Items drawn when a graph opens \(items\)$/).value).toBe("2000");
+    // The range and the sentence are tied to the field.
+    const described = largest.getAttribute("aria-describedby")!.split(" ").map((id) => document.getElementById(id)!.textContent);
+    expect(described).toEqual([
+      "The largest file you can open from this computer or load from a web address.",
+      "Default 50 MB. From 1 to 200 MB.",
+    ]);
+    expect(screen.getByText("Default 2,000 items. From 100 to 20,000 items.")).toBeTruthy();
+    expect(screen.getByText(/The query limits stay fixed/)).toBeTruthy();
+  });
+
+  it("refuses a value outside its range under its field, and Save waits, aria-disabled", async () => {
+    await open({}, "limits");
+    type(/^Largest file/, "201");
+    const largest = field(/^Largest file/);
+    expect(largest.getAttribute("aria-invalid")).toBe("true");
+    const ids = largest.getAttribute("aria-describedby")!.split(" ");
+    expect(document.getElementById(ids[2])!.textContent).toBe("Enter a whole number from 1 to 200 MB.");
+    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
+    expect((saveButton() as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(saveButton());
+    expect(saveLimits).not.toHaveBeenCalled();
+    for (const text of ["0", "50.5", "", "1e2", " 7", "-3"]) {
+      type(/^Largest file/, text);
+      expect(saveButton().getAttribute("aria-disabled")).toBe("true");
+    }
+    type(/^Largest file/, "100");
+    expect(largest.getAttribute("aria-invalid")).toBeNull();
+    expect(saveButton().getAttribute("aria-disabled")).toBe("false");
+  });
+
+  it("Save waits while nothing has changed", async () => {
+    await open({}, "limits");
+    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("Save sends only what changed, takes the answer and says when it applies", async () => {
+    const answer = { ...SETTINGS, limits: LIMITS.map((l) => (l.key === "largestFile" ? { ...l, value: 100, source: "settings" as const } : l)) };
+    saveLimits.mockResolvedValue(answer);
+    await open({}, "limits");
+    type(/^Largest file/, "100");
+    await act(async () => {
+      fireEvent.click(saveButton());
+    });
+    expect(saveLimits).toHaveBeenCalledWith({ largestFile: 100 });
+    expect(field(/^Largest file/).value).toBe("100");
+    const status = document.querySelector<HTMLElement>(".settings-limit-status")!;
+    expect(status.getAttribute("role")).toBe("status");
+    expect(status.textContent).toBe("Saved. The new limits apply to the next file you load and the next graph you open.");
+    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("a Save the server refuses says why and keeps the typed value", async () => {
+    saveLimits.mockRejectedValue(new ApiError("Largest file to load must be a whole number from 1 to 200 MB.", 422));
+    await open({}, "limits");
+    type(/^Largest file/, "150");
+    await act(async () => {
+      fireEvent.click(saveButton());
+    });
+    expect(screen.getByText("Largest file to load must be a whole number from 1 to 200 MB.")).toBeTruthy();
+    expect(field(/^Largest file/).value).toBe("150");
+  });
+
+  it("Cancel puts the saved values back", async () => {
+    await open({}, "limits");
+    type(/^Largest file/, "120");
+    type(/^Longest time/, "5");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(field(/^Largest file/).value).toBe("50");
+    expect(field(/^Longest time/).value).toBe("60");
+    expect(saveLimits).not.toHaveBeenCalled();
+  });
+
+  it("Reset to defaults puts the defaults in the fields, to be saved", async () => {
+    getSettings.mockResolvedValue({
+      ...SETTINGS,
+      limits: LIMITS.map((l) => ({ ...l, value: l.key === "readTime" ? 300 : l.key === "largestFile" ? 120 : l.value, source: "settings" as const })),
+    });
+    saveLimits.mockResolvedValue(SETTINGS);
+    await open({}, "limits");
+    expect(field(/^Longest time/).value).toBe("300");
+    fireEvent.click(screen.getByRole("button", { name: "Reset to defaults" }));
+    expect(field(/^Largest file/).value).toBe("50");
+    expect(field(/^Longest time/).value).toBe("60");
+    expect(saveLimits).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(saveButton());
+    });
+    expect(saveLimits).toHaveBeenCalledWith({ largestFile: 50, readTime: 60 });
+  });
+
+  it("a limit an environment variable owns is read-only, names the variable, and is never sent", async () => {
+    getSettings.mockResolvedValue({
+      ...SETTINGS,
+      limits: LIMITS.map((l) =>
+        l.key === "largestFile"
+          ? { ...l, value: 300, source: "environment" as const, variables: ["SEMANTIC_STUDIO_MAX_UPLOAD_BYTES", "SEMANTIC_STUDIO_MAX_FETCH_BYTES"] }
+          : l,
+      ),
+    });
+    saveLimits.mockResolvedValue(SETTINGS);
+    await open({}, "limits");
+    expect(screen.queryByRole("textbox", { name: /^Largest file/ })).toBeNull();
+    const group = screen.getByRole("group", { name: "Largest file to load" });
+    expect(group.textContent).toContain("300 MB");
+    expect(group.textContent).toContain(
+      "Set by the administrator (SEMANTIC_STUDIO_MAX_UPLOAD_BYTES, SEMANTIC_STUDIO_MAX_FETCH_BYTES).",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Reset to defaults" }));
+    expect(screen.queryByRole("textbox", { name: /^Largest file/ })).toBeNull();
+    await act(async () => {
+      fireEvent.click(saveButton());
+    });
+    // Reset changed nothing editable, so there is nothing to send.
+    expect(saveLimits).not.toHaveBeenCalled();
+    type(/^Longest time/, "90");
+    await act(async () => {
+      fireEvent.click(saveButton());
+    });
+    expect(saveLimits).toHaveBeenCalledWith({ readTime: 90 });
+  });
+
+  it("with every limit read-only there are no buttons to press", async () => {
+    getSettings.mockResolvedValue({
+      ...SETTINGS,
+      limits: LIMITS.map((l) => ({ ...l, source: "environment" as const, variables: ["SEMANTIC_STUDIO_X"] })),
+    });
+    await open({}, "limits");
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reset to defaults" })).toBeNull();
+  });
+
+  it("says so when the settings cannot be read", async () => {
+    getSettings.mockRejectedValue(new Error("The server did not answer."));
+    await open({}, "limits");
+    expect(screen.getByText("Could not read the settings: The server did not answer.")).toBeTruthy();
+  });
+
+  it("a value typed survives a look at another tab", async () => {
+    await open({}, "limits");
+    type(/^Largest file/, "75");
+    fireEvent.click(tab("Network"));
+    fireEvent.click(tab("Limits"));
+    expect(field(/^Largest file/).value).toBe("75");
+  });
+});
+
+describe("closing with an unsaved limit asks once (home-and-settings 5.4)", () => {
+  it("closes at once with nothing changed", async () => {
+    const { onClose } = await open({}, "limits");
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("the ✕, Escape and the backdrop each ask; Close discards and closes", async () => {
+    const { onClose } = await open({}, "limits");
+    type(/^Largest file/, "75");
+    for (const leave of [
+      () => fireEvent.click(screen.getByRole("button", { name: "Close Settings" })),
+      () => fireEvent.keyDown(document.body, { key: "Escape" }),
+      () => fireEvent.click(document.querySelector(".modal-backdrop")!),
+    ]) {
+      leave();
+      const question = screen.getByRole("group", { name: "Close without saving?" });
+      expect(question.textContent).toContain("Close without saving? The limits you changed are not kept.");
+      // Focus on the answer that keeps the work.
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Keep editing" }));
+      fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+      expect(screen.queryByRole("group", { name: "Close without saving?" })).toBeNull();
+    }
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(saveLimits).not.toHaveBeenCalled();
+  });
+
+  it("Escape while it asks keeps editing, on Limits, the value still there", async () => {
+    const { onClose } = await open({}, "limits");
+    type(/^Largest file/, "75");
+    fireEvent.click(tab("Library"));
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.getByRole("group", { name: "Close without saving?" })).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.queryByRole("group", { name: "Close without saving?" })).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(tab("Limits").getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(tab("Limits"));
+    expect(field(/^Largest file/).value).toBe("75");
+  });
+
+  it("the question goes once the change is saved or put back while it stands (code review)", async () => {
+    await open({}, "limits");
+    type(/^Largest file/, "75");
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.getByRole("group", { name: "Close without saving?" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("group", { name: "Close without saving?" })).toBeNull();
+  });
+
+  it("asks nothing once the change is saved, or put back", async () => {
+    saveLimits.mockResolvedValue({ ...SETTINGS, limits: LIMITS.map((l) => (l.key === "readTime" ? { ...l, value: 90 } : l)) });
+    const { onClose } = await open({}, "limits");
+    type(/^Longest time/, "90");
+    await act(async () => {
+      fireEvent.click(saveButton());
+    });
+    type(/^Largest file/, "75");
+    type(/^Largest file/, "50");
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

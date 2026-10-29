@@ -48,9 +48,9 @@ INPUTS / INPUT SOURCES
     - Uploaded files (multipart) and JSON fetch/sparql request bodies.
     - Remote RDF files fetched over HTTP for the /fetch endpoint.
     - The shared `store` and `saved_queries` singletons.
-    - Environment: SEMANTIC_STUDIO_MAX_UPLOAD_BYTES, SEMANTIC_STUDIO_MAX_FETCH_BYTES,
-      SEMANTIC_STUDIO_PARSE_TIMEOUT and SEMANTIC_STUDIO_GRAPH_NODE_BUDGET
-      override the default caps.
+    - The upload and fetch caps, the parse timeout and the graph's first
+      budget from settings.py, read at call time (Settings → Limits, D-120;
+      an environment variable still wins).
 
 EXPECTED OUTPUT
     - JSON responses (ontology summaries, graph, one entity's neighbourhood,
@@ -97,7 +97,7 @@ from rdflib import URIRef
 from starlette.concurrency import run_in_threadpool
 
 # Delegate the real work to the domain modules.
-from .. import parse_errors, provenance
+from .. import parse_errors, provenance, settings
 from ..docs_export import DocsExportError, build_zip
 from ..embedded_queries import MAX_TEXT_CHARS as MAX_QUERY_CHARS
 from ..embedded_queries import list_embedded_queries
@@ -163,19 +163,10 @@ def _env_float(name: str, default: float) -> float:
     return value if value > 0 else default
 
 
-# Both caps default to 50 MB. The number was chosen against the catalogue the
-# application itself suggests, whose largest entry was then the JUHO thesaurus
-# at about 26 MB: a default that refused content the interface recommends would
-# be a bug rather than a control. That entry was replaced on 2026-07-31 and the
-# catalogue's largest is now FIBO at about 5 MB, so the headroom is wider than
-# the argument requires — deliberately left alone, because the cap protects the
-# arbitrary public URL a user types, which the catalogue never bounded. An
-# administrator with a known-good larger file raises them.
-MAX_UPLOAD_BYTES = _env_int("SEMANTIC_STUDIO_MAX_UPLOAD_BYTES", 50 * 1024 * 1024)
-MAX_FETCH_BYTES = _env_int("SEMANTIC_STUDIO_MAX_FETCH_BYTES", 50 * 1024 * 1024)
-# Roughly ten times the 5.4 seconds measured for 400,000 triples, which leaves
-# room for slower machines and denser formats such as RDF/XML.
-PARSE_TIMEOUT_SECONDS = _env_float("SEMANTIC_STUDIO_PARSE_TIMEOUT", 60.0)
+# The upload and fetch caps (50 MB), the parse timeout (60 s) and the graph's
+# first budget (2,000) are read from settings.py at call time (D-120): a
+# person can change them in Settings → Limits within fixed ranges, and an
+# environment variable still wins. Each default's reason moved with it.
 
 # Read size for the streaming upload and download paths. Small enough that the
 # overshoot past a limit is negligible, large enough not to dominate the cost.
@@ -223,12 +214,6 @@ def _reset_docs_rate_limit() -> None:
         _docs_request_times.clear()
 SOURCE_HARD_MAX_BYTES = 16 * 1024 * 1024
 
-# How many graph nodes one /graph response may carry. The failure this bounds
-# is in the browser, not here: 18,717 nodes left the tab unresponsive for over
-# 95 seconds and it never recovered. 2,000 is a safety net rather than an
-# optimum — it is roughly nine times below the observed failure, and being
-# wrong costs a change to the environment variable rather than a release.
-DEFAULT_GRAPH_NODE_BUDGET = _env_int("SEMANTIC_STUDIO_GRAPH_NODE_BUDGET", 2000)
 # The ceiling "Show more" climbs towards. A request above it is clamped and the
 # clamped value is reported back, so the interface can say the maximum was
 # reached, rather than being refused as if the caller had made an error.
@@ -350,11 +335,11 @@ SearchKind = Literal["class", "concept", "objectProperty", "datatypeProperty", "
 
 
 def _viz(ontology, imports: bool, lang: Optional[str] = None) -> dict:
-    return imports_mod.view_viz(ontology, imports, PARSE_TIMEOUT_SECONDS, lang)
+    return imports_mod.view_viz(ontology, imports, settings.parse_timeout(), lang)
 
 
 def _graph(ontology, imports: bool):
-    return imports_mod.view_graph(ontology, imports, PARSE_TIMEOUT_SECONDS)
+    return imports_mod.view_graph(ontology, imports, settings.parse_timeout())
 
 
 def _from_data(ontology, iri: str) -> Optional[dict]:
@@ -402,15 +387,7 @@ def list_ontologies() -> list[dict]:
     return [library_examples.with_questions(o.summary()) for o in store.list()]
 
 
-def too_large_detail(limit: int, variable: str) -> str:
-    """The message for a refused oversized body: the limit, and how to raise it."""
-    return (
-        f"This file is larger than the {limit // (1024 * 1024)} MB limit. "
-        f"You can raise the limit with the {variable} environment variable."
-    )
-
-
-async def _read_capped(file: UploadFile, limit: int, variable: str) -> bytes:
+async def _read_capped(file: UploadFile, limit: int) -> bytes:
     """Read an upload in chunks, refusing the moment it passes ``limit``.
 
     The point is the refusal happening *during* the read. `await file.read()`
@@ -426,7 +403,7 @@ async def _read_capped(file: UploadFile, limit: int, variable: str) -> bytes:
         total += len(chunk)
         if total > limit:
             # Stop here. The rest of the body is never read into this process.
-            raise HTTPException(status_code=413, detail=too_large_detail(limit, variable))
+            raise HTTPException(status_code=413, detail=settings.too_large_detail(limit))
         chunks.append(chunk)
     return b"".join(chunks)
 
@@ -496,19 +473,18 @@ async def upload_ontology(
     # a generous allowance for the framing keeps a file that is legitimately
     # just under the limit from being refused on its boundary text alone. The
     # chunked read below is what enforces the limit exactly.
+    # Read once, so the declared check and the read hold to one number.
+    limit = settings.upload_bytes()
     declared = request.headers.get("content-length")
     if declared and declared.isdigit():
-        if int(declared) > MAX_UPLOAD_BYTES + CHUNK_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=too_large_detail(MAX_UPLOAD_BYTES, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES"),
-            )
+        if int(declared) > limit + CHUNK_BYTES:
+            raise HTTPException(status_code=413, detail=settings.too_large_detail(limit))
     # Registered before the body is read back from its spool, so a Cancel
     # pressed once the browser has sent the last byte finds the load (PR #65
     # review). FastAPI parses the multipart body before this line runs; a
     # Cancel in that moment finds no id, and answers too late.
     with _load(loadId) as mark:
-        data = await _read_capped(file, MAX_UPLOAD_BYTES, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES")
+        data = await _read_capped(file, limit)
         if not data:
             raise HTTPException(status_code=400, detail="The uploaded file is empty.")
         # Detect the RDF format from the filename (or the caller's override).
@@ -522,11 +498,11 @@ async def upload_ontology(
                 source="upload",
                 data=data,
                 fmt=fmt,
-                parse_timeout=PARSE_TIMEOUT_SECONDS,
+                parse_timeout=settings.parse_timeout(),
                 mark=mark,
             )
         except ParseTimeout as exc:
-            raise HTTPException(status_code=504, detail=str(exc)) from exc
+            raise HTTPException(status_code=504, detail=settings.too_slow_detail(str(exc))) from exc
         except ParseError as exc:
             raise HTTPException(
                 status_code=422, detail=_load_failure(exc, data, file.filename)
@@ -586,6 +562,7 @@ async def fetch_ontology(request: FetchRequest) -> dict:
         raise HTTPException(status_code=400, detail=GHE_NOT_SUPPORTED_DETAIL)
     # Turn a github.com "blob" page URL into the raw download URL.
     url = to_raw_url(raw_input)
+    limit = settings.fetch_bytes()
     with _load(request.loadId) as mark:
         try:
             # The broker is synchronous (the rdflib chokepoint calls it from a
@@ -597,7 +574,7 @@ async def fetch_ontology(request: FetchRequest) -> dict:
                 url,
                 reason=FETCH_REASON,
                 headers=FETCH_HEADERS,
-                max_bytes=MAX_FETCH_BYTES,
+                max_bytes=limit,
                 timeout=60,
                 user_initiated=True,
             )
@@ -605,10 +582,7 @@ async def fetch_ontology(request: FetchRequest) -> dict:
             # Refused before any connection was made to the address in question.
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except TooLarge as exc:
-            raise HTTPException(
-                status_code=413,
-                detail=too_large_detail(MAX_FETCH_BYTES, "SEMANTIC_STUDIO_MAX_FETCH_BYTES"),
-            ) from exc
+            raise HTTPException(status_code=413, detail=settings.too_large_detail(limit, "fetch")) from exc
         except TooManyRedirects as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except FetchFailed as exc:
@@ -633,11 +607,11 @@ async def fetch_ontology(request: FetchRequest) -> dict:
                 source=final_url,
                 data=data,
                 fmt=fmt,
-                parse_timeout=PARSE_TIMEOUT_SECONDS,
+                parse_timeout=settings.parse_timeout(),
                 mark=mark,
             )
         except ParseTimeout as exc:
-            raise HTTPException(status_code=504, detail=str(exc)) from exc
+            raise HTTPException(status_code=504, detail=settings.too_slow_detail(str(exc))) from exc
         except ParseError as exc:
             # The name wins; a server's content type explains a nameless address.
             suggested = parse_errors.format_from_content_type(response.headers.get("content-type"))
@@ -685,7 +659,7 @@ def get_graph(
     caller asking for more than the view can draw has not made an error — the
     response reports the clamped `budget` so the interface can say so.
     """
-    budget = min(DEFAULT_GRAPH_NODE_BUDGET if limit is None else limit, MAX_GRAPH_NODE_BUDGET)
+    budget = min(settings.graph_budget() if limit is None else limit, MAX_GRAPH_NODE_BUDGET)
     return budget_viz(_viz(_get_or_404(oid), imports, lang), budget)
 
 
@@ -1030,7 +1004,7 @@ def get_hierarchy(
     # Imported rows carry `importedFrom`, and the edge to each one the
     # origin "imported" -- D-046's seam with a new value (AC-21); a
     # snapshot's individuals carry `fromData` (csv-data-import 5.6).
-    tree = imports_mod.view_hierarchy(ontology, imports, PARSE_TIMEOUT_SECONDS, lang)
+    tree = imports_mod.view_hierarchy(ontology, imports, settings.parse_timeout(), lang)
     if inferred:
         pid = editing_service.project_of(oid)
         outcome = editing_service.current_inferred(pid, imports) if pid is not None else None
@@ -1043,7 +1017,7 @@ def get_hierarchy(
 def get_query_schema(oid: str, imports: bool = IMPORTS_PARAM) -> dict:
     """Class-level schema powering the visual query builder."""
     ontology = _get_or_404(oid)
-    return imports_mod.view_query_schema(ontology, imports, PARSE_TIMEOUT_SECONDS)
+    return imports_mod.view_query_schema(ontology, imports, settings.parse_timeout())
 
 
 @router.get("/{oid}/embedded-queries")
@@ -1068,7 +1042,7 @@ def get_query_node(oid: str, iri: str = Query(...), imports: bool = IMPORTS_PARA
     classes too, and describing one against the file alone would refuse it.
     """
     ontology = _get_or_404(oid)
-    schema = imports_mod.view_query_schema(ontology, imports, PARSE_TIMEOUT_SECONDS)
+    schema = imports_mod.view_query_schema(ontology, imports, settings.parse_timeout())
     graph = _graph(ontology, imports)
     with ontology.reading():
         described = describe_query_node(graph, iri, schema)
@@ -1131,7 +1105,7 @@ def resolve_imports(oid: str) -> dict:
     user has not approved; what resolved before the question is kept."""
     ontology = _get_or_404(oid)
     imports_service.resolve(
-        ontology, parse_timeout=PARSE_TIMEOUT_SECONDS, max_bytes=MAX_FETCH_BYTES
+        ontology, parse_timeout=settings.parse_timeout(), max_bytes=settings.fetch_bytes()
     )
     return imports_service.listing(ontology)
 
@@ -1141,7 +1115,7 @@ def refresh_imports(oid: str) -> dict:
     """Re-download every import that came from the network, through the broker."""
     ontology = _get_or_404(oid)
     imports_service.resolve(
-        ontology, refresh=True, parse_timeout=PARSE_TIMEOUT_SECONDS, max_bytes=MAX_FETCH_BYTES
+        ontology, refresh=True, parse_timeout=settings.parse_timeout(), max_bytes=settings.fetch_bytes()
     )
     return imports_service.listing(ontology)
 
@@ -1165,7 +1139,7 @@ def map_import(oid: str, body: ImportMapping) -> dict:
     target = store.get(body.ontologyId)
     if target is None or target.id == ontology.id:
         raise HTTPException(status_code=400, detail="Choose another ontology from your library.")
-    imports_service.map_to_library(ontology, body.iri, target, parse_timeout=PARSE_TIMEOUT_SECONDS)
+    imports_service.map_to_library(ontology, body.iri, target, parse_timeout=settings.parse_timeout())
     return imports_service.listing(ontology)
 
 
@@ -1192,7 +1166,7 @@ async def import_files(
     received: list[tuple[str, bytes]] = []
     total = 0
     for upload in files:
-        data = await _read_capped(upload, MAX_UPLOAD_BYTES, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES")
+        data = await _read_capped(upload, settings.upload_bytes())
         total += len(data)
         if total > imports_mod.MAX_TOTAL_BYTES:
             raise HTTPException(status_code=413, detail=too_big)
@@ -1204,7 +1178,7 @@ async def import_files(
         received,
         for_iri=forIri,
         accept_mismatch=acceptMismatch,
-        parse_timeout=PARSE_TIMEOUT_SECONDS,
+        parse_timeout=settings.parse_timeout(),
     )
     result["imports"] = imports_service.listing(ontology)
     return result

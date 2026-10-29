@@ -51,7 +51,8 @@ BASIC IDEA
 INPUTS / INPUT SOURCES
     - Raw file bytes from uploads or URL fetches (passed to `add`).
     - A format hint from the file extension / caller, else content sniffing.
-    - An optional parse timeout, supplied by the router from configuration.
+    - An optional parse timeout, supplied by the router from settings.py;
+      its refusal sentence says where the limit is raised (D-120).
     - An optional cancel mark (loads.py) for a load the browser can cancel.
     - Previously persisted <id>.rdf, <id>.meta.json and (for JSON-LD with a
       remote context) <id>.contexts.json files in the data dir.
@@ -112,7 +113,7 @@ from rdflib.util import guess_format
 from .graph_builder import build_card_sketch, build_viz_graph, ontology_iris
 from .hierarchy import build_hierarchy
 from .loads import LoadMark
-from . import network_broker
+from . import network_broker, settings
 from .net_guard import (
     BlockedAddress,
     install_rdflib_guard,
@@ -302,11 +303,9 @@ def parse_rdf(
         except FuturesTimeout as exc:
             # Do not block shutting the pool down on the abandoned worker.
             pool.shutdown(wait=False, cancel_futures=True)
-            raise ParseTimeout(
-                f"This file took longer than {timeout:g} seconds to parse and "
-                "was stopped. You can raise the limit with "
-                "SEMANTIC_STUDIO_PARSE_TIMEOUT."
-            ) from exc
+            # The sentence says where the limit is raised, or that the
+            # administrator set it (home-and-settings 5.5).
+            raise ParseTimeout(settings.too_slow_message(timeout)) from exc
 
 
 @dataclass
@@ -731,6 +730,8 @@ saved_queries = SavedQueryStore(store.data_dir)
 # The broker keeps its policy and activity log beside the library, and this is
 # the one module that knows where that is.
 network_broker.broker.configure(store.data_dir)
+# settings.json, the limits a person saved in Settings, lives there too.
+settings.configure(store.data_dir)
 
 
 # Above this many statements the formatted source view is a bounded

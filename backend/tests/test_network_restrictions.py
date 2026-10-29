@@ -389,7 +389,7 @@ def test_blocked_context_is_refused_through_content_sniffing(context_server):
 
 def test_oversized_context_is_refused_while_reading(context_server, monkeypatch, loopback_is_public):
     """SEC-16 / AC-4."""
-    monkeypatch.setattr("app.net_guard.MAX_FETCH_BYTES", 64 * 1024)
+    monkeypatch.setattr("app.settings.fetch_bytes", lambda: 64 * 1024)
     broker.policy.grant("jsonld:context", "127.0.0.1", "allow", remember=True)
     context_server.body = b'{"@context":{"name":"http://example.org/name"},"pad":"' + b"x" * (
         2 * 1024 * 1024
@@ -485,7 +485,7 @@ def test_peak_memory_is_bounded_by_the_cap_not_the_body(
     The body is far larger than the cap, so a passing measurement shows the
     limit bounds what is held rather than reporting a number afterwards.
     """
-    monkeypatch.setattr("app.net_guard.MAX_FETCH_BYTES", 512 * 1024)
+    monkeypatch.setattr("app.settings.fetch_bytes", lambda: 512 * 1024)
     broker.policy.grant("jsonld:context", "127.0.0.1", "allow", remember=True)
     context_server.body = b'{"@context":{"n":"http://example.org/n"},"pad":"' + b"x" * (
         20 * 1024 * 1024

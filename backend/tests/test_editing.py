@@ -689,9 +689,9 @@ def test_invalid_turtle_changes_nothing_and_reports_line_and_column(pid):
 
 
 def test_the_apply_body_is_capped_while_reading(pid, monkeypatch):
-    from app.routers import ontologies
+    from app import settings
 
-    monkeypatch.setattr(ontologies, "MAX_UPLOAD_BYTES", 1000)
+    monkeypatch.setattr(settings, "upload_bytes", lambda: 1000)
     before_rev = revision(pid)
     big = "# " + "x" * 5000
     # Declared: refused by the middleware before the body is read.

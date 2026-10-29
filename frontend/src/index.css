@@ -3688,6 +3688,80 @@ button.legend-row:hover {
   font-weight: 600;
 }
 
+/* Where your work is kept (Stage B): after the live regions and the failed
+   load, so not a sibling section; the same rule above it. The path is text
+   to select, wrapping anywhere rather than widening the dialog. */
+.settings-folder-section {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 12px;
+}
+
+.settings-folder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-path {
+  flex: 1 1 260px;
+  min-width: 0;
+  padding: 6px 10px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: var(--fs-xs);
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.settings-copied:empty,
+.settings-limit-status:empty {
+  margin: 0;
+}
+
+/* Settings → Limits (Stage B): one block per limit, its name, field or
+   read-only value, and its lines under it. */
+.settings-limit {
+  margin: 14px 0 0;
+}
+
+.settings-limit p {
+  margin: 2px 0 0;
+}
+
+.settings-limit-name {
+  display: block;
+  margin: 0 0 4px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settings-limit-input {
+  width: 9em;
+}
+
+.settings-limit-input[aria-invalid="true"] {
+  border-color: var(--error-text);
+}
+
+.settings-limit-value {
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.settings-limit-actions {
+  margin-top: 16px;
+}
+
+.load-error-settings {
+  margin-top: 6px;
+}
+
 /* A SERVICE question shows query text, which is the whole point of it, so the
    dialog widens and the text takes the full row under its label. In the
    480px dialog's value column a box showed 319px of a 476px line, and what

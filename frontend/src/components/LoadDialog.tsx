@@ -33,7 +33,10 @@ BASIC IDEA
 
     A file no parser could read comes back as one sentence the server wrote
     (parse_errors.py, load-and-shapes 5.1); the parsers' own text, when the
-    server sends it, sits under a closed *Technical details*, as text.
+    server sends it, sits under a closed *Technical details*, as text. A file
+    refused for its size or its reading time says where the limit is raised,
+    with a *Settings* button that closes this dialog for Settings → Limits,
+    unless the administrator set the limit (home-and-settings 5.5).
 
     The Data tab adds data to the open project rather than an ontology to
     the library. It shows the snapshot list, and the wizard in its place
@@ -62,6 +65,7 @@ INPUTS / INPUT SOURCES (props)
       and "Load from a URL" land on the right one. Defaults to "file".
     - onLibraryChanged: a cancelled load had already finished, so the
       library has a new entry to read.
+    - onOpenLimits: open Settings on Limits, in this dialog's place.
     - project: the open project, which adds the Data tab; startImport opens
       it with the wizard started; onValidate and onShowData are the import
       report's next steps.
@@ -100,6 +104,7 @@ interface Props {
   onShowData?: () => void;
   /** A cancelled load had already finished: the library has a new entry. */
   onLibraryChanged?: () => void;
+  onOpenLimits?: () => void;
 }
 
 export default function LoadDialog({
@@ -111,6 +116,7 @@ export default function LoadDialog({
   onValidate,
   onShowData,
   onLibraryChanged,
+  onOpenLimits,
 }: Props) {
   const [tab, setTab] = useState<LoadTab>(initialTab === "data" && !project ? "file" : initialTab);
   const [wizard, setWizard] = useState<WizardStart | null>(startImport && project ? { kind: "new" } : null);
@@ -379,7 +385,16 @@ export default function LoadDialog({
         <p className="visually-hidden" role="status">
           {announcement}
         </p>
-        <LoadErrorView error={error} />
+        <LoadErrorView
+          error={error}
+          onOpenLimits={
+            onOpenLimits &&
+            (() => {
+              cancelRun(true);
+              onOpenLimits();
+            })
+          }
+        />
       </div>
     </div>
   );

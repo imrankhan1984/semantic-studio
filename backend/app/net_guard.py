@@ -56,7 +56,6 @@ from __future__ import annotations
 import base64
 import contextvars
 import ipaddress
-import os
 import socket
 from contextlib import contextmanager
 from email.message import Message
@@ -65,6 +64,8 @@ from typing import Iterator, Optional, Union
 from urllib.error import HTTPError
 from urllib.parse import urlparse
 from urllib.response import addinfourl
+
+from . import settings
 
 IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 
@@ -236,21 +237,10 @@ def assert_url_fetchable(url: str, *, after_redirect: bool = False) -> None:
 # defence in depth -- it is what routes a parser's request to the broker at all.
 # ---------------------------------------------------------------------------
 
-# Shares SEMANTIC_STUDIO_MAX_FETCH_BYTES with the fetch endpoint deliberately:
-# both are "bytes pulled from a URL over HTTP", and two numbers for one idea
-# would drift. The default is repeated here rather than imported because the
-# router imports this module, not the other way round.
-_DEFAULT_MAX_BYTES = 50 * 1024 * 1024
-
-
-def _max_fetch_bytes() -> int:
-    raw = os.environ.get("SEMANTIC_STUDIO_MAX_FETCH_BYTES")
-    if raw and raw.isdigit() and int(raw) > 0:
-        return int(raw)
-    return _DEFAULT_MAX_BYTES
-
-
-MAX_FETCH_BYTES = _max_fetch_bytes()
+# Shares the fetch cap with the fetch endpoint deliberately: both are "bytes
+# pulled from a URL over HTTP", and two numbers for one idea would drift. So
+# it is settings.fetch_bytes(), read at call time as the endpoint's is, and a
+# change in Settings → Limits moves both together (D-120).
 
 # Not configurable, and not the parse timeout. The parse timeout releases the
 # *request*; it cannot stop the worker, so without a socket timeout a hanging
@@ -346,20 +336,21 @@ def guarded_urlopen(request) -> addinfourl:
 
     # Carry rdflib's headers (its Accept negotiation matters).
     headers = dict(request.headers)
+    max_bytes = settings.fetch_bytes()
     try:
         response = network_broker.broker.request(
             "jsonld:context",
             url,
             reason=CONTEXT_REASON,
             headers=headers,
-            max_bytes=MAX_FETCH_BYTES,
+            max_bytes=max_bytes,
             timeout=CONTEXT_SOCKET_TIMEOUT,
         )
     except BlockedAddress as exc:
         raise BlockedAddress(CONTEXT_REFUSED_DETAIL.format(url=url)) from exc
     except network_broker.TooLarge as exc:
         raise BlockedAddress(
-            CONTEXT_TOO_LARGE_DETAIL.format(url=url, mb=MAX_FETCH_BYTES // (1024 * 1024))
+            CONTEXT_TOO_LARGE_DETAIL.format(url=url, mb=max_bytes // (1024 * 1024))
         ) from exc
     except network_broker.FetchFailed as exc:
         raise BlockedAddress(CONTEXT_FAILED_DETAIL.format(url=url, reason=exc)) from exc

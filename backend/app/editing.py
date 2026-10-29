@@ -180,7 +180,7 @@ from .projects import (
     graph_counts,
     valid_lang,
 )
-from . import axioms, examples, lexical, modeling_checks, reasoning, sentences, shacl, shapes_form
+from . import axioms, examples, lexical, modeling_checks, reasoning, sentences, settings, shacl, shapes_form
 from .canvas import build_canvas, restrict, with_inferred
 from .imports import imports_service, load_state
 from .snapshots import SnapshotService
@@ -490,7 +490,8 @@ def parse_turtle(text: str, timeout: Optional[float], base: Optional[str] = None
         except FuturesTimeout as exc:
             pool.shutdown(wait=False, cancel_futures=True)
             raise ParseTimeout(
-                f"This text took longer than {timeout:g} seconds to parse and was stopped."
+                f"This text took longer than {timeout:g} seconds to parse and was stopped. "
+                + settings.raise_hint("readTime")
             ) from exc
 
 

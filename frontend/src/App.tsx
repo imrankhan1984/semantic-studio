@@ -1939,7 +1939,7 @@ export default function App() {
             className="nav-item about-item"
             onClick={() => setSettingsTab("network")}
             aria-haspopup="dialog"
-            title="Network, and the library itself"
+            title="Network, the library, and the limits on loading"
           >
             <IconSettings />
             <span>Settings</span>
@@ -2467,6 +2467,12 @@ export default function App() {
           onLoaded={onLoaded}
           onClose={() => setDialogOpen(false)}
           initialTab={dialogTab}
+          // A file refused for its size or time: Settings → Limits takes
+          // the Load dialog's place (home-and-settings 5.5).
+          onOpenLimits={() => {
+            setDialogOpen(false);
+            setSettingsTab("limits");
+          }}
           // A cancelled load that had already finished is in the library now.
           onLibraryChanged={refreshList}
           project={

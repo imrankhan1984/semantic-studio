@@ -5,9 +5,9 @@ FILE: frontend/src/components/LibrarySettings.tsx
 
 SUMMARY
     Settings → Library (home-and-settings 5.4): adding a reference ontology
-    from the catalogue (schema.org, FIBO, UNESCO), and *Add the examples
-    back* while a bundled example is missing. The Load dialog's Suggested tab
-    until it moved here (5.3).
+    from the catalogue (schema.org, FIBO, UNESCO), *Add the examples back*
+    while a bundled example is missing, and where the work is kept, with
+    Copy path. The Load dialog's Suggested tab until it moved here (5.3).
 
 BASIC IDEA
     Both are about the library itself rather than a file in hand, which is
@@ -22,6 +22,11 @@ BASIC IDEA
     the Library tab, since the pressed button goes with the examples it
     named.
 
+    Where the work is kept is the data folder's full path, from GET
+    /api/settings (Stage B), as selectable text: Copy path is a convenience,
+    and a browser that refuses the clipboard leaves the text to select.
+    *Path copied* is said in a polite live region (5.7).
+
     It stays mounted while Network is showing (SettingsDialog keeps both
     panels and hides one), so a load started here is not cancelled by a
     look at the other tab; closing Settings unmounts it, which cancels.
@@ -31,6 +36,10 @@ INPUTS / INPUT SOURCES (props)
     - examplesMissing / onExamplesRestored: how many bundled examples are not
       in the library, and what to do with the library the restore answers.
     - focusTab: give focus to the Library tab.
+    - dataDir: the data folder's path; null while Settings reads it, or
+      when the read failed (dataDirFailed).
+    - onOpenLimits: a catalogue entry refused for its size offers Settings →
+      Limits, which this switches to.
     Plus CATALOGUE (through CatalogueList), fetchOntology and restoreExamples.
 
 EXPECTED OUTPUT
@@ -38,7 +47,7 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchOntology, restoreExamples, type ExamplesRestored } from "../api";
 import type { CatalogueEntry } from "../catalogue";
 import type { OntologySummary } from "../types";
@@ -51,6 +60,9 @@ interface Props {
   examplesMissing: number;
   onExamplesRestored?: (result: ExamplesRestored) => void;
   focusTab: () => void;
+  dataDir?: string | null;
+  dataDirFailed?: boolean;
+  onOpenLimits?: () => void;
 }
 
 export default function LibrarySettings({
@@ -59,6 +71,9 @@ export default function LibrarySettings({
   examplesMissing,
   onExamplesRestored,
   focusTab,
+  dataDir = null,
+  dataDirFailed = false,
+  onOpenLimits,
 }: Props) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [restoring, setRestoring] = useState(false);
@@ -81,6 +96,24 @@ export default function LibrarySettings({
     focusOrigin,
   });
   const busy = run !== null || restoring;
+
+  const [copied, setCopied] = useState("");
+  const copyTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+  }, []);
+  const copyPath = async () => {
+    if (!dataDir) return;
+    try {
+      await navigator.clipboard.writeText(dataDir);
+      setCopied("Path copied");
+    } catch {
+      setCopied("Could not copy. Select the path to copy it.");
+    }
+    // Cleared after a while, so pressing it again is announced again.
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+    copyTimer.current = window.setTimeout(() => setCopied(""), 4000);
+  };
   const origin =
     run?.origin.tab === "suggested" ? run.origin : ended?.origin.tab === "suggested" ? ended.origin : null;
 
@@ -145,7 +178,23 @@ export default function LibrarySettings({
       <p className="visually-hidden" role="status">
         {announcement}
       </p>
-      <LoadErrorView error={error} />
+      <LoadErrorView error={error} onOpenLimits={onOpenLimits} />
+      <section className="settings-section settings-folder-section" aria-labelledby="settings-folder-heading">
+        <h3 id="settings-folder-heading">Where your work is kept</h3>
+        <p className="hint">Projects, the library and saved queries are kept here, on this computer.</p>
+        <div className="settings-folder">
+          <code className="settings-path">
+            {dataDir ?? (dataDirFailed ? "Could not be read. Close Settings and open it again." : "Reading…")}
+          </code>
+          <button type="button" aria-disabled={!dataDir} onClick={() => void copyPath()}>
+            Copy path
+          </button>
+        </div>
+        <p className="hint settings-copied" role="status">
+          {copied}
+        </p>
+      </section>
+
     </div>
   );
 }

@@ -302,15 +302,24 @@ partial graph — those are usually already published with their own docs.
 ## Size and time limits
 
 Loading an ontology is bounded so that a mistake — or a hostile file — costs you
-a message rather than a restart. Each limit can be raised with an environment
-variable if you have a known-good file that needs it.
+a message rather than a restart. Three limits can be changed in **Settings →
+Limits**, within fixed ranges, and apply to the next file you load or graph you
+open. A file refused for its size or its reading time says so and offers a
+*Settings* button that opens that tab. The choices are kept in `settings.json`
+in the data folder (Settings → Library shows where that is).
 
-| Limit | Default | Environment variable |
-| --- | --- | --- |
-| Upload size | 50 MB | `SEMANTIC_STUDIO_MAX_UPLOAD_BYTES` |
-| Fetch size | 50 MB | `SEMANTIC_STUDIO_MAX_FETCH_BYTES` |
-| Parse time | 60 seconds | `SEMANTIC_STUDIO_PARSE_TIMEOUT` |
-| Entities drawn at once | 2,000 | `SEMANTIC_STUDIO_GRAPH_NODE_BUDGET` |
+| Limit in Settings | Default | Range | Environment variable |
+| --- | --- | --- | --- |
+| Largest file to load | 50 MB | 1 to 200 MB | `SEMANTIC_STUDIO_MAX_UPLOAD_BYTES` (uploads), `SEMANTIC_STUDIO_MAX_FETCH_BYTES` (URLs) |
+| Longest time to read a file | 60 seconds | 10 to 600 seconds | `SEMANTIC_STUDIO_PARSE_TIMEOUT` |
+| Items drawn when a graph opens | 2,000 | 100 to 20,000 | `SEMANTIC_STUDIO_GRAPH_NODE_BUDGET` |
+
+**An environment variable wins.** A limit whose variable is set is shown
+read-only, naming the variable, and cannot be changed from the page; a Docker or
+managed install stays exactly as its administrator configured it. A variable is
+not held to the range. Either size variable makes *Largest file* read-only, and
+each still governs only its own path. The query limits (SELECT only, 1,000 rows,
+30 seconds) are not settings.
 
 50 MB leaves ample room for the suggested list, whose largest entry is FIBO at
 about 5 MB; the limit is sized for the arbitrary public URL you can type, not
@@ -349,7 +358,8 @@ controls below with it. Nothing is hidden silently.
   numbers will be larger than what you can see. That is deliberate: it describes
   the file, not the canvas.
 
-Raise `SEMANTIC_STUDIO_GRAPH_NODE_BUDGET` if your machine copes with more.
+Raise *Items drawn when a graph opens* in Settings → Limits (or
+`SEMANTIC_STUDIO_GRAPH_NODE_BUDGET`) if your machine copes with more.
 
 ## Projects
 

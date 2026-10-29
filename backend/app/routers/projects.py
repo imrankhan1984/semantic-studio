@@ -56,7 +56,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from .. import reasoning
+from .. import reasoning, settings
 from ..editing import (
     AlreadyDefined,
     CommandError,
@@ -279,7 +279,7 @@ async def put_source(pid: str, doc: str, request: Request) -> dict:
     rdflib's message. The body is read in chunks and refused past the upload
     cap while reading, not after.
     """
-    limit = ontologies.MAX_UPLOAD_BYTES
+    limit = settings.upload_bytes()
     chunks: list[bytes] = []
     total = 0
     async for chunk in request.stream():
@@ -287,7 +287,7 @@ async def put_source(pid: str, doc: str, request: Request) -> dict:
         if total > limit:
             raise HTTPException(
                 status_code=413,
-                detail=ontologies.too_large_detail(limit, "SEMANTIC_STUDIO_MAX_UPLOAD_BYTES"),
+                detail=settings.too_large_detail(limit),
             )
         chunks.append(chunk)
     try:
@@ -299,7 +299,7 @@ async def put_source(pid: str, doc: str, request: Request) -> dict:
         raise HTTPException(status_code=422, detail="The body must be JSON: {\"text\": ...}.")
     with _errors():
         return await run_in_threadpool(
-            editing_service.apply_text, pid, doc, text, ontologies.PARSE_TIMEOUT_SECONDS
+            editing_service.apply_text, pid, doc, text, settings.parse_timeout()
         )
 
 
@@ -372,7 +372,7 @@ def download(pid: str, doc: str) -> Response:
 @router.post("/{pid}/recover")
 def recover(pid: str, body: Recover) -> dict:
     with _errors():
-        return editing_service.recover(pid, body.action, ontologies.PARSE_TIMEOUT_SECONDS)
+        return editing_service.recover(pid, body.action, settings.parse_timeout())
 
 
 @router.get("/{pid}/shapes")
