@@ -12,8 +12,10 @@ SUMMARY
     and Tab kept inside; Network being today's panel; Library listing the
     catalogue and loading an entry as the Load dialog's Suggested tab did,
     its status, Cancel and focus included, a look at Network not cancelling
-    it and closing cancelling it; *Add the examples back* only while one is
-    missing, and what it says and where focus goes. Stage B: where the work
+    it and closing cancelling it; *Bundled with Semantic Studio* only while
+    a bundled entry is missing, naming them, and *Add them back*: what it
+    says and where focus goes (reference-ontologies 5.3, AC-3); QUDT's
+    SHACL form last in the catalogue. Stage B: where the work
     is kept and Copy path; Limits' fields, their ranges, Save waiting on a
     refused value, Save, Cancel and Reset to defaults, the read-only
     administrator line, and asking once on closing with a change; a
@@ -99,7 +101,7 @@ afterEach(() => {
 async function open(props: Partial<Parameters<typeof SettingsDialog>[0]> = {}, initialTab?: SettingsTab) {
   const handlers = { onClose: vi.fn(), onLoaded: vi.fn(), onLibraryChanged: vi.fn(), onExamplesRestored: vi.fn() };
   await act(async () => {
-    render(<SettingsDialog {...handlers} examplesMissing={0} initialTab={initialTab} {...props} />);
+    render(<SettingsDialog {...handlers} bundledMissing={[]} initialTab={initialTab} {...props} />);
   });
   return handlers;
 }
@@ -262,6 +264,14 @@ describe("Library: a reference ontology (home-and-settings 5.4 item 1, AC-6)", (
     expect(screen.getByRole("heading", { name: "Add a reference ontology" })).toBeTruthy();
   });
 
+  it("offers QUDT's SHACL form last, with its size (reference-ontologies 5.3, AC-3)", async () => {
+    await open({}, "library");
+    const rows = [...document.querySelectorAll<HTMLElement>(".catalogue-entry")];
+    const last = rows[rows.length - 1];
+    expect(last.textContent).toContain("QUDT 3.5.2, SHACL form");
+    expect(last.textContent).toContain("~6.9 MB · 133k statements");
+  });
+
   it("loads an entry as the Load dialog did: its id and signal, then onLoaded", async () => {
     const pending = hold();
     const { onLoaded } = await open({}, "library");
@@ -334,15 +344,25 @@ describe("Library: a reference ontology (home-and-settings 5.4 item 1, AC-6)", (
   });
 });
 
-describe("Library: the examples (home-and-settings 5.4 item 2, AC-6)", () => {
-  it("offers Add the examples back only while an example is missing", async () => {
-    await open({ examplesMissing: 0 }, "library");
-    expect(screen.queryByRole("button", { name: "Add the examples back" })).toBeNull();
+describe("Library: bundled with Semantic Studio (home-and-settings 5.4 item 2, AC-6; reference-ontologies 5.3, AC-3)", () => {
+  it("shows only while a bundled entry is missing, names the missing ones, and offers Add them back", async () => {
+    await open({ bundledMissing: [] }, "library");
+    expect(screen.queryByRole("heading", { name: "Bundled with Semantic Studio" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add them back" })).toBeNull();
     cleanup();
-    await open({ examplesMissing: 1 }, "library");
-    const button = screen.getByRole("button", { name: "Add the examples back" });
+    await open({ bundledMissing: ["The Lord of the Rings", "QUDT"] }, "library");
+    expect(screen.getByRole("heading", { name: "Bundled with Semantic Studio" })).toBeTruthy();
+    expect(screen.getByText("Missing: The Lord of the Rings, QUDT.")).toBeTruthy();
+    const button = screen.getByRole("button", { name: "Add them back" });
+    // The sentence is the button's description: "them" is said with it.
+    expect(button.getAttribute("aria-describedby")).toBe("settings-bundled-missing");
+    expect(document.getElementById("settings-bundled-missing")!.textContent).toBe(
+      "Missing: The Lord of the Rings, QUDT.",
+    );
     // Secondary, not primary, as it was.
     expect(button.className).not.toContain("primary");
+    // Where the work is kept is left as it is.
+    expect(screen.getByRole("heading", { name: "Where your work is kept" })).toBeTruthy();
   });
 
   it("calls the restore endpoint, hands App the library, says what came back and gives the Library tab focus", async () => {
@@ -355,12 +375,12 @@ describe("Library: the examples (home-and-settings 5.4 item 2, AC-6)", () => {
       ],
     };
     restoreExamples.mockResolvedValue(result);
-    const { onExamplesRestored } = await open({ examplesMissing: 2 }, "library");
+    const { onExamplesRestored } = await open({ bundledMissing: ["Space Exploration", "FOAF (Friend of a Friend)"] }, "library");
     const status = document.querySelector<HTMLElement>(".examples-restored")!;
     expect(status.getAttribute("role")).toBe("status");
     expect(status.textContent).toBe("");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Add the examples back" }));
+      fireEvent.click(screen.getByRole("button", { name: "Add them back" }));
     });
     expect(restoreExamples).toHaveBeenCalledTimes(1);
     expect(onExamplesRestored).toHaveBeenCalledWith(result);
@@ -373,9 +393,9 @@ describe("Library: the examples (home-and-settings 5.4 item 2, AC-6)", () => {
   it("a load started afterwards clears what the restore said (found in review)", async () => {
     restoreExamples.mockResolvedValue({ restored: ["ont-a"], ontologies: [{ ...SUMMARY, id: "ont-a", name: "Space Exploration" }] });
     fetchOntology.mockRejectedValue(new Error("The address could not be reached."));
-    await open({ examplesMissing: 1 }, "library");
+    await open({ bundledMissing: ["Space Exploration"] }, "library");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Add the examples back" }));
+      fireEvent.click(screen.getByRole("button", { name: "Add them back" }));
     });
     const status = document.querySelector<HTMLElement>(".examples-restored")!;
     expect(status.textContent).toBe("Added back: Space Exploration.");
@@ -389,8 +409,8 @@ describe("Library: the examples (home-and-settings 5.4 item 2, AC-6)", () => {
   it("is aria-disabled while it works, never disabled; a failure says why and keeps focus on it", async () => {
     let fail!: (e: Error) => void;
     restoreExamples.mockReturnValue(new Promise((_, reject) => (fail = reject)));
-    const { onExamplesRestored } = await open({ examplesMissing: 1 }, "library");
-    const button = screen.getByRole("button", { name: "Add the examples back" }) as HTMLButtonElement;
+    const { onExamplesRestored } = await open({ bundledMissing: ["Space Exploration"] }, "library");
+    const button = screen.getByRole("button", { name: "Add them back" }) as HTMLButtonElement;
     button.focus();
     await act(async () => {
       fireEvent.click(button);

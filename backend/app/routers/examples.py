@@ -5,13 +5,13 @@ FILE: backend/app/routers/examples.py
 
 SUMMARY
     POST /api/examples/restore (home-and-examples 5.1): add back the bundled
-    examples missing from the library, and answer with the library as it now
-    stands.
+    entries missing from the library, examples and reference ontologies alike
+    (reference-ontologies 5.3), and answer with the library as it now stands.
 
 BASIC IDEA
-    The only way a removed example comes back. Seeding at start-up respects a
-    removal for good; this is the person asking, from the Load dialog's
-    Suggested tab. It takes no body, and like every write it reaches here only
+    The only way a removed entry comes back. Seeding at start-up respects a
+    removal for good; this is the person asking, from Settings → Library's
+    *Bundled with Semantic Studio*. It takes no body, and like every write it reaches here only
     through local_guard. The work is library_examples.restore's.
 
 INPUTS / INPUT SOURCES
@@ -37,5 +37,5 @@ router = APIRouter(prefix="/api/examples", tags=["examples"])
 @router.post("/restore")
 def restore_examples() -> dict:
     restored = library_examples.restore(store)
-    ontologies = [library_examples.with_questions(o.summary()) for o in store.list()]
+    ontologies = [library_examples.as_listed(o.summary()) for o in store.list()]
     return {"restored": restored, "ontologies": ontologies}

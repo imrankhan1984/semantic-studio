@@ -5,9 +5,10 @@ FILE: frontend/src/components/LibrarySettings.tsx
 
 SUMMARY
     Settings → Library (home-and-settings 5.4): adding a reference ontology
-    from the catalogue (schema.org, FIBO, UNESCO), *Add the examples back*
-    while a bundled example is missing, and where the work is kept, with
-    Copy path. The Load dialog's Suggested tab until it moved here (5.3).
+    from the catalogue (schema.org, FIBO, UNESCO, QUDT's SHACL form),
+    *Bundled with Semantic Studio* while a bundled entry is missing
+    (reference-ontologies 5.3), and where the work is kept, with Copy path.
+    The Load dialog's Suggested tab until it moved here (5.3).
 
 BASIC IDEA
     Both are about the library itself rather than a file in hand, which is
@@ -17,10 +18,10 @@ BASIC IDEA
     sentence and the network approval are the same code. A finished load
     opens the ontology, as it did from the dialog, and Settings closes.
 
-    *Add the examples back* opens nothing and downloads nothing: the server
-    adds its own bundled files again, the tab stays open, and focus goes to
-    the Library tab, since the pressed button goes with the examples it
-    named.
+    *Add them back* opens nothing and downloads nothing: the server adds its
+    own bundled files again, examples and reference ontologies alike, the
+    tab stays open, and focus goes to the Library tab, since the pressed
+    button goes with the section that named what was missing.
 
     Where the work is kept is the data folder's full path, from GET
     /api/settings (Stage B), as selectable text: Copy path is a convenience,
@@ -33,8 +34,9 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES (props)
     - onLoaded / onLibraryChanged: as the Load dialog's.
-    - examplesMissing / onExamplesRestored: how many bundled examples are not
-      in the library, and what to do with the library the restore answers.
+    - bundledMissing / onExamplesRestored: the names of the bundled entries
+      not in the library, in their order, and what to do with the library
+      the restore answers.
     - focusTab: give focus to the Library tab.
     - dataDir: the data folder's path; null while Settings reads it, or
       when the read failed (dataDirFailed).
@@ -57,7 +59,7 @@ import { LoadErrorView, loadError, useLoadRun, type LoadOrigin } from "./useLoad
 interface Props {
   onLoaded: (summary: OntologySummary) => void;
   onLibraryChanged?: () => void;
-  examplesMissing: number;
+  bundledMissing: string[];
   onExamplesRestored?: (result: ExamplesRestored) => void;
   focusTab: () => void;
   dataDir?: string | null;
@@ -68,7 +70,7 @@ interface Props {
 export default function LibrarySettings({
   onLoaded,
   onLibraryChanged,
-  examplesMissing,
+  bundledMissing,
   onExamplesRestored,
   focusTab,
   dataDir = null,
@@ -133,7 +135,9 @@ export default function LibrarySettings({
       const result = await restoreExamples();
       const names = result.ontologies.filter((o) => result.restored.includes(o.id)).map((o) => o.name);
       onExamplesRestored(result);
-      setRestoredNote(names.length ? `Added back: ${names.join(", ")}.` : "The examples are all in your library.");
+      setRestoredNote(
+        names.length ? `Added back: ${names.join(", ")}.` : "Everything bundled is already in your library.",
+      );
       focusTab();
     } catch (e: unknown) {
       setError(loadError(e));
@@ -156,16 +160,27 @@ export default function LibrarySettings({
         />
       </section>
 
-      {/* Only while an example is missing: the only way one comes back
-          (home-and-examples 5.1, 5.8). Nothing is downloaded. */}
-      {examplesMissing > 0 && onExamplesRestored && (
-        <section className="settings-section" aria-labelledby="settings-examples-heading">
-          <h3 id="settings-examples-heading">The examples</h3>
+      {/* Only while a bundled entry is missing: the only way one comes back
+          (home-and-examples 5.1, 5.8; reference-ontologies 5.3). It names
+          them, since an example and a reference ontology are now two
+          different things to miss. Nothing is downloaded. */}
+      {bundledMissing.length > 0 && onExamplesRestored && (
+        <section className="settings-section" aria-labelledby="settings-bundled-heading">
+          <h3 id="settings-bundled-heading">Bundled with Semantic Studio</h3>
+          <p className="hint" id="settings-bundled-missing">
+            Missing: {bundledMissing.join(", ")}.
+          </p>
           {/* aria-disabled, never disabled, while it works: a disabled button
               drops focus, and a failure would leave it on the page
-              (load-and-shapes 5.6). */}
-          <button type="button" aria-disabled={busy} onClick={() => !busy && void addExamplesBack()}>
-            Add the examples back
+              (load-and-shapes 5.6). The sentence above is its description:
+              *Add them back* says what only with it. */}
+          <button
+            type="button"
+            aria-disabled={busy}
+            aria-describedby="settings-bundled-missing"
+            onClick={() => !busy && void addExamplesBack()}
+          >
+            Add them back
           </button>
         </section>
       )}

@@ -7,7 +7,8 @@ FILE: frontend/src/components/OntologyCard.test.tsx
 SUMMARY
     The first test for OntologyCard. Covers what a card shows -- since
     home-and-examples 5.6 (AC-8), one sentence and two facts, the statements
-    and the date added or *Example*, and *Read-only* in words -- that its
+    and the date added or *Example* (*Reference* for a reference ontology,
+    reference-ontologies 5.2), and *Read-only* in words -- that its
     count describes the whole ontology rather than the canvas, the three
     verbs, the "⋮" disclosure and its focus contract, and that an ontology
     stored before the sketch existed renders without asking for one; since
@@ -34,7 +35,7 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import OntologyCard from "./OntologyCard";
 import type { CardSketch, OntologySummary } from "../types";
@@ -157,6 +158,25 @@ describe("OntologyCard contents", () => {
       "The Solar System and its missions.",
     );
     expect(facts(container)).toEqual(["132,001 statements", "Example", "Read-only"]);
+  });
+
+  it("a reference ontology says Reference, never Example (reference-ontologies 5.2)", () => {
+    const { container } = renderCard({
+      source: "example",
+      example: { key: "qudt", purpose: "Quantities, units and dimensions.", group: "reference" },
+    });
+    expect(facts(container)).toEqual(["132,001 statements", "Reference", "Read-only"]);
+    expect(container.querySelector(".onto-summary")?.textContent).toBe("Quantities, units and dimensions.");
+  });
+
+  it("the group is the server's; a server that predates groups is read by the key", () => {
+    // FOAF from an older server, with no group: still a reference.
+    const { container } = renderCard({ source: "example", example: { key: "foaf", purpose: "People." } });
+    expect(facts(container)).toContain("Reference");
+    cleanup();
+    // The server's word wins over the key.
+    const told = renderCard({ source: "example", example: { key: "foaf", purpose: "People.", group: "example" } });
+    expect(facts(told.container)).toContain("Example");
   });
 
   it("an undated file keeps its statements and Read-only and drops the date", () => {

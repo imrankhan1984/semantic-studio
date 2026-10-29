@@ -193,6 +193,7 @@ describe("no Suggested tab (home-and-settings 5.3, AC-4)", () => {
     expect(document.querySelector(".catalogue-entry")).toBeNull();
     expect(screen.queryByText(/Well-known public ontologies/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Add the examples back" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add them back" })).toBeNull();
   });
 
   it("opens on Local file unless another tab is asked for", () => {

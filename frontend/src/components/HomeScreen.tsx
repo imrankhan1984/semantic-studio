@@ -6,7 +6,8 @@ FILE: frontend/src/components/HomeScreen.tsx
 SUMMARY
     The screen the application opens on, and the screen the Home control returns
     to from anywhere. It shows one library -- the person's projects and loaded
-    files, most recent first, then the three bundled examples -- as cards,
+    files, most recent first, then the bundled examples and reference
+    ontologies (reference-ontologies 5.2) -- as cards,
     headed with the three ways in, *New project*, *Open a file* and *Load
     from a URL*, in one row of primary buttons, and a search box
     (home-and-settings 5.2).

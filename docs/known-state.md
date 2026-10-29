@@ -2509,3 +2509,30 @@ EXPECTED OUTPUT
   path into the clipboard; the contrast sweep over every tab, nothing
   under 4.5:1 or 12 px. With `SEMANTIC_STUDIO_MAX_UPLOAD_BYTES` set,
   *Largest file* a named read-only group and the PUT 409.
+
+- **Reference library** (2026-10-29, spec `reference-ontologies` Stage A,
+  backlog E-12). QUDT 3.5.2 is bundled unmodified as
+  `vocab/qudt-3.5.2.ttl` (6,867,319 bytes, 132,166 statements, 228
+  classes, 100 object and 100 datatype properties, every class and 196 of
+  the properties in `http://qudt.org/schema/qudt/`; the other four are
+  outside terms QUDT re-declares). It is the twelfth offline import and the
+  fourth bundled library entry. The file states CC BY 4.0 and, separately,
+  that its UCUM codes are under Regenstrief's UCUM licence: Imran accepted
+  both, and `vocab/NOTICE.md` repeats the UCUM notice as that licence asks.
+
+  **A group is attached when listed, never stored.** Each manifest entry
+  is an `example` (Space Exploration, The Lord of the Rings) or a
+  `reference` (FOAF, QUDT). `library_examples.as_listed` adds the group
+  from the manifest the way it adds the questions, so a library seeded
+  before groups existed gains them without a new seed. Home orders the
+  person's work, then the examples, then the references, by group and
+  then manifest order; the card's chip reads *Reference* or *Example*.
+
+  **QUDT is most of a first start.** Measured on Imran's machine, fresh
+  data folder, median of three: 1.11 s without the entry, 5.00 s with it,
+  3.9 s added against the 5 s line of 5.2 item 4; a later start 1.15 s.
+  The seeding tests seed a five-statement stand-in in QUDT's place, since
+  the bookkeeping is the same for every entry, and one test seeds the real
+  file. The two "every bundled vocabulary" timings in `test_imports.py`
+  keep the eleven they were budgeted on: QUDT alone is a 2.6 s parse and
+  imports VAEM, which is not bundled.

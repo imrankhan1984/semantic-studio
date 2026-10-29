@@ -5,8 +5,8 @@ FILE: frontend/src/catalogue.ts
 
 SUMMARY
     A static list of well-known ontologies offered as suggestions, in the order
-    a newcomer should meet them: schema.org, FIBO, then a multilingual SKOS
-    thesaurus. Rendered by CatalogueList, on the Load dialog's "Suggested"
+    a newcomer should meet them: schema.org, FIBO, a multilingual SKOS
+    thesaurus, then QUDT's SHACL form. Rendered by CatalogueList, on the Load dialog's "Suggested"
     tab. FOAF led the list until it became one of the library's bundled
     examples (home-and-examples 5.8): it is in every library from the first
     start, with no download, and picking it here as well would add it twice.
@@ -99,5 +99,20 @@ export const CATALOGUE: CatalogueEntry[] = [
     size: "~3.8 MB · 100k statements · ~4s",
     audience: "Start here for SKOS: taxonomies, concept schemes and broader/narrower.",
     url: "https://vocabularies.unesco.org/exports/thesaurus/latest/unesco-thesaurus.ttl",
+  },
+  {
+    // Last (reference-ontologies 5.3): a second form of a vocabulary already
+    // in every library, for someone who knows why they want it. Measured
+    // 2026-10-29 through the application: 6,908,519 bytes, 132,907
+    // statements, 234 node shapes and 357 property shapes, fetched and parsed
+    // in 10.1 s (median of three). The http address redirects here and
+    // serves the same bytes.
+    id: "qudt-shacl",
+    name: "QUDT 3.5.2, SHACL form",
+    description:
+      "The same quantities and units written as SHACL shapes, for projects that validate data against QUDT.",
+    size: "~6.9 MB · 133k statements · ~10s",
+    audience: "For data checked against QUDT; the library already has QUDT itself.",
+    url: "https://qudt.org/3.5.2/shacl/qudt-all",
   },
 ];

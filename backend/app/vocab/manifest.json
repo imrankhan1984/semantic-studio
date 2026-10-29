@@ -1,5 +1,5 @@
 {
-  "description": "Vocabularies shipped with Semantic Studio so that importing them needs no network. Each file is byte-for-byte what its source URL served on the retrieval date; sha256 is checked before a file is parsed (test_imports.py fails on a mismatch or a missing license). Regenerate a hash only together with a fresh download from the same source.",
+  "description": "Vocabularies shipped with Semantic Studio so that importing them needs no network. Each file is byte-for-byte what its source URL served on the retrieval date; sha256 is checked before a file is parsed (test_imports.py fails on a mismatch or a missing license). Regenerate a hash only together with a fresh download from the same source. 'retrieved' at the top is the date of the first eleven; an entry added later carries its own.",
   "retrieved": "2026-09-27",
   "vocabularies": [
     {
@@ -190,6 +190,23 @@
         "http://purl.obolibrary.org/obo/bfo.owl",
         "http://purl.obolibrary.org/obo/bfo/2020/bfo-core.ttl",
         "http://purl.obolibrary.org/obo/bfo/2020/bfo.owl"
+      ]
+    },
+    {
+      "id": "qudt",
+      "title": "QUDT 3.5.2",
+      "file": "qudt-3.5.2.ttl",
+      "format": "turtle",
+      "sourceUrl": "https://qudt.org/3.5.2/qudt-all",
+      "retrieved": "2026-10-29",
+      "license": {
+        "name": "CC BY 4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Stated in the file (dcterms:rights on vaem:GMD_QUDT-All), attribution to QUDT.org; its UCUM codes are also under the UCUM license (https://ucum.org/license), whose notice the file carries and NOTICE.md repeats"
+      },
+      "sha256": "aa11e3a4b6f0cd60327981f992099538a00fbf23281ef679fef8ddca96e65940",
+      "iris": [
+        "http://qudt.org/3.5.2/qudt-all"
       ]
     }
   ]

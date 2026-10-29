@@ -227,7 +227,7 @@ import {
 } from "./components/icons";
 import { removalConfirmation, removalPrompt } from "./removalPrompt";
 import { formatName, homeStatus, statementCount } from "./statusWords";
-import { missingExamples } from "./home/libraryOrder";
+import { missingBundled } from "./home/libraryOrder";
 import type { SourceTarget } from "./sourceTarget";
 import { useQueryBuilder } from "./sparql/useQueryBuilder";
 import type {
@@ -2457,7 +2457,7 @@ export default function App() {
             onLoaded(summary);
           }}
           onLibraryChanged={refreshList}
-          examplesMissing={missingExamples(ontologies).length}
+          bundledMissing={missingBundled(ontologies).map((b) => b.name)}
           onExamplesRestored={(result) => setOntologies(result.ontologies)}
         />
       )}

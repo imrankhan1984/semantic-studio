@@ -1,8 +1,9 @@
 {
-  "description": "The examples added to the library once, on first start, with no download (home-and-examples 5.1, D-111). In this order on Home, after the person's own work. Each file is the application's own and is pinned by SHA-256; test_library_examples.py fails on a mismatch. 'file' is relative to backend/app; FOAF is the bundled vocabulary itself, not a copy. Change a file and its hash together: a changed hash is what replaces an example already in a library. Each example's 'questions' are ready-made SPARQL files in examples/questions/ (query-page-rework 5.4), pinned the same way and shown first in Query's Try one of these; a question file opens with a one-line comment saying what it shows.",
+  "description": "The bundled entries added to the library once, on first start, with no download (home-and-examples 5.1, D-111). Each has a 'group': 'example' (teaching material) or 'reference' (a published vocabulary to build on, reference-ontologies 5.2), which decides its chip; on Home they follow the person's own work, the examples first and then the references, each group in this order. Each file is the application's own and is pinned by SHA-256; test_library_examples.py fails on a mismatch. 'file' is relative to backend/app; FOAF and QUDT are the bundled vocabularies themselves (vocab/), not copies. Change a file and its hash together: a changed hash is what replaces an example already in a library. Each example's 'questions' are ready-made SPARQL files in examples/questions/ (query-page-rework 5.4), pinned the same way and shown first in Query's Try one of these; a question file opens with a one-line comment saying what it shows.",
   "examples": [
     {
       "key": "space",
+      "group": "example",
       "file": "examples/space-exploration.ttl",
       "format": "turtle",
       "name": "Space Exploration",
@@ -31,6 +32,7 @@
     },
     {
       "key": "middle-earth",
+      "group": "example",
       "file": "examples/middle-earth.ttl",
       "format": "turtle",
       "name": "The Lord of the Rings",
@@ -59,6 +61,7 @@
     },
     {
       "key": "foaf",
+      "group": "reference",
       "file": "vocab/foaf.rdf",
       "format": "xml",
       "name": "FOAF (Friend of a Friend)",
@@ -78,6 +81,15 @@
           "sha256": "6a087a8e537febbfc18a8eeda84e757193358bc7d3c43b0716cdb7e0d7aae0e1"
         }
       ]
+    },
+    {
+      "key": "qudt",
+      "group": "reference",
+      "file": "vocab/qudt-3.5.2.ttl",
+      "format": "turtle",
+      "name": "QUDT",
+      "purpose": "Quantities, units and dimensions: the standard vocabulary for measurements. QUDT.org, CC BY 4.0.",
+      "sha256": "aa11e3a4b6f0cd60327981f992099538a00fbf23281ef679fef8ddca96e65940"
     }
   ]
 }

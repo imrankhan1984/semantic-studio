@@ -536,7 +536,8 @@ def test_merged_view_does_not_touch_the_files_prefixes():
 def test_every_bundled_vocabulary_has_licence_source_and_matching_hash():
     """AC-24: a missing licence or a hash that does not match the file fails."""
     manifest = load_manifest()
-    assert len(manifest["vocabularies"]) == 11
+    # The eleven of D-068 and QUDT (reference-ontologies 5.1).
+    assert len(manifest["vocabularies"]) == 12
     for entry in manifest["vocabularies"]:
         assert entry["license"]["name"] and entry["license"]["url"].startswith("http"), entry["id"]
         assert entry["sourceUrl"].startswith("https://"), entry["id"]
@@ -726,12 +727,19 @@ def _median_ms(fn, runs: int = 5) -> float:
     return statistics.median(samples)
 
 
+def _eleven_iris() -> tuple[str, ...]:
+    """The first IRI of each of the eleven vocabularies of D-068."""
+    return tuple(e["iris"][0] for e in load_manifest()["vocabularies"] if e["id"] != "qudt")
+
+
 @pytest.mark.perf
 def test_bundled_closure_budget(no_network):
     """Resolving an ontology that imports every bundled vocabulary, parse
     included, <= 2 s. The parsed-vocabulary cache is cleared before each run,
-    so the time is the cold one the budget describes."""
-    iris = tuple(entry["iris"][0] for entry in load_manifest()["vocabularies"])
+    so the time is the cold one the budget describes. The eleven the budget
+    was set for: QUDT, added later, is a 6.9 MB parse on its own and imports
+    VAEM, which is not bundled (reference-ontologies 5.1)."""
+    iris = _eleven_iris()
     ontology = store.get(_upload("m.ttl", _doc("http://example.org/main", imports=iris)))
 
     def cold_resolve():
@@ -754,9 +762,9 @@ def test_merged_view_overhead(no_network):
     endpoint itself serves a cached build, so timing it would compare two
     dictionary lookups and prove nothing. Every bundled vocabulary is imported,
     eleven documents, which is the worst case the subject pruning in
-    MergedView exists for.
+    MergedView exists for. QUDT is left out, as in the budget above.
     """
-    iris = tuple(entry["iris"][0] for entry in load_manifest()["vocabularies"])
+    iris = _eleven_iris()
     ontology = store.get(_upload("m.ttl", _doc("http://example.org/main", imports=iris)))
     imports_service.resolve(ontology, max_bytes=imports_mod.MAX_TOTAL_BYTES)
     view = imports_service.merged(ontology)["graph"]

@@ -4,12 +4,14 @@ FILE: backend/app/library_examples.py
 ================================================================================
 
 SUMMARY
-    The library's three bundled examples (home-and-examples 5.1, D-111):
-    Space Exploration, The Lord of the Rings and FOAF, added to the person's
-    library once, on first start, with no download, under fixed ids; replaced
-    in place when a release ships a changed file; and added back, when the
-    person asks, after a removal. (examples.py is a project's example data,
-    a different thing that had the name first.)
+    The library's four bundled entries (home-and-examples 5.1, D-111;
+    reference-ontologies 5.2): two examples, Space Exploration and The Lord
+    of the Rings, and two reference ontologies, FOAF and QUDT, added to the
+    person's library once, on first start, with no download, under fixed
+    ids; replaced in place when a release ships a changed file; and added
+    back, when the person asks, after a removal. Code names keep *example*
+    for all four. (examples.py is a project's example data, a different
+    thing that had the name first.)
 
 BASIC IDEA
     `<data dir>/examples.json` records which examples have been seeded and the
@@ -32,10 +34,20 @@ BASIC IDEA
     queries and a card survive a restart and a reinstall. Nothing here opens
     a connection: every file is the application's own.
 
+    Each entry's `group`, *example* or *reference*, is the manifest's and is
+    attached when the library is listed, never stored with the entry, as the
+    questions are: a library seeded before groups existed gains them with no
+    new seed. Both groups are seeded, removed and restored alike; the group
+    decides only the chip and the order on Home.
+
+    QUDT is the one large entry, about 6.9 MB and 132,000 statements: its
+    parse is most of a first start's cost (3.9 s added, measured 2026-10-29),
+    paid once, since a later start parses nothing.
+
 INPUTS / INPUT SOURCES
-    - backend/app/examples/manifest.json and the files it names (FOAF is
-      vocab/foaf.rdf, the file owl:imports uses), the questions' .rq files
-      among them.
+    - backend/app/examples/manifest.json and the files it names (FOAF and
+      QUDT are vocab/foaf.rdf and vocab/qudt-3.5.2.ttl, the files owl:imports
+      uses), the questions' .rq files among them.
     - The OntologyStore to add to, and examples.json in its data directory.
 
 EXPECTED OUTPUT
@@ -43,7 +55,7 @@ EXPECTED OUTPUT
     - restore(store): the examples missing from the library added back;
       returns their ids.
     - example_id(key): an example's fixed id.
-    - with_questions(summary): a listed example's record with its
+    - as_listed(summary): a listed entry's record with its group and its
       ready-made questions, {id, title, about, text} each, from
       examples/questions/ (query-page-rework 5.4).
 ================================================================================
@@ -111,6 +123,13 @@ def _add(store: OntologyStore, entry: dict) -> str:
 
 
 @functools.cache
+def _groups() -> dict[str, str]:
+    """Each entry's group by key, read once per process. An entry without
+    one is an example: home-and-examples' manifest had no groups."""
+    return {entry["key"]: entry.get("group", "example") for entry in load_manifest()}
+
+
+@functools.cache
 def _questions() -> dict[str, list[dict]]:
     """Each example's ready-made questions by key (query-page-rework 5.4),
     read once per process: the files are the application's own and change
@@ -136,18 +155,28 @@ def _questions() -> dict[str, list[dict]]:
     return out
 
 
-def with_questions(summary: dict) -> dict:
-    """A library summary, an example's record carrying its questions.
+def as_listed(summary: dict) -> dict:
+    """A library summary, a bundled entry's record carrying its group and its
+    questions.
 
     Attached when the library is listed, never stored with the entry: an
-    example seeded before the questions shipped gains them without being
-    seeded again, and an update to a question needs no new hash on the
-    example. Told by the entry's `example` record, never by its name.
+    entry seeded before the questions or the groups shipped gains them
+    without being seeded again, and an update to a question needs no new
+    hash on the entry. Told by the entry's `example` record, never by its
+    name.
     """
     record = summary.get("example")
     if summary.get("source") != "example" or not isinstance(record, dict):
         return summary
-    return {**summary, "example": {**record, "questions": _questions().get(record.get("key"), [])}}
+    key = record.get("key")
+    return {
+        **summary,
+        "example": {
+            **record,
+            "group": _groups().get(key, "example"),
+            "questions": _questions().get(key, []),
+        },
+    }
 
 
 def seed(store: OntologyStore) -> list[str]:

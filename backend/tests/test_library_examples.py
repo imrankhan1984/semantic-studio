@@ -4,7 +4,10 @@ FILE: backend/tests/test_library_examples.py
 ================================================================================
 
 SUMMARY
-    The library's three bundled examples (home-and-examples, U-13a, D-111):
+    The library's four bundled entries (home-and-examples, U-13a, D-111),
+    two examples and two reference ontologies (reference-ontologies 5.2,
+    E-12): each entry's group, and QUDT seeded, removed, restored and
+    replaced like the others;
     seeding on a first start and never again, a removal that stays removed,
     a changed file replacing its entry under the same id, the restore
     endpoint; the manifest and its hashes; and what each new file must hold
@@ -22,6 +25,11 @@ BASIC IDEA
     count, not a timing. The broker's request is replaced with one that fails
     the test, so "no network" does not lean on the sandbox.
 
+    QUDT is 6.9 MB and a 3 s parse, so the seeding tests seed SEEDED, the
+    manifest with a five-statement stand-in in QUDT's place; what is being
+    tested is the bookkeeping, which is the same for every entry. One test
+    seeds the real file, so the real one is proved to arrive too.
+
     The files are read straight from backend/app/examples/ with rdflib, the
     way the seeding reads them, and each floor is asserted as a count or as
     named statements rather than by eye. A floor is a minimum: the test says
@@ -30,13 +38,14 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES
     - backend/app/examples/manifest.json, the two Turtle files beside it, and
-      backend/app/vocab/foaf.rdf.
+      backend/app/vocab/foaf.rdf and qudt-3.5.2.ttl.
     - library_examples, OntologyStore and SavedQueryStore on pytest's
       tmp_path; the FastAPI app through TestClient for the endpoint.
 
 EXPECTED OUTPUT
     - Pass/fail for AC-1 to AC-6, the backend half of AC-10, and the
-      server's part of AC-9; the server's half of query-page-rework AC-8.
+      server's part of AC-9; the server's half of query-page-rework AC-8;
+      reference-ontologies AC-1 and AC-2.
 ================================================================================
 """
 
@@ -45,6 +54,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -70,6 +80,34 @@ def _entry(key: str) -> dict:
     return next(e for e in MANIFEST["examples"] if e["key"] == key)
 
 
+# QUDT's stand-in for the seeding tests (see BASIC IDEA): small, and with a
+# class, so its card has a sketch as QUDT's does.
+STANDIN = Path(tempfile.mkdtemp(prefix="qudt-standin-")) / "qudt-standin.ttl"
+STANDIN.write_bytes(
+    b"@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+    b"@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
+    b'<http://example.org/units> a owl:Ontology ; rdfs:label "Units" .\n'
+    b'<http://example.org/units#Unit> a owl:Class ; rdfs:label "Unit"@en .\n'
+    b'<http://example.org/units#Metre> a <http://example.org/units#Unit> ; rdfs:label "metre"@en .\n'
+)
+SEEDED = [
+    {**e, "file": str(STANDIN), "sha256": hashlib.sha256(STANDIN.read_bytes()).hexdigest()}
+    if e["key"] == "qudt" else e
+    for e in MANIFEST["examples"]
+]
+
+
+@pytest.fixture(autouse=True)
+def small_qudt(monkeypatch):
+    """Seed the stand-in for QUDT; `real_qudt` undoes it."""
+    monkeypatch.setattr(library_examples, "load_manifest", lambda: SEEDED)
+
+
+@pytest.fixture
+def real_qudt(small_qudt, monkeypatch):
+    monkeypatch.setattr(library_examples, "load_manifest", lambda: MANIFEST["examples"])
+
+
 def _graph(key: str) -> Graph:
     entry = _entry(key)
     return Graph().parse(data=(APP / entry["file"]).read_bytes(), format=entry["format"])
@@ -88,23 +126,38 @@ def middle_earth() -> Graph:
 # --- the manifest -----------------------------------------------------------
 
 
-def test_manifest_lists_the_three_examples_in_their_order():
-    assert [e["key"] for e in MANIFEST["examples"]] == ["space", "middle-earth", "foaf"]
+def test_manifest_lists_the_four_entries_in_their_order():
+    assert [e["key"] for e in MANIFEST["examples"]] == ["space", "middle-earth", "foaf", "qudt"]
     assert [e["name"] for e in MANIFEST["examples"]] == [
         "Space Exploration",
         "The Lord of the Rings",
         "FOAF (Friend of a Friend)",
+        "QUDT",
     ]
     for entry in MANIFEST["examples"]:
         assert entry["purpose"].strip(), entry["key"]
 
 
+def test_every_entry_has_its_group():
+    # reference-ontologies 5.2 item 1: teaching material, or a published
+    # vocabulary to build on. Nothing else.
+    assert {e["key"]: e["group"] for e in MANIFEST["examples"]} == {
+        "space": "example",
+        "middle-earth": "example",
+        "foaf": "reference",
+        "qudt": "reference",
+    }
+
+
 @pytest.mark.parametrize("entry", MANIFEST["examples"], ids=lambda e: e["key"])
-def test_each_file_matches_its_hash_and_is_at_most_1_mb(entry):
+def test_each_file_matches_its_hash(entry):
     data = (APP / entry["file"]).read_bytes()
     assert hashlib.sha256(data).hexdigest() == entry["sha256"]
-    # Section 10: three small parses at the first start, bounded here.
-    assert len(data) <= 1024 * 1024
+    # home-and-examples Section 10: the three small parses at the first start
+    # are bounded here. QUDT is the one large entry, measured on its own
+    # (reference-ontologies 5.2 item 4, test_vocab.py).
+    if entry["key"] != "qudt":
+        assert len(data) <= 1024 * 1024
 
 
 def test_foaf_is_the_bundled_vocabulary_not_a_copy():
@@ -118,6 +171,21 @@ def test_foaf_is_the_bundled_vocabulary_not_a_copy():
     assert not list((APP / "examples").glob("foaf*"))
 
 
+def test_qudt_is_the_bundled_vocabulary_not_a_copy():
+    entry = _entry("qudt")
+    assert entry["file"] == "vocab/qudt-3.5.2.ttl" and entry["format"] == "turtle"
+    vocab = json.loads((APP / "vocab" / "manifest.json").read_text(encoding="utf-8"))
+    qudt = next(v for v in vocab["vocabularies"] if v["file"] == "qudt-3.5.2.ttl")
+    assert entry["sha256"] == qudt["sha256"]
+    # 5.2 item 3, word for word.
+    assert entry["purpose"] == (
+        "Quantities, units and dimensions: the standard vocabulary for measurements. "
+        "QUDT.org, CC BY 4.0."
+    )
+    assert "questions" not in entry
+    assert not list((APP / "examples").glob("qudt*"))
+
+
 def test_the_new_files_are_binary_in_gitattributes():
     attributes = (APP.parent.parent / ".gitattributes").read_text(encoding="utf-8")
     assert "backend/app/examples/*.ttl binary" in attributes
@@ -125,7 +193,7 @@ def test_the_new_files_are_binary_in_gitattributes():
 
 # --- seeding: once, under fixed ids, and a removal stays removed -----------
 
-KEYS = ["space", "middle-earth", "foaf"]
+KEYS = ["space", "middle-earth", "foaf", "qudt"]
 
 
 @pytest.fixture
@@ -151,24 +219,24 @@ def test_example_ids_are_fixed_and_shaped_like_any_library_id():
         oid = library_examples.example_id(key)
         assert re.fullmatch(r"ont-[0-9a-f]{12}", oid)
         assert oid == "ont-" + hashlib.sha256(f"example:{key}".encode()).hexdigest()[:12]
-    assert len({library_examples.example_id(k) for k in KEYS}) == 3
+    assert len({library_examples.example_id(k) for k in KEYS}) == 4
 
 
-def test_a_first_start_adds_the_three_examples(tmp_path, parses):
+def test_a_first_start_adds_the_four_entries(tmp_path, parses):
     store = OntologyStore(tmp_path)
     added = library_examples.seed(store)
     assert added == [library_examples.example_id(k) for k in KEYS]
     entries = {o.id: o.summary() for o in store.list()}
-    for entry in MANIFEST["examples"]:
+    for entry in SEEDED:
         summary = entries[library_examples.example_id(entry["key"])]
         assert summary["source"] == "example"
         assert summary["name"] == entry["name"]
         assert summary["example"] == {"key": entry["key"], "purpose": entry["purpose"]}
         # The card's sketch is computed in the same parse, as for an upload.
         assert summary["card"]["sketch"]["nodes"]
-    assert len(parses) == 3
+    assert len(parses) == 4
     state = json.loads((tmp_path / "examples.json").read_text(encoding="utf-8"))
-    assert state == {"seeded": {e["key"]: e["sha256"] for e in MANIFEST["examples"]}}
+    assert state == {"seeded": {e["key"]: e["sha256"] for e in SEEDED}}
 
 
 def test_a_later_start_parses_nothing_and_keeps_the_ids(tmp_path, parses):
@@ -197,7 +265,7 @@ def test_a_removed_example_stays_removed_after_a_restart(tmp_path, parses):
 
 def _changed_manifest(tmp_path, key: str, extra: bytes):
     """The manifest as a release with a changed file would ship it."""
-    entries = json.loads(json.dumps(MANIFEST["examples"]))
+    entries = json.loads(json.dumps(SEEDED))
     entry = next(e for e in entries if e["key"] == key)
     data = (APP / entry["file"]).read_bytes() + extra
     changed = tmp_path / "changed.ttl"
@@ -303,7 +371,7 @@ def _older(key: str, tmp_path) -> dict:
 
 def test_an_older_library_gets_the_new_words_under_the_same_ids(tmp_path, parses, monkeypatch):
     data_dir = tmp_path / "data"
-    older = [_older(e["key"], tmp_path) if e["key"] != "foaf" else e for e in MANIFEST["examples"]]
+    older = [_older(e["key"], tmp_path) if e["group"] == "example" else e for e in SEEDED]
     monkeypatch.setattr(library_examples, "load_manifest", lambda: older)
     store = OntologyStore(data_dir)
     library_examples.seed(store)
@@ -312,7 +380,7 @@ def test_an_older_library_gets_the_new_words_under_the_same_ids(tmp_path, parses
     assert labels == {Literal("Rosetta", lang="en")}
 
     # The next start ships this release's manifest.
-    monkeypatch.setattr(library_examples, "load_manifest", lambda: MANIFEST["examples"])
+    monkeypatch.setattr(library_examples, "load_manifest", lambda: SEEDED)
     parses.clear()
     restarted = OntologyStore(data_dir)
     assert sorted(library_examples.seed(restarted)) == sorted([space_id, me_id])
@@ -323,6 +391,57 @@ def test_an_older_library_gets_the_new_words_under_the_same_ids(tmp_path, parses
     assert "kilometers" in str(graph.value(SPACE.diameterKm, RDFS.comment))
     defense = [str(o) for o in OntologyStore(data_dir).get(me_id).ensure_loaded().objects(None, RDFS.comment)]
     assert any("defense" in c for c in defense) and not any("defence" in c for c in defense)
+
+
+def test_the_real_qudt_is_seeded_removed_and_restored_under_its_fixed_id(tmp_path, parses, real_qudt):
+    """reference-ontologies AC-2: the 6.9 MB file itself, once, through the
+    same bookkeeping as the examples."""
+    store = OntologyStore(tmp_path)
+    qudt = library_examples.example_id("qudt")
+    assert library_examples.seed(store) == [library_examples.example_id(k) for k in KEYS]
+    summary = store.get(qudt).summary()
+    assert summary["name"] == "QUDT" and summary["source"] == "example"
+    assert summary["triples"] == 132_166
+    assert summary["card"]["sketch"]["nodes"]
+    assert library_examples.as_listed(summary)["example"]["group"] == "reference"
+
+    assert store.remove(qudt)
+    parses.clear()
+    restarted = OntologyStore(tmp_path)
+    assert library_examples.seed(restarted) == [] and restarted.get(qudt) is None
+    assert parses == []
+    assert library_examples.restore(restarted) == [qudt]
+    assert parses == ["turtle"]
+    assert OntologyStore(tmp_path).get(qudt).summary()["triples"] == 132_166
+
+
+def test_a_changed_qudt_replaces_its_entry_under_the_same_id(tmp_path, parses, monkeypatch):
+    data_dir = tmp_path / "data"
+    library_examples.seed(OntologyStore(data_dir))
+    oid = library_examples.example_id("qudt")
+    before = OntologyStore(data_dir).get(oid).summary()["triples"]
+    extra = b'<http://example.org/units#Second> <http://www.w3.org/2000/01/rdf-schema#label> "second"@en .\n'
+    entries = _changed_manifest(tmp_path, "qudt", extra)
+    monkeypatch.setattr(library_examples, "load_manifest", lambda: entries)
+    restarted = OntologyStore(data_dir)
+    assert library_examples.seed(restarted) == [oid]
+    assert restarted.get(oid).summary()["triples"] == before + 1
+
+
+def test_a_listed_entry_carries_its_group_from_the_manifest(tmp_path, parses):
+    """Attached when listed, never stored: an entry seeded before groups
+    existed, whose record has only key and purpose, gains its group."""
+    store = OntologyStore(tmp_path)
+    library_examples.seed(store)
+    groups = {}
+    for ontology in store.list():
+        record = ontology.summary()["example"]
+        assert set(record) == {"key", "purpose"}
+        groups[record["key"]] = library_examples.as_listed(ontology.summary())["example"]["group"]
+    assert groups == {"space": "example", "middle-earth": "example", "foaf": "reference", "qudt": "reference"}
+    # A person's own file is no bundled entry, whatever it is called.
+    own = {"source": "upload", "name": "QUDT", "example": None}
+    assert library_examples.as_listed(own) == own
 
 
 def test_restore_adds_back_only_the_missing_ones(tmp_path, parses):
@@ -709,7 +828,7 @@ def test_lotr_is_about_five_to_eight_hundred_statements(middle_earth):
 
 # --- the ready-made questions (query-page-rework 5.4, AC-8) ---------------
 
-QUESTIONS = [(e["key"], q) for e in MANIFEST["examples"] for q in e["questions"]]
+QUESTIONS = [(e["key"], q) for e in MANIFEST["examples"] for q in e.get("questions", [])]
 
 # 5.4's table, as measured: rows, and for the short ones the names in order.
 ANSWERS = {
@@ -726,6 +845,9 @@ ANSWERS = {
 
 def test_every_example_has_two_or_three_questions_and_5_4s_eight_in_all():
     for entry in MANIFEST["examples"]:
+        # QUDT came with none (reference-ontologies writes no questions).
+        if entry["key"] == "qudt":
+            continue
         assert 2 <= len(entry["questions"]) <= 3, entry["key"]
     assert sorted(q["id"] for _key, q in QUESTIONS) == sorted(ANSWERS)
 
@@ -805,7 +927,7 @@ def test_a_question_that_cannot_be_read_is_left_out_never_a_failed_listing(monke
     monkeypatch.setattr(library_examples, "load_manifest", lambda: manifest["examples"])
     library_examples._questions.cache_clear()
     try:
-        listed = library_examples.with_questions(
+        listed = library_examples.as_listed(
             {"source": "example", "example": {"key": "space", "purpose": "p"}}
         )
         assert [q["id"] for q in listed["example"]["questions"]] == [
