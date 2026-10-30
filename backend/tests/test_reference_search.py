@@ -524,3 +524,56 @@ def test_a_command_never_builds_an_index_under_the_document_lock(monkeypatch):
     r = _command(pid, "AddSubClassOf", {"child": child, "parent": QUDT + "QuantityKind"})
     assert r.status_code == 200, r.text
     assert held == [False], "the first build ran while the document was locked"
+
+
+# --- found in the PR #72 review ------------------------------------------------
+
+OWN = "http://example.org/staff#"
+
+
+def _own_project(refs: list[str], template: str = "empty", **body) -> str:
+    return _project(refs, template, baseIri=OWN, prefix="staff", **body)
+
+
+@pytest.mark.parametrize(
+    "refs, body",
+    [([], {"description": "Who works here."}), (["qudt"], {})],
+    ids=["a description", "a reference"],
+)
+def test_a_new_project_keeps_its_own_prefix_and_a_line_using_it_applies(refs, body):
+    """longturtle drops every unused prefix, the project's own included, so
+    a template with an addition lost it and its first Turtle line using it
+    failed as unbound, where a plain template accepted it."""
+    pid = _own_project(refs, **body)
+    text = (project_store.folder(pid) / "model.ttl").read_text(encoding="utf-8")
+    assert f"PREFIX staff: <{OWN}>" in text or f"@prefix staff: <{OWN}>" in text
+    r = _apply(pid, _source(pid) + "\nstaff:Pump a owl:Class .\n")
+    assert r.status_code == 200, r.text
+
+
+def test_the_own_prefix_survives_a_visual_change_and_a_save():
+    pid = _own_project([])
+    header = client.post(f"/api/projects/{pid}/open").json()["documents"][0]["header"]
+    assert _command(pid, "SetComment", {"iri": header, "value": "Who works here."}).status_code == 200
+    assert client.post(f"/api/projects/{pid}/documents/model/save", json={}).status_code == 200
+    text = (project_store.folder(pid) / "model.ttl").read_text(encoding="utf-8")
+    assert "Who works here." in text, "the save wrote the visual change"
+    assert f"PREFIX staff: <{OWN}>" in text
+
+
+def test_keep_prefixes_writes_the_own_prefix_once():
+    text = "PREFIX owl: <http://www.w3.org/2002/07/owl#>\n\n<http://e> a owl:Ontology .\n"
+    kept = references.keep_prefixes(text, {}, ("staff", OWN))
+    assert kept.startswith(f"PREFIX staff: <{OWN}>\n")
+    assert references.keep_prefixes(kept, {}, ("staff", OWN)) == kept
+
+
+def test_a_cache_of_another_version_is_rebuilt():
+    entry = references.by_key("foaf")
+    references.forget()
+    path = store.data_dir / "references" / f"{entry['sha256']}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stale = {"version": references.INDEX_VERSION + 1, "sha256": entry["sha256"], "terms": [], "defined": []}
+    path.write_text(json.dumps(stale), encoding="utf-8")
+    assert FOAF + "Organization" in references.index("foaf").defined
+    assert json.loads(path.read_text(encoding="utf-8"))["version"] == references.INDEX_VERSION

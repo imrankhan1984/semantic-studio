@@ -3023,6 +3023,9 @@ class OpenDocument:
     # document declares, which a visual change keeps (reference-ontologies
     # 5.6). Read through declared().
     _declared: tuple = (None, {})
+    # (prefix, base IRI) from the manifest: the project's own prefix, which
+    # clean() keeps though no statement uses it yet (PR #72 review).
+    own: Optional[tuple] = None
     # (revision and langs, view, the imports view it was built with): the
     # canvas's boxes and lines (D-081).
     _canvas: Optional[tuple] = None
@@ -3033,10 +3036,11 @@ class OpenDocument:
 
     def clean(self) -> str:
         """longturtle of the current graph, once per revision, with the
-        reference prefixes the document declares and does not use yet: a
-        new project's foaf: must survive its first visual change."""
+        reference prefixes the document declares and does not use yet, and
+        the project's own: a new project's foaf: and its own prefix must
+        survive its first visual change."""
         if self._clean is None or self._clean[0] != self.ontology.revision:
-            text = references.keep_prefixes(clean_turtle(self.graph), self.declared())
+            text = references.keep_prefixes(clean_turtle(self.graph), self.declared(), self.own)
             self._clean = (self.ontology.revision, text)
         return self._clean[1]
 
@@ -3146,7 +3150,10 @@ class EditingService:
             editable=True,
             languages=languages,
         )
-        document = OpenDocument(pid, doc, path, ontology, last_text=text, save_point=BASE, saved_text=text)
+        document = OpenDocument(
+            pid, doc, path, ontology, last_text=text, save_point=BASE, saved_text=text,
+            own=(manifest.get("prefix"), manifest["baseIri"]),
+        )
         ontology.source_provider = lambda: document.text().encode("utf-8")
         # Every view reads under the same lock the edits take, so a build never
         # iterates a graph an apply is changing (found in review).
@@ -3604,7 +3611,7 @@ class EditingService:
         if text is None:
             # As clean() writes it: recovery reads its declarations from
             # this text, and a dropped foaf: would switch FOAF off.
-            text = references.keep_prefixes(clean_turtle(snapshot), declared)
+            text = references.keep_prefixes(clean_turtle(snapshot), declared, document.own)
         # Serialising ran outside the lock, so a save, a discard or a newer
         # change may have happened meanwhile: each moves the generation, and
         # a draft written now would be offered for recovery after the user

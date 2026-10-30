@@ -24,6 +24,8 @@ BASIC IDEA
     uses, keep_prefixes writes back a reference prefix that was declared and
     is not used yet, or the first visual change of a new project would drop
     `foaf:` and switch FOAF off before the person had picked a term from it.
+    It keeps the project's own prefix the same way, as nothing may use it
+    yet either.
 
     **The index** is built from the bundled file alone, the first time a
     project needs it: every class, property and concept defined in the
@@ -43,7 +45,7 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - entries(), public(), keys(): the references and the route's view of them.
-    - declared_prefixes(text), in_use(declared), keep_prefixes(text, declared).
+    - declared_prefixes(text), in_use(declared), keep_prefixes(text, declared, own).
     - index(key), index_of(entry): the cached index; search(...), defines(...), unknown_terms(...).
 ================================================================================
 """
@@ -142,19 +144,25 @@ def in_use(declared: dict[str, str]) -> list[dict]:
     return [e for e in entries() if namespaces_of(e) & bound]
 
 
-def keep_prefixes(text: str, declared: dict[str, str]) -> str:
-    """longturtle's text with every declared reference prefix it dropped.
+def keep_prefixes(text: str, declared: dict[str, str], own: Optional[tuple] = None) -> str:
+    """longturtle's text with every declared reference prefix it dropped,
+    and the project's own prefix (`own`: the manifest's prefix and base IRI).
 
-    Only reference namespaces: the rule that an unused prefix goes is
-    longturtle's and stays so for every other one. A prefix whose name the
-    text now binds to something else is left out rather than written twice.
+    Only those: the rule that an unused prefix goes is longturtle's and
+    stays so for every other one. The project's own goes back whether or
+    not the text declared it, or a new project's first Turtle line using it
+    fails as unbound (PR #72 review). A prefix whose name the text now binds
+    to something else is left out rather than written twice.
     """
     reference = set().union(*(namespaces_of(e) for e in entries()))
     present = declared_prefixes(text)
+    wanted = {prefix: namespace for prefix, namespace in declared.items() if namespace in reference}
+    if own and own[0] and own[1]:
+        wanted.setdefault(own[0], own[1])
     missing = [
         (prefix, namespace)
-        for prefix, namespace in sorted(declared.items())
-        if namespace in reference and namespace not in present.values() and prefix not in present
+        for prefix, namespace in sorted(wanted.items())
+        if namespace not in present.values() and prefix not in present
     ]
     if not missing:
         return text

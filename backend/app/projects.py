@@ -40,7 +40,8 @@ BASIC IDEA
     added the same way, as an rdflib Literal and never assembled as text.
     A template with nothing added is written as rendered, byte for byte;
     one with additions is written as longturtle, its declared reference
-    prefixes kept though nothing uses them yet. A library copy keeps its own
+    prefixes and its own prefix kept though nothing uses them yet (the own
+    one or its first Turtle line fails as unbound). A library copy keeps its own
     file: it takes no references, and a description only where its header
     has none in the primary language, appended as one statement rdflib
     writes, so the copied text, comments and all, stays as it was.
@@ -608,7 +609,9 @@ class ProjectStore:
             if comment is not None:
                 graph.add((header, RDFS.comment, comment))
             declared = {p: n for e in chosen for p, n in e["reuse"]["prefixes"].items()}
-            text = references.keep_prefixes(graph.serialize(format="longturtle"), declared)
+            text = references.keep_prefixes(
+                graph.serialize(format="longturtle"), declared, (prefix, base_iri)
+            )
         elif comment is not None and not any(
             isinstance(c, Literal) and (c.language or "").lower() == primary_language.lower()
             for c in graph.objects(header, RDFS.comment)
