@@ -16,6 +16,12 @@ BASIC IDEA
     in both `import x` and `from x import y` forms, and for the socket-opening
     calls themselves. The same model as the frontend's no-raw-html.test.ts.
 
+    The release's launcher (release-packaging 5.2) is named apart: it opens a
+    socket and an http.client connection, both to its own server on
+    127.0.0.1, which are not outbound connections. It is held to exactly
+    those two imports, and every address it binds or connects to is its
+    LOOPBACK constant, so a client added to it fails here like anywhere else.
+
     The scan is proved able to see before it is trusted: it is run over a
     planted sample of every forbidden form and must flag each one, and the
     file list must be non-empty and include the two exempt files -- a scan of
@@ -36,6 +42,8 @@ from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent.parent / "app"
 ALLOWED = {"network_broker.py", "net_guard.py"}
+# Its own server only; held to that by the two tests at its name below.
+LAUNCHER = "launcher.py"
 
 _CLIENTS = r"(?:httpx|requests|urllib3|aiohttp|socket|http\.client|urllib\.request)"
 FORBIDDEN = [
@@ -88,6 +96,8 @@ def test_only_the_broker_and_the_guard_reach_the_network():
     for path in files:
         if path.name in ALLOWED and path.parent == APP_DIR:
             continue
+        if path == APP_DIR / LAUNCHER:
+            continue
         for hit in violations(path.read_text(encoding="utf-8")):
             offenders.append(f"{path.relative_to(APP_DIR.parent)} {hit}")
     assert offenders == [], "\n".join(offenders)
@@ -124,3 +134,27 @@ def test_owlrl_itself_holds_no_network_client():
     assert len(files) > 5
     offenders = [f"{path.name} {hit}" for path in files for hit in violations(path.read_text(encoding="utf-8"))]
     assert offenders == []
+
+
+# The launcher (release-packaging 5.2): its requests to its own server go
+# straight to 127.0.0.1 through http.client, never urllib, which would read
+# the system proxy (AC-9). Exempt by name from the scan above, and held here
+# to what that exemption is for.
+LAUNCHER_ALLOWED = {"line import http.client", "line import socket", "line socket.socket("}
+
+
+def test_the_launcher_holds_only_its_loopback_socket_and_http_client():
+    source = (APP_DIR / LAUNCHER).read_text(encoding="utf-8")
+    seen = {"line " + hit.split(": ", 1)[1] for hit in violations(source)}
+    assert seen == LAUNCHER_ALLOWED
+    assert re.search(r"^\s*(?:import|from)\s+urllib\b", source, re.M) is None
+
+
+def test_the_launcher_connects_and_binds_only_to_its_loopback_constant():
+    source = (APP_DIR / LAUNCHER).read_text(encoding="utf-8")
+    assert re.search(r'^LOOPBACK = "127\.0\.0\.1"$', source, re.M)
+    connections = re.findall(r"HTTPConnection\(([^,)]*)", source)
+    binds = re.findall(r"\.bind\(\(([^,)]*)", source)
+    assert connections and binds, "the scan found nothing to check"
+    assert set(connections) | set(binds) == {"LOOPBACK"}
+    assert ".connect(" not in source and "create_connection" not in source

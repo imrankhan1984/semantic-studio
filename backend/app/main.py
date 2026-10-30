@@ -254,10 +254,12 @@ async def _offline(_request: Request, exc: Offline) -> JSONResponse:
 
 
 # A trivial liveness probe. Deployment tooling (and our own scripts) hit this
-# to confirm the server is up before doing anything else.
+# to confirm the server is up before doing anything else. `app` is how the
+# release's launcher tells this application from another program on the same
+# port (release-packaging 5.2 item 3).
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "app": "semantic-studio"}
 
 
 # --- serve the built frontend in production ---------------------------------

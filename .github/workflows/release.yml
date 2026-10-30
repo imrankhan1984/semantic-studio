@@ -1,0 +1,188 @@
+# ==============================================================================
+# FILE: .github/workflows/release.yml
+# ==============================================================================
+#
+# SUMMARY
+#     Builds the Windows release, one zip a colleague unzips and starts with no
+#     installation (release-packaging 5.4, backlog X-9, D-119), smoke-tests it
+#     on windows-latest, and keeps it as an artifact for 7 days. On a tag v*
+#     on main it also attaches the zip and its SHA-256 to a DRAFT release.
+#
+# BASIC IDEA
+#     One job builds and tests; a second, only for a tag, drafts. The build
+#     takes python.org's embeddable Python, at the patch pinned below, and
+#     refuses it unless its SHA-256 is the one written here (AC-7); the Python
+#     that runs pip and compiles the bytecode is setup-python's copy of the
+#     same patch, so every .pyc and every wheel matches the bundled one.
+#     release/build.py assembles the folder and the zip; release/smoke.py
+#     unzips nothing itself: the zip is unzipped here into a folder with a
+#     space in its path, and the smoke test starts it through the start file
+#     and checks steps 1 to 8 of 5.4.
+#
+#     The workflow never publishes a release. It drafts one, and Imran
+#     publishes it (the safety rule *never publish without approval*);
+#     test_release_workflow.py fails on any step that could publish. The
+#     draft job alone may write to the repository, and only for a tag whose
+#     commit is on main.
+#
+#     CI's backend-windows job tests 3.14; PYTHON_VERSION's minor must stay
+#     the same, which test_release_workflow.py checks. Moving the patch means
+#     moving PYTHON_EMBED_SHA256 with it, from the release's page on
+#     python.org.
+#
+# INPUTS / INPUT SOURCES
+#     - The repository at the pull request, the dispatch or the tag.
+#     - python-<PYTHON_VERSION>-embed-amd64.zip from www.python.org.
+#
+# EXPECTED OUTPUT
+#     - The artifact SemanticStudio-<version>-windows-x64: the zip and its
+#       .sha256, kept 7 days; a red job on any failed build or smoke step.
+#     - For a tag v* on main: a draft release carrying both. Never published.
+# ==============================================================================
+name: Release
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - release/**
+      - backend/app/launcher.py
+      - backend/requirements.txt
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.14.10"
+  # From https://www.python.org/downloads/release/python-31410/, the row
+  # "Windows embeddable package (64-bit)".
+  PYTHON_EMBED_SHA256: "0000000000000000000000000000000000000000000000000000000000000000"
+
+jobs:
+  # TEMPORARY, removed before review: reads the embeddable's SHA-256 from
+  # python.org's release page, which the build container cannot reach.
+  find-embed-hash:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          page="$(curl -fsSL https://www.python.org/downloads/release/python-${PYTHON_VERSION//./}/)"
+          echo "$page" | tr '\n' ' ' | grep -oE 'python-'"$PYTHON_VERSION"'-embed-amd64\.zip.{0,1500}' | grep -oE '[0-9a-f]{64}' | head -3 | sed 's/^/page: /'
+          echo "$page" | tr '\n' ' ' | grep -oE '.{0,400}embed-amd64\.zip.{0,600}' | head -2
+          curl -fsSL -o embed.zip "https://www.python.org/ftp/python/$PYTHON_VERSION/python-$PYTHON_VERSION-embed-amd64.zip"
+          sha256sum embed.zip | sed 's/^/downloaded: /'
+          curl -fsSL "https://www.python.org/ftp/python/$PYTHON_VERSION/python-$PYTHON_VERSION-embed-amd64.zip.sigstore" -o /dev/null && echo "sigstore bundle exists" || true
+
+  windows-zip:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build the frontend
+        working-directory: frontend
+        run: |
+          npm ci --no-fund --no-audit
+          npm run build
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Version
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") { $version = "${{ github.ref_name }}".Substring(1) }
+          else { $version = "dev-" + "${{ github.sha }}".Substring(0, 7) }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "RELEASE_NAME=SemanticStudio-$version-windows-x64" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # AC-7: python.org's file, or nothing.
+      - name: Download and check the embeddable Python
+        shell: pwsh
+        run: |
+          $file = Join-Path $env:RUNNER_TEMP "python-embed.zip"
+          $url = "https://www.python.org/ftp/python/$env:PYTHON_VERSION/python-$env:PYTHON_VERSION-embed-amd64.zip"
+          Invoke-WebRequest -Uri $url -OutFile $file
+          $actual = (Get-FileHash -Algorithm SHA256 -Path $file).Hash.ToLowerInvariant()
+          if ($actual -ne $env:PYTHON_EMBED_SHA256.ToLowerInvariant()) {
+            throw "The embeddable Python's SHA-256 is $actual, not the $env:PYTHON_EMBED_SHA256 written in release.yml. Not building."
+          }
+          "EMBED_ZIP=$file" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build the zip
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "release"
+          python release/build.py --out $out --version $env:VERSION --commit "${{ github.sha }}" --embed $env:EMBED_ZIP
+          "OUT_DIR=$out" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Get-Item (Join-Path $out "$env:RELEASE_NAME.zip") | Select-Object Name, Length
+          Get-Content (Join-Path $out "$env:RELEASE_NAME\requirements-lock.txt")
+
+      # 5.4: unzipped into a folder with a space in its path, started through
+      # the start file, steps 1 to 8.
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          $smoke = Join-Path $env:RUNNER_TEMP "smoke test"
+          Expand-Archive -Path (Join-Path $env:OUT_DIR "$env:RELEASE_NAME.zip") -DestinationPath $smoke
+          python release/smoke.py (Join-Path $smoke $env:RELEASE_NAME)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_NAME }}
+          path: |
+            ${{ env.OUT_DIR }}/${{ env.RELEASE_NAME }}.zip
+            ${{ env.OUT_DIR }}/${{ env.RELEASE_NAME }}.zip.sha256
+          retention-days: 7
+          if-no-files-found: error
+
+  draft:
+    needs: windows-zip
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    # The one job that may write: it creates a draft, nothing more.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: The tag is on main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "The tag $GITHUB_REF_NAME is not on main."; exit 1; }
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Draft the release (Imran publishes it)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          zip="SemanticStudio-$version-windows-x64.zip"
+          digest="$(cut -d' ' -f1 "dist/$zip.sha256")"
+          {
+            echo "Semantic Studio $version for Windows: unzip it anywhere and open *Start Semantic Studio*. Nothing is installed and no administrator rights are needed."
+            echo
+            echo "**Before unzipping:** this release is not signed, so Windows may warn about it. Right-click the zip, choose *Properties*, tick *Unblock*, then unzip."
+            echo
+            echo "Your work is kept in \`%LOCALAPPDATA%\\semantic-studio\`, never in the unzipped folder, so a new release finds it."
+            echo
+            echo "SHA-256 of \`$zip\`: \`$digest\`"
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "Semantic Studio $version" --notes-file notes.md \
+            "dist/$zip" "dist/$zip.sha256"
