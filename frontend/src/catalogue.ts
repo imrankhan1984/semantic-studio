@@ -6,8 +6,8 @@ FILE: frontend/src/catalogue.ts
 SUMMARY
     A static list of well-known ontologies offered as suggestions, in the order
     a newcomer should meet them: schema.org, FIBO, a multilingual SKOS
-    thesaurus, then QUDT's SHACL form. Rendered by CatalogueList, on the Load dialog's "Suggested"
-    tab. FOAF led the list until it became one of the library's bundled
+    thesaurus, then QUDT's SHACL form. Rendered by CatalogueList, in Settings →
+    Library (home-and-settings 5.4). FOAF led the list until it became one of the library's bundled
     examples (home-and-examples 5.8): it is in every library from the first
     start, with no download, and picking it here as well would add it twice.
 

@@ -174,7 +174,7 @@ export default function SourceView({ ontologyId, target = null, onTargetResolved
     return (
       <div className="source-view empty">
         <p>No ontology loaded yet.</p>
-        <p className="hint">Use “Load” to add one, then come back to read it here.</p>
+        <p className="hint">Open an ontology from Home, then come back to read its source here.</p>
       </div>
     );
   }

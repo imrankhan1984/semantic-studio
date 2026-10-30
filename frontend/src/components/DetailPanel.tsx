@@ -58,10 +58,11 @@ INPUTS / INPUT SOURCES (props)
     5.3, D-113). Without the Edit section they are a Rules block of their
     own, one sentence each in the Edit page's words, read-only, a shape
     outside the sentences as its Turtle, and the blank-node statements they
-    came from are not listed again. With the Edit section the panel leaves
-    rules and rows as they were: that section says them only in some of its
-    forms (not for an imported class, an example, a class of the other
-    kind), and hiding the rows there lost them (code review).
+    came from are not listed again. With the Edit section the rows go only
+    where that section says the rules, its class form (`saysRules`): not for
+    an imported class, an example or a class of the other kind, where hiding
+    the rows lost them (code review), and no longer listed twice where it
+    does (wording 5.6).
 
     Without the Edit section the panel opens on In plain words (explain-panel
     5.1, D-114): what kind of thing this is and what its file states about
@@ -83,9 +84,10 @@ import { getNodeDetails } from "../api";
 import { panelTerms } from "../explain/glossary";
 import { linkTarget } from "../links";
 import { dataLabel } from "../modeling/dataSentences";
+import { entityModel } from "../modeling/entity";
 import { itemKey, itemSentence } from "../modeling/ruleSentences";
 import type { CanvasSet, NodeDetails, TermRef, ProjectKind } from "../types";
-import EditSection from "./EditSection";
+import EditSection, { saysRules } from "./EditSection";
 import ExplainBlock from "./ExplainBlock";
 import InferredBlock from "./InferredBlock";
 
@@ -237,9 +239,19 @@ export default function DetailPanel({
   if (!iri) return null;
   const href = linkTarget(iri);
   // A class's rules as sentences, when the server read some and no Edit
-  // section is here to say them; only then do their blank-node rows go.
+  // section is here to say them.
   const showRules = !editing && (details?.rules?.items.length ?? 0) > 0;
-  const statements = details && showRules ? details.outgoing.filter((row) => !isRuleRow(row)) : (details?.outgoing ?? []);
+  // Said by either section, this Rules block or the Edit section's, their
+  // blank-node rows go: keyed on `showRules` alone, a project's Explore page
+  // listed each rule twice (wording 5.6). The Edit section says them only in
+  // its class form, so it is asked, not assumed.
+  const rulesSaid =
+    showRules ||
+    (details !== null &&
+      editing !== null &&
+      ontologyId !== null &&
+      saysRules(details, entityModel(details, editing.primaryLanguage, editing.languages), editing.kind ?? null));
+  const statements = details && rulesSaid ? details.outgoing.filter((row) => !isRuleRow(row)) : (details?.outgoing ?? []);
   const hiddenRows = (details?.outgoing.length ?? 0) - statements.length;
   // Only what this page holds is known to be a rule: when the server cut the
   // list, the true total stays the heading's number (CLAUDE.md, limits).

@@ -10,6 +10,11 @@ SUMMARY
     frontend's sentences.test.ts reads too, so the two sides agree; and a
     scan that fails if any other module defines its own.
 
+    A noun reads after *has* (wording 5.2): the table holds the spec's noun
+    rows, and every property name in the bundled examples, the templates
+    and FOAF that now takes *has* is listed here, so a base-form verb
+    (*contain*, which would read *has contain*) cannot arrive unread.
+
 BASIC IDEA
     One table, frontend/src/modeling/sentences.table.json, read by both
     suites: two tables kept in step by hand is how four article rules came
@@ -20,6 +25,7 @@ BASIC IDEA
 
 INPUTS / INPUT SOURCES
     - app.sentences; the shared table; backend/app/**/*.py as text.
+    - app/examples/*.ttl, app/templates/*.ttl and app/vocab/foaf.rdf.
 
 EXPECTED OUTPUT
     - Pass/fail.
@@ -64,6 +70,72 @@ def test_the_table_holds_the_specs_examples():
     }
     verbs = {row[0] for row in TABLE["verb"]}
     assert {"uses", "has part", "is part of", "part of", "located in", "holder"} <= verbs
+    # wording 5.2's noun rows, the verbs beside them, and *has destination*,
+    # which must not become *has has destination*.
+    rows = {row[0]: (row[1], row[2]) for row in TABLE["verb"]}
+    assert {k: rows[k] for k in ("crew member", "holder", "launch site", "has destination", "orbits")} == {
+        "crew member": ("has crew member", "have crew member"),
+        "holder": ("has holder", "have holder"),
+        "launch site": ("has launch site", "have launch site"),
+        "has destination": ("has destination", "have destination"),
+        "orbits": ("orbits", "orbit"),
+    }
+
+
+# Every property name in the bundled examples, the templates and FOAF that
+# reads after *has* since wording 5.2, each read by a person as a noun or a
+# participle (*made*), never a verb in base form. A new name in one of those
+# files that takes *has* fails here until someone reads it: *contain* would
+# say *has contain*, the known limit 5.2 accepts.
+NOUN_NAMES = {
+    "account", "account name", "account service homepage", "acronym", "age", "AIM chat ID",
+    "birthday", "born in year", "crew member", "crew size", "current project", "depiction",
+    "diameter (km)", "DNA checksum", "family_name", "familyName", "firstName", "focus",
+    "geekcode", "gender", "Given name", "homepage", "ICQ chat ID", "image", "in year",
+    "interest", "jabber ID", "landing date", "lastName", "launch date", "logo", "made",
+    "maker", "member", "membershipClass", "mission type", "MSN chat ID", "name", "nickname",
+    "openid", "page", "past project", "personal mailbox", "phone", "plan", "primary topic",
+    "schoolHomepage", "sha1sum (hex)", "sha1sum of a personal mailbox URI name", "Skype ID",
+    "status", "Surname", "target", "theme", "thumbnail", "tipjar", "title", "topic",
+    "topic_interest", "weblog", "work info homepage", "workplace homepage", "Yahoo chat ID",
+    "year founded", "year of discovery",
+}
+
+_FILL = {
+    "{{base}}": "http://example.org/x#", "{{ontology}}": "http://example.org/x",
+    "{{prefix}}": "ex", "{{name}}": "X", "{{lang}}": "en",
+}
+
+
+def _bundled_graphs():
+    from rdflib import Graph
+
+    for path in sorted((APP / "examples").glob("*.ttl")) + sorted((APP / "templates").glob("*.ttl")):
+        text = path.read_text(encoding="utf-8")
+        for key, value in _FILL.items():
+            text = text.replace(key, value)
+        yield path.name, Graph().parse(data=text, format="turtle")
+    yield "foaf.rdf", Graph().parse(APP / "vocab" / "foaf.rdf", format="xml")
+
+
+def test_no_bundled_property_name_is_a_base_form_verb():
+    from rdflib import OWL, RDF, RDFS, URIRef
+
+    names: set[str] = set()
+    read = []
+    for file, graph in _bundled_graphs():
+        read.append(file)
+        for kind in (OWL.ObjectProperty, OWL.DatatypeProperty, RDF.Property):
+            for prop in graph.subjects(RDF.type, kind):
+                if not isinstance(prop, URIRef):
+                    continue
+                labels = [str(l) for l in graph.objects(prop, RDFS.label) if getattr(l, "language", None) in (None, "en")]
+                for label in labels or [re.split(r"[#/]", str(prop))[-1]]:
+                    if verb(label) == f"has {label}":
+                        names.add(label)
+    # The files were read: both examples, the Small template, FOAF.
+    assert {"middle-earth.ttl", "space-exploration.ttl", "small.ttl", "foaf.rdf"} <= set(read)
+    assert names == NOUN_NAMES
 
 
 # What a copy of either rule would write.

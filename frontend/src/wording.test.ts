@@ -8,6 +8,10 @@ SUMMARY
     AC-9): the word is *statement*. Code names keep *triples* (`summary.triples`,
     the API), and *N-Triples* is a format's name, so both are allowed.
 
+    And no text names a *“Load”* button (wording-and-query-export 5.1,
+    AC-1): U-17 removed it, and two empty states went on sending people to
+    it. Home's actions are *Open a file* and *Load from a URL*.
+
 BASIC IDEA
     Every source file is read as text (`import.meta.glob` with `?raw`, as
     ModelCanvas.test.tsx scans for `@xyflow/react`), its comments are taken
@@ -78,6 +82,35 @@ describe("the word a person reads is statements (AC-9)", () => {
     const offenders = files.flatMap(([path, source]) =>
       visibleTriples(source).map((line) => `${path}: ${line}`),
     );
+    expect(offenders).toEqual([]);
+  });
+});
+
+/** Places a button called Load is named: the word alone in quotes, or
+ *  *Load button*. *Load from a URL* and the *Load dialog* are not buttons
+ *  called Load. */
+function namedLoad(source: string): string[] {
+  return withoutComments(source)
+    .split("\n")
+    .filter((line) => /[“‘"'`]Load[”’"'`]|\bLoad button\b/.test(line))
+    .map((line) => line.trim());
+}
+
+describe("no text names a Load button (wording 5.1, AC-1)", () => {
+  it("the scanner finds a quoted Load and leaves other uses alone", () => {
+    expect(namedLoad("<p>Use “Load” to upload a file.</p>")).toHaveLength(1);
+    expect(namedLoad('const hint = "Press the Load button";')).toHaveLength(1);
+    expect(namedLoad("label: 'Load',")).toHaveLength(1);
+    expect(namedLoad('<button>Load from a URL</button>')).toEqual([]);
+    expect(namedLoad("// the “Load” dialog")).toEqual([]);
+    expect(namedLoad("loadOntology(id)")).toEqual([]);
+  });
+
+  it("no source file names one", () => {
+    const files = Object.entries(SOURCES).filter(([path]) => !/\.test\.tsx?$/.test(path));
+    expect(files.some(([path]) => path.endsWith("/components/GraphView.tsx"))).toBe(true);
+    expect(files.some(([path]) => path.endsWith("/components/SourceView.tsx"))).toBe(true);
+    const offenders = files.flatMap(([path, source]) => namedLoad(source).map((line) => `${path}: ${line}`));
     expect(offenders).toEqual([]);
   });
 });

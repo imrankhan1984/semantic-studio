@@ -295,6 +295,7 @@ vi.mock("./components/GraphView", () => ({
     focusTick,
     queryResults,
     frameTick,
+    loading,
   }: {
     data: unknown;
     leftRail?: React.ReactNode;
@@ -304,6 +305,7 @@ vi.mock("./components/GraphView", () => ({
     focusTick: number;
     queryResults?: ReadonlySet<string>;
     frameTick?: number;
+    loading?: boolean;
   }) => {
     graphRenders.count += 1;
     return (
@@ -319,6 +321,7 @@ vi.mock("./components/GraphView", () => ({
       data-has-graph={data ? "yes" : "no"}
       data-results={[...(queryResults ?? [])].join(" ")}
       data-frame-tick={frameTick ?? 0}
+      data-loading={loading ? "yes" : "no"}
       data-expansion={expansion ? expansion.data.nodes.map((n) => n.id).join(" ") : ""}
     >
       {leftRail}
@@ -706,6 +709,20 @@ describe("App startup chooser", () => {
     expect(homeShown()).toBe(false);
     expect(document.querySelector(".query-panel")).toBeTruthy();
     expect(getGraph).toHaveBeenCalledWith("o1", undefined, false);
+  });
+
+  it("tells the graph it is loading while Building graph… shows (wording 5.1, AC-2)", async () => {
+    // The real GraphView draws its empty state only when not loading
+    // (GraphView.test.tsx); here, that App says so for as long as the overlay
+    // is up, and stops when the graph lands.
+    let land!: (graph: unknown) => void;
+    getGraph.mockImplementationOnce(() => new Promise((resolve) => (land = resolve)));
+    await renderAppOpened();
+    expect(screen.getByText("Building graph…")).toBeTruthy();
+    expect(screen.getByTestId("graph").dataset.loading).toBe("yes");
+    await act(async () => land(TRUNCATED));
+    expect(screen.queryByText("Building graph…")).toBeNull();
+    expect(screen.getByTestId("graph").dataset.loading).toBe("no");
   });
 
   it("opening a library entry hides the chooser and loads it", async () => {
@@ -3889,7 +3906,7 @@ describe("App: the graph frames the results (query-page-rework 5.2)", () => {
     // A literal's text that looks like an IRI is never a result node.
     expect(rings()).toBe("http://x/Bond http://x/Issuer");
     expect(frames()).toBe(before + 1);
-    expect(liveRegion()).toContain("2 results shown on the graph.");
+    expect(liveRegion()).toContain("2 entities shown on the graph.");
     expect(getResultNodes).not.toHaveBeenCalled();
     // The legend says what the ring is while there are results on the graph.
     openLegend();
@@ -3948,12 +3965,12 @@ describe("App: the graph frames the results (query-page-rework 5.2)", () => {
     expect(getResultNodes).toHaveBeenCalledWith("o1", ["http://x/Coupon", "http://x/Rate"], false);
     expect(graph().getAttribute("data-expansion")).toBe("http://x/Coupon http://x/Rate");
     expect(frames()).toBe(before + 1);
-    expect(liveRegion()).toContain("3 results shown on the graph.");
+    expect(liveRegion()).toContain("3 entities shown on the graph.");
     // Every one was drawn, so the header says nothing about the rest.
     expect(screen.getByTestId("results-note").textContent).toBe("");
     // The merge reports itself without an expansion's sentence over the run's.
     await click("fake merge");
-    expect(liveRegion()).toContain("3 results shown on the graph.");
+    expect(liveRegion()).toContain("3 entities shown on the graph.");
     expect(liveRegion()).not.toContain("Added");
   });
 
@@ -3971,7 +3988,7 @@ describe("App: the graph frames the results (query-page-rework 5.2)", () => {
     expect(screen.getByTestId("results-note").textContent).toBe(
       "The graph shows 200 of the 340 results it had not drawn.",
     );
-    expect(liveRegion()).toContain("200 results shown on the graph.");
+    expect(liveRegion()).toContain("200 entities shown on the graph.");
   });
 
   it("an answer for a run already cleared draws nothing", async () => {

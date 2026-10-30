@@ -81,7 +81,7 @@ function propertyDetails(kind: "datatypeProperty" | "objectProperty", domain: Do
 }
 
 const SEPARATE_TEXT =
-  "hasName lists Employee and Team separately. In RDFS and OWL that means whatever has hasName is both an Employee and a Team. To mean either one, share it.";
+  "hasName lists Employee and Team separately. In RDFS and OWL that means whatever has a value for hasName is both an Employee and a Team. To mean either one, share it.";
 
 function separate(needs?: "parentName"): ModelWarning {
   return {

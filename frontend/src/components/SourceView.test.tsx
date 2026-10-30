@@ -27,12 +27,15 @@ BASIC IDEA
     And the sentence above a part: the formatted view of a large ontology
     counts the statements it holds rather than the bytes (CF-3).
 
+    And the empty state: with nothing open it sends a person to Home, never
+    to the *Load* button U-17 removed (wording 5.1).
+
 INPUTS / INPUT SOURCES
     - A mocked ../api whose getSource returns a fixed document.
     - Synthetic line arrays built in this file for the pure-function cases.
 
 EXPECTED OUTPUT
-    - Pass/fail per assertion, covering AC-9 and AC-10.
+    - Pass/fail per assertion, covering AC-9 and AC-10, and wording AC-1.
 ================================================================================
 */
 
@@ -392,5 +395,14 @@ describe("SourceView, a part of a large ontology", () => {
     const hint = document.querySelector(".query-hint")!;
     expect(hint.textContent).toContain("This file is too large to show in full");
     expect(hint.textContent).not.toContain("statements");
+  });
+});
+
+describe("SourceView with nothing open (wording 5.1, AC-1)", () => {
+  it("sends a person to Home", () => {
+    render(<SourceView ontologyId={null} />);
+    const hint = document.querySelector(".source-view.empty .hint")!;
+    expect(hint.textContent).toBe("Open an ontology from Home, then come back to read its source here.");
+    expect(getSource).not.toHaveBeenCalled();
   });
 });

@@ -27,7 +27,7 @@
     ["is part of", "is part of", "be part of"],
     ["part of", "is part of", "be part of"],
     ["located in", "is located in", "be located in"],
-    ["holder", "holder", "holder"],
+    ["holder", "has holder", "have holder"],
     ["works for", "works for", "work for"],
     ["worksFor", "worksFor", "workFor"],
     ["carries", "carries", "carry"],
@@ -35,6 +35,12 @@
     ["member of", "is member of", "be member of"],
     ["can see", "can see", "can see"],
     ["Owned by", "is Owned by", "be Owned by"],
-    ["address", "address", "address"]
+    ["address", "has address", "have address"],
+    ["crew member", "has crew member", "have crew member"],
+    ["launch site", "has launch site", "have launch site"],
+    ["has destination", "has destination", "have destination"],
+    ["orbits", "orbits", "orbit"],
+    ["name", "has name", "have name"],
+    ["hasName", "hasName", "haveName"]
   ]
 }

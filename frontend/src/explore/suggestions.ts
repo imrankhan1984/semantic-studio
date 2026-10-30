@@ -21,6 +21,11 @@ BASIC IDEA
     nodes are skipped: they are the file's own metadata, often high-degree, and
     never what a newcomer wants to open first.
 
+    The picks are then shown by group: classes and concepts first, then
+    properties, then individuals, each group by connections (wording 5.9,
+    Q3 A). By connections alone The Lord of the Rings led with its three
+    books; a learner reads the model first, so *Character* leads.
+
     Split out from the component on purpose, following sparql/starters.ts and
     QueryStart.tsx: the ranking and the wording are testable without rendering
     anything, which is why the query builder is the best-tested part of this
@@ -31,7 +36,8 @@ INPUTS / INPUT SOURCES
       DOM, no globals.
 
 EXPECTED OUTPUT
-    - suggestedEntities -> up to `limit` VizNodes, highest degree first, ties
+    - suggestedEntities -> up to `limit` VizNodes, by group (the model, then
+      properties, then individuals), each group highest degree first, ties
       broken by id so the list is identical on every load.
     - describeContents -> "This ontology describes 412 classes, 58 object
       properties and 1,104 individuals.", built only from counts and the
@@ -42,6 +48,7 @@ EXPECTED OUTPUT
 */
 
 import { plural } from "../sparql/describe";
+import { own } from "../theme/kinds";
 import type { VizGraph, VizNode } from "../types";
 import { kindLabel } from "../types";
 
@@ -56,6 +63,28 @@ const PER_KIND_CEILING = 3;
 /** The file's own `owl:Ontology` declaration. Excluded from the suggestions
  *  rather than from the summary sentence, which counts the whole ontology. */
 const HEADER_KIND = "ontology";
+
+/** The order the picks are shown in (wording 5.9): the model first, classes
+ *  and concepts with their schemes and collections, then properties, then
+ *  individuals; any other kind last. Read own-key (X-6). */
+const GROUPS: Record<string, number> = {
+  class: 0,
+  concept: 0,
+  conceptScheme: 0,
+  collection: 0,
+  objectProperty: 1,
+  datatypeProperty: 1,
+  annotationProperty: 1,
+  property: 1,
+  individual: 2,
+};
+const OTHER_GROUP = 3;
+
+function byGroupThenRank(a: VizNode, b: VizNode): number {
+  const ga = own(GROUPS, a.kind) ?? OTHER_GROUP;
+  const gb = own(GROUPS, b.kind) ?? OTHER_GROUP;
+  return ga !== gb ? ga - gb : byRank(a, b);
+}
 
 /** A sentence naming eleven kinds is a sentence nobody reads. */
 const MAX_NAMED_KINDS = 3;
@@ -79,7 +108,7 @@ function byRank(a: VizNode, b: VizNode): number {
  * Up to `limit` entities worth opening first: highest degree, at most `perKind`
  * from any one kind before the remaining slots are filled from the overall
  * ranking, ontology-header nodes excluded, ties broken by id so the result is
- * stable.
+ * stable; shown by group, then by degree.
  */
 export function suggestedEntities(
   graph: VizGraph | null,
@@ -124,8 +153,10 @@ export function suggestedEntities(
   }
 
   // Sorted rather than returned in selection order: the second pass appends
-  // below the ceiling's picks, and the list the user reads is meant to descend.
-  return taken.sort(byRank);
+  // below the ceiling's picks. The group decides what is chosen not at all,
+  // only the order it is read in, so the picks and the ceiling stay as they
+  // were (wording 5.9).
+  return taken.sort(byGroupThenRank);
 }
 
 /**

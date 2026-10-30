@@ -567,6 +567,21 @@ function crewed(items = CREWED_RULES, rules = true): NodeDetails {
   };
 }
 
+/** The panel on a project's model, with its Edit section. */
+async function renderEditing(kind: "ontology" | "taxonomy" | null = null) {
+  await act(async () => {
+    render(
+      <DetailPanel
+        ontologyId="o1"
+        iri={`${SPACE}CrewedMission`}
+        onNavigate={vi.fn()}
+        onClose={vi.fn()}
+        editing={{ primaryLanguage: "en", languages: ["en"], kind }}
+      />,
+    );
+  });
+}
+
 describe("DetailPanel: a class's rules (explore-rules 5.3, AC-3, AC-4)", () => {
   it("shows the rules under Rules, one sentence each, a Turtle item read-only", async () => {
     await renderPanel(crewed());
@@ -599,24 +614,40 @@ describe("DetailPanel: a class's rules (explore-rules 5.3, AC-3, AC-4)", () => {
     expect(screen.queryByRole("heading", { name: "Rules" })).toBeNull();
   });
 
-  it("leaves the rules to the Edit section's own block when the panel edits", async () => {
+  it("says a project class's rules once, in the Edit section, with no rule row under Statements (wording 5.6, AC-7)", async () => {
+    // Before: the Edit section said the rule and Statements listed its
+    // blank-node row again, as a running project showed (PR description).
     getNodeDetails.mockResolvedValue({ ...crewed(), kind: "class", names: [{ lang: "en", value: "Crewed mission" }] });
-    await act(async () => {
-      render(
-        <DetailPanel
-          ontologyId="o1"
-          iri={`${SPACE}CrewedMission`}
-          onNavigate={vi.fn()}
-          onClose={vi.fn()}
-          editing={{ primaryLanguage: "en", languages: ["en"] }}
-        />,
-      );
-    });
+    await renderEditing();
     expect(screen.getByRole("region", { name: "Edit" })).toBeTruthy();
     expect(screen.queryByRole("heading", { level: 3, name: "Rules" })).toBeNull();
     expect(screen.getAllByText("Every Crewed mission has at least one crew member that is an Astronaut")).toHaveLength(1);
-    // The rows stay: the Edit section says rules only in some of its forms,
-    // and hiding the rows behind one that does not lost them (code review).
+    expect(document.querySelectorAll(".term-bnode")).toHaveLength(0);
+    expect(document.querySelectorAll("table.detail-table tbody tr")).toHaveLength(2);
+    expect(screen.getByRole("heading", { name: /Statements/ }).textContent).toBe("Statements 2");
+  });
+
+  it("says where the rules went when the server cut the list, on a project's page too", async () => {
+    getNodeDetails.mockResolvedValue({
+      ...crewed(), outgoingTotal: 600, kind: "class", names: [{ lang: "en", value: "Crewed mission" }],
+    });
+    await renderEditing();
+    expect(screen.getByText("Showing 2 of 600 statements; 2 more are the rules above.")).toBeTruthy();
+  });
+
+  it("keeps the rule rows where the Edit section does not say them: an example, a class of the other kind", async () => {
+    // The Edit section's class form alone carries the rules (`saysRules`);
+    // hiding the rows behind another form lost them (code review).
+    getNodeDetails.mockResolvedValue({
+      ...crewed(), kind: "class", names: [{ lang: "en", value: "Crewed mission" }],
+      example: { classes: [], fields: [] },
+    });
+    await renderEditing();
+    expect(document.querySelectorAll(".term-bnode")).toHaveLength(2);
+    cleanup();
+    getNodeDetails.mockResolvedValue({ ...crewed(), kind: "class", names: [{ lang: "en", value: "Crewed mission" }] });
+    await renderEditing("taxonomy");
+    expect(screen.getByText(/A class, read-only in a taxonomy/)).toBeTruthy();
     expect(document.querySelectorAll(".term-bnode")).toHaveLength(2);
   });
 

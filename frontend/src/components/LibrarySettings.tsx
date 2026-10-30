@@ -4,10 +4,11 @@ FILE: frontend/src/components/LibrarySettings.tsx
 ================================================================================
 
 SUMMARY
-    Settings → Library (home-and-settings 5.4): adding a reference ontology
-    from the catalogue (schema.org, FIBO, UNESCO, QUDT's SHACL form),
-    *Bundled with Semantic Studio* while a bundled entry is missing
-    (reference-ontologies 5.3), and where the work is kept, with Copy path.
+    Settings → Library (home-and-settings 5.4): *Bundled with Semantic
+    Studio* while a bundled entry is missing (reference-ontologies 5.3),
+    first, so *Add them back* is in view without a scroll (wording 5.7);
+    adding a reference ontology from the catalogue (schema.org, FIBO,
+    UNESCO, QUDT's SHACL form); and where the work is kept, with Copy path.
     The Load dialog's Suggested tab until it moved here (5.3).
 
 BASIC IDEA
@@ -152,22 +153,12 @@ export default function LibrarySettings({
 
   return (
     <div ref={bodyRef} className="settings-library">
-      <section className="settings-section" aria-labelledby="settings-catalogue-heading">
-        <h3 id="settings-catalogue-heading">Add a reference ontology</h3>
-        <p className="hint">Well-known public ontologies — nothing is downloaded until you pick one.</p>
-        <CatalogueList
-          fetchingId={run?.origin.tab === "suggested" ? run.origin.entryId : null}
-          busy={busy}
-          onPick={(entry) => void add(entry)}
-          status={origin && statusAt(origin)}
-          statusId={origin?.entryId ?? null}
-        />
-      </section>
-
       {/* Only while a bundled entry is missing: the only way one comes back
           (home-and-examples 5.1, 5.8; reference-ontologies 5.3). It names
           them, since an example and a reference ontology are now two
-          different things to miss. Nothing is downloaded. */}
+          different things to miss. Nothing is downloaded. Above the
+          catalogue, so *Add them back* is in view at 1280×720 without a
+          scroll (wording 5.7). */}
       {bundledMissing.length > 0 && onExamplesRestored && (
         <section className="settings-section" aria-labelledby="settings-bundled-heading">
           <h3 id="settings-bundled-heading">Bundled with Semantic Studio</h3>
@@ -188,6 +179,18 @@ export default function LibrarySettings({
           </button>
         </section>
       )}
+
+      <section className="settings-section" aria-labelledby="settings-catalogue-heading">
+        <h3 id="settings-catalogue-heading">Add a reference ontology</h3>
+        <p className="hint">Well-known public ontologies — nothing is downloaded until you pick one.</p>
+        <CatalogueList
+          fetchingId={run?.origin.tab === "suggested" ? run.origin.entryId : null}
+          busy={busy}
+          onPick={(entry) => void add(entry)}
+          status={origin && statusAt(origin)}
+          statusId={origin?.entryId ?? null}
+        />
+      </section>
 
       {/* Both rendered whether or not they have anything to say: a live
           region added with its text is unreliably announced. */}

@@ -218,7 +218,7 @@ describe("the reuse plan in the class form (attribute-reuse 5.2)", () => {
     ]);
     expect(within(plan).getByText(/^Is every Contractor an Employee\?/)).toBeTruthy();
     expect(
-      within(plan).getByText("Share hasName between Employee and Contractor. It means: whatever has hasName is an Employee or a Contractor."),
+      within(plan).getByText("Share hasName between Employee and Contractor. It means: whatever has a value for hasName is an Employee or a Contractor."),
     ).toBeTruthy();
     expect(within(plan).getByText("Every Intern gets hasName too, because an Intern is a Worker.")).toBeTruthy();
     expect(within(plan).getByLabelText("The Turtle it writes").textContent).toContain("owl:unionOf");

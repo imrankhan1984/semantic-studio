@@ -423,14 +423,16 @@ export default function HomeScreen({
             <div className="home-controls">
               {/* The three ways in, in reading order, each the primary style:
                   they differ by their words, never by colour alone
-                  (home-and-settings 5.2, 5.7). */}
+                  (home-and-settings 5.2, 5.7). aria-disabled with a guard,
+                  never disabled: a disabled button drops the focus it holds
+                  (the authoring rule, wording 5.7). */}
               <div className="home-actions">
                 {projects && (
                   <button
                     ref={newProjectRef}
                     className="primary large"
-                    onClick={projects.onNew}
-                    disabled={projectBusyId !== null}
+                    aria-disabled={projectBusyId !== null}
+                    onClick={() => projectBusyId === null && projects.onNew()}
                   >
                     New project
                   </button>
@@ -438,12 +440,12 @@ export default function HomeScreen({
                 <button
                   ref={openFileRef}
                   className="primary large"
-                  disabled={busy}
-                  onClick={() => onOpenDialog("file")}
+                  aria-disabled={busy}
+                  onClick={() => !busy && onOpenDialog("file")}
                 >
                   Open a file
                 </button>
-                <button className="primary large" disabled={busy} onClick={() => onOpenDialog("url")}>
+                <button className="primary large" aria-disabled={busy} onClick={() => !busy && onOpenDialog("url")}>
                   Load from a URL
                 </button>
               </div>
@@ -470,7 +472,9 @@ export default function HomeScreen({
                     // a placeholder that invited a concept name would return
                     // nothing and teach the user the feature is broken rather
                     // than absent.
-                    placeholder="Search your library by name"
+                    // Short enough to fit unclipped at 1280×720 (wording
+                    // 5.7); the label above still says what it searches.
+                    placeholder="Search by name"
                   />
                 </>
               )}

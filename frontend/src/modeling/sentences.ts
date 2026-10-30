@@ -21,7 +21,7 @@ SUMMARY
     attribute-reuse 5.1, 5.2 and 5.4 read the same way: a suggestion under
     the name (*hasName, an attribute of Employee (text).*), each case of the
     reuse plan in the person's names, what a union means (*whatever has
-    hasName is an Employee or a Contractor*), the shared parent's question,
+    a value for hasName is an Employee or a Contractor*), the shared parent's question,
     who else gains a property moved up, the canvas's *Share* entry and its
     two-way Delete question, and what the live region says after.
 
@@ -48,8 +48,12 @@ BASIC IDEA
 
     A label is a verb when its first word is one (*is*, *has*, *can*) or ends
     in a single *s* (*uses*); one ending in a preposition or starting with a
-    participle reads after *is* or *be* (*part of*, *located in*); a bare
-    noun (*holder*) is left as written. No article is guessed before a label:
+    participle reads after *is* or *be* (*part of*, *located in*); anything
+    else is a noun (*holder*, *crew member*) and reads after *has* or
+    *have*: left bare it gave *A Crewed mission crew member an Astronaut*
+    (wording U-15 5.2). A bare verb in base form (*contain*) reads *has
+    contain*, a known limit no name in the bundled examples, the templates
+    or FOAF meets (test_sentences.py lists them). No article is guessed before a label:
     *Ann is member of Team A* stays. A name is used exactly as written;
     nothing here reads ontology text as markup or as a pattern.
 
@@ -114,18 +118,18 @@ function readsAfterIs(lower: string[]): boolean {
 }
 
 /** A relationship's label as the verb after a subject: *uses* and *has
- *  part* stay, *part of* and *located in* read after *is*, a bare noun
- *  (*holder*) is left alone. */
+ *  part* stay, *part of* and *located in* read after *is*, a noun
+ *  (*holder*) reads after *has*. */
 export function verb(label: string): string {
   const lower = words(label).map((m) => m[0].toLowerCase());
   if (!lower.length) return label;
   if (AUXILIARIES.has(lower[0]) || thirdPerson(lower[0])) return label;
-  return readsAfterIs(lower) ? `is ${label}` : label;
+  return readsAfterIs(lower) ? `is ${label}` : `has ${label}`;
 }
 
 /** The same label after *must* or *may*: *uses* -> *use*, *has part* ->
- *  *have part*, *is part of* and *part of* -> *be part of*; a bare noun is
- *  left alone. */
+ *  *have part*, *is part of* and *part of* -> *be part of*; a noun reads
+ *  after *have*. */
 export function mustVerb(label: string): string {
   const found = words(label);
   if (!found.length) return label;
@@ -144,14 +148,16 @@ export function mustVerb(label: string): string {
     else base = written.slice(0, -1);
     return `${label.slice(0, start)}${base}${rest}`;
   }
-  return readsAfterIs(lower) ? `be ${label}` : label;
+  return readsAfterIs(lower) ? `be ${label}` : `have ${label}`;
 }
 
 /** A new relationship read as it is named: *A Person works for an
  *  Organization.* With no name yet, the gap is shown, so the sentence has
  *  its shape before the first key. */
 export function relationshipSentence(from: string, name: string, to: string): string {
-  const said = name.trim() || "…";
+  // Through `verb`: a noun name read bare gave *A Crewed mission crew member
+  // an Astronaut* (wording 5.2).
+  const said = name.trim() ? verb(name.trim()) : "…";
   const first = article(from);
   return `${first[0].toUpperCase()}${first.slice(1)} ${from} ${said} ${article(to)} ${to}.`;
 }
@@ -165,7 +171,7 @@ export function linkSentence(kind: "subClassOf" | "broader" | "related", from: s
 
 /** An existing relationship the line would complete. */
 export function existingSentence(from: string, name: string, to: string): string {
-  return `${from} ${name} ${to} (existing relationship)`;
+  return `${from} ${verb(name)} ${to} (existing relationship)`;
 }
 
 /** What the live region says once a relationship is made (5.2). */
@@ -174,7 +180,8 @@ export function createdAnnouncement(name: string, from: string, to: string): str
 }
 
 /** An attribute's datatype as a word, for *name (Person, text)*: the seven
- *  types of E-6, and the prefixed name for any other. */
+ *  types of E-6, the common others the bundled files use (wording 5.4), and
+ *  the prefixed name for any other. */
 const TYPE_WORDS: Record<string, string> = {
   "xsd:string": "text",
   "rdf:langString": "text",
@@ -184,11 +191,24 @@ const TYPE_WORDS: Record<string, string> = {
   "xsd:date": "date",
   "xsd:dateTime": "date and time",
   "xsd:anyURI": "web address",
+  "xsd:gYear": "year",
+  "xsd:gYearMonth": "year and month",
+  "xsd:time": "time of day",
+  "xsd:float": "decimal number",
+  "xsd:double": "decimal number",
+  "xsd:nonNegativeInteger": "whole number, zero or more",
+  "xsd:positiveInteger": "whole number above zero",
 };
+
+/** Own keys only (X-6): a datatype named `constructor` read the object's
+ *  prototype and gave a function. */
+function knownType(datatype: string): boolean {
+  return Object.prototype.hasOwnProperty.call(TYPE_WORDS, datatype);
+}
 
 export function typeWord(datatype: string | null): string {
   if (!datatype) return "no type yet";
-  return TYPE_WORDS[datatype] ?? datatype;
+  return knownType(datatype) ? TYPE_WORDS[datatype] : datatype;
 }
 
 /** A tree row's ends: *Person → Organization* for a relationship, *Person,
@@ -324,7 +344,7 @@ export function oneStartOneEnd(name: string, from: string | null): string {
  *  *yes or no*, which take none; a type without a word is its name. */
 export function asType(datatype: string): string {
   const word = typeWord(datatype);
-  if (!(datatype in TYPE_WORDS) || word === "text" || word === "yes or no") return word;
+  if (!knownType(datatype) || word === "text" || word === "yes or no") return word;
   return a(word);
 }
 
@@ -406,9 +426,11 @@ export function matchesSaid(count: number, kind: PropertyWord): string {
   return count === 1 ? `1 existing ${kind} matches` : `${count} existing ${kind}s match`;
 }
 
-/** Who has a property, for *It means: whatever has a name ...*. */
+/** Who has a property, for *It means: whatever has a value for hasName
+ *  ...*: *whatever has hasName* read the name twice over (wording 5.3), and
+ *  modeling_checks.py says the same words. */
 function whoever(kind: PropertyWord, name: string): string {
-  return kind === "relationship" ? `whatever ${verb(name)} something` : `whatever has ${name}`;
+  return kind === "relationship" ? `whatever ${verb(name)} something` : `whatever has a value for ${name}`;
 }
 
 /** Case A (5.2): no class yet. */

@@ -112,9 +112,56 @@ describe("suggestedEntities", () => {
     // Both individuals fit under the ceiling; the other six slots go to classes.
     expect(result.filter((n) => n.kind === "individual")).toHaveLength(2);
     expect(result.filter((n) => n.kind === "class")).toHaveLength(6);
-    // The fill takes the next highest classes, and the whole list still descends
-    // by degree rather than showing the ceiling's picks first.
+    // The fill takes the next highest classes, and each group descends by
+    // degree rather than showing the ceiling's picks first.
     expect(result.map((n) => n.degree)).toEqual([900, 899, 898, 897, 896, 895, 5, 4]);
+  });
+
+  it("shows the model first: classes and concepts, then properties, then individuals (wording 5.9, AC-10)", () => {
+    // The Lord of the Rings' leaders as a running backend measured them
+    // (2026-10-30, /graph of the bundled example): by connections alone the
+    // three books led and Character was second.
+    const ME = "http://example.org/middle-earth#";
+    const lotr = (local: string, kind: string, degree: number): VizNode => ({ ...node(ME + local, kind, degree), label: local });
+    const graph = graphOf([
+      lotr("TheReturnOfTheKing", "individual", 25),
+      lotr("Character", "class", 23),
+      lotr("FellowshipOfTheRing", "individual", 17),
+      lotr("TheTwoTowers", "individual", 17),
+      lotr("BattleOfThePelennorFields", "individual", 13),
+      lotr("Gandalf", "individual", 12),
+      lotr("Elf", "class", 11),
+      lotr("Place", "class", 9),
+      lotr("Hobbit", "class", 8),
+      lotr("childOf", "objectProperty", 4),
+      lotr("parentOf", "objectProperty", 4),
+      lotr("appearsIn", "objectProperty", 2),
+      lotr("bornInYear", "datatypeProperty", 1),
+      { ...node("http://example.org/middle-earth", "ontology", 0), label: "The Lord of the Rings" },
+    ]);
+    const result = suggestedEntities(graph);
+    const ids = result.map((n) => n.id.slice(ME.length));
+
+    expect(ids[0]).toBe("Character");
+    expect(ids).toEqual([
+      "Character", "Elf", "Place",
+      "childOf", "parentOf",
+      "TheReturnOfTheKing", "FellowshipOfTheRing", "TheTwoTowers",
+    ]);
+    // Eight picks at most, three per kind at most: the same picks as before,
+    // in a new order.
+    expect(result).toHaveLength(8);
+    const perKind = new Map<string, number>();
+    for (const n of result) perKind.set(n.kind, (perKind.get(n.kind) ?? 0) + 1);
+    expect(Math.max(...perKind.values())).toBeLessThanOrEqual(3);
+    const lastClass = result.map((n) => n.kind).lastIndexOf("class");
+    const firstIndividual = result.map((n) => n.kind).indexOf("individual");
+    expect(lastClass).toBeLessThan(firstIndividual);
+  });
+
+  it("puts a kind outside the three groups last, by own key only", () => {
+    const graph = graphOf([node("x", "other", 50), node("c", "concept", 1), node("p", "constructor", 40), node("i", "individual", 2)]);
+    expect(suggestedEntities(graph).map((n) => n.id)).toEqual(["c", "i", "x", "p"]);
   });
 
   it("excludes ontology header nodes", () => {

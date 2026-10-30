@@ -489,7 +489,8 @@ leaves one behind.
 - What a draft made takes focus on its box whether the refetch lands before the result or after; `focusBox` retries until the box holds focus, as React Flow draws a new node hidden. [Edit page]
 - `index.css`'s kind tokens and `canvas/kindColours.ts` say the same values; `kindColours.test.ts` checks both themes. [Edit page]
 - `HierarchyView` never imports from `canvas/`: App reaches `canvas/` only through `React.lazy`. [Edit page]
-- Canvas markers are sized in user space, one per line kind, coloured by CSS. [Edit page]
+- Canvas markers are sized in user space, one per line kind, coloured by CSS.
+- A rule's raw rows leave Statements exactly when a section says the rule: the Rules block, or the Edit section where `saysRules` holds (wording 5.6). [Wording tidy-up] [Edit page]
 
 ## Skills
 

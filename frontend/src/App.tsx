@@ -2319,6 +2319,7 @@ export default function App() {
               onExpanded={onExpanded}
               queryResults={mode === "query" ? queryResults : undefined}
               frameTick={frameTick}
+              loading={loadingGraph}
               leftRail={
                 graphData ? (
                   <Legend

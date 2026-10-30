@@ -192,9 +192,13 @@ describe("a property's facts", () => {
     expect(texts("acronym", { kind: "datatypeProperty", description: null, domains: [], datatype: "xsd:string" })).toEqual([
       "acronym gives a thing a value: text.",
     ]);
+    // xsd:gYear has a word since wording 5.4; a type without one is its name.
     expect(
       texts("year", { kind: "datatypeProperty", description: null, domains: [ref("Organization")], datatype: "xsd:gYear" }),
-    ).toEqual(["year gives an Organization a value: xsd:gYear."]);
+    ).toEqual(["year gives an Organization a value: a year."]);
+    expect(
+      texts("code", { kind: "datatypeProperty", description: null, domains: [ref("Organization")], datatype: "xsd:hexBinary" }),
+    ).toEqual(["code gives an Organization a value: xsd:hexBinary."]);
     expect(texts("note", { kind: "datatypeProperty", description: null, domains: [], datatype: null })).toEqual([
       "note gives a thing a value.",
     ]);

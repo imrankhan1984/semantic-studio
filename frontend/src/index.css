@@ -944,10 +944,12 @@ select:focus {
   height: 100%;
 }
 
+/* Tight enough that QUDT's three chips, the widest, keep one line in a
+   card at 1280×720 (wording 5.7); a narrower card still wraps. */
 .onto-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 6px;
+  gap: 4px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -955,7 +957,7 @@ select:focus {
 }
 
 .onto-chips li {
-  padding: 2px 7px;
+  padding: 2px 6px;
   border-radius: 999px;
   border: 1px solid var(--border);
   color: var(--text-dim);
@@ -5495,6 +5497,12 @@ kbd {
 
 .shapes-add {
   line-height: 1;
+}
+
+/* Validate stands beside +, so it takes +'s 32 px, not the small set's 28
+   (wording 5.8); elsewhere it keeps the small size. */
+.shapes-list-head .validate-btn {
+  height: var(--btn-md);
 }
 
 .shapes-chooser {

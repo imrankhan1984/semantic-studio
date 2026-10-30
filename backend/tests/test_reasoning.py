@@ -382,23 +382,26 @@ EXPECTED_REASONS = {
     "L1 is an Order line": ("only", "order 7 has line L1, and every Order's has line can only be Order lines"),
     "carol is a Customer": ("same", "carol is a Client, and Client and Customer mean the same thing"),
     "Ann and Anne are the same thing": (
-        "sameThing", "passport 1 holder Ann and Anne, and holder is at most one, so they are the same",
+        "sameThing", "passport 1 has holder Ann and Anne, and holder is at most one, so they are the same",
     ),
 }
 
 
 def test_a_label_that_is_no_verb_reads_after_is():
     # PR #55 review: "unit A part of Acme". A verb stays; a label ending in a
-    # preposition, or starting with a participle, takes *is*; a bare noun is
-    # left alone rather than made to say the subject is it. The rule is
-    # sentences.py's since X-12; this keeps the review's own cases.
+    # preposition, or starting with a participle, takes *is*; a noun reads
+    # after *has* rather than being made to say the subject is it (wording
+    # 5.2). The rule is sentences.py's since X-12; this keeps the review's
+    # own cases.
     from app.sentences import verb
 
     for label in ("employs", "works for", "worksFor", "has line", "is part of", "leads", "can see"):
         assert verb(label) == label
     for label in ("part of", "partOf", "married to", "member of", "above", "located in", "Owned by"):
         assert verb(label) == f"is {label}"
-    for label in ("holder", "address", "status", "", "42"):
+    for label in ("holder", "address", "status"):
+        assert verb(label) == f"has {label}"
+    for label in ("", "42"):
         assert verb(label) == label
 
 
