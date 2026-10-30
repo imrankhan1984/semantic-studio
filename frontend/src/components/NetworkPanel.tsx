@@ -131,7 +131,9 @@ export default function NetworkPanel() {
       {policy && (
         <>
           <section className="network-section" aria-labelledby="network-offline-heading">
-            <h3 id="network-offline-heading">Connections</h3>
+            {/* Not *Connections*: above the Connection section it read as
+                that section's plural. */}
+            <h3 id="network-offline-heading">Working offline</h3>
             <button
               type="button"
               role="switch"

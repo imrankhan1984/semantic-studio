@@ -166,7 +166,7 @@ describe("NetworkPanel", () => {
     await renderPanel();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByRole("button", { name: /close/i })).toBeNull();
-    expect(screen.getByRole("heading", { level: 3, name: "Connections" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: "Working offline" })).toBeTruthy();
     expect(getNetworkPolicy).toHaveBeenCalledTimes(1);
     expect(getNetworkActivity).toHaveBeenCalledTimes(1);
     expect(getNetworkConnection).toHaveBeenCalledTimes(1);
@@ -250,7 +250,7 @@ describe("NetworkPanel, Connection (Stage 4)", () => {
   it("stands between Work offline and the sites, the system proxy chosen by default", async () => {
     await renderPanel();
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(headings).toEqual(["Connections", "Connection", "Allowed and blocked sites", "Recent connections"]);
+    expect(headings).toEqual(["Working offline", "Connection", "Allowed and blocked sites", "Recent connections"]);
     const group = screen.getByRole("group", { name: "Proxy" });
     const radios = [...group.querySelectorAll<HTMLInputElement>("input[type=radio]")];
     expect(radios.map((r) => r.labels?.[0]?.textContent)).toEqual([

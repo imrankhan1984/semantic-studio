@@ -2663,7 +2663,12 @@ EXPECTED OUTPUT
   *after* the policy gate, because on Windows and macOS the system bypass
   check can itself look a name up. Because it reads the environment, a
   runner or sandbox with `HTTPS_PROXY` set would send every test's request
-  to its proxy, so `conftest.py` makes it `{}` for every test.
+  to its proxy, so `conftest.py` makes it `{}` for every test. The
+  system's bypass list holds too (`proxy_bypass`, NO_PROXY or Windows'
+  exceptions): such a host goes direct and pinned. And the broker's client
+  keeps `trust_env=False` in every mode: httpx reads `HTTPS_PROXY` and
+  `HTTP_PROXY` on its own otherwise, so *No proxy* would not mean no proxy.
+  Both have a test that fails without its line (PR #75 review).
 
   **Through a proxy, nothing is pinned.** The original URL goes to the
   proxy, which asks for `CONNECT host:443`; a pinned address would show the

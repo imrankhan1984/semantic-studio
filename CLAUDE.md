@@ -49,7 +49,7 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1720 tests (+2 marked `network`, deselected)
+cd backend  && python -m pytest tests    # 1722 tests (+2 marked `network`, deselected)
 cd frontend && npm run test              # 1940 tests, vitest
 ```
 
@@ -281,7 +281,7 @@ leaves one behind.
 - Only `network_broker.py` connects out; policy is asked before any name resolves. [outbound connection]
 - The broker connects to the judged address (`_pinned_url`), the name in `Host` and SNI, unless a proxy carries the request. [outbound connection]
 - Through a proxy the original URL goes as it is (no pinned address, `Host` or `sni_hostname`), and only after D-070's name rules: a name resolving here to a non-public address never reaches the proxy (D-123). [Corporate network]
-- The system proxy is `getproxies()` read at each request, after the policy gate, never cached; `conftest.py` makes it `{}` for every test. [Corporate network]
+- The system proxy is `getproxies()` read at each request, after the policy gate, never cached, and the system's bypass list (`proxy_bypass`) holds; `conftest.py` makes it `{}` for every test. `trust_env=False` stays on the broker's client: httpx would otherwise take `HTTPS_PROXY` itself, past *No proxy*. [Corporate network]
 - Trust is `truststore.SSLContext` with the user's file added by `load_verify_locations`, built per request; only `network_broker.py` imports truststore, and `test_network_settings.py` scans `app/` for any way to switch verification off. [Corporate network]
 - The connection settings are `network-policy.json`'s, written by `network_broker.py` alone, never `settings.json`; a certificate file holding `PRIVATE KEY` is refused. [Corporate network]
 - Workers run in `contextvars.copy_context()`, or a just-once grant never reaches them. [outbound connection]

@@ -335,6 +335,53 @@ def test_no_proxy_ignores_the_system_proxy(monkeypatch, proxy, http_server, loop
     assert proxy.connections == 0
 
 
+def test_a_host_on_the_system_bypass_list_goes_direct(monkeypatch, proxy, http_server, loopback_is_public):
+    """The system's own exceptions hold: a host the system says to reach
+    directly is reached directly and pinned, and the proxy hears nothing.
+
+    The bypass list is NO_PROXY, which proxy_bypass reads on every platform
+    once any proxy variable is set (on Windows the registry's ProxyOverride
+    is read only when none is)."""
+    server = http_server(lambda _p: (200, {}, BODY))
+    port = server.server_address[1]
+    loopback_is_public["bypass.test"] = [LOCAL]
+    loopback_is_public["proxied.test"] = [LOCAL]
+    monkeypatch.setattr(urllib.request, "getproxies", lambda: {"http": f"http://127.0.0.1:{proxy.port}"})
+    for name in ("no_proxy", "NO_PROXY"):
+        monkeypatch.setenv(name, "bypass.test")
+
+    response = _get(f"http://bypass.test:{port}/x")
+    assert response.status == 200 and not response.proxied
+    assert server.requests == ["/x"]
+    assert proxy.connections == 0
+
+    # And the proxy is live: a host not on the list goes through it.
+    assert _get(f"http://proxied.test:{port}/y").proxied
+    assert proxy.lines == [f"GET http://proxied.test:{port}/y HTTP/1.1"]
+
+
+def test_no_proxy_ignores_the_environments_proxy_variables(monkeypatch, proxy, http_server, tls_server, loopback_is_public):
+    """httpx would read HTTPS_PROXY and HTTP_PROXY itself unless told not to
+    (trust_env=False): with *No proxy* chosen, a proxy in the environment
+    hears nothing, over plain http or https."""
+    server = http_server(lambda _p: (200, {}, BODY))
+    origin = tls_server("company-site")
+    loopback_is_public["plain.test"] = [LOCAL]
+    loopback_is_public["secure.test"] = [LOCAL]
+    proxy_url = f"http://127.0.0.1:{proxy.port}"
+    for name in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(name, proxy_url)
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    _mode("none")
+    assert _upload_ca().status_code == 200
+
+    assert _get(f"http://plain.test:{server.server_address[1]}/x").body == BODY
+    assert _get(f"https://secure.test:{origin.port}/x").body == BODY
+    assert server.requests == ["/x"] and origin.hosts == [f"secure.test:{origin.port}"]
+    assert proxy.connections == 0
+
+
 def test_a_system_proxy_of_another_kind_is_refused_not_bypassed(monkeypatch, loopback_is_public):
     loopback_is_public["plain.test"] = [LOCAL]
     monkeypatch.setattr(urllib.request, "getproxies", lambda: {"http": "socks5://127.0.0.1:1080"})
