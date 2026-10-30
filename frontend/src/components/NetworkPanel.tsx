@@ -5,31 +5,33 @@ FILE: frontend/src/components/NetworkPanel.tsx
 
 SUMMARY
     Network settings: the switch that makes Semantic Studio work offline, the
-    sites the user has allowed or blocked (each revocable), and the most recent
-    connections the application made or refused. The user's view of, and
-    control over, everything the network broker does (external-access Stage 1).
+    connection settings for a corporate network, the sites the user has
+    allowed or blocked (each revocable), and the most recent connections the
+    application made or refused. The user's view of, and control over,
+    everything the network broker does (external-access Stages 1 and 4).
 
 BASIC IDEA
     The Network tab of Settings (home-and-settings 5.4), today's panel
     unchanged inside it; it was a modal of its own, opened from a header
-    control, until Settings took that control's place. It makes two requests
-    when Settings opens -- the policy and the activity log -- and none
-    before, so the application's mount budget is untouched. Changes apply at
-    once, as they always did: there is no Save on this tab.
+    control, until Settings took that control's place. It makes three
+    requests when Settings opens -- the policy, the activity log and the
+    connection settings -- and none before, so the application's mount
+    budget is untouched. Changes apply at once, as they always did, except
+    the proxy, which waits for its own Save (NetworkConnection.tsx).
 
-    Three sections, each stated in text:
+    Four sections, each stated in text:
       * Work offline, a `role="switch"` button whose `aria-checked` is the
         state and whose label says it. Offline refuses every connection with no
         dialog; it is a normal state, not an error, so it is worded as one.
+      * Connection (Stage 4, backlog X-7): the proxy, the certificates and
+        Test connection, a component of its own (NetworkConnection.tsx)
+        that reads and saves its own settings.
       * Allowed and blocked sites. Remembered decisions only; a just-once
         Allow is spent by the action it was given for and is never a standing
         permission. Revoke returns the site to Ask. Focus moves to the
         section heading after a revoke, because the row that held it is gone.
       * Recent connections, newest first, capped by the server at 200. Each row
         says what happened in words (networkWords.ts); colour adds nothing.
-
-    The corporate network settings (proxy, certificate file, Test connection)
-    are a later stage (backlog X-7) and deliberately have no placeholder here.
 
     Changes are announced in a polite live region, so a screen reader user
     hears that offline took effect or that a site was revoked.
@@ -52,6 +54,7 @@ import {
 } from "../api";
 import { outcomeLabel, purposeLabel } from "../networkWords";
 import type { NetworkActivity, NetworkPolicy } from "../types";
+import NetworkConnection from "./NetworkConnection";
 
 function when(iso: string): string {
   const date = new Date(iso);
@@ -128,7 +131,9 @@ export default function NetworkPanel() {
       {policy && (
         <>
           <section className="network-section" aria-labelledby="network-offline-heading">
-            <h3 id="network-offline-heading">Connections</h3>
+            {/* Not *Connections*: above the Connection section it read as
+                that section's plural. */}
+            <h3 id="network-offline-heading">Working offline</h3>
             <button
               type="button"
               role="switch"
@@ -147,6 +152,8 @@ export default function NetworkPanel() {
                 : "Online. Semantic Studio asks before connecting to a site you have not decided about."}
             </p>
           </section>
+
+          <NetworkConnection />
 
           <section className="network-section" aria-labelledby="network-sites-heading">
             <h3 id="network-sites-heading" ref={sitesHeadingRef} tabIndex={-1}>

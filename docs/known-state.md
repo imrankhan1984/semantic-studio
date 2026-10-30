@@ -2647,3 +2647,71 @@ EXPECTED OUTPUT
   a modal dialog named *Remove from your library*, described by
   removalPrompt's sentence; Tab and Shift+Tab wrap; Escape gives focus back
   to the card's ⋮.
+
+- **Corporate network** (2026-10-30, spec `external-access` v1.7 Stage 4,
+  Section 5.5, backlog X-7, D-070 and D-123). Behind Zscaler every outbound
+  feature failed twice over: the broker connected directly with
+  `trust_env=False`, and Python's own certificate list does not hold the
+  company root Zscaler re-signs with. The broker now chooses a proxy per
+  request and trusts what the operating system trusts.
+
+  **The system proxy is the default and is read every time.**
+  `urllib.request.getproxies()` reads Windows' proxy setting (elsewhere
+  the `HTTPS_PROXY` variables) at each request, never cached: a laptop that
+  moves between the office and home changes it without a restart. With
+  none found the connection is direct and pinned, as before. It is asked
+  *after* the policy gate, because on Windows and macOS the system bypass
+  check can itself look a name up. Because it reads the environment, a
+  runner or sandbox with `HTTPS_PROXY` set would send every test's request
+  to its proxy, so `conftest.py` makes it `{}` for every test. The
+  system's bypass list holds too (`proxy_bypass`, NO_PROXY or Windows'
+  exceptions): such a host goes direct and pinned. And the broker's client
+  keeps `trust_env=False` in every mode: httpx reads `HTTPS_PROXY` and
+  `HTTP_PROXY` on its own otherwise, so *No proxy* would not mean no proxy.
+  Both have a test that fails without its line (PR #75 review).
+
+  **Through a proxy, nothing is pinned.** The original URL goes to the
+  proxy, which asks for `CONNECT host:443`; a pinned address would show the
+  proxy an IP for a name, and an SNI name carried by hand would be checked
+  against nothing. What D-070 keeps is name-based and runs before the proxy
+  hears anything: a non-public address in the URL, a name that resolves
+  here to any non-public address, a name with no dot, and `.local`,
+  `.localhost`, `.internal`, `.lan`, `.home.arpa`. The last two kinds are
+  refused in every mode, at gate 2 with no lookup: direct, the address check
+  refused them after a lookup anyway. A name this machine cannot look up at
+  all goes to the proxy, as it would from the browser on a network that
+  resolves only through its proxy; the host was still approved by name.
+  The residual, a public name the proxy routes inside, is said under the
+  proxy choice. A recording proxy sees zero connections for every refused
+  form (`test_network_settings.py`).
+
+  **Trust is added to, never replaced.** `truststore.SSLContext` hands
+  verification to Windows or macOS and reads OpenSSL's system paths on
+  Linux; the user's file joins it with `load_verify_locations`. The context
+  is built per request, so a Remove is forgotten by the next request.
+  truststore does not implement `get_ca_certs`; the test reads its inner
+  context, which is where Windows' and macOS' verification read the added
+  roots from too. Verification has no off switch: a scan of `app/` refuses
+  `verify=False`, `CERT_NONE`, `check_hostname = False`,
+  `_create_unverified_context`, `PYTHONHTTPSVERIFY` and any assignment to
+  `verify_mode`. The live trust tests run on Linux only, where
+  `SSL_CERT_FILE` can play the system store; Windows' store cannot be
+  filled by a test.
+
+  **The certificate file is read as certificates only**: PEM blocks kept,
+  anything else wrapped as DER, then a throwaway context must load it and
+  hold one. A file with `PRIVATE KEY` in it is refused, as a trust file has
+  no use for a key. 1 MB, enforced twice: the middleware on the declared
+  size, the route while reading.
+
+  **Where it lives.** `connection` in `network-policy.json`, written by
+  `network_broker.py` alone, and `network-ca.pem` beside it; never
+  `settings.json`, which keeps the three limits D-120 gave `settings.py`.
+  A hand-edited bad value falls back on its own and is logged once; a
+  Manual with no usable HTTPS proxy reads as the default mode.
+
+  **Test connection** fetches the RDF vocabulary as `network:test`, which is
+  logged and never grantable; a test sent to another host fails rather than
+  asking. httpx folds a certificate failure into `ConnectError`, so the
+  stage is read from the exception chain (`SSLCertVerificationError`), and
+  a refused `CONNECT` is `ProxyError`, whose text starts with the status.

@@ -17,6 +17,8 @@
 
 # Never touched.
 *.png   binary
+# A DER certificate is bytes; a test compares it byte for byte.
+*.der   binary
 *.jpg   binary
 *.ico   binary
 *.woff  binary

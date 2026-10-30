@@ -453,6 +453,37 @@ of them open as fast as none.
   and green: Alice is not yet a member of Acme.
 - Queries saved while a project is open are kept in its `queries/` folder.
 
+## Corporate networks: proxy and certificates
+
+Settings → Network → *Connection* sets how Semantic Studio reaches the
+internet on a company network. Nothing here changes what needs your
+approval: every new site is still asked about first.
+
+- **Proxy.** *Use my system's proxy settings* is the default. It reads the
+  proxy set in Windows (Settings, Network & internet, Proxy), or the
+  `HTTPS_PROXY` and `HTTP_PROXY` variables elsewhere, at every request; with
+  none found it connects directly. *No proxy* always connects directly.
+  *Manual* takes an HTTPS proxy host and port, an optional HTTP proxy (empty
+  means the HTTPS one), and a list of hosts that skip the proxy. Changes
+  apply on **Save**. Proxy auto-configuration (PAC) files and proxy
+  passwords are not supported.
+- **Certificates.** Semantic Studio trusts the certificates your operating
+  system trusts, so a company root that Windows already trusts (Zscaler's,
+  for example) needs no step. If it does not, add the company's root
+  certificate file (`.pem`, `.crt` or `.cer`, at most 1 MB): it is added to
+  the trusted set, never in its place. Certificate checking cannot be
+  switched off.
+- **Test connection** downloads the RDF vocabulary from www.w3.org through
+  the saved settings and says which step failed, if one did: the proxy, the
+  certificate or the site.
+
+Through a proxy, the proxy finds the site, so Semantic Studio cannot see
+its address. It still refuses addresses and names that are clearly internal
+(private addresses, names that resolve to them on your machine, names
+without a dot, and `.local`, `.internal`, `.lan` and `.home.arpa`) before
+the proxy hears of them. The settings are kept in `network-policy.json` and
+the certificate as `network-ca.pem`, both in the data folder.
+
 ## Where your ontologies are stored
 
 Every ontology you load (uploaded file or URL fetch) is persisted so it is
@@ -566,8 +597,8 @@ above).
 
 - Running the built queries against remote SPARQL endpoints.
 - Editing and serialization back to RDF.
-- GitHub Enterprise support (configurable hosts, per-user access tokens,
-  corporate proxy handling) — until then, download files and upload them.
+- GitHub Enterprise support (configurable hosts, per-user access tokens)
+  — until then, download files and upload them.
 - Private github.com repositories via personal access token.
 
 ## Licenses of major dependencies
@@ -584,5 +615,6 @@ All dependencies are permissive open source:
 | httpx | BSD-3-Clause |
 | pySHACL, SHACL validation | Apache-2.0 |
 | OWL-RL (installed with pySHACL) | W3C Software License |
+| truststore, the operating system's certificates | MIT |
 
 This project itself is MIT licensed — see [LICENSE](LICENSE).

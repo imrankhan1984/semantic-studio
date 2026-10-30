@@ -134,6 +134,12 @@ def test_route_discovery_finds_the_known_mutating_routes():
         ("POST", "/api/projects/x/documents/x/save"),
         # home-and-settings Stage B: a limit is changed only from our page.
         ("PUT", "/api/settings"),
+        # external-access Stage 4: a page that could set the proxy or add a
+        # trusted root would read every connection the app makes.
+        ("PUT", "/api/network/connection"),
+        ("PUT", "/api/network/connection/ca"),
+        ("DELETE", "/api/network/connection/ca"),
+        ("POST", "/api/network/test"),
     ]:
         assert expected in routes
 

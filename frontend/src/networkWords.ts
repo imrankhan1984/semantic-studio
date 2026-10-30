@@ -47,6 +47,8 @@ const PHRASES: Record<string, { always: string; purpose: string }> = {
   "ontology:import": { always: "importing ontologies", purpose: "Imports" },
   "jsonld:context": { always: "loading JSON-LD contexts", purpose: "JSON-LD contexts" },
   "sparql:service": { always: "running SPARQL queries", purpose: "SPARQL queries" },
+  // Test connection (Stage 4): logged, never granted, so never "always".
+  "network:test": { always: "testing the connection", purpose: "Connection test" },
 };
 
 const OUTCOMES: Record<string, string> = {

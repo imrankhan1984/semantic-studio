@@ -93,10 +93,14 @@ import type {
   VizNeighborhood,
   VizNodes,
   VizNode,
+  ConnectionTestResult,
   NetworkActivity,
   NetworkCapability,
+  NetworkConnection,
   NetworkGrant,
   NetworkPolicy,
+  ProxyMode,
+  ProxyPair,
   ShapesListing,
   ShapeSuggestions,
   ValidationResult,
@@ -693,6 +697,55 @@ export function getNetworkActivity(limit = 200): Promise<NetworkActivity[]> {
   return send(`/api/network/activity?limit=${limit}`).then((r) =>
     handle<NetworkActivity[]>(r),
   );
+}
+
+/* --- the corporate network settings (external-access 5.5, Stage 4) -------- */
+
+// The proxy choice, the certificate file and what the system offers now.
+export function getNetworkConnection(): Promise<NetworkConnection> {
+  return send("/api/network/connection").then((r) => handle<NetworkConnection>(r));
+}
+
+// Save the proxy settings. A refused field comes back as a 422 whose
+// `detail.fields` names it, with its sentence.
+export function saveNetworkConnection(payload: {
+  mode: ProxyMode;
+  https: ProxyPair;
+  http: ProxyPair;
+  noProxy: string[];
+}): Promise<NetworkConnection> {
+  return send("/api/network/connection", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
+    body: JSON.stringify(payload),
+  }).then((r) => handle<NetworkConnection>(r));
+}
+
+// Add a certificate file to the trusted set. The server reads only the bytes.
+export function uploadNetworkCertificate(file: File): Promise<NetworkConnection> {
+  const form = new FormData();
+  form.append("file", file);
+  return send("/api/network/connection/ca", {
+    method: "PUT",
+    headers: { ...CLIENT_HEADER },
+    body: form,
+  }).then((r) => handle<NetworkConnection>(r));
+}
+
+// Remove the certificate file; the system's certificates alone are trusted.
+export function removeNetworkCertificate(): Promise<NetworkConnection> {
+  return send("/api/network/connection/ca", {
+    method: "DELETE",
+    headers: { ...CLIENT_HEADER },
+  }).then((r) => handle<NetworkConnection>(r));
+}
+
+// Fetch one known file through the saved settings and say what happened.
+export function testNetworkConnection(): Promise<ConnectionTestResult> {
+  return send("/api/network/test", {
+    method: "POST",
+    headers: { ...CLIENT_HEADER },
+  }).then((r) => handle<ConnectionTestResult>(r));
 }
 
 /* --- Settings (home-and-settings 5.4, D-120) ------------------------------- */
