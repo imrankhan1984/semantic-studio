@@ -295,7 +295,7 @@ describe("Structure (AC-1, AC-3)", () => {
     fireEvent.change(box, { target: { value: "Doc" } });
     const option = await screen.findByRole("option");
     expect(option.textContent).toBe("Document, from FOAF");
-    expect(searchNodes).toHaveBeenLastCalledWith(OID, "Doc", true, "class");
+    expect(searchNodes).toHaveBeenLastCalledWith(OID, "Doc", true, "class", undefined, undefined, true);
     await act(async () => {
       fireEvent.keyDown(box, { key: "Enter" });
     });
@@ -396,7 +396,7 @@ describe("Structure (AC-1, AC-3)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add broader concept" }));
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "St" } });
     await screen.findByRole("option", { name: "Status" });
-    expect(searchNodes).toHaveBeenLastCalledWith(OID, "St", true, "concept");
+    expect(searchNodes).toHaveBeenLastCalledWith(OID, "St", true, "concept", undefined, undefined, true);
     await act(async () => {
       fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
     });
@@ -930,7 +930,7 @@ describe("relationship form (AC-7)", () => {
     fireEvent.click(screen.getByRole("button", { name: "or choose an existing relationship" }));
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "em" } });
     const option = await screen.findByRole("option", { name: "employs" });
-    expect(searchNodes).toHaveBeenLastCalledWith(OID, "em", true, "objectProperty");
+    expect(searchNodes).toHaveBeenLastCalledWith(OID, "em", true, "objectProperty", undefined, undefined, true);
     await act(async () => {
       fireEvent.mouseDown(option);
     });

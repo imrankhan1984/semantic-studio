@@ -433,3 +433,180 @@ def test_list_budget():
     median = sorted(samples)[2]
     assert len(listed) >= 100
     assert median <= limit_ms(100), f"listing {len(listed)} projects took {median:.1f} ms (median of 5)"
+
+
+# --- reference-ontologies 5.4: reuse terms and a description (AC-4, AC-5) -------
+
+FOAF_NS = "http://xmlns.com/foaf/0.1/"
+QUDT_NS = "http://qudt.org/schema/qudt/"
+DCTERMS_REQUIRES = URIRef("http://purl.org/dc/terms/requires")
+
+
+def _model_text(pid: str) -> str:
+    return (project_store.folder(pid) / "model.ttl").read_text(encoding="utf-8")
+
+
+def _declared(text: str) -> dict:
+    graph = Graph(bind_namespaces="none")
+    graph.parse(data=text, format="turtle")
+    return {p: str(n) for p, n in graph.namespaces()}
+
+
+@pytest.mark.parametrize("template", ["empty", "small", "taxonomy-empty", "taxonomy-small"])
+def test_references_write_prefixes_and_requires_and_never_imports(template):
+    project = _create(name="Plant", template=template, references=["foaf", "qudt"])
+    text = _model_text(project["id"])
+    declared = _declared(text)
+    assert declared["foaf"] == FOAF_NS and declared["qudt"] == QUDT_NS
+    graph = _model(project["id"])
+    header = URIRef("http://example.org/plant")
+    assert set(graph.objects(header, DCTERMS_REQUIRES)) == {
+        URIRef("http://xmlns.com/foaf/0.1/"), URIRef("http://qudt.org/3.5.2/qudt-all"),
+    }
+    # D-121: a prefix is not an import.
+    assert not list(graph.triples((None, OWL.imports, None)))
+    assert "imports" not in text
+    assert project["references"] == ["foaf", "qudt"]
+    assert project_store.manifest(project["id"])["references"] == ["foaf", "qudt"]
+
+
+def test_no_reference_and_no_description_writes_the_template_byte_for_byte():
+    project = _create(name="Plain", template="empty", baseIri="http://acme.test/p#", prefix="p")
+    assert _model_text(project["id"]) == (
+        "@prefix p: <http://acme.test/p#> .\n"
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+        "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n\n"
+        "<http://acme.test/p> a owl:Ontology ;\n"
+        '    rdfs:label "Plain"@en .\n'
+    )
+    assert project["references"] == []
+
+
+def test_no_path_writes_owl_imports():
+    """D-121, read from the source: every mention of owl:imports in the
+    application reads it, and no template declares one."""
+    app_dir = pathlib.Path(__file__).resolve().parents[1] / "app"
+    reads = ("objects(", "subjects(", "subject_objects(", "value(", "triples(")
+    for path in app_dir.rglob("*.py"):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "OWL.imports" in line or "owl#imports" in line:
+                ok = any(r in line for r in reads) or path.name == "query_schema.py"
+                assert ok, f"{path.name}:{number} may write owl:imports: {line.strip()}"
+    assert len(list(app_dir.rglob("*.py"))) > 40, "the scan read the application"
+    for template in (app_dir / "templates").glob("*.ttl"):
+        assert "imports" not in template.read_text(encoding="utf-8"), template.name
+
+
+def test_description_is_the_headers_comment_in_the_primary_language():
+    project = _create(name="Pumps", template="small", primaryLanguage="fr", description='Une "ontologie"\nde pompes.')
+    # Read as the app reads a document, through read_text (_load).
+    graph = Graph().parse(data=_model_text(project["id"]), format="turtle")
+    comments = list(graph.objects(URIRef("http://example.org/pumps"), RDFS.comment))
+    assert comments == [Literal('Une "ontologie"\nde pompes.', lang="fr")]
+
+
+@pytest.mark.parametrize("empty", [None, "", "   \n "])
+def test_an_empty_description_writes_no_comment(empty):
+    body = {"name": "Pumps", "template": "empty"}
+    if empty is not None:
+        body["description"] = empty
+    project = _create(**body)
+    assert not list(_model(project["id"]).objects(URIRef("http://example.org/pumps"), RDFS.comment))
+
+
+def test_description_limit_is_2000_characters():
+    assert client.post("/api/projects", json={"name": "Long", "template": "empty", "description": "x" * 2001}).status_code == 422
+    project = _create(name="Long", template="empty", description="x" * 2000)
+    assert len(next(_model(project["id"]).objects(None, RDFS.comment))) == 2000
+
+
+def test_an_unknown_reference_key_is_422_and_makes_nothing():
+    before = set(p.name for p in project_store.dir.iterdir())
+    for refs in (["schema"], ["foaf", "FOAF"], ["../vocab"]):
+        r = client.post("/api/projects", json={"name": "Odd", "template": "empty", "references": refs})
+        assert r.status_code == 422, (refs, r.text)
+    assert set(p.name for p in project_store.dir.iterdir()) == before
+
+
+def test_project_prefix_equal_to_a_chosen_reference_prefix_is_refused():
+    r = client.post("/api/projects", json={"name": "QUDT test", "template": "empty", "prefix": "qudt", "references": ["qudt"]})
+    assert r.status_code == 422  # a ProjectError, as every refused create
+    assert r.json()["detail"] == "qudt is QUDT's prefix. Choose another for your project."
+    # The default prefix of the spec's example is fine, and so is qudt without QUDT.
+    assert _create(name="QUDT test", template="empty", references=["qudt"])["prefix"] == "qudttest"
+    assert _create(name="Units", template="empty", prefix="qudt")["prefix"] == "qudt"
+
+
+# The copies' header is their own IRI: another test imports
+# <http://example.org/lib>, and a library entry naming it would answer that
+# import (D-068) for every test after this one.
+COPIED = "http://example.org/copied"
+
+
+def _library_copy(data: bytes, name: str):
+    oid = _upload(data, name)
+    return oid, lambda: client.delete(f"/api/ontologies/{oid}")
+
+
+def test_a_copy_takes_no_references_and_keeps_its_own_description():
+    oid, remove = _library_copy(
+        LIBRARY_TTL.replace(b"# A comment", f'<{COPIED}> a owl:Ontology ; rdfs:comment "Its own."@en .\n# A comment'.encode()),
+        "own.ttl",
+    )
+    try:
+        r = client.post("/api/projects", json={"name": "Copy", "fromOntologyId": oid, "references": ["foaf"]})
+        assert r.status_code == 422 and "copy keeps its own file" in r.json()["detail"]
+        kept = _create(name="Copy", fromOntologyId=oid, description="An ontology for Copy.")
+        assert list(_model(kept["id"]).objects(URIRef(COPIED), RDFS.comment)) == [Literal("Its own.", lang="en")]
+    finally:
+        remove()
+
+
+def test_a_copy_without_a_description_gains_one_and_keeps_its_text():
+    library = LIBRARY_TTL.replace(b"# A comment", f"<{COPIED}> a owl:Ontology .\n# A comment".encode())
+    oid, remove = _library_copy(library, "bare.ttl")
+    try:
+        project = _create(name="Copy", fromOntologyId=oid, description="An ontology for Copy.")
+        text = _model_text(project["id"])
+        assert text.startswith(library.decode("utf-8").rstrip("\n")), "the copied text, comments and all, stays"
+        assert list(_model(project["id"]).objects(URIRef(COPIED), RDFS.comment)) == [
+            Literal("An ontology for Copy.", lang="en")
+        ]
+    finally:
+        remove()
+
+
+def test_a_copy_of_another_format_never_writes_into_the_library():
+    """Code review: the RDF/XML path copied the library's own graph object,
+    so the description landed in the library entry, at revision 0."""
+    rdfxml = LIBRARY_RDFXML.replace(
+        b'  <owl:Class rdf:about="http://example.org/x#Cat">',
+        f'  <owl:Ontology rdf:about="{COPIED}"/>\n  <owl:Class rdf:about="http://example.org/x#Cat">'.encode(),
+    )
+    oid, remove = _library_copy(rdfxml, "cats.rdf")
+    try:
+        library = store.get(oid).ensure_loaded()
+        before = len(library)
+        project = _create(name="Cats", fromOntologyId=oid, description="An ontology for Cats.")
+        assert list(_model(project["id"]).objects(URIRef(COPIED), RDFS.comment)) == [Literal("An ontology for Cats.", lang="en")]
+        assert len(library) == before
+        assert not list(library.objects(URIRef(COPIED), RDFS.comment))
+    finally:
+        remove()
+
+
+def test_the_description_later_is_one_set_comment_on_the_header_and_one_undo():
+    """5.5, AC-6: the state names the header, as for a project made before
+    E-12 (no references, no description), and SetComment on it is one step."""
+    project = _create(name="Older", template="small")
+    opened = client.post(f"/api/projects/{project['id']}/open").json()
+    model = next(d for d in opened["documents"] if d["doc"] == "model")
+    assert model["header"] == "http://example.org/older"
+    url = f"/api/projects/{project['id']}/documents/model"
+    r = client.post(f"{url}/commands", json={"command": "SetComment", "args": {"iri": model["header"], "value": "Pumps and valves."}})
+    assert r.status_code == 200, r.text
+    assert r.json()["state"]["canUndo"] and r.json()["state"]["header"] == model["header"]
+    header = URIRef(model["header"])
+    assert editing_service.document(project["id"], "model").graph.value(header, RDFS.comment) == Literal("Pumps and valves.", lang="en")
+    assert client.post(f"{url}/undo").status_code == 200
+    assert editing_service.document(project["id"], "model").graph.value(header, RDFS.comment) is None

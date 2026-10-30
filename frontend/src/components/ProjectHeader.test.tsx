@@ -10,7 +10,9 @@ SUMMARY
     inside a text field, the polite live region, the document switcher, and
     the language menu with the display switch and missing counts; and the
     one-row bar of edit-page-rework 5.2: Turtle, the ⋯ menu by keyboard,
-    Show canvas as a checkbox item, Save primary while unsaved.
+    Show canvas as a checkbox item, Save primary while unsaved; and
+    Description… (reference-ontologies 5.5, AC-6): the header's comment
+    read, one SetComment on Save, Undo takes it back, focus back on ⋯.
 
 BASIC IDEA
     api.ts is mocked and the real store is opened on a fixed project, so
@@ -26,10 +28,10 @@ EXPECTED OUTPUT
 
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { openProject, undoChange, redoChange, saveDocument, getLanguageReport, updateProject } =
+const { openProject, undoChange, redoChange, saveDocument, getLanguageReport, updateProject, getNodeDetails, runCommand } =
   vi.hoisted(() => ({
     openProject: vi.fn(),
     undoChange: vi.fn(),
@@ -37,6 +39,8 @@ const { openProject, undoChange, redoChange, saveDocument, getLanguageReport, up
     saveDocument: vi.fn(),
     getLanguageReport: vi.fn(),
     updateProject: vi.fn(),
+    getNodeDetails: vi.fn(),
+    runCommand: vi.fn(),
   }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -47,6 +51,8 @@ vi.mock("../api", async (importOriginal) => ({
   saveDocument,
   getLanguageReport,
   updateProject,
+  getNodeDetails,
+  runCommand,
 }));
 
 import { projectStore } from "../state/projectStore";
@@ -361,11 +367,18 @@ describe("ProjectHeader, found in code review", () => {
     expect(more.getAttribute("aria-expanded")).toBe("true");
     const menu = screen.getByRole("menu", { name: "More project actions" });
     const items = [...menu.querySelectorAll("[role^='menuitem']")].map((m) => m.textContent);
-    expect(items).toEqual(["Language: en…", "Add shapes.ttl", "Save a copy", "✓Show canvas", "Close project"]);
+    expect(items).toEqual([
+      "Language: en…",
+      "Description…",
+      "Add shapes.ttl",
+      "Save a copy",
+      "✓Show canvas",
+      "Close project",
+    ]);
     // Focus is on the first item; arrows, End and Home move it.
     expect(document.activeElement?.textContent).toBe("Language: en…");
     fireEvent.keyDown(menu, { key: "ArrowDown" });
-    expect(document.activeElement?.textContent).toBe("Add shapes.ttl");
+    expect(document.activeElement?.textContent).toBe("Description…");
     fireEvent.keyDown(menu, { key: "End" });
     expect(document.activeElement?.textContent).toBe("Close project");
     fireEvent.keyDown(menu, { key: "ArrowDown" });
@@ -393,6 +406,120 @@ describe("ProjectHeader, found in code review", () => {
     expect(canvasToggle).toHaveBeenCalledTimes(1);
     await fromMenu("Close project");
     expect(handlers.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  describe("Description… (reference-ontologies 5.5)", () => {
+    const HEADER = "http://x";
+    const COMMENT = "http://www.w3.org/2000/01/rdf-schema#comment";
+    const details = (comments: { value: string; lang: string }[]) => ({
+      iri: HEADER,
+      prefixed: "<http://x>",
+      label: "Invoices",
+      outgoing: comments.map((c) => ({
+        predicate: { type: "uri", value: COMMENT },
+        object: { type: "literal", value: c.value, lang: c.lang },
+      })),
+      incoming: [],
+      outgoingTotal: comments.length,
+      incomingTotal: 0,
+    });
+
+    async function openDescription() {
+      await fromMenu("Description…");
+      return screen.getByRole("dialog", { name: "Description" });
+    }
+
+    it("reads the header's comment in the primary language and saves one SetComment", async () => {
+      await renderHeader({ header: HEADER });
+      getNodeDetails.mockResolvedValue(details([{ value: "Les factures.", lang: "fr" }, { value: "Invoices.", lang: "en" }]));
+      runCommand.mockResolvedValue({
+        revision: 4,
+        label: "Set comment of Invoices (en)",
+        state: doc({ header: HEADER, revision: 4, undoLabel: "Set comment of Invoices (en)" }),
+      });
+      const dialog = await openDescription();
+      expect(dialog.getAttribute("aria-modal")).toBe("true");
+      expect(getNodeDetails).toHaveBeenCalledWith("prj-0123456789ab-model", HEADER);
+      const area = screen.getByLabelText(/What this project is about/) as HTMLTextAreaElement;
+      expect(area.value).toBe("Invoices.");
+      fireEvent.change(area, { target: { value: "  Invoices and the parties to them.  " } });
+      await act(async () => {
+        fireEvent.click(within(screen.getByRole("dialog", { name: "Description" })).getByRole("button", { name: "Save" }));
+      });
+      expect(runCommand).toHaveBeenCalledTimes(1);
+      expect(runCommand).toHaveBeenCalledWith("prj-0123456789ab", "model", "SetComment", {
+        iri: HEADER,
+        value: "Invoices and the parties to them.",
+        lang: "en",
+      });
+      expect(live()).toBe("Description saved.");
+      expect(screen.queryByRole("dialog", { name: "Description" })).toBeNull();
+      // Focus back on ⋯, the menu's way back (5.5).
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "More project actions" }));
+      // One step: Undo names it and takes it back.
+      const undo = screen.getByRole("button", { name: "Undo: Set comment of Invoices (en)" });
+      undoChange.mockResolvedValue({ revision: 5, label: "Set comment of Invoices (en)", state: doc({ header: HEADER, revision: 5, canUndo: false }) });
+      await act(async () => {
+        fireEvent.click(undo);
+      });
+      expect(undoChange).toHaveBeenCalledTimes(1);
+    });
+
+    it("works for a project made before E-12, with no description yet", async () => {
+      await renderHeader({ header: HEADER });
+      getNodeDetails.mockResolvedValue(details([]));
+      await openDescription();
+      const area = screen.getByLabelText(/What this project is about/) as HTMLTextAreaElement;
+      expect(area.value).toBe("");
+      const save = within(screen.getByRole("dialog", { name: "Description" })).getByRole("button", { name: "Save" });
+      expect(save.getAttribute("aria-disabled")).toBe("true");
+      expect(document.getElementById(save.getAttribute("aria-describedby")!)!.textContent).toBe(
+        "Write a description to save it.",
+      );
+      fireEvent.change(area, { target: { value: "Invoices." } });
+      expect(within(screen.getByRole("dialog", { name: "Description" })).getByRole("button", { name: "Save" }).getAttribute("aria-disabled")).toBe("false");
+    });
+
+    it("Escape and the ✕ close it without a change, focus back on ⋯", async () => {
+      await renderHeader({ header: HEADER });
+      getNodeDetails.mockResolvedValue(details([]));
+      await openDescription();
+      await act(async () => {
+        fireEvent.keyDown(document, { key: "Escape" });
+      });
+      expect(screen.queryByRole("dialog", { name: "Description" })).toBeNull();
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "More project actions" }));
+      await openDescription();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Close Description" }));
+      });
+      expect(screen.queryByRole("dialog", { name: "Description" })).toBeNull();
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "More project actions" }));
+      expect(runCommand).not.toHaveBeenCalled();
+    });
+
+    it("says the counter past 2,000 characters and does not save", async () => {
+      await renderHeader({ header: HEADER });
+      getNodeDetails.mockResolvedValue(details([]));
+      await openDescription();
+      fireEvent.change(screen.getByLabelText(/What this project is about/), { target: { value: "y".repeat(2001) } });
+      expect(document.getElementById("description-dialog-count")!.textContent).toBe(
+        "2,001 of 2,000 characters: shorten it by 1.",
+      );
+      await act(async () => {
+        fireEvent.click(within(screen.getByRole("dialog", { name: "Description" })).getByRole("button", { name: "Save" }));
+      });
+      expect(runCommand).not.toHaveBeenCalled();
+    });
+
+    it("a model with no header says so instead of opening", async () => {
+      await renderHeader({ header: null });
+      await fromMenu("Description…");
+      expect(screen.queryByRole("dialog", { name: "Description" })).toBeNull();
+      expect(handlers.onError).toHaveBeenCalledWith(
+        "This model has no ontology header (owl:Ontology) to describe. Add one in Turtle first.",
+      );
+    });
   });
 
   it("a press outside closes the menu", async () => {

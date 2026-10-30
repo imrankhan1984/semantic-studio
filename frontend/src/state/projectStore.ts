@@ -782,13 +782,17 @@ export const projectStore = {
 
   /** Apply the editor's text. Throws TurtleError for invalid Turtle, with
    *  nothing changed; the draft is kept so the user can fix it. */
-  async applyEditor(): Promise<void> {
+  /** Apply the editor's text. Resolves the server's answer, whose
+   *  `references` names the reference terms it does not know (reference-
+   *  ontologies 5.7), or null when there was nothing to apply. */
+  async applyEditor(): Promise<ChangeResult | null> {
     const project = requireProject();
     const text = snapshot.editorDraft;
-    if (text === null) return;
+    if (text === null) return null;
     const result = await applyDocumentSource(project.id, snapshot.activeDoc, text);
     set({ editorDraft: null });
     afterChange(result, "");
+    return result;
   },
 
   /** Save a document, the current one unless named. Resolves "warning" when

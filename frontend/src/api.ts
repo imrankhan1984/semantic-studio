@@ -76,6 +76,7 @@ import type {
   ProjectSummary,
   ProjectKind,
   ProjectTemplate,
+  ReferenceOntology,
   SaveResult,
   ImportFilesResult,
   ImportsListing,
@@ -510,8 +511,14 @@ export function searchNodes(
    *  its cap (100) above. The search box asks for one more than it shows, to
    *  know whether more match (explore-and-query-layout 5.7). */
   limit?: number,
+  /** Add the terms of the reference ontologies the document has in use by
+   *  prefix, after its own and its imports' (reference-ontologies 5.6). */
+  references = false,
 ): Promise<VizNode[]> {
-  const extra = (kind ? `&kind=${kind}` : "") + (limit !== undefined ? `&limit=${limit}` : "");
+  const extra =
+    (kind ? `&kind=${kind}` : "") +
+    (limit !== undefined ? `&limit=${limit}` : "") +
+    (references ? "&references=true" : "");
   return send(
     withLang(
       withImports(`/api/ontologies/${id}/search?q=${encodeURIComponent(q)}${extra}`, imports),
@@ -827,6 +834,11 @@ async function bytes(url: string): Promise<{ blob: Blob; filename: string }> {
   return { blob, filename };
 }
 
+// The reference ontologies New project offers (reference-ontologies 8).
+export function listReferences(): Promise<ReferenceOntology[]> {
+  return send("/api/references").then((r) => handle<ReferenceOntology[]>(r));
+}
+
 // Every project, from manifests alone.
 export function listProjects(): Promise<ProjectSummary[]> {
   return send("/api/projects").then((r) => handle<ProjectSummary[]>(r));
@@ -840,6 +852,10 @@ export function createProject(payload: {
   baseIri?: string;
   prefix?: string;
   primaryLanguage?: string;
+  /** Reference ontology keys a template reuses (reference-ontologies 5.4). */
+  references?: string[];
+  /** The header's rdfs:comment; empty writes none. */
+  description?: string;
 }): Promise<ProjectSummary> {
   return send("/api/projects", {
     method: "POST",

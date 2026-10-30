@@ -33,6 +33,19 @@ BASIC IDEA
     one does, with two examples in its model, so a learner's first Validate
     already shows red and green (shacl-authoring 5.8, row S23).
 
+    A template project may reuse reference ontologies (reference-ontologies
+    5.4, D-121): each one chosen adds its prefixes and a dcterms:requires
+    naming it to the rendered graph, and never an owl:imports. The
+    description is the header's rdfs:comment in the primary language,
+    added the same way, as an rdflib Literal and never assembled as text.
+    A template with nothing added is written as rendered, byte for byte;
+    one with additions is written as longturtle, its declared reference
+    prefixes and its own prefix kept though nothing uses them yet (the own
+    one or its first Turtle line fails as unbound). A library copy keeps its own
+    file: it takes no references, and a description only where its header
+    has none in the primary language, appended as one statement rdflib
+    writes, so the copied text, comments and all, stays as it was.
+
     Delete never destroys: the folder moves into projects/.trash/, and the
     trash is emptied by hand (open question 3, closed as recommended).
 
@@ -99,9 +112,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from rdflib import Graph, URIRef
-from rdflib.namespace import OWL, RDF, RDFS, SKOS
+from rdflib import Graph, Literal, URIRef
+from rdflib.namespace import DCTERMS, OWL, RDF, RDFS, SKOS
 
+from . import references
 from .queries_store import SavedQueryStore
 
 # What create() mints. fullmatch, never match: `$` also matches before a
@@ -144,6 +158,9 @@ LANG_TAG = re.compile(
 )
 
 NAME_MAX = 120
+# The description's limit (reference-ontologies 5.4 item 3), checked by the
+# request model and again here for any other caller.
+DESCRIPTION_MAX = 2000
 
 
 # The layout file (visual-modeling Section 9). The byte cap is enforced twice,
@@ -308,6 +325,29 @@ def infer_kind(graph: Graph) -> str:
     return "taxonomy" if counts["concepts"] and not counts["classes"] else "ontology"
 
 
+def header_of(graph: Graph) -> Optional[URIRef]:
+    """The owl:Ontology a description is written on: the first by IRI.
+    The one rule, for create here and Description… in editing.py."""
+    found = sorted(s for s in graph.subjects(RDF.type, OWL.Ontology) if isinstance(s, URIRef))
+    return found[0] if found else None
+
+
+def _with_references(graph: Graph, header: URIRef, chosen: list[dict]) -> None:
+    """One dcterms:requires per reference, and never owl:imports (D-121):
+    reusing a term by its prefix commits to nothing else. The prefixes are
+    written by keep_prefixes, as nothing uses them yet."""
+    for entry in chosen:
+        graph.add((header, DCTERMS.requires, URIRef(entry["reuse"]["ontology"])))
+
+
+def _statement(subject: URIRef, predicate: URIRef, value: Literal) -> str:
+    """One statement as rdflib writes it, for appending to a copied file:
+    N-Triples is Turtle, and needs no prefix the file may not declare."""
+    one = Graph()
+    one.add((subject, predicate, value))
+    return one.serialize(format="nt")
+
+
 def template_shapes(template: str) -> Optional[Path]:
     """The starter shapes a template ships, or None: the Small template has
     them, so a first Validate already shows a mix of results (S23)."""
@@ -456,6 +496,9 @@ class ProjectStore:
             # 5.6, D-117), the next form's default; None until one differs
             # from owl, as no project had it before.
             "classType": manifest.get("classType"),
+            # The reference ontologies chosen at creation (reference-
+            # ontologies 5.4): a record, never what puts one in use.
+            "references": manifest.get("references", []),
         }
 
     def list(self) -> list[dict]:
@@ -489,12 +532,16 @@ class ProjectStore:
         source_graph: Optional[Graph] = None,
         source_text: Optional[str] = None,
         source_name: Optional[str] = None,
+        reference_keys: Optional[list[str]] = None,
+        description: Optional[str] = None,
     ) -> dict:
         """A new project with model.ttl written, from a template or a library copy.
 
         `source_text` is a library file that was Turtle already, copied
         verbatim so its comments and layout survive; `source_graph` is any
-        other format, written as clean Turtle.
+        other format, written as clean Turtle. `reference_keys` are the
+        reference ontologies a template reuses; `description` the header's
+        rdfs:comment, none when empty.
         """
         name = (name or "").strip()
         if not name:
@@ -517,13 +564,36 @@ class ProjectStore:
             raise ProjectError(
                 f"{primary_language!r} is not a well-formed language tag (for example en or en-US)."
             )
+        description = (description or "").strip()
+        if len(description) > DESCRIPTION_MAX:
+            raise ProjectError(f"A description can be at most {DESCRIPTION_MAX:,} characters.")
+        chosen: list[dict] = []
+        for key in dict.fromkeys(reference_keys or []):
+            entry = references.by_key(key)
+            if entry is None:
+                raise ProjectError(f"There is no reference ontology called {key!r}.")
+            chosen.append(entry)
+        copying = source_text is not None or source_graph is not None
+        if chosen and copying:
+            raise ProjectError("A copy keeps its own file: reusing terms is chosen with a template.")
+        for entry in chosen:
+            if prefix in entry["reuse"]["prefixes"]:
+                raise ProjectError(
+                    f"{prefix} is {entry['reuse']['title']}'s prefix. Choose another for your project."
+                )
 
         if source_text is not None:
             text = source_text
             graph = Graph()
             graph.parse(data=text, format="turtle")
         elif source_graph is not None:
-            graph = source_graph
+            # A copy: the library's own graph is read, never written, and a
+            # description is added below (code review).
+            graph = Graph()
+            for bound, namespace in source_graph.namespaces():
+                graph.bind(bound, namespace, override=True, replace=True)
+            for triple in source_graph:
+                graph.add(triple)
             text = graph.serialize(format="longturtle")
         else:
             text = render_template(
@@ -532,7 +602,28 @@ class ProjectStore:
             graph = Graph()
             graph.parse(data=text, format="turtle")
 
-        copied = source_text is not None or source_graph is not None
+        header = header_of(graph)
+        comment = Literal(description, lang=primary_language) if description and header is not None else None
+        if not copying and (chosen or comment is not None):
+            _with_references(graph, header, chosen)
+            if comment is not None:
+                graph.add((header, RDFS.comment, comment))
+            declared = {p: n for e in chosen for p, n in e["reuse"]["prefixes"].items()}
+            text = references.keep_prefixes(
+                graph.serialize(format="longturtle"), declared, (prefix, base_iri)
+            )
+        elif comment is not None and not any(
+            isinstance(c, Literal) and (c.language or "").lower() == primary_language.lower()
+            for c in graph.objects(header, RDFS.comment)
+        ):
+            # A copy's own description wins; one it lacks is added.
+            graph.add((header, RDFS.comment, comment))
+            if source_text is not None:
+                text = text.rstrip("\n") + "\n\n" + _statement(header, RDFS.comment, comment)
+            else:
+                text = graph.serialize(format="longturtle")
+
+        copied = copying
         kind = infer_kind(graph) if copied else TEMPLATE_KINDS[template or "empty"]
         pid = "prj-" + uuid.uuid4().hex[:12]
         folder = self.dir / pid
@@ -563,6 +654,8 @@ class ProjectStore:
             "kind": kind,
             "commentsWarned": False,
             "startedFrom": source_name or template or "empty",
+            # For the summary only: the file is the truth (5.4 item 5).
+            "references": [e["key"] for e in chosen],
         }
         (folder / MANIFEST).write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"

@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1587 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1861 tests, vitest
+cd backend  && python -m pytest tests    # 1639 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1884 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -62,7 +62,7 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Thirty-seven backend tests carry
+**Timing budgets are separated, not deleted.** Thirty-nine backend tests carry
 `@pytest.mark.perf`; eleven frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
@@ -162,6 +162,10 @@ backend/app/
                      examples.json in the data folder makes a removal stick;
                      restore; attaches each entry's group and ready-made
                      questions when listed
+  references.py      Reference ontologies reused by prefix (D-121): which a
+                     document has in use (its declared prefixes, read from
+                     its text), the term index built from the bundled files
+                     and cached by hash, search, and the Apply check
   store.py           In-memory ontology store, disk persistence, lazy parsing;
                      every derived view keyed on the revision (D-081)
   parse_errors.py    A failed load in one plain sentence (D-112): the line,
@@ -238,6 +242,8 @@ frontend/src/
                      and statementCount, the one place *statements* is said
   limitWords.ts      Settings → Limits' words and its one rule: which typed
                      text is a value, and what a Save sends (D-120)
+  referenceWords.ts  The Turtle editor's line for a reference term it does
+                     not know, with the closest match (reference-ontologies)
   canvas/            The modeling canvas (D-086): ModelCanvas on React Flow,
                      its boxes and relate menu, its legend and tip card
                      (CanvasAids.tsx), the colour tokens by kind
@@ -250,7 +256,7 @@ docs/known-state.md  Why each load-bearing rule below exists
 
 `sparql/`, `explore/`, `home/`, `projects/`, `modeling/`, `reasoning/` and `explain/` are the same idea seven times: logic a
 component needs, kept out of the component so it can be tested without
-rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts`, `statusWords.ts`, `limitWords.ts`,
+rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts`, `statusWords.ts`, `limitWords.ts`, `referenceWords.ts`,
 `links.ts` and `catalogue.ts` are the same idea for one function and one constant. Prefer this
 split for anything with a rule in it.
 
@@ -429,6 +435,11 @@ leaves one behind.
 - Only `axioms.py` reads a domain's objects, through `domain_of`; `editing.py` writes them. `test_axioms.py` scans for any other read (D-116). [one reader of a domain]
 - No command writes a second `rdfs:domain`: the standards read two as *both*. Sharing is a union of named classes or a shared parent (D-116). [one reader of a domain]
 - A union is never left with one member: UnshareDomain from two writes the plain domain, and replacing or clearing a domain takes the union's blank nodes. [one reader of a domain]
+
+**Reference ontologies**
+- The portal never writes `owl:imports` on its own: a reference is reused by its prefix and a `dcterms:requires`; `test_no_path_writes_owl_imports` scans `app/` (D-121). [Reference terms]
+- A reference ontology is in use when the document declares a prefix bound to its namespace, read from the document's text, never from its graph (rdflib binds `foaf:` in every graph) and never because of `dcterms:requires`; `clean()` writes a declared reference prefix back, and the project's own at creation and in `clean()`. [Reference terms]
+- The reference index is built from the bundled files only, cached in memory and in the data folder by SHA-256, and never sent whole to the browser. [Reference terms]
 
 **OWL or RDFS for each class**
 - A class is typed `owl:Class` or `rdfs:Class`, never both: CreateClass and SetClassType write one. Its kind is `axioms.kind_of`, the document's own typing first, for the commands and `/node` alike (D-117). [OWL or RDFS for each class]

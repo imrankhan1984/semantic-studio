@@ -31,6 +31,13 @@ BASIC IDEA
     Four states, each said in text: Clean (matches the document), Edited (not
     applied; Apply enabled), Error (line and column), and Applying.
 
+    After an apply, the result line names each prefixed term of a reference
+    ontology in use that the reference does not define, with the closest
+    term when there is one (reference-ontologies 5.7): *qudt:Powr is not a
+    term of QUDT. Did you mean qudt:Power?* The text has applied all the
+    same; the line goes with the next edit. It is a polite status region rendered
+    while empty, so the line is read when it appears.
+
     For shapes.ttl the toolbar gains Validate and the result panels show
     below the text (shacl-authoring 5.1, 5.6), the same check the Shapes
     view shows. Text not yet applied is not part of the document, so
@@ -52,6 +59,7 @@ EXPECTED OUTPUT
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { TurtleError, getDocumentSource } from "../api";
+import { unknownTermLines } from "../referenceWords";
 import { projectStore, useProjectSelector } from "../state/projectStore";
 import type { ProjectDocName } from "../types";
 import ResultPanels, { ValidateButton } from "./ResultPanels";
@@ -94,6 +102,8 @@ export default function TurtleEditor({ projectId, doc, revision, onSelectEntity 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [problem, setProblem] = useState<ParseProblem | null>(null);
+  // What the last apply said about reference terms (5.7).
+  const [notes, setNotes] = useState<string[]>([]);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
 
@@ -103,6 +113,7 @@ export default function TurtleEditor({ projectId, doc, revision, onSelectEntity 
   useEffect(() => {
     setBase(null);
     setProblem(null);
+    setNotes([]);
   }, [projectId, doc]);
 
   // The document's own text, again whenever it changes -- unless the user has
@@ -142,9 +153,11 @@ export default function TurtleEditor({ projectId, doc, revision, onSelectEntity 
     if (!edited || applying) return;
     setApplying(true);
     setProblem(null);
+    setNotes([]);
     const applied = editorDraft;
     try {
-      await projectStore.applyEditor();
+      const result = await projectStore.applyEditor();
+      setNotes(unknownTermLines(result?.references));
       // What the server now holds as the editor's text, so the box does not
       // flash back to the old text while the refetch is in flight.
       setBase(applied);
@@ -173,6 +186,7 @@ export default function TurtleEditor({ projectId, doc, revision, onSelectEntity 
 
   const discard = () => {
     setProblem(null);
+    setNotes([]);
     projectStore.setEditorDraft(null);
   };
 
@@ -236,6 +250,11 @@ export default function TurtleEditor({ projectId, doc, revision, onSelectEntity 
         </div>
       )}
       {loadError && <p className="detail-error">{loadError}</p>}
+      <div className="turtle-notes" role="status" aria-live="polite">
+        {notes.map((line) => (
+          <p key={line}>{line}</p>
+        ))}
+      </div>
 
       <div className="turtle-body">
         <div className="turtle-gutter" ref={gutterRef} aria-hidden="true">
@@ -257,6 +276,7 @@ export default function TurtleEditor({ projectId, doc, revision, onSelectEntity 
           readOnly={base === null && editorDraft === null}
           onChange={(e) => {
             setProblem(null);
+            setNotes([]);
             projectStore.setEditorDraft(e.target.value === base ? null : e.target.value);
           }}
           onScroll={(e) => {

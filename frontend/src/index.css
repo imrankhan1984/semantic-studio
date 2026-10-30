@@ -4292,6 +4292,16 @@ button.legend-row:hover {
   width: 520px;
 }
 
+/* Description… (reference-ontologies 5.5): the form's text area, alone. */
+.description-dialog {
+  width: 480px;
+}
+
+/* The ✕ sits in the corner; the heading, and its focus ring, stop short. */
+.description-dialog .confirm-title {
+  margin-right: 32px;
+}
+
 .form-field {
   display: flex;
   flex-direction: column;
@@ -4314,8 +4324,48 @@ button.legend-row:hover {
   border-radius: 6px;
 }
 
-.form-field input[aria-invalid="true"] {
+.form-field input[aria-invalid="true"],
+.form-field textarea[aria-invalid="true"] {
   border-color: var(--error);
+}
+
+/* The project's description (reference-ontologies 5.4 item 3): a few lines,
+   taller by hand, never wider than the dialog. */
+.form-field textarea {
+  font: inherit;
+  padding: 6px 8px;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  resize: vertical;
+  min-height: 3.5em;
+}
+
+/* Reuse terms from (5.4 item 1): one checkbox per reference ontology, its
+   title and purpose as its label. */
+.new-project-references {
+  border: none;
+  padding: 0;
+}
+
+.new-project-references legend {
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  margin-bottom: 4px;
+  padding: 0;
+}
+
+.form-field .new-project-reference {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.new-project-reference input {
+  margin-top: 3px;
 }
 
 .form-hint {
@@ -4414,6 +4464,14 @@ button.legend-row:hover {
 
 /* The Turtle editor: the source view's overlay, with a line-number gutter
    that scrolls with the text. */
+/* After an apply, the reference terms it does not know (reference-
+   ontologies 5.7): information, not an error, so plain text on the panel. */
+.turtle-notes p {
+  margin: 4px 12px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
 .turtle-state {
   font-size: var(--fs-xs);
   color: var(--text-dim);

@@ -280,6 +280,9 @@ export interface VizNode {
   // An individual from a data snapshot: the file it was imported from
   // (csv-data-import 5.6).
   fromData?: string;
+  // A picker's match from a reference ontology the document has in use by
+  // its prefix, not imported (reference-ontologies 5.6): its title, "FOAF".
+  fromReference?: string;
 }
 
 // One edge in the graph view.
@@ -941,6 +944,9 @@ export interface ProjectSummary {
   // The kind of class the last new one was made as (attribute-reuse 5.6,
   // D-117), the next form's default; null until one differed from OWL.
   classType?: ClassType | null;
+  // The reference ontologies chosen at creation (reference-ontologies 5.4),
+  // a record only: what puts one in use is its prefix in the file.
+  references?: string[];
 }
 
 /** SetClassType's dry run (5.7): what the class becomes, what goes with it
@@ -976,6 +982,9 @@ export interface ProjectDocumentState {
   canRedo: boolean;
   redoLabel: string | null;
   triples: number;
+  // The document's owl:Ontology, which Description… writes on
+  // (reference-ontologies 5.5); null when it has none.
+  header?: string | null;
 }
 
 export interface OpenedProject {
@@ -994,6 +1003,24 @@ export interface ChangeResult {
   created?: string;
   // A CreateClass: the kind it was made as, the project's default now.
   classType?: ClassType;
+  // A Turtle apply: the prefixed names in a reference ontology's namespace
+  // that it does not define (reference-ontologies 5.7). Information only.
+  references?: UnknownReferenceTerms;
+}
+
+/** The Turtle editor's check on Apply: at most five named, the rest counted. */
+export interface UnknownReferenceTerms {
+  terms: { term: string; reference: string; suggestion: string | null }[];
+  more: number;
+}
+
+/** A reference ontology New project can reuse terms from (GET /api/references). */
+export interface ReferenceOntology {
+  key: string;
+  title: string;
+  prefixes: Record<string, string>;
+  purpose: string;
+  sentence: string;
 }
 
 // The kinds search can be narrowed to (the editing form's pickers).

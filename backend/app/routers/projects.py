@@ -6,7 +6,10 @@ FILE: backend/app/routers/projects.py
 SUMMARY
     The HTTP surface for projects and editing (authoring-foundations): list,
     create, rename, duplicate, trash and export projects, and change their
-    kind, ontology or taxonomy (relationships 5.1); open and close them;
+    kind, ontology or taxonomy (relationships 5.1); a create may name the
+    reference ontologies a template reuses (known keys, else 422) and a
+    description (at most 2,000 characters; reference-ontologies 5.4);
+    open and close them;
     run commands, apply Turtle, undo, redo, save and recover a document; and
     the modeling canvas's view and layout (visual-modeling Stage 2); the
     SHACL shapes in the form's structure, their suggestions, and validation
@@ -53,10 +56,10 @@ from contextlib import contextmanager
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
-from .. import reasoning, settings
+from .. import reasoning, references, settings
 from ..editing import (
     AlreadyDefined,
     CommandError,
@@ -68,7 +71,7 @@ from ..editing import (
     editing_service,
     project_store,
 )
-from ..projects import LAYOUT_MAX_BYTES, ProjectError, UnknownDocument, UnknownProject
+from ..projects import DESCRIPTION_MAX, LAYOUT_MAX_BYTES, ProjectError, UnknownDocument, UnknownProject
 from ..store import ParseError, ParseTimeout, store
 from . import ontologies
 
@@ -82,6 +85,19 @@ class CreateProject(BaseModel):
     baseIri: Optional[str] = None
     prefix: Optional[str] = None
     primaryLanguage: str = "en"
+    # The reference ontologies a template reuses (reference-ontologies 5.4):
+    # known keys only, anything else 422 before a folder is made.
+    references: list[str] = []
+    # The header's rdfs:comment; empty writes none (5.4 item 3).
+    description: Optional[str] = Field(default=None, max_length=DESCRIPTION_MAX)
+
+    @field_validator("references")
+    @classmethod
+    def _known(cls, keys: list[str]) -> list[str]:
+        unknown = [k for k in keys if k not in references.keys()]
+        if unknown:
+            raise ValueError(f"Unknown reference ontology: {', '.join(unknown)}.")
+        return keys
 
 
 class PatchProject(BaseModel):
@@ -180,16 +196,19 @@ def create_project(body: CreateProject) -> dict:
                 return project_store.create(
                     name=body.name, base_iri=body.baseIri, prefix=body.prefix,
                     primary_language=body.primaryLanguage, source_text=text,
-                    source_name=source.name,
+                    source_name=source.name, reference_keys=body.references,
+                    description=body.description,
                 )
             return project_store.create(
                 name=body.name, base_iri=body.baseIri, prefix=body.prefix,
                 primary_language=body.primaryLanguage, source_graph=source.ensure_loaded(),
-                source_name=source.name,
+                source_name=source.name, reference_keys=body.references,
+                description=body.description,
             )
         return project_store.create(
             name=body.name, base_iri=body.baseIri, prefix=body.prefix,
             primary_language=body.primaryLanguage, template=body.template or "empty",
+            reference_keys=body.references, description=body.description,
         )
 
 

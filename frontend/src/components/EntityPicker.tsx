@@ -7,7 +7,11 @@ SUMMARY
     A search field that picks one class, property or concept (visual-modeling
     5.1): the parent of a class, the range of a relationship, a broader
     concept. Matches come from the document and its resolved imports, one kind
-    only, and an imported match says so in text ("Person, from FOAF").
+    only, and an imported match says so in text ("Person, from FOAF"). After
+    those come the terms of a reference ontology the document has in use by
+    its prefix (reference-ontologies 5.6), said the same way, with a
+    visually hidden "(not imported)" so a screen reader is not told it is
+    an import.
 
 BASIC IDEA
     The WAI-ARIA combobox pattern with a listbox popup: the input keeps focus
@@ -16,7 +20,8 @@ BASIC IDEA
     cancels. Search is the existing endpoint with the new `kind` filter,
     which is applied before its limit so twenty-five properties never crowd
     out the one class wanted. The merged view is always asked for: without
-    resolved imports it is the document itself.
+    resolved imports it is the document itself. So are reference terms,
+    which the server adds only when a reference's namespace is declared.
 
     Typing waits a moment before asking, and a stale answer is dropped when a
     newer question has been sent, so a fast typist sees the list for what is
@@ -91,7 +96,7 @@ export default function EntityPicker({
     }
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      searchNodes(ontologyId, q, true, kind)
+      searchNodes(ontologyId, q, true, kind, undefined, undefined, true)
         .then((found) => {
           if (cancelled) return;
           const shown = found.filter((n) => !exclude.includes(n.id) && (!importedOnly || n.importedFrom));
@@ -183,6 +188,12 @@ export default function EntityPicker({
           >
             {node.label}
             {node.importedFrom && <span className="entity-picker-from">, from {node.importedFrom}</span>}
+            {!node.importedFrom && node.fromReference && (
+              <span className="entity-picker-from">
+                , from {node.fromReference}
+                <span className="visually-hidden"> (not imported)</span>
+              </span>
+            )}
           </li>
         ))}
       </ul>
