@@ -17,15 +17,18 @@ SUMMARY
     says and where focus goes (reference-ontologies 5.3, AC-3); QUDT's
     SHACL form last in the catalogue. Stage B: where the work
     is kept and Copy path; Limits' fields, their ranges, Save waiting on a
-    refused value, Save, Cancel and Reset to defaults, the read-only
-    administrator line, and asking once on closing with a change; a
-    catalogue entry refused for its size offering Limits. AC-5 to AC-7, AC-9.
+    refused value, Save, Reset to defaults, Cancel closing Settings without
+    asking and focus going back to the opener (AC-12), the read-only
+    administrator line, and the ✕, Escape and the backdrop asking once on
+    closing with a change; a catalogue entry refused for its size offering
+    Limits. AC-5 to AC-7, AC-9, AC-12.
 
 BASIC IDEA
     api.ts is mocked, the component tests' pattern; a load is held by its
     mock until the test answers it, and rejects on its abort signal as the
     real request does. Focus going back to the Settings button is App's, and
-    App.test.tsx asserts it.
+    App.test.tsx asserts it; Cancel's test renders a host that does what App
+    does, to see the dialog leave through onClose and take focus nowhere.
 
 INPUTS / INPUT SOURCES
     - SettingsDialog, with api.ts's network, fetch, restore and settings
@@ -37,6 +40,7 @@ EXPECTED OUTPUT
 */
 
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useRef, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { getNetworkPolicy, getNetworkActivity, fetchOntology, restoreExamples, cancelLoad, getSettings, saveLimits } =
@@ -584,14 +588,63 @@ describe("Limits (home-and-settings 5.4, AC-7)", () => {
     expect(field(/^Largest file/).value).toBe("150");
   });
 
-  it("Cancel puts the saved values back", async () => {
-    await open({}, "limits");
+  it("Cancel, untouched, closes Settings (AC-12)", async () => {
+    const { onClose } = await open({}, "limits");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(saveLimits).not.toHaveBeenCalled();
+  });
+
+  it("Cancel after an edit closes without asking, saves nothing, and Limits shows the saved value when reopened (AC-12)", async () => {
+    const { onClose } = await open({}, "limits");
     type(/^Largest file/, "120");
     type(/^Longest time/, "5");
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("group", { name: "Close without saving?" })).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(saveLimits).not.toHaveBeenCalled();
+    cleanup();
+    await open({}, "limits");
     expect(field(/^Largest file/).value).toBe("50");
     expect(field(/^Longest time/).value).toBe("60");
-    expect(saveLimits).not.toHaveBeenCalled();
+  });
+
+  it("after Cancel, focus goes back to the control that opened Settings (AC-12)", async () => {
+    // The opener and its focus are App's (closeSettings); this host does
+    // what App does, so the test sees the dialog leave through onClose and
+    // move focus nowhere after it. App.test.tsx drives the real header.
+    function Host() {
+      const opener = useRef<HTMLButtonElement>(null);
+      const [shown, setShown] = useState(false);
+      return (
+        <>
+          <button ref={opener} onClick={() => setShown(true)}>
+            Open Settings
+          </button>
+          {shown && (
+            <SettingsDialog
+              initialTab="limits"
+              onClose={() => {
+                setShown(false);
+                opener.current?.focus();
+              }}
+              onLoaded={vi.fn()}
+              bundledMissing={[]}
+            />
+          )}
+        </>
+      );
+    }
+    render(<Host />);
+    const opener = screen.getByRole("button", { name: "Open Settings" });
+    opener.focus();
+    await act(async () => {
+      fireEvent.click(opener);
+    });
+    type(/^Largest file/, "120");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
+    expect(document.activeElement).toBe(opener);
   });
 
   it("Reset to defaults puts the defaults in the fields, to be saved", async () => {
@@ -712,13 +765,32 @@ describe("closing with an unsaved limit asks once (home-and-settings 5.4)", () =
     expect(field(/^Largest file/).value).toBe("75");
   });
 
-  it("the question goes once the change is saved or put back while it stands (code review)", async () => {
+  it("the question goes once the change is put back while it stands (code review)", async () => {
     await open({}, "limits");
     type(/^Largest file/, "75");
     fireEvent.keyDown(document.body, { key: "Escape" });
     expect(screen.getByRole("group", { name: "Close without saving?" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    type(/^Largest file/, "50");
     expect(screen.queryByRole("group", { name: "Close without saving?" })).toBeNull();
+  });
+
+  it("closing by the ✕ with an edit still asks, once (AC-12)", async () => {
+    const { onClose } = await open({}, "limits");
+    type(/^Largest file/, "75");
+    fireEvent.click(screen.getByRole("button", { name: "Close Settings" }));
+    expect(screen.getAllByRole("group", { name: "Close without saving?" })).toHaveLength(1);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("Cancel while the question stands closes, asking nothing more (AC-12)", async () => {
+    const { onClose } = await open({}, "limits");
+    type(/^Largest file/, "75");
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(saveLimits).not.toHaveBeenCalled();
   });
 
   it("asks nothing once the change is saved, or put back", async () => {

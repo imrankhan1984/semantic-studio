@@ -19,10 +19,12 @@ BASIC IDEA
 
     Nothing applies until Save, which sends only the limits no variable owns
     and that differ from the saved ones; the server checks the range again.
-    Cancel puts the saved values back in the fields; Reset to defaults puts
-    the defaults there, to be saved. Closing Settings discards, and asks once
-    first: the dialog asks, since it holds every way out, so this file only
-    says whether there is anything to lose (onDirtyChange).
+    Cancel drops what was typed, saves nothing and closes Settings without
+    the unsaved-changes question: pressing Cancel is the answer (AC-12).
+    Reset to defaults puts the defaults in the fields, to be saved. Closing
+    Settings any other way (the ✕, Escape, the backdrop) discards too, and
+    asks once first: the dialog asks, since it holds those ways out, so this
+    file only says whether there is anything to lose (onDirtyChange).
 
     A refused Save (a range the server holds, or a variable set since the
     dialog opened) is said under the buttons and changes nothing.
@@ -32,6 +34,7 @@ INPUTS / INPUT SOURCES (props)
     - failed: the sentence for a read that failed.
     - onSaved: the answer of a Save, for the dialog to hold.
     - onDirtyChange: whether a field differs from its saved value.
+    - onCancel: Cancel pressed; the dialog closes, asking nothing.
 
 EXPECTED OUTPUT
     - The tab's body.
@@ -58,11 +61,12 @@ interface Props {
   failed: string | null;
   onSaved: (settings: AppSettings) => void;
   onDirtyChange: (dirty: boolean) => void;
+  onCancel: () => void;
 }
 
 type Drafts = Partial<Record<LimitKey, string>>;
 
-export default function LimitsSettings({ settings, failed, onSaved, onDirtyChange }: Props) {
+export default function LimitsSettings({ settings, failed, onSaved, onDirtyChange, onCancel }: Props) {
   const [drafts, setDrafts] = useState<Drafts>({});
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
@@ -100,10 +104,13 @@ export default function LimitsSettings({ settings, failed, onSaved, onDirtyChang
     }
   };
 
+  // Nothing typed is kept for a later opening: the dialog unmounts this
+  // panel as it closes, and the next one reads the saved values again.
   const cancel = () => {
     setDrafts({});
     setStatus("");
     setRefused(null);
+    onCancel();
   };
 
   const resetToDefaults = () => {
