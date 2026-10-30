@@ -24,7 +24,13 @@ EXPECTED OUTPUT
 import { describe, expect, it } from "vitest";
 import { alwaysPhrase, outcomeLabel, purposeLabel, reachedTheSite } from "./networkWords";
 
-const CAPABILITIES = ["ontology:fetch", "ontology:import", "jsonld:context", "sparql:service"];
+const CAPABILITIES = [
+  "ontology:fetch",
+  "ontology:import",
+  "jsonld:context",
+  "sparql:service",
+  "network:test",
+];
 
 describe("networkWords", () => {
   it("has words for every capability, none of them the capability's name", () => {

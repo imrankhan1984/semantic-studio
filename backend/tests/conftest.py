@@ -15,7 +15,8 @@ BASIC IDEA
     isolated, disposable data directory.
 
     It also carries the network fixtures shared across files: an autouse reset
-    of the network broker's policy and log, `loopback_is_public` (lets a pinned
+    of the network broker's policy and log, no system proxy found (autouse,
+    since the system proxy is the default), `loopback_is_public` (lets a pinned
     connection reach a loopback test server under a public-looking name), and
     `http_server` (recording HTTP servers).
 
@@ -75,6 +76,20 @@ def _fresh_network_policy():
     broker.reset()
     yield
     broker.reset()
+
+
+@pytest.fixture(autouse=True)
+def _no_system_proxy(monkeypatch):
+    """Every test starts with no system proxy found (external-access 5.5).
+
+    *Use my system's proxy settings* is the default, and getproxies() reads
+    the environment on Linux: a runner or a sandbox with HTTPS_PROXY set would
+    otherwise send every test's request to its proxy. A test that wants one
+    patches getproxies again.
+    """
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "getproxies", lambda: {})
 
 
 @pytest.fixture

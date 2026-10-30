@@ -3993,6 +3993,108 @@ button.legend-row:hover {
   overflow-y: auto;
 }
 
+/* The Connection section (external-access 5.5, Stage 4). A field's sentence
+   stands under it in the same column; a pair keeps host and port side by
+   side where there is room and stacks where there is not. */
+.network-proxy {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: var(--fs-sm);
+}
+
+.network-proxy legend {
+  padding: 0;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.network-proxy-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.network-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.network-pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.network-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--fs-sm);
+}
+
+.network-field p {
+  margin: 0;
+}
+
+/* The host takes the row's width beside its port; in the column around the
+   pairs a basis would be a height. */
+.network-pair .network-field-httpsHost,
+.network-pair .network-field-httpHost {
+  flex: 1 1 220px;
+}
+
+.network-field-httpsPort input,
+.network-field-httpPort input {
+  width: 7em;
+}
+
+.network-field input[aria-invalid="true"] {
+  border-color: var(--error-text);
+}
+
+.network-hint {
+  margin: 4px 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.network-subheading {
+  margin: 12px 0 4px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.network-ca {
+  margin: 6px 0;
+}
+
+.network-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 10px;
+}
+
+.network-actions .network-hint {
+  margin: 0;
+}
+
+.network-test-result {
+  margin: 6px 0 0;
+  font-size: var(--fs-sm);
+}
+
+.network-test-result:empty {
+  margin: 0;
+}
+
 /* --- the imports panel (external-access Stage 2) ---------------------------
    A bar above the main area in View and Hierarchy modes, like the graph notice
    above the canvas. Every status in it is a word; nothing here is coloured to

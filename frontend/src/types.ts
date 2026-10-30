@@ -77,11 +77,41 @@ export interface NetworkPolicy {
   grants: NetworkGrant[];
 }
 
+// The corporate network settings (external-access 5.5, Stage 4). `port` is
+// a number once saved; a Save may carry the text as typed, which the server
+// judges and refuses with a sentence.
+export type ProxyMode = "system" | "none" | "manual";
+
+export interface ProxyPair {
+  host: string;
+  port: number | string | null;
+}
+
+export interface NetworkConnection {
+  mode: ProxyMode;
+  https: ProxyPair;
+  http: ProxyPair;
+  noProxy: string[];
+  caFile: { name: string; sha256: string } | null;
+  // What the system offers now, as host:port, or null when it offers none.
+  systemProxy: string | null;
+  // Whose certificates are trusted: the operating system's, or Python's own
+  // list where truststore cannot load.
+  trust: "system" | "python";
+}
+
+export interface ConnectionTestResult {
+  ok: boolean;
+  stage: "proxy" | "tls" | "http" | "offline" | null;
+  message: string;
+}
+
 // One line of the activity log. `outcome` is "ok" for a completed download;
 // every other value is a request that was refused, asked about, or failed.
 export interface NetworkActivity {
   time: string;
-  capability: NetworkCapability;
+  // Test connection is logged under its own word and is never granted.
+  capability: NetworkCapability | "network:test";
   url: string;
   host: string;
   outcome: string;

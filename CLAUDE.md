@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1658 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1924 tests, vitest
+cd backend  && python -m pytest tests    # 1719 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1940 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -125,9 +125,11 @@ EXPECTED OUTPUT
 `query_schema.py` before writing any. The density is deliberate. Match it.
 
 **3. Do not add dependencies casually.** `frontend/package.json` carries eight
-runtime dependencies and `backend/requirements.txt` carries nine (pySHACL the
+runtime dependencies and `backend/requirements.txt` carries ten (pySHACL the
 sixth, D-092; openpyxl and defusedxml for Excel, D-100; owlrl, already there
-through pySHACL, made direct for reasoning, D-102). Adding one is
+through pySHACL, made direct for reasoning, D-102; truststore for the
+operating system's certificates, D-123, imported by `network_broker.py`
+alone). Adding one is
 a decision that belongs in a spec, not in a commit.
 
 **4. SPARQL execution is SELECT-only.** `prepare_select` in `sparql_exec.py` is
@@ -149,7 +151,8 @@ backend/app/
   main.py            FastAPI app, CORS for the dev frontend, static mount
   local_guard.py     Refuses requests not from the app's own page (Host, header, Origin)
   net_guard.py       Outbound address judgement; hands rdflib's own network calls to the broker
-  network_broker.py  The one door out: capability grants, offline, pinning, activity log
+  network_broker.py  The one door out: capability grants, offline, pinning, activity log;
+                     the proxy, the trusted certificates and Test connection (D-123)
   imports.py         owl:imports: resolution chain, closure, cache, MergedView
   sparql_service.py  SERVICE blocks found, approved, and sent through the broker
   vocab/             Bundled vocabularies, pinned by SHA-256 in manifest.json;
@@ -244,6 +247,8 @@ frontend/src/
                      and statementCount, the one place *statements* is said
   limitWords.ts      Settings → Limits' words and its one rule: which typed
                      text is a value, and what a Save sends (D-120)
+  connectionWords.ts Settings → Network's Connection words: the system proxy,
+                     the trust, the file, and what a Save sends (D-123)
   referenceWords.ts  The Turtle editor's line for a reference term it does
                      not know, with the closest match (reference-ontologies)
   canvas/            The modeling canvas (D-086): ModelCanvas on React Flow,
@@ -258,7 +263,7 @@ docs/known-state.md  Why each load-bearing rule below exists
 
 `sparql/`, `explore/`, `home/`, `projects/`, `modeling/`, `reasoning/` and `explain/` are the same idea seven times: logic a
 component needs, kept out of the component so it can be tested without
-rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts`, `statusWords.ts`, `limitWords.ts`, `referenceWords.ts`,
+rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts`, `connectionWords.ts`, `statusWords.ts`, `limitWords.ts`, `referenceWords.ts`,
 `links.ts` and `catalogue.ts` are the same idea for one function and one constant. Prefer this
 split for anything with a rule in it.
 
@@ -274,7 +279,11 @@ leaves one behind.
 
 **Security and network**
 - Only `network_broker.py` connects out; policy is asked before any name resolves. [outbound connection]
-- The broker connects to the judged address (`_pinned_url`), the name in `Host` and SNI. [outbound connection]
+- The broker connects to the judged address (`_pinned_url`), the name in `Host` and SNI, unless a proxy carries the request. [outbound connection]
+- Through a proxy the original URL goes as it is (no pinned address, `Host` or `sni_hostname`), and only after D-070's name rules: a name resolving here to a non-public address never reaches the proxy (D-123). [Corporate network]
+- The system proxy is `getproxies()` read at each request, after the policy gate, never cached; `conftest.py` makes it `{}` for every test. [Corporate network]
+- Trust is `truststore.SSLContext` with the user's file added by `load_verify_locations`, built per request; only `network_broker.py` imports truststore, and `test_network_settings.py` scans `app/` for any way to switch verification off. [Corporate network]
+- The connection settings are `network-policy.json`'s, written by `network_broker.py` alone, never `settings.json`; a certificate file holding `PRIVATE KEY` is refused. [Corporate network]
 - Workers run in `contextvars.copy_context()`, or a just-once grant never reaches them. [outbound connection]
 - A limit is read at call time from `settings.py`, never cached at import; `test_settings.py` scans for any other reader of its variables (D-120). [Settings limits]
 - A limit set by an environment variable is never changed from the page: the PUT is 409, and either size variable makes *Largest file* read-only (D-120). [Settings limits]
@@ -285,7 +294,7 @@ leaves one behind.
 - `local_guard` is added last in `main.py`; every mutating `api.ts` call spreads `CLIENT_HEADER`. [own page]
 - Backend `TestClient`s use `base_url="http://localhost"` and the client header. [own page]
 - `install_rdflib_guard` patches both `_urlopen`s, and UNIT-4 asserts it. [S-4]
-- The upload cap is enforced twice: middleware and `_read_capped`. [enforced twice]
+- The upload cap is enforced twice: middleware and `_read_capped`; the certificate file's 1 MB too, middleware and the route's count. [enforced twice]
 - Network tests assert a recording server saw zero requests, not only a 4xx. [S-1, S-2]
 - `test_fetch_restrictions.py` restricts nothing; network tests go elsewhere. [test_fetch_restrictions]
 - The About panel's "stay on this machine" sentences change with any feature that sends content out. [About panel]

@@ -74,7 +74,7 @@ from fastapi.staticfiles import StaticFiles
 # (ontologies vs saved queries) keeps this file small.
 from .local_guard import LocalOnlyMiddleware
 from .network_broker import ApprovalRequired, GrantScopeMiddleware, HostBlocked, Offline
-from . import library_examples, settings, tabular
+from . import library_examples, network_broker, settings, tabular
 from .routers import data, examples, network, ontologies, projects, queries, references
 from .routers import settings as settings_router
 from .store import store
@@ -141,8 +141,10 @@ async def refuse_oversized_bodies(request: Request, call_next):
     layout (visual-modeling Stage 2) is a fourth, at 1 MB. A data file for
     the import wizard (csv-data-import Section 9) is a fifth, at 5 MB, on the
     four routes that take one; an edited mapping a sixth, at 1 MB. The IRIs
-    a query's results send to /nodes are a seventh, at 4 MB, and a settings
-    change (home-and-settings Section 9) an eighth, at 16 KB.
+    a query's results send to /nodes are a seventh, at 4 MB, a settings
+    change (home-and-settings Section 9) an eighth, at 16 KB, and a
+    certificate file for the corporate network (external-access 5.5) a
+    ninth, at 1 MB.
     """
     if request.method not in ("POST", "PUT", "PATCH"):
         return await call_next(request)
@@ -158,6 +160,11 @@ async def refuse_oversized_bodies(request: Request, call_next):
             # the CHUNK_BYTES allowance below is for the upload envelopes.
             if _declared(request) > projects.LAYOUT_MAX_BYTES:
                 return JSONResponse(status_code=413, content={"detail": projects.LAYOUT_TOO_LARGE})
+        elif path == "/api/network/connection/ca":
+            # A certificate file (external-access 5.5): 1 MB, read again in
+            # chunks by the route.
+            limit = network_broker.CA_MAX_BYTES
+            detail = network_broker.CA_TOO_LARGE
         elif path == "/api/settings" and _declared(request) > settings.BODY_MAX_BYTES:
             # Three numbers; the route reads its 16 KB cap again while reading.
             return JSONResponse(status_code=413, content={"detail": settings.BODY_TOO_LARGE})

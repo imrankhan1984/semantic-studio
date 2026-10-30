@@ -161,6 +161,18 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   getSettings: () => api.getSettings(),
   saveLimits: () => api.saveLimits({ largestFile: 100 }),
   getNetworkActivity: () => api.getNetworkActivity(),
+  // external-access Stage 4: the connection settings and Test connection.
+  getNetworkConnection: () => api.getNetworkConnection(),
+  saveNetworkConnection: () =>
+    api.saveNetworkConnection({
+      mode: "manual",
+      https: { host: "proxy.corp", port: 9400 },
+      http: { host: "", port: null },
+      noProxy: ["localhost"],
+    }),
+  uploadNetworkCertificate: () => api.uploadNetworkCertificate(new File(["x"], "root.pem")),
+  removeNetworkCertificate: () => api.removeNetworkCertificate(),
+  testNetworkConnection: () => api.testNetworkConnection(),
   listImports: () => api.listImports("ont-1"),
   resolveImports: () => api.resolveImports("ont-1"),
   refreshImports: () => api.refreshImports("ont-1"),
@@ -252,16 +264,15 @@ describe("api client header (S-6)", () => {
     // (ShareDomain's dry run, attribute-reuse 5.2); a query's hidden results
     // one POST (/nodes, query-page-rework 5.2); a change of a class's kind
     // one POST (SetClassType's dry run, attribute-reuse 5.7); Settings →
-    // Limits one PUT (home-and-settings Stage B).
+    // Limits one PUT (home-and-settings Stage B); the corporate network
+    // settings two PUTs (the proxy, the certificate file), a DELETE (the
+    // file's Remove) and a POST (Test connection, external-access 5.5).
     const expected = [
-      ...Array(6).fill("DELETE"),
+      ...Array(7).fill("DELETE"),
       "PATCH",
       "PATCH",
-      ...Array(32).fill("POST"),
-      "PUT",
-      "PUT",
-      "PUT",
-      "PUT",
+      ...Array(33).fill("POST"),
+      ...Array(6).fill("PUT"),
     ];
     expect(mutating.map((r) => r.method).sort()).toEqual(expected);
     for (const request of mutating) {
