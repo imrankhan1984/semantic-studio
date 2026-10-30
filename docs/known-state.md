@@ -2560,6 +2560,12 @@ EXPECTED OUTPUT
   prefixes a statement uses: the first visual change of a new project
   dropped `foaf:` and switched FOAF off before a term was picked.
   `dcterms:requires` is never read; it records, it switches nothing on.
+  The project's own prefix (the manifest's `prefix` and `baseIri`) is
+  kept the same way, at creation too, whether or not the text declared it
+  (PR #72 review): a project made with a reference or a description,
+  written as longturtle, lost its own prefix line, and its first Turtle
+  line using it failed as unbound; `main` lost it after any visual change
+  that did not use it. Every other unused prefix still goes.
 
   **The index is built from bundled files only,** the first time a project
   needs it, while parsing: `_Within` keeps only statements about the

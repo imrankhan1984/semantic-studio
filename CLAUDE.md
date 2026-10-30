@@ -49,7 +49,7 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1634 tests (+2 marked `network`, deselected)
+cd backend  && python -m pytest tests    # 1639 tests (+2 marked `network`, deselected)
 cd frontend && npm run test              # 1884 tests, vitest
 ```
 
@@ -438,7 +438,7 @@ leaves one behind.
 
 **Reference ontologies**
 - The portal never writes `owl:imports` on its own: a reference is reused by its prefix and a `dcterms:requires`; `test_no_path_writes_owl_imports` scans `app/` (D-121). [Reference terms]
-- A reference ontology is in use when the document declares a prefix bound to its namespace, read from the document's text, never from its graph (rdflib binds `foaf:` in every graph) and never because of `dcterms:requires`; `clean()` writes a declared reference prefix back. [Reference terms]
+- A reference ontology is in use when the document declares a prefix bound to its namespace, read from the document's text, never from its graph (rdflib binds `foaf:` in every graph) and never because of `dcterms:requires`; `clean()` writes a declared reference prefix back, and the project's own at creation and in `clean()`. [Reference terms]
 - The reference index is built from the bundled files only, cached in memory and in the data folder by SHA-256, and never sent whole to the browser. [Reference terms]
 
 **OWL or RDFS for each class**
