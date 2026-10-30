@@ -97,7 +97,7 @@ def test_the_embeddable_python_is_refused_unless_its_hash_matches():
     assert set(digest) != {"0"}, "the pinned hash is still the placeholder"
     check = next(run for run in _runs(workflow) if "Get-FileHash" in run)
     assert "-Algorithm SHA256" in check
-    assert re.search(r"if \(\$actual -ne \$env:PYTHON_EMBED_SHA256[^)]*\)\s*\{\s*throw", check)
+    assert re.search(r"if \(\$actual -ne \$env:PYTHON_EMBED_SHA256(?:\.ToLowerInvariant\(\))?\)\s*\{\s*throw", check)
     assert "https://www.python.org/ftp/python/" in check
     # The build step uses the checked file, set only after the check passed.
     assert check.index("throw") < check.index("EMBED_ZIP=")
