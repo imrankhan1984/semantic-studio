@@ -5,7 +5,8 @@ FILE: backend/app/routers/queries.py
 
 SUMMARY
     REST endpoints for the saved-query library, under /api/queries: list, save
-    (create or update), and delete.
+    (create or update), delete, and export one ontology's queries as a zip
+    (wording-and-query-export 5.13, D-122).
 
 BASIC IDEA
     A thin HTTP layer over the SavedQueryStore. It validates that the referenced
@@ -23,6 +24,11 @@ BASIC IDEA
     travels with the project's export and goes to the trash with it. Library
     queries stay where they were.
 
+    The export is a read for the removal dialog: the id is matched against
+    the library's pattern before any lookup (422), an ontology not in the
+    library is 404, and with no saved queries the zip holds only its README.
+    query_export.py builds it.
+
 INPUTS / INPUT SOURCES
     - HTTP requests from the frontend's query panel.
     - JSON save bodies (name, ontologyId, mode, builder state or null, sparql,
@@ -34,6 +40,7 @@ EXPECTED OUTPUT
     - JSON: a list of saved queries, a single saved entry, or a delete
       acknowledgement; 404/400 on unknown ontology / missing name; 422 on a
       malformed id, an unknown mode or oversized text.
+    - A zip (application/zip, attachment) for the export.
 ================================================================================
 """
 
@@ -41,9 +48,10 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
+from .. import query_export
 from ..embedded_queries import MAX_TEXT_CHARS
 
 # The saved-query store, plus the ontology store to validate references.
@@ -85,6 +93,27 @@ class SaveQueryRequest(BaseModel):
 def list_queries(ontology: Optional[str] = Query(default=None)) -> list[dict]:
     """GET /api/queries[?ontology=id] -> saved queries, optionally for one ontology."""
     return _store_for(ontology).list(ontology_id=ontology)
+
+
+# A library ontology's id, as store.add and library_examples mint it. A
+# project document's queries travel with its project's own export.
+LIBRARY_ID = r"^ont-[0-9a-f]{12}$"
+
+
+@router.get("/export")
+def export_queries(ontologyId: str = Query(pattern=LIBRARY_ID)) -> Response:
+    """GET /api/queries/export?ontologyId=id -> the ontology's saved queries
+    as a zip of .rq files and a README (5.13). The pattern is checked before
+    any lookup; an id not in the library is 404."""
+    ontology = store.get(ontologyId)
+    if ontology is None or ontology.editable:
+        raise HTTPException(status_code=404, detail="There is no such ontology in the library.")
+    data = query_export.export_zip(saved_queries.list(ontology_id=ontologyId), ontology.name)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{query_export.zip_filename(ontology.name)}"'},
+    )
 
 
 @router.post("")

@@ -137,6 +137,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   getQueryNode: () => api.getQueryNode("ont-1", "http://example.org/a"),
   runSparql: () => api.runSparql("ont-1", "SELECT * WHERE { ?s ?p ?o }"),
   listSavedQueries: () => api.listSavedQueries("ont-1"),
+  exportSavedQueries: () => api.exportSavedQueries("ont-0123456789ab"),
   saveQuery: () =>
     api.saveQuery({
       name: "q",

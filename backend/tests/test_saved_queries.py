@@ -21,24 +21,35 @@ BASIC IDEA
     second line of defence and the delete route hands it an id from the URL
     with no request model in front.
 
+    The export (wording-and-query-export 5.12, 5.13) is read back as a zip:
+    its entry names, each file's comment lines and its README. Hostile names
+    (`../../x`, a line break, a drive letter) are checked on the entry names
+    the archive really holds, and by unpacking it into an empty folder and
+    finding nothing outside it.
+
 INPUTS / INPUT SOURCES
     - examples/space-exploration.ttl, uploaded through the API.
     - The conftest temp data directory.
 
 EXPECTED OUTPUT
-    - Pass/fail per assertion, covering AC-9, AC-10 and AC-13.
+    - Pass/fail per assertion, covering AC-9, AC-10 and AC-13, and AC-14
+      and AC-15 of wording-and-query-export.
 ================================================================================
 """
 
+import io
 import json
+import zipfile
+from datetime import date
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app import query_export
 from app.main import app
 from app.queries_store import InvalidQueryId, SavedQueryStore
-from app.store import saved_queries
+from app.store import saved_queries, store
 
 EXAMPLE = Path(__file__).parent.parent.parent / "examples" / "space-exploration.ttl"
 SELECT = "SELECT ?s WHERE { ?s ?p ?o }"
@@ -214,3 +225,120 @@ def test_store_mints_ids_that_match_its_own_pattern(tmp_path):
     entry = store.save(name="n", ontology_id="o", ontology_name="o", state={}, sparql=SELECT)
     assert store.get(entry["id"])["id"] == entry["id"]
     assert store.delete(entry["id"]) is True
+
+
+# --- export (wording-and-query-export 5.12, 5.13; AC-14, AC-15) ---------------
+
+_fresh = iter(range(10_000))
+
+
+def _fresh_ontology(name: str = "Shop.ttl") -> str:
+    """An ontology of its own, so a test counts only the queries it saved:
+    the content differs each time, or the upload hands back the first."""
+    n = next(_fresh)
+    body = f"<http://example.org/shop#Thing{n}> a <http://www.w3.org/2002/07/owl#Class> .\n"
+    response = client.post("/api/ontologies/upload", files={"file": (name, body.encode(), "text/turtle")})
+    assert response.status_code == 200, response.text
+    return response.json()["id"]
+
+
+def _export(oid: str) -> zipfile.ZipFile:
+    response = client.get("/api/queries/export", params={"ontologyId": oid})
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"] == "application/zip"
+    assert response.headers["content-disposition"].startswith("attachment; filename=")
+    return zipfile.ZipFile(io.BytesIO(response.content))
+
+
+def test_export_holds_one_rq_per_query_visual_and_text_and_a_readme():
+    oid = _fresh_ontology("Space missions.ttl")
+    name = store.get(oid).name
+    assert _save(oid, name="Planets").status_code == 200
+    assert _save(oid, name="Moons by planet", mode="text", state=None,
+                 sparql="SELECT ?m WHERE { ?m a ?c }").status_code == 200
+    archive = _export(oid)
+    assert sorted(archive.namelist()) == ["Moons by planet.rq", "Planets.rq", "README.txt"]
+
+    today = date.today().isoformat()
+    visual = archive.read("Planets.rq").decode("utf-8")
+    assert visual == (
+        "# Saved query: Planets\n"
+        f"# Ontology: {name}\n"
+        "# Made with: the visual builder\n"
+        f"# Exported from Semantic Studio on {today}\n"
+        "\n"
+        f"{SELECT}\n"
+    )
+    text = archive.read("Moons by planet.rq").decode("utf-8")
+    assert "# Made with: the text editor\n" in text
+    assert text.endswith("SELECT ?m WHERE { ?m a ?c }\n")
+
+    readme = archive.read("README.txt").decode("utf-8")
+    assert "Query, choose\nText, then Open .rq file..." in readme
+    assert "visual builder comes back as text" in readme
+
+
+def test_export_names_are_safe_for_traversal_and_line_breaks(tmp_path):
+    oid = _fresh_ontology()
+    hostile = ["../../x", "first line\nsecond line", "C:\\Windows\\evil", "/etc/passwd", "..", "a\r# injected"]
+    for name in hostile:
+        assert _save(oid, name=name).status_code == 200
+    archive = _export(oid)
+    names = archive.namelist()
+    # Read first: an archive with nothing in it would pass every check below.
+    assert len(names) == len(hostile) + 1
+    for entry in names:
+        assert "/" not in entry and "\\" not in entry and ".." not in entry and ":" not in entry, entry
+    assert "x.rq" in names and "first line second line.rq" in names and "query.rq" in names
+
+    # Each name stays on its comment line: four comment lines, then a blank.
+    for entry in names:
+        if not entry.endswith(".rq"):
+            continue
+        head = archive.read(entry).decode("utf-8").split("\n")
+        assert [line[:2] for line in head[:4]] == ["# "] * 4, head
+        assert head[4] == "" and head[5] == SELECT
+    broken = archive.read("first line second line.rq").decode("utf-8")
+    assert broken.startswith("# Saved query: first line second line\n# Ontology: ")
+    assert "# Saved query: a # injected\n" in archive.read("a injected.rq").decode("utf-8")
+
+    # Unpacked, nothing lands outside the folder it was unpacked into.
+    target = tmp_path / "out"
+    target.mkdir()
+    archive.extractall(target)
+    assert sorted(p.name for p in tmp_path.rglob("*") if p.is_file() and target not in p.parents) == []
+    assert len(list(target.iterdir())) == len(names)
+
+
+def test_export_numbers_repeats_without_regard_to_case_and_cuts_long_names():
+    oid = _fresh_ontology()
+    for name in ["Bonds", "bonds", "Bonds", "readme", "x" * 200]:
+        assert _save(oid, name=name).status_code == 200
+    names = set(_export(oid).namelist())
+    stems = {n[:-3] for n in names if n.endswith(".rq")}
+    assert {s.casefold() for s in stems if s.casefold().startswith("bonds")} == {"bonds", "bonds (2)", "bonds (3)"}
+    assert "readme.rq" in names and "README.txt" in names
+    assert "x" * 80 + ".rq" in names
+
+
+def test_export_with_no_saved_queries_holds_only_the_readme():
+    assert _export(_fresh_ontology()).namelist() == ["README.txt"]
+
+
+def test_export_of_an_unknown_ontology_is_404():
+    response = client.get("/api/queries/export", params={"ontologyId": "ont-000000000000"})
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize("oid", ["../x", "ont-0123", "ont-0123456789AB", "prj-0123456789ab-model", "ont-0123456789ab\n", ""])
+def test_export_refuses_an_id_outside_the_pattern_before_any_lookup(oid, monkeypatch):
+    looked = []
+    monkeypatch.setattr(store, "get", lambda *a, **k: looked.append(a))
+    response = client.get("/api/queries/export", params={"ontologyId": oid})
+    assert response.status_code == 422, response.text
+    assert looked == []
+
+
+def test_export_header_name_carries_no_quote_or_line_break():
+    assert query_export.zip_filename('The "Lord"\r\nX-Evil: 1') == "The-Lord-X-Evil-1-saved-queries.zip"
+    assert query_export.zip_filename("../..") == "ontology-saved-queries.zip"

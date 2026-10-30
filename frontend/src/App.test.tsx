@@ -36,11 +36,11 @@ BASIC IDEA
     completely rather than merely making it less visible.
 
     The removal tests turn an ordering claim into an assertion. "The count
-    happens before the dialog" is not observable from the rendered output, so
-    window.confirm is stubbed with a spy that records what listSavedQueries had
-    done by the time it was called. Anything weaker would pass against a
+    happens before the dialog" is asserted by holding the count back and
+    finding no dialog until it lands. Anything weaker would pass against a
     version that opened the dialog first and counted afterwards, which is
-    exactly the defect being fixed.
+    exactly the defect being fixed. The dialog is RemoveDialog since
+    wording-and-query-export 5.11; its words are asserted where they show.
 
 INPUTS / INPUT SOURCES
     - A mocked api.ts returning one ontology summary and one budgeted graph.
@@ -114,6 +114,7 @@ const {
   restoreExamples,
   getResultNodes,
   getSettings,
+  exportSavedQueries,
 } = vi.hoisted(() => ({
   listOntologies: vi.fn(),
   getGraph: vi.fn(),
@@ -169,7 +170,13 @@ const {
   getResultNodes: vi.fn(),
   // home-and-settings Stage B: read when Settings opens, never on mount.
   getSettings: vi.fn(),
+  // wording-and-query-export 5.11: the removal dialog's Download.
+  exportSavedQueries: vi.fn(),
 }));
+
+// The browser's save, recorded: jsdom has no object URLs to hand a blob to.
+const { triggerDownload } = vi.hoisted(() => ({ triggerDownload: vi.fn() }));
+vi.mock("./download", () => ({ triggerDownload }));
 
 // importOriginal rather than a bare factory, so ApiError stays the real class.
 // App tells a 404 from /neighborhood apart from a failure with `instanceof`, and
@@ -216,11 +223,13 @@ vi.mock("./api", async (importOriginal) => ({
   restoreExamples,
   getResultNodes,
   getSettings,
+  exportSavedQueries,
 }));
 
 /** Every mocked client function, so a test can count what mount actually did. */
 const ALL_API = {
   getSettings,
+  exportSavedQueries,
   getResultNodes,
   restoreExamples,
   listData,
@@ -443,6 +452,7 @@ const TRUNCATED: VizGraph = {
 
 beforeEach(() => {
   for (const fn of Object.values(ALL_API)) fn.mockReset();
+  triggerDownload.mockReset();
   pick.iri = "http://x/Bond";
   pick.prefixed = "x:Bond";
   // jsdom implements no scrolling and does not define this at all, so the
@@ -771,7 +781,6 @@ describe("App startup chooser", () => {
     // AC-5. It used to fall back to the last remaining entry, which is the
     // same unasked-for render this feature exists to stop.
     listOntologies.mockResolvedValue([SUMMARY, { ...SUMMARY, id: "o2", name: "FOAF" }]);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     await renderApp();
     await act(async () => {
@@ -789,13 +798,13 @@ describe("App startup chooser", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     });
+    await answerRemoval("Remove");
 
     expect(deleteOntology).toHaveBeenCalledWith("o1");
     expect(homeShown()).toBe(true);
     // FOAF is still saved and is NOT opened in FIBO's place.
     expect(getGraph).not.toHaveBeenCalled();
     expect(libraryCard("FOAF")).toBeTruthy();
-    confirm.mockRestore();
   });
 });
 
@@ -1711,6 +1720,20 @@ describe("App result navigation", () => {
   });
 });
 
+/** The removal dialog (wording-and-query-export 5.11), or null. */
+function removalDialog(): HTMLElement | null {
+  return screen.queryByRole("dialog", { name: "Remove from your library" });
+}
+
+/** Press one of the removal dialog's answers by its words. */
+async function answerRemoval(label: string | RegExp) {
+  const dialog = removalDialog();
+  expect(dialog).not.toBeNull();
+  await act(async () => {
+    fireEvent.click(within(dialog!).getByRole("button", { name: label }));
+  });
+}
+
 describe("App removal warning", () => {
   /** Two saved queries against the ontology the tests remove. */
   const SAVED = [
@@ -1734,32 +1757,27 @@ describe("App removal warning", () => {
   }
 
   it("counts saved queries before showing the dialog", async () => {
-    // AC-11. The ordering is the feature. A confirm spy that records the
-    // count's state at the moment it is called is the only way to assert it
-    // from here — asserting merely that both happened would pass against a
-    // version that asked first and counted afterwards.
-    listSavedQueries.mockResolvedValue(SAVED);
-    let countedFirst = false;
-    // The probe records state and nothing else. An expect() inside the mock
-    // would throw through onRemove, which is called as `void onRemove()`, so a
-    // failure would surface as an unhandled rejection rather than as this test
-    // failing. The message is asserted afterwards, from the recorded call.
-    const confirm = vi.spyOn(window, "confirm").mockImplementation(() => {
-      countedFirst = listSavedQueries.mock.calls.length === 1;
-      return false;
-    });
+    // AC-11. The ordering is the feature: with the count held back there is
+    // no dialog, and once it lands the dialog carries its number.
+    let release: (queries: unknown[]) => void = () => {};
+    listSavedQueries.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
 
     await renderApp();
     await clickRemove();
-
     expect(listSavedQueries).toHaveBeenCalledWith("o1");
-    expect(countedFirst).toBe(true);
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(removalDialog()).toBeNull();
+
+    await act(async () => {
+      release(SAVED);
+    });
     // And the number reached the sentence, not just the network.
-    const message = String(confirm.mock.calls[0][0]);
+    const message = removalDialog()!.textContent!;
     expect(message).toContain("2 saved queries");
     expect(message).toContain("“Bonds by issuer”");
-    confirm.mockRestore();
   });
 
   it("keeps the card inert, and focus on its ⋮ button, while counting", async () => {
@@ -1774,7 +1792,6 @@ describe("App removal warning", () => {
         release = resolve;
       }),
     );
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 
     await renderApp();
     await clickRemove();
@@ -1782,17 +1799,18 @@ describe("App removal warning", () => {
     expect(moreButton().getAttribute("aria-disabled")).toBe("true");
     expect(moreButton().disabled).toBe(false);
     expect(document.activeElement).toBe(moreButton());
-    expect(confirm).not.toHaveBeenCalled();
+    expect(removalDialog()).toBeNull();
 
     await act(async () => {
       release([]);
     });
 
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(removalDialog()).not.toBeNull();
     expect(moreButton().getAttribute("aria-disabled")).toBe("false");
-    // Declined: focus is where the person left it.
+    // Declined: focus is back where the person left it (5.14).
+    await answerRemoval("Cancel");
+    expect(removalDialog()).toBeNull();
     expect(document.activeElement).toBe(moreButton());
-    confirm.mockRestore();
   });
 
   it("gives focus to Home's start target when the removed card goes", async () => {
@@ -1800,48 +1818,47 @@ describe("App removal warning", () => {
     // must not fall to the page.
     listOntologies.mockResolvedValue([SUMMARY, { ...SUMMARY, id: "o2", name: "FOAF" }]);
     listSavedQueries.mockResolvedValue([]);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     await renderApp();
     await clickRemove();
+    await answerRemoval("Remove");
 
     expect(deleteOntology).toHaveBeenCalledWith("o1");
     expect(screen.queryByRole("heading", { level: 3, name: "FIBO" })).toBeNull();
     expect(document.activeElement).not.toBe(document.body);
     expect(document.activeElement).toBe(cardVerb("Explore", "FOAF"));
-    confirm.mockRestore();
   });
 
   it("a failed count still opens the dialog with cautious wording", async () => {
     // AC-13. A failed count must never become "0 queries", and it must not
     // block the removal either: the user asked to delete something.
     listSavedQueries.mockRejectedValue(new Error("network down"));
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     await renderApp();
     await clickRemove();
 
-    const message = String(confirm.mock.calls[0][0]);
+    const message = removalDialog()!.textContent!;
     expect(message).toContain("any queries saved against it");
     expect(message).not.toContain("0 saved");
+    // No count, so no Download: Cancel and Remove only (AC-12).
+    expect(within(removalDialog()!).queryByRole("button", { name: /download/i })).toBeNull();
+    await answerRemoval("Remove");
     expect(deleteOntology).toHaveBeenCalledWith("o1");
     // The failed count is not an error bar: nothing the user did went wrong.
     expect(document.querySelector(".error-bar")).toBeNull();
-    confirm.mockRestore();
   });
 
   it("cancelling makes no delete request", async () => {
     // AC-14. Counting is a read; declining must leave everything as it was.
     listSavedQueries.mockResolvedValue(SAVED);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 
     await renderApp();
     await clickRemove();
+    await answerRemoval("Cancel");
 
     expect(deleteOntology).not.toHaveBeenCalled();
     expect(libraryCard("FIBO")).toBeTruthy();
     expect(document.querySelector(".notice-bar")).toBeNull();
-    confirm.mockRestore();
   });
 
   it("reports the deleted query count afterwards", async () => {
@@ -1850,25 +1867,24 @@ describe("App removal warning", () => {
     // why this test has the server report three where the client counted two.
     listSavedQueries.mockResolvedValue(SAVED);
     deleteOntology.mockResolvedValue({ deleted: "o1", deletedQueries: 3 });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     await renderApp();
     await clickRemove();
+    await answerRemoval("Remove");
 
     expect(document.querySelector(".notice-bar")!.textContent).toBe(
       "Removed FIBO and 3 saved queries.",
     );
-    confirm.mockRestore();
   });
 
   it("reports nothing extra when no queries were deleted", async () => {
     // AC-16. The ordinary case stays silent. The ontology visibly went; a
     // message saying so would be the noise that stops the other one being read.
     listSavedQueries.mockResolvedValue([]);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     await renderApp();
     await clickRemove();
+    await answerRemoval("Remove");
 
     expect(homeShown()).toBe(true);
     expect(document.querySelector(".notice-bar")).toBeNull();
@@ -1876,7 +1892,42 @@ describe("App removal warning", () => {
     // already watching, so removing it would be the announcement bug it exists
     // to avoid. What must not happen is that it says anything.
     expect(document.querySelector(".notice-region")!.textContent).toBe("");
-    confirm.mockRestore();
+  });
+
+  it("offers the saved queries as a zip, and Download leaves the dialog open (wording 5.11, AC-12, AC-13)", async () => {
+    listSavedQueries.mockResolvedValue(SAVED);
+    const blob = new Blob(["zip"]);
+    exportSavedQueries.mockResolvedValue({ blob, filename: "FIBO-saved-queries.zip" });
+
+    await renderApp();
+    await clickRemove();
+    // removalPrompt's sentence, unchanged, and the offer beside it.
+    expect(removalDialog()!.textContent).toContain(
+      "Remove “FIBO”? This deletes its stored copy and 2 saved queries (“Bonds by issuer”, “All jurisdictions”), which cannot be undone.",
+    );
+    await answerRemoval("Download the 2 saved queries");
+
+    expect(exportSavedQueries).toHaveBeenCalledWith("o1");
+    // Saved under the ontology's own name, not the header's ASCII one.
+    expect(triggerDownload).toHaveBeenCalledWith(blob, "FIBO saved queries.zip");
+    expect(removalDialog()).not.toBeNull();
+    expect(within(removalDialog()!).getByRole("status").textContent).toBe(
+      "Downloaded 2 saved queries as FIBO saved queries.zip.",
+    );
+    expect(within(removalDialog()!).getByRole("button", { name: "Download again" })).toBeTruthy();
+    // Nothing removed: the ontology is still in the library.
+    expect(deleteOntology).not.toHaveBeenCalled();
+    await answerRemoval("Cancel");
+    expect(libraryCard("FIBO")).toBeTruthy();
+  });
+
+  it("a zero count offers Cancel and Remove only (AC-12)", async () => {
+    listSavedQueries.mockResolvedValue([]);
+    await renderApp();
+    await clickRemove();
+    const buttons = within(removalDialog()!).getAllByRole("button").map((b) => b.textContent);
+    expect(buttons).toEqual(["Cancel", "Remove"]);
+    expect(removalDialog()!.textContent).toContain("Remove “FIBO” and delete its stored copy? It will no longer appear after a restart.");
   });
 
   it("the confirmation is a polite live region", async () => {
@@ -1885,7 +1936,6 @@ describe("App removal warning", () => {
     // nothing needs a decision.
     listSavedQueries.mockResolvedValue(SAVED);
     deleteOntology.mockResolvedValue({ deleted: "o1", deletedQueries: 2 });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     await renderApp();
     // The region exists before there is anything to say. A live region added
@@ -1896,11 +1946,11 @@ describe("App removal warning", () => {
     expect(region.getAttribute("aria-live")).toBe("polite");
 
     await clickRemove();
+    await answerRemoval("Remove");
 
     expect(document.querySelector(".notice-region")).toBe(region);
     expect(region.textContent).toContain("Removed FIBO");
     expect(region.querySelector("[role='alert']")).toBeNull();
-    confirm.mockRestore();
   });
 });
 
@@ -2202,7 +2252,6 @@ describe("App home screen", () => {
       { id: "q1", name: "Planets" },
       { id: "q2", name: "Missions" },
     ]);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     await renderApp();
 
     await act(async () => {
@@ -2213,12 +2262,12 @@ describe("App home screen", () => {
     });
 
     expect(listSavedQueries).toHaveBeenCalledWith("o1");
-    expect(confirm.mock.calls[0][0]).toContain("2 saved queries");
+    expect(removalDialog()!.textContent).toContain("2 saved queries");
+    await answerRemoval("Remove");
     expect(deleteOntology).toHaveBeenCalledWith("o1");
     // Still on Home afterwards, and the card is gone from it.
     expect(homeShown()).toBe(true);
     expect(screen.queryByRole("heading", { level: 3, name: "FIBO" })).toBeNull();
-    confirm.mockRestore();
   });
 
   it("removing a card that is not the open ontology leaves the open one alone", async () => {
@@ -2227,7 +2276,6 @@ describe("App home screen", () => {
     // reached with something loaded, so the ontology being removed is routinely
     // not the one open — and closing that one would be a reset nobody asked for.
     listOntologies.mockResolvedValue([SUMMARY, { ...SUMMARY, id: "o2", name: "FOAF" }]);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     deleteOntology.mockResolvedValue({ deleted: "o2", deletedQueries: 0 });
 
     await renderAppOpened();
@@ -2240,6 +2288,7 @@ describe("App home screen", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     });
+    await answerRemoval("Remove");
 
     expect(deleteOntology).toHaveBeenCalledWith("o2");
     // FIBO is still the open ontology: the status bar names it, and pressing a
@@ -2249,7 +2298,6 @@ describe("App home screen", () => {
       fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
     });
     expect(homeShown()).toBe(false);
-    confirm.mockRestore();
   });
 });
 

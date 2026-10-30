@@ -6,7 +6,10 @@ FILE: frontend/src/removalPrompt.ts
 SUMMARY
     Builds the sentence shown in the confirmation dialog before an ontology is
     removed. It is a pure function of the ontology's name, the number of queries
-    saved against it, and their names.
+    saved against it, and their names. And the removal dialog's other words
+    (wording-and-query-export 5.11): its heading, the Download button in its
+    three states, what the live region says once the file is saved, and the
+    sentence for a download that failed.
 
 BASIC IDEA
     Removing an ontology also deletes every query saved against it, and the
@@ -28,15 +31,21 @@ BASIC IDEA
     It lives in its own module rather than inside App.tsx so that it can be
     tested without rendering the whole application.
 
+    The dialog's Download is offered only for a known count above zero
+    (`offersDownload`): with `null` there is nothing honest to put on the
+    button, and with zero there is nothing to keep. The sentence above stays
+    removalPrompt's, unchanged, in every case.
+
 INPUTS / INPUT SOURCES
     - The active ontology's name, from the ontology list.
     - The length of GET /api/queries?ontology=... , or null if that call failed.
     - The names of those saved queries, in the order the server listed them.
 
 EXPECTED OUTPUT
-    - One plain-text sentence for window.confirm. Plain text is deliberate: the
-      ontology name comes from an uploaded filename and is therefore
-      attacker-influenced, and a native dialog cannot execute markup.
+    - One plain-text sentence for RemoveDialog, shown as React text. Plain
+      text is deliberate: the ontology name comes from an uploaded filename
+      and is therefore attacker-influenced, and nothing here is markup.
+    - The dialog's heading, button words, file name and announcements.
 ================================================================================
 */
 
@@ -88,4 +97,44 @@ export function removalConfirmation(name: string, deletedQueries: number): strin
   if (deletedQueries <= 0) return null;
   const plural = deletedQueries === 1 ? "1 saved query" : `${deletedQueries} saved queries`;
   return `Removed ${name} and ${plural}.`;
+}
+
+/** The removal dialog's heading: what is being decided, named once. */
+export const REMOVE_HEADING = "Remove from your library";
+
+/** Whether the dialog offers to download the queries first (5.11 item 2):
+ *  only for a count that is known and above zero. */
+export function offersDownload(savedQueries: number | null): savedQueries is number {
+  return savedQueries !== null && savedQueries > 0;
+}
+
+/** "the saved query" for one, "the 3 saved queries" for more. */
+function theQueries(count: number): string {
+  return count === 1 ? "the saved query" : `the ${count} saved queries`;
+}
+
+/** The Download button's words: before, while the file is prepared, and
+ *  once it has been saved (5.11 item 3). */
+export function downloadLabel(count: number, state: "idle" | "preparing" | "done"): string {
+  if (state === "preparing") return "Preparing…";
+  if (state === "done") return "Download again";
+  return `Download ${theQueries(count)}`;
+}
+
+/** The file the browser saves: the ontology's own name (5.12). */
+export function exportFilename(name: string): string {
+  return `${name} saved queries.zip`;
+}
+
+/** What the live region says once the file has been handed to the browser. */
+export function downloadedSentence(count: number, filename: string): string {
+  const what = count === 1 ? "1 saved query" : `${count} saved queries`;
+  return `Downloaded ${what} as ${filename}.`;
+}
+
+/** Said in the dialog when the download failed; Remove stays available. */
+export function downloadFailed(count: number): string {
+  return count === 1
+    ? "The query could not be downloaded. It is still saved; nothing was removed."
+    : "The queries could not be downloaded. They are still saved; nothing was removed.";
 }

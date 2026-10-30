@@ -2617,3 +2617,33 @@ EXPECTED OUTPUT
   **The graph's empty state waits for the build.** It showed through
   *Building graph…* on every open, telling a person no ontology was open
   while one was being drawn; GraphView now takes `loading`.
+
+- **Query export** (2026-10-30, spec `wording-and-query-export` Stage B,
+  backlog Q-11, D-122). Removing an ontology deletes every query saved
+  against it; the removal dialog (`RemoveDialog.tsx`, in place of
+  `window.confirm`, which could not offer a button) now offers them first
+  as one zip from `GET /api/queries/export`: one `.rq` per query, visual
+  and text alike, and a README. There is no restore and no builder state:
+  a visual query leaves as its SPARQL and comes back as text.
+
+  **The names are untrusted, twice.** A query's name is the person's own
+  words and the ontology's comes from an uploaded file. An entry name keeps
+  only letters, digits, spaces, hyphens and underscores, at most 80, so
+  `../../x` is `x.rq` and no separator, `..` or drive letter reaches the
+  archive; repeats take *(2)*, compared without case, because a Windows or
+  macOS folder would let one overwrite the other when unpacked. In the
+  comment lines every control character, line breaks and the Unicode line
+  separators included, becomes a space: left as it was, a name with a line break would
+  have ended its comment and started a line of SPARQL. The response header
+  carries an ASCII name only; the browser saves under the page's name, the
+  ontology's own. `ontologyId` is matched against `ont-` and twelve hex
+  digits before any lookup (422); a project document's queries leave with
+  its project's own export.
+
+  **Focus starts on Cancel**, the safe answer to a removal, through
+  `useDialogTrap` with Cancel as the element it focuses; Download is
+  aria-disabled while the file is prepared, so it keeps focus, and the
+  dialog stays open after it. Measured in Chrome over the DevTools Protocol:
+  a modal dialog named *Remove from your library*, described by
+  removalPrompt's sentence; Tab and Shift+Tab wrap; Escape gives focus back
+  to the card's ⋮.
