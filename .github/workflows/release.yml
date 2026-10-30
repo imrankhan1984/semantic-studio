@@ -72,12 +72,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          page="$(curl -fsSL https://www.python.org/downloads/release/python-${PYTHON_VERSION//./}/)"
-          echo "$page" | tr '\n' ' ' | grep -oE 'python-'"$PYTHON_VERSION"'-embed-amd64\.zip.{0,1500}' | grep -oE '[0-9a-f]{64}' | head -3 | sed 's/^/page: /'
-          echo "$page" | tr '\n' ' ' | grep -oE '.{0,400}embed-amd64\.zip.{0,600}' | head -2
+          curl -fsSL "https://www.python.org/downloads/release/python-${PYTHON_VERSION//./}/" \
+            | tr '\n' ' ' | sed -e 's/<wbr>//g' -e 's/<[^>]*>/ /g' | tr -s ' ' \
+            | grep -oE 'Windows embeddable package \(64-bit\).{0,300}' | grep -oE '[0-9a-f]{16}( [0-9a-f]{16}){0,3}' | head -2 | sed 's/^/page: /'
           curl -fsSL -o embed.zip "https://www.python.org/ftp/python/$PYTHON_VERSION/python-$PYTHON_VERSION-embed-amd64.zip"
           sha256sum embed.zip | sed 's/^/downloaded: /'
-          curl -fsSL "https://www.python.org/ftp/python/$PYTHON_VERSION/python-$PYTHON_VERSION-embed-amd64.zip.sigstore" -o /dev/null && echo "sigstore bundle exists" || true
 
   windows-zip:
     runs-on: windows-latest
