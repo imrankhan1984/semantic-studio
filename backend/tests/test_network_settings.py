@@ -315,6 +315,17 @@ def test_the_system_proxy_is_read_at_each_request(monkeypatch, proxy, http_serve
     assert view["systemProxy"] == f"127.0.0.1:{proxy.port}"
 
 
+def test_a_proxy_password_is_never_shown(monkeypatch):
+    """A system proxy URL may carry a user name and password; the panel and
+    every sentence name the host and port only."""
+    monkeypatch.setattr(urllib.request, "getproxies", lambda: {"https": "http://me:s3cret@127.0.0.1:1"})
+    assert client.get("/api/network/connection").json()["systemProxy"] == "127.0.0.1:1"
+    monkeypatch.setattr(network_broker, "TEST_URL", "https://www.w3.org/1999/02/22-rdf-syntax-ns")
+    assert "s3cret" not in json.dumps(client.post("/api/network/test").json())
+    monkeypatch.setattr(urllib.request, "getproxies", lambda: {"https": "socks5://me:s3cret@127.0.0.1:1"})
+    assert "s3cret" not in json.dumps(client.post("/api/network/test").json())
+
+
 def test_no_proxy_ignores_the_system_proxy(monkeypatch, proxy, http_server, loopback_is_public):
     server = http_server(lambda _p: (200, {}, BODY))
     loopback_is_public["plain.test"] = [LOCAL]

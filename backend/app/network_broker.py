@@ -603,6 +603,13 @@ def _bypassed(host: str, entries: Iterable[str]) -> bool:
     return False
 
 
+def proxy_label(proxy: str) -> str:
+    """A proxy as the person reads it: host and port, never a password a
+    system proxy URL may carry (`http://user:secret@proxy:8080`)."""
+    netloc = urlsplit(proxy).netloc
+    return netloc.rpartition("@")[2]
+
+
 def system_proxy(scheme: str = "https") -> Optional[str]:
     """The system's proxy URL for ``scheme``, read now, or None.
 
@@ -884,7 +891,7 @@ class NetworkBroker:
         system offers now and which certificates are trusted."""
         view = copy.deepcopy(self.policy.connection)
         found = system_proxy("https") or system_proxy("http")
-        view["systemProxy"] = urlsplit(found).netloc if found else None
+        view["systemProxy"] = proxy_label(found) if found else None
         view["trust"] = trust_source()
         return view
 
@@ -966,7 +973,11 @@ class NetworkBroker:
         except Exception:
             pass
         if urlsplit(proxy).scheme not in ("http", "https"):
-            raise FetchFailed(url, f"the system proxy ({proxy}) is of a kind Semantic Studio cannot use")
+            raise FetchFailed(
+                url,
+                f"the system proxy ({urlsplit(proxy).scheme}://{proxy_label(proxy)}) is of a kind "
+                "Semantic Studio cannot use",
+            )
         return proxy
 
     # --- logging ----------------------------------------------------------
@@ -1320,7 +1331,7 @@ def _failed_stage(exc: FetchFailed, proxy: Optional[str], site: str) -> dict:
         said = f" (status {status.group(1)})" if status else ""
         return {"ok": False, "stage": "proxy", "message": f"The proxy refused the connection{said}."}
     if proxy is not None and any(isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)) for e in chain):
-        where = urlsplit(proxy).netloc
+        where = proxy_label(proxy)
         return {
             "ok": False, "stage": "proxy",
             "message": f"Could not reach the proxy at {where}. Check the address and port.",
