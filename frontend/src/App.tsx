@@ -144,7 +144,9 @@ BASIC IDEA
     destroy before it asks. Deleting an ontology has always deleted every query
     saved against it; onRemove now fetches that count first, puts it in the
     confirmation, and reports afterwards what the server says it actually took.
-    It starts from a card's ⋯ menu on Home, never from the context bar.
+    It starts from a card's ⋯ menu on Home, never from the context bar. The
+    question is RemoveDialog, which can offer the saved queries as a zip
+    before they go (wording-and-query-export 5.11).
 
 INPUTS / INPUT SOURCES
     - The backend API (via api.ts) for the ontology list and graph.
@@ -166,6 +168,7 @@ import {
   downloadDocumentCopy,
   duplicateProject,
   exportProject,
+  exportSavedQueries,
   getGraph,
   getNeighborhood,
   getResultNodes,
@@ -178,6 +181,7 @@ import {
   updateProject,
 } from "./api";
 import ConfirmDialog from "./components/ConfirmDialog";
+import RemoveDialog from "./components/RemoveDialog";
 import NewProjectDialog, { type NewProjectRequest } from "./components/NewProjectDialog";
 import ProjectHeader from "./components/ProjectHeader";
 import TurtleEditor from "./components/TurtleEditor";
@@ -225,7 +229,7 @@ import {
   IconSun,
   IconView,
 } from "./components/icons";
-import { removalConfirmation, removalPrompt } from "./removalPrompt";
+import { exportFilename, removalConfirmation } from "./removalPrompt";
 import { formatName, homeStatus, statementCount } from "./statusWords";
 import { isReference, missingBundled } from "./home/libraryOrder";
 import type { SourceTarget } from "./sourceTarget";
@@ -475,6 +479,10 @@ export default function App() {
   // started it, in Home's ⋯ menu, is the one that has to say it is busy.
   // Removal is started nowhere else (portal-foundations 5.7).
   const [removingId, setRemovingId] = useState<string | null>(null);
+  // The removal dialog's question, once its count is in (5.11).
+  const [removal, setRemoval] = useState<{ id: string; name: string; count: number | null; names: string[] } | null>(
+    null,
+  );
   const [mode, setMode] = useState<AppMode>("explore");
   // A mode picked from the header with nothing open. It is remembered rather
   // than refused, so the library heading can ask which ontology it should act
@@ -1077,6 +1085,10 @@ export default function App() {
   // saying so. A failure to count is carried as null, never as zero — see
   // removalPrompt.ts, which is where that distinction is enforced and tested.
   //
+  // The question is RemoveDialog, not window.confirm, which could not offer
+  // a button: a count above zero offers the queries as a zip first
+  // (wording-and-query-export 5.11).
+  //
   // It takes an id rather than reading activeId: removal is started from a
   // card's menu on the home screen, where the ontology being removed is
   // usually not the active one.
@@ -1094,7 +1106,20 @@ export default function App() {
     } finally {
       setRemovingId(null);
     }
-    if (!window.confirm(removalPrompt(name, count, names))) return;
+    setRemoval({ id, name, count, names });
+  };
+
+  // The dialog's Download: the zip saved under the ontology's own name,
+  // which the dialog then announces.
+  const downloadRemovalQueries = async (id: string, name: string): Promise<string> => {
+    const { blob } = await exportSavedQueries(id);
+    const filename = exportFilename(name);
+    triggerDownload(blob, filename);
+    return filename;
+  };
+
+  const confirmRemove = async (id: string, name: string) => {
+    setRemoval(null);
     try {
       // The count comes back from the delete rather than being reused from
       // above: another tab may have saved one in between, and what was actually
@@ -2513,6 +2538,17 @@ export default function App() {
           initialSource={newProject.source}
           onCreate={onCreateProject}
           onClose={() => setNewProject(null)}
+        />
+      )}
+
+      {removal && (
+        <RemoveDialog
+          name={removal.name}
+          savedQueries={removal.count}
+          names={removal.names}
+          onDownload={() => downloadRemovalQueries(removal.id, removal.name)}
+          onCancel={() => setRemoval(null)}
+          onRemove={() => void confirmRemove(removal.id, removal.name)}
         />
       )}
 

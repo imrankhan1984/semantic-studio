@@ -566,6 +566,13 @@ export function listSavedQueries(ontologyId: string): Promise<SavedQuery[]> {
   );
 }
 
+// One library ontology's saved queries as a zip of .rq files and a README
+// (wording-and-query-export 5.13): the removal dialog's Download. The page
+// names the file; the header's ASCII name is only the fallback.
+export function exportSavedQueries(ontologyId: string): Promise<{ blob: Blob; filename: string }> {
+  return bytes(`/api/queries/export?ontologyId=${encodeURIComponent(ontologyId)}`);
+}
+
 // Create or update a saved query (id present -> update). A text query sends
 // mode "text", its text as `sparql`, and the state it forked from or null.
 export function saveQuery(payload: {

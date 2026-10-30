@@ -189,6 +189,8 @@ backend/app/
                      the only importer of owlrl
   shapes_form.py     A SHACL shape as the form reads it, read-only parts, suggestions
   queries_store.py   Saved queries, visual or text, one JSON file each
+  query_export.py    One library ontology's saved queries as a zip of .rq
+                     files and a README, for the removal dialog (D-122)
   tabular.py         A CSV file or a workbook's sheet read for the data import:
                      dialect detected, the fixed limits (2,000 rows, D-098),
                      the Excel defences (D-100), the copy written
@@ -300,6 +302,7 @@ leaves one behind.
 - Builder state is never written while the query is text; the live text is in `textRef`. [written as text]
 - The editor's key is `editorSession`, the same across the fork. [written as text]
 - The saved-query id is checked twice: request model and the store's `_path`. [written as text]
+- An exported query's entry name keeps only letters, digits, spaces, hyphens and underscores, and its comment lines no control character; the export's id is matched before any lookup (D-122). [Query export]
 - `ResultsTable` stays `React.memo`, fed a `useCallback` `onClear`. [leads somewhere]
 - `sourceTarget.ts` uses `indexOf`, never a `RegExp` built from ontology text. [leads somewhere]
 - A 404 is told by `ApiError.status`, never by message text. [leads somewhere]

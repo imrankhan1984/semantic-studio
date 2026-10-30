@@ -28,7 +28,15 @@ EXPECTED OUTPUT
 */
 
 import { describe, expect, it } from "vitest";
-import { removalConfirmation, removalPrompt } from "./removalPrompt";
+import {
+  downloadFailed,
+  downloadLabel,
+  downloadedSentence,
+  exportFilename,
+  offersDownload,
+  removalConfirmation,
+  removalPrompt,
+} from "./removalPrompt";
 
 /** The exact sentence the dialog used before this feature existed. */
 const UNCHANGED =
@@ -116,5 +124,33 @@ describe("removalConfirmation", () => {
   it("says nothing when no queries were deleted", () => {
     // AC-16. The ontology visibly disappeared; announcing that it did is noise.
     expect(removalConfirmation("FIBO", 0)).toBeNull();
+  });
+});
+
+describe("the removal dialog's words (wording-and-query-export 5.11)", () => {
+  it("offers a download only for a known count above zero: null is not 0", () => {
+    expect(offersDownload(null)).toBe(false);
+    expect(offersDownload(0)).toBe(false);
+    expect(offersDownload(1)).toBe(true);
+    expect(offersDownload(3)).toBe(true);
+  });
+
+  it("names the button for one and for more, and its two other states", () => {
+    expect(downloadLabel(3, "idle")).toBe("Download the 3 saved queries");
+    expect(downloadLabel(1, "idle")).toBe("Download the saved query");
+    expect(downloadLabel(3, "preparing")).toBe("Preparing…");
+    expect(downloadLabel(3, "done")).toBe("Download again");
+  });
+
+  it("names the file after the ontology and says it once saved", () => {
+    const file = exportFilename("The Lord of the Rings");
+    expect(file).toBe("The Lord of the Rings saved queries.zip");
+    expect(downloadedSentence(3, file)).toBe("Downloaded 3 saved queries as The Lord of the Rings saved queries.zip.");
+    expect(downloadedSentence(1, file)).toBe("Downloaded 1 saved query as The Lord of the Rings saved queries.zip.");
+  });
+
+  it("says a failed download removed nothing", () => {
+    expect(downloadFailed(3)).toBe("The queries could not be downloaded. They are still saved; nothing was removed.");
+    expect(downloadFailed(1)).toBe("The query could not be downloaded. It is still saved; nothing was removed.");
   });
 });
