@@ -126,8 +126,10 @@ class Launch:
                 match = pattern.search(line)
                 if match:
                     return match
-            if self.process.poll() is not None and not self.lines[-1:]:
-                break
+            if self.process.poll() is not None:
+                # Ended; give the reader a moment for its last lines.
+                time.sleep(0.5)
+                return next((m for m in map(pattern.search, self.lines) if m), None)
             time.sleep(0.1)
         return None
 

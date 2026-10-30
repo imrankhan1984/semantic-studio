@@ -99,13 +99,17 @@ def url(port: int) -> str:
 def bind(port: int) -> Optional[socket.socket]:
     """The port's listening socket on 127.0.0.1, or None when it is taken.
 
-    No SO_REUSEADDR: on Windows it lets a socket share a port another program
-    is listening on, which is the opposite of the question asked here.
-    SO_EXCLUSIVEADDRUSE, Windows only, keeps another program off ours."""
+    Windows: SO_EXCLUSIVEADDRUSE and never SO_REUSEADDR, which there lets a
+    socket share a port another program is listening on, the opposite of
+    the question asked here. Elsewhere SO_REUSEADDR, which refuses a port
+    someone listens on but not one whose last run's connections are still
+    in TIME_WAIT: without it a quick restart moved to 8001."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((LOOPBACK, port))
         sock.listen(128)
     except OSError:
@@ -235,6 +239,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         server.run(sockets=[sock])
     except KeyboardInterrupt:
         pass
+    except SystemExit as exc:
+        # uvicorn ends a failed start (the lifespan, the socket) with
+        # sys.exit(3), after logging why; past _run's handler it would close
+        # the window with the reason on it.
+        if exc.code not in (0, None):
+            print("Semantic Studio stopped because of the error above.", flush=True)
+            _wait_for_a_key()
+            return 2
     finally:
         sock.close()
     return 0

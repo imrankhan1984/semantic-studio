@@ -110,9 +110,12 @@ def third_party(lib: Path | None, python_dir: Path | None) -> str:
             meta = dist.metadata
             licence = meta.get("License-Expression") or meta.get("License") or ""
             header = f"{meta['Name']} {dist.version}" + (f" ({licence.splitlines()[0]})" if licence else "")
+            # Only the metadata folder's files: a module named license.py is
+            # code, not a license.
             texts = [
                 f for f in (dist.files or [])
-                if any(word in Path(str(f)).name.upper() for word in ("LICENSE", "LICENCE", "COPYING", "NOTICE"))
+                if ".dist-info" in str(f)
+                and any(word in Path(str(f)).name.upper() for word in ("LICENSE", "LICENCE", "COPYING", "NOTICE"))
             ]
             body = "\n\n".join(
                 Path(dist.locate_file(f)).read_text(encoding="utf-8", errors="replace").rstrip() for f in texts

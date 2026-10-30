@@ -56,7 +56,7 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1751 tests (+2 marked `network`, deselected)
+cd backend  && python -m pytest tests    # 1755 tests (+2 marked `network`, deselected)
 cd frontend && npm run test              # 1940 tests, vitest
 ```
 

@@ -132,3 +132,10 @@ def test_the_artifact_is_kept_seven_days_and_the_smoke_test_runs():
     smoke = next(s for s in steps if s.get("name") == "Smoke test")
     assert '"smoke test"' in smoke["run"] and "release/smoke.py" in smoke["run"]
     assert steps.index(smoke) < steps.index(upload)
+
+
+def test_no_script_has_an_expression_pasted_in():
+    """A tag's name may hold quotes and $( ): values reach a script through
+    `env:`, never `${{ }}` inside `run:`."""
+    runs = _runs(_workflow())
+    assert runs and all("${{" not in run for run in runs), [r for r in runs if "${{" in r]

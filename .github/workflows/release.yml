@@ -87,13 +87,22 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      # On a pull request github.sha is the merge GitHub made, not the
+      # branch; VERSION.txt names the commit a reviewer can find. Values
+      # reach the script through env, never pasted into it: a tag's name
+      # may hold quotes and $( ).
       - name: Version
         shell: pwsh
+        env:
+          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if ("${{ github.ref_type }}" -eq "tag") { $version = "${{ github.ref_name }}".Substring(1) }
-          else { $version = "dev-" + "${{ github.sha }}".Substring(0, 7) }
+          if ($env:REF_TYPE -eq "tag") { $version = $env:REF_NAME.Substring(1) }
+          else { $version = "dev-" + $env:COMMIT.Substring(0, 7) }
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "RELEASE_NAME=SemanticStudio-$version-windows-x64" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "COMMIT=$env:COMMIT" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       # AC-7: python.org's file, or nothing.
       - name: Download and check the embeddable Python
@@ -112,7 +121,7 @@ jobs:
         shell: pwsh
         run: |
           $out = Join-Path $env:RUNNER_TEMP "release"
-          python release/build.py --out $out --version $env:VERSION --commit "${{ github.sha }}" --embed $env:EMBED_ZIP
+          python release/build.py --out $out --version $env:VERSION --commit $env:COMMIT --embed $env:EMBED_ZIP
           "OUT_DIR=$out" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Get-Item (Join-Path $out "$env:RELEASE_NAME.zip") | Select-Object Name, Length
           Get-Content (Join-Path $out "$env:RELEASE_NAME\requirements-lock.txt")
@@ -126,7 +135,7 @@ jobs:
           Expand-Archive -Path (Join-Path $env:OUT_DIR "$env:RELEASE_NAME.zip") -DestinationPath $smoke
           python release/smoke.py (Join-Path $smoke $env:RELEASE_NAME)
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ env.RELEASE_NAME }}
           path: |
@@ -150,7 +159,7 @@ jobs:
         run: |
           git fetch origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "The tag $GITHUB_REF_NAME is not on main."; exit 1; }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true

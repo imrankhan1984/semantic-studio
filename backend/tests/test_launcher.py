@@ -315,3 +315,36 @@ def test_the_launchers_requests_never_reach_a_proxy(system_proxy, serve):
     assert (state, found) == ("running", port)
     assert system_proxy.requests == [], "the launcher asked the proxy for its own server"
     assert len(up.requests) == 3
+
+
+def test_a_failed_start_keeps_its_reason_on_screen(recorded, monkeypatch, capsys):
+    """uvicorn ends a failed start with sys.exit(3), past _run's handler."""
+
+    def run(self, sockets=None):
+        raise SystemExit(3)
+
+    monkeypatch.setattr(uvicorn.Server, "run", run)
+    monkeypatch.setattr(launcher, "PORTS", free_ports(1))
+    waited = []
+    monkeypatch.setattr("builtins.input", lambda prompt="": waited.append(prompt) or "")
+    assert launcher.main(["--no-browser"]) == 2
+    assert waited and "stopped because of the error above" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(os.name == "nt", reason="TIME_WAIT does not hold a listening port on Windows")
+def test_a_quick_restart_gets_the_same_port():
+    """The last run's connections in TIME_WAIT do not move a restart to 8001."""
+    (port,) = free_ports(1)
+    server = launcher.bind(port)
+    client = socket.create_connection(("127.0.0.1", port))
+    accepted, _ = server.accept()
+    accepted.close()  # the server closes first: its side waits in TIME_WAIT
+    client.close()
+    server.close()
+    again = launcher.bind(port)
+    assert again is not None, "a quick restart could not take its own port back"
+    again.close()
+
+
+def test_a_port_someone_listens_on_is_still_taken(taken):
+    assert launcher.bind(taken()) is None
