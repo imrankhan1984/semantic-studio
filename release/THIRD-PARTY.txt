@@ -1,0 +1,24 @@
+Semantic Studio: third-party software in this release
+=====================================================
+
+Semantic Studio itself is MIT licensed (see LICENSE). This release also
+carries the software below, each under its own license. Its full license
+texts follow, as shipped by each package; requirements-lock.txt lists every
+package and its exact version.
+
+  Python (embeddable distribution)       Python Software Foundation License
+  FastAPI                                MIT
+  uvicorn                                BSD-3-Clause
+  rdflib                                 BSD-3-Clause
+  httpx                                  BSD-3-Clause
+  python-multipart                       Apache-2.0
+  pySHACL, SHACL validation              Apache-2.0
+  OWL-RL, reasoning                      W3C Software License
+  openpyxl, Excel workbooks              MIT
+  defusedxml                             Python Software Foundation License
+  truststore, Windows' certificates      MIT
+
+The web interface in static\ is built from React, Vite, Sigma.js, graphology,
+the ForceAtlas2 layout and React Flow (@xyflow/react), all MIT licensed.
+
+The packages they depend on are listed below with their own licenses.

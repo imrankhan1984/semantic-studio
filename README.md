@@ -107,6 +107,23 @@ them by clicking, without writing SPARQL by hand.
   model against them, one panel per rule set, in plain sentences. See
   [Projects](#projects).
 
+## Quick start (Windows, nothing to install)
+
+Download `SemanticStudio-<version>-windows-x64.zip` from the
+[Releases](https://github.com/imrankhan1984/semantic-studio/releases) page.
+The release is not signed, so first right-click the zip, choose
+*Properties* and tick *Unblock*. Then unzip it anywhere and open
+**Start Semantic Studio**. The app opens in your browser at
+<http://127.0.0.1:8000> (or the next free port, up to 8019). Close the
+window that opens with it to stop it.
+
+The zip carries its own Python, the way Protégé carries its own Java. You
+need no Python, Node, Docker or administrator rights. Your work is kept in
+`%LOCALAPPDATA%\semantic-studio`, never in the unzipped folder, so to update
+you unzip the new release and start it. Starting it a second time opens the
+copy that is already running. `README.txt` in the zip says the same in seven
+sentences.
+
 ## Quick start (Docker)
 
 ```bash

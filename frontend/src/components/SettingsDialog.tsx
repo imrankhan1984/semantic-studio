@@ -36,9 +36,10 @@ BASIC IDEA
 
     Closing with a limit typed but not saved asks once, in the dialog, as the
     Load dialog asks over a mapping: *Close* closes and discards, *Keep
-    editing* (or Escape again) goes back to Limits. Every way out asks: the
-    ✕, Escape and the backdrop. A catalogue entry that finished loading
-    closes without asking; the person chose that.
+    editing* (or Escape again) goes back to Limits. The ✕, Escape and the
+    backdrop ask. Limits' Cancel closes without asking, and so does a
+    catalogue entry that finished loading: in both the person chose that
+    (AC-12).
 
     The key handler is on `document` (a load-bearing rule for every dialog
     here): a click on the panel's own prose blurs focus to <body>, where a
@@ -274,6 +275,7 @@ export default function SettingsDialog({
             failed={settingsFailed}
             onSaved={setSettings}
             onDirtyChange={onDirtyChange}
+            onCancel={onClose}
           />
         </div>
       </div>

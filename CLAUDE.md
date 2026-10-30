@@ -43,14 +43,21 @@ npm run dev
 
 Or `docker compose up --build` for the whole thing on port 8000.
 
+The Windows release (D-119) is a zip built by `.github/workflows/release.yml`
+with `release/build.py`: python.org's embeddable Python, the packages, `app`,
+the built frontend and `Start Semantic Studio.cmd`, which runs
+`python\python.exe -B -m app.launcher`. Its smoke test, `release/smoke.py`,
+runs on Linux too against a tree built without `--embed`:
+`python release/smoke.py <tree> --python backend/.venv/bin/python`.
+
 Set `SEMANTIC_STUDIO_DATA_DIR` to a temporary folder when experimenting, or the
 app writes into the real per-user ontology library.
 
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1722 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1940 tests, vitest
+cd backend  && python -m pytest tests    # 1755 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1945 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -149,6 +156,8 @@ the results header in `ResultsTable.tsx` for the pattern.
 ```
 backend/app/
   main.py            FastAPI app, CORS for the dev frontend, static mount
+  launcher.py        The Windows release's entry point (D-119): the port, a running
+                     copy reused, 127.0.0.1 only, the browser, three sentences
   local_guard.py     Refuses requests not from the app's own page (Host, header, Origin)
   net_guard.py       Outbound address judgement; hands rdflib's own network calls to the broker
   network_broker.py  The one door out: capability grants, offline, pinning, activity log;
@@ -258,6 +267,9 @@ frontend/src/
                      relate rule and line curves; loaded only through
                      React.lazy in App
 
+release/             The Windows release: the start file, README.txt,
+                     THIRD-PARTY.txt, build.py and smoke.py (D-119)
+
 docs/known-state.md  Why each load-bearing rule below exists
 ```
 
@@ -299,6 +311,13 @@ leaves one behind.
 - `test_fetch_restrictions.py` restricts nothing; network tests go elsewhere. [test_fetch_restrictions]
 - The About panel's "stay on this machine" sentences change with any feature that sends content out. [About panel]
 - Every `href` goes through `linkTarget` (http and https only); `links.test.ts` scans for one that does not (D-088). [safe links]
+
+**Windows release**
+- The launcher binds `127.0.0.1`, its own socket handed to uvicorn, and the binding scan covers it (`test_deployment_binding.py`); it takes no `--host` (D-119). [Windows release]
+- The launcher's own requests go by `http.client` to `127.0.0.1`, never `urllib`, which reads Windows' proxy; a recording proxy sees zero (AC-9). [Windows release]
+- The release never writes inside its own folder: `-B` in the start file, bytecode compiled at build, work in the data folder; smoke step 7 lists the folder. [Windows release]
+- The release workflow never publishes, it drafts; `test_release_workflow.py` scans for any way to publish and for the hash check. [Windows release]
+- `PYTHON_VERSION` is the exact patch with `backend-windows`'s minor, and `PYTHON_EMBED_SHA256` moves with it. [Windows release]
 
 **Queries and imports**
 - No `async` route parses or builds on the event loop; that work goes through `run_in_threadpool` (`test_load_cancel.py` scans). [off the event loop]

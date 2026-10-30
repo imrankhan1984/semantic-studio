@@ -2715,3 +2715,59 @@ EXPECTED OUTPUT
   asking. httpx folds a certificate failure into `ConnectError`, so the
   stage is read from the exception chain (`SSLCertVerificationError`), and
   a refused `CONNECT` is `ProxyError`, whose text starts with the status.
+
+- **Windows release** (2026-10-30, spec `release-packaging` v1.2, backlog
+  X-9, D-119). A colleague with no Python, Node or Docker, and no
+  administrator rights, unzips one file and opens *Start Semantic Studio*.
+  The zip holds python.org's embeddable Python, the backend's packages in
+  `python\lib`, `app\`, the built frontend in `static\` and the start file;
+  `release/build.py` assembles it and `release.yml` builds and smoke-tests
+  it on `windows-latest`.
+
+  **The launcher binds 127.0.0.1, and the binding scan covers it.**
+  `app/launcher.py` is the one place the release's binding is decided: it
+  binds the port's socket itself on its `LOOPBACK` constant and hands that
+  socket to uvicorn, so nothing can take the port between the check and the
+  start and there is no second place an address is chosen. It takes no
+  `--host`. `test_deployment_binding.py` reads the launcher, the start file,
+  the smoke test and the workflow for any other address; smoke step 5
+  proves the zip refuses a connection on the runner's other address. The
+  port's socket has no `SO_REUSEADDR`: on Windows that lets a socket share
+  a port another program listens on. Only a taken port is asked
+  `/api/health`, because a refused connection on Windows takes about two
+  seconds; `/api/health` now says `"app": "semantic-studio"`, which is how a
+  running copy is told from another program on 8000.
+
+  **The launcher's own requests never use a proxy.** Python's `urllib`
+  reads Windows' proxy, and Windows' `<local>` exception covers only names
+  without a dot, so behind a manual proxy a request to `127.0.0.1` would go
+  to the proxy and the launcher would wait. It asks with `http.client`
+  straight to `127.0.0.1` (AC-9). `test_no_direct_network.py` exempts it by
+  name and holds it to a socket and `http.client`, each naming `LOOPBACK`;
+  `test_launcher.py` proves it with a recording proxy that sees zero
+  requests while a urllib request in its place reaches it.
+
+  **The release never writes inside its own folder.** Work is kept in the
+  data folder (`store.default_data_dir`, `%LOCALAPPDATA%\semantic-studio`),
+  so a new release finds it and a read-only share still runs. Python's own
+  bytecode was the one write: the start file runs `-B`, which
+  multiprocessing passes on to the reasoner's spawned process, and the
+  build compiles everything with unchecked hashes, so no start finds a
+  `.pyc` stale. Smoke step 7 lists the folder before the start and after
+  the last request; dropped `-B`, it reports `app/__pycache__`.
+
+  **The release workflow never publishes, it drafts.** A tag `v*` whose
+  commit is on main gives a draft release with the zip and its SHA-256;
+  Imran publishes it. Only the draft job holds `contents: write`.
+  `test_release_workflow.py` scans for every way to publish (`gh release
+  edit`, `--draft=false`, a release action, the releases API) and for the
+  hash check, which throws before the checked file's path is set.
+
+  **The embeddable Python is pinned twice.** `PYTHON_VERSION` is the exact
+  patch, its minor the one `backend-windows` tests (a test compares them),
+  and `PYTHON_EMBED_SHA256` the hash from python.org's release page. The
+  same patch runs pip and `compileall` through setup-python, so every wheel
+  and `.pyc` matches the bundled interpreter. Its `._pth` lists the
+  standard library zip, `.`, `lib` and `..` and no `import site`: no
+  `PYTHONPATH`, no user site folder, and none of Python's own environment
+  variables reach it.

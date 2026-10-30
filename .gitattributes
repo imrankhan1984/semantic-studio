@@ -36,3 +36,7 @@ backend/app/vocab/*.rdf binary
 backend/app/examples/*.ttl binary
 # Their ready-made questions (query-page-rework 5.4) are pinned there too.
 backend/app/examples/questions/*.rq binary
+
+# The release's start file (release-packaging 5.2): cmd.exe reads a batch
+# file with LF endings unreliably, so it is CRLF in every checkout.
+*.cmd   text eol=crlf

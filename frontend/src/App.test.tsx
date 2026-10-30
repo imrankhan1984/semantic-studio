@@ -2782,6 +2782,31 @@ describe("App network approval (external-access Stage 1)", () => {
     expect(document.activeElement).toBe(settings);
   });
 
+  it("Limits' Cancel closes Settings without asking and gives focus back to the Settings button (home-and-settings AC-12)", async () => {
+    getNetworkPolicy.mockResolvedValue({ offline: false, grants: [] });
+    getNetworkActivity.mockResolvedValue([]);
+    getSettings.mockResolvedValue({
+      dataDir: "/data",
+      limits: [
+        { key: "largestFile", name: "Largest file to load", unit: "MB", value: 50, default: 50, min: 1, max: 200, source: "default", variables: [] },
+      ],
+    });
+    await renderApp();
+    const settings = screen.getByRole("button", { name: "Settings" });
+    settings.focus();
+    await act(async () => {
+      fireEvent.click(settings);
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Limits" }));
+    fireEvent.change(screen.getByLabelText(/^Largest file/), { target: { value: "120" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Close without saving?" })).toBeNull();
+    expect(document.activeElement).toBe(settings);
+  });
+
   it("a catalogue entry added from Settings → Library opens, and Settings closes", async () => {
     getNetworkPolicy.mockResolvedValue({ offline: false, grants: [] });
     getNetworkActivity.mockResolvedValue([]);
