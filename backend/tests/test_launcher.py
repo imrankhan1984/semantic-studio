@@ -301,8 +301,10 @@ def test_the_proxy_is_one_urllib_would_use(system_proxy, serve):
     import urllib.request
 
     port = serve({"status": "ok", "app": "semantic-studio"}).server_address[1]
+    # A fresh opener, never urlopen: urlopen keeps the first opener it
+    # builds, proxy and all, for every later test in the process.
     with pytest.raises(urllib.error.HTTPError):
-        urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=5)
+        urllib.request.build_opener().open(f"http://127.0.0.1:{port}/api/health", timeout=5)
     assert len(system_proxy.requests) == 1
 
 
