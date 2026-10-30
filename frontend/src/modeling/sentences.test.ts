@@ -35,6 +35,7 @@ import {
   existingSentence,
   linkSentence,
   relationshipSentence,
+  asType,
   rowEnds,
   typeWord,
 } from "./sentences";
@@ -57,13 +58,28 @@ describe("sentences", () => {
     expect(S.attributeSentence("Person", "active", "xsd:boolean")).toBe("A Person has an active, as yes or no.");
     expect(S.attributeSentence("Person", "home page", "xsd:anyURI")).toBe("A Person has a home page, as a web address.");
     // A type without a word is its name, with no article guessed.
-    expect(S.attributeSentence("Person", "year", "xsd:gYear")).toBe("A Person has a year, as xsd:gYear.");
+    expect(S.attributeSentence("Person", "year", "xsd:gYear")).toBe("A Person has a year, as a year.");
+    expect(S.attributeSentence("Person", "code", "xsd:hexBinary")).toBe("A Person has a code, as xsd:hexBinary.");
   });
 
   it("reads a relationship as it is named, with the gap before the first key", () => {
     expect(relationshipSentence("Person", "works for", "Organization")).toBe("A Person works for an Organization.");
     expect(relationshipSentence("Employee", "reports to", "Employee")).toBe("An Employee reports to an Employee.");
     expect(relationshipSentence("Person", "  ", "Organization")).toBe("A Person … an Organization.");
+  });
+
+  it("reads a noun-named relationship after has, in the relate menu and as an existing one (wording 5.2, AC-3)", () => {
+    expect(relationshipSentence("Crewed mission", "crew member", "Astronaut")).toBe(
+      "A Crewed mission has crew member an Astronaut.",
+    );
+    expect(relationshipSentence("Mission", "has destination", "Place")).toBe("A Mission has destination a Place.");
+    expect(relationshipSentence("Unit", "part of", "Organization")).toBe("A Unit is part of an Organization.");
+    expect(existingSentence("Crewed mission", "crew member", "Astronaut")).toBe(
+      "Crewed mission has crew member Astronaut (existing relationship)",
+    );
+    expect(existingSentence("Mission", "has destination", "Place")).toBe(
+      "Mission has destination Place (existing relationship)",
+    );
   });
 
   it("reads each line the way it points", () => {
@@ -89,7 +105,26 @@ describe("sentences", () => {
     expect(
       ["xsd:string", "xsd:integer", "xsd:decimal", "xsd:boolean", "xsd:date", "xsd:dateTime", "xsd:anyURI"].map(typeWord),
     ).toEqual(["text", "whole number", "decimal number", "yes or no", "date", "date and time", "web address"]);
-    expect(typeWord("xsd:gYear")).toBe("xsd:gYear");
+    expect(typeWord("xsd:hexBinary")).toBe("xsd:hexBinary");
+  });
+
+  it("names the common other types in words, by own key only (wording 5.4, AC-5)", () => {
+    expect(
+      [
+        "xsd:gYear", "xsd:gYearMonth", "xsd:time", "xsd:float", "xsd:double",
+        "xsd:nonNegativeInteger", "xsd:positiveInteger",
+      ].map(typeWord),
+    ).toEqual([
+      "year", "year and month", "time of day", "decimal number", "decimal number",
+      "whole number, zero or more", "whole number above zero",
+    ]);
+    expect(rowEnds({ domain: "Planet", range: "xsd:gYear" }, true)).toBe("Planet, year");
+    // A datatype named for a prototype member is its own name, not a function.
+    for (const name of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      expect(typeWord(name)).toBe(name);
+      expect(asType(name)).toBe(name);
+    }
+    expect(asType("xsd:gYear")).toBe("a year");
   });
 });
 
@@ -213,7 +248,7 @@ describe("reuse (attribute-reuse 5.1, 5.2, 5.4)", () => {
 
   it("says what a union means, an attribute's and a relationship's, the label read as a verb", () => {
     expect(S.planUnion("attribute", "hasName", ["Employee", "Contractor"])).toBe(
-      "Share hasName between Employee and Contractor. It means: whatever has hasName is an Employee or a Contractor.",
+      "Share hasName between Employee and Contractor. It means: whatever has a value for hasName is an Employee or a Contractor.",
     );
     expect(S.planUnion("relationship", "part of", ["Engine", "Wheel", "Unit"])).toBe(
       "Share part of between Engine, Wheel and Unit. It means: whatever is part of something is an Engine, a Wheel or a Unit.",

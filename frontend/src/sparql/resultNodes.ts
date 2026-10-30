@@ -112,12 +112,14 @@ export function frameTarget(points: Iterable<{ x: number; y: number }>): CameraT
   return { x, y, ratio: Math.min(MAX_FRAME_RATIO, Math.max(SINGLE_RESULT_RATIO, span)) };
 }
 
-/** What the live region says once per explicit run, or null for none. */
+/** What the live region says once per explicit run, or null for none. The
+ *  count is of entities drawn, not result rows, so it says *entities*
+ *  (wording 5.5): two rows naming one node are one entity. */
 export function shownOnGraph(count: number): string | null {
   if (count <= 0) return null;
   return count === 1
-    ? "1 result shown on the graph."
-    : `${count.toLocaleString()} results shown on the graph.`;
+    ? "1 entity shown on the graph."
+    : `${count.toLocaleString()} entities shown on the graph.`;
 }
 
 /** The results header's sentence when more were hidden than were drawn

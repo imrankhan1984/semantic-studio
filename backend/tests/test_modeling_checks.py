@@ -490,7 +490,7 @@ shop:audits a owl:ObjectProperty ; rdfs:label "audits"@en ; rdfs:domain shop:Per
 """).status_code == 200
     assert warnings(pid, EX + "badge") == [{
         "code": "separate",
-        "text": "badge lists Organization and Person separately. In RDFS and OWL that means whatever has badge "
+        "text": "badge lists Organization and Person separately. In RDFS and OWL that means whatever has a value for badge "
                 "is both an Organization and a Person. To mean either one, share it.",
         "fix": {"command": "ShareDomain", "args": {"property": EX + "badge", "how": "union"}, "label": "Share it"},
     }]

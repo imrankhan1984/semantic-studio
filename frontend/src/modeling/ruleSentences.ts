@@ -21,6 +21,9 @@ BASIC IDEA
     is sentences.ts's, the one rule every sentence shares (X-12), and the
     plural the last word's. A count on a relationship named *has X* reads
     without its *has*: *has at most 2 lines*, not *has at most 2 has line*.
+    A value and the defining phrase read the property through `verb`, so
+    *has destination* is not said *has has destination* and a noun such as
+    *launch site* reads *has launch site* (wording 5.2).
 
     The builder is one state for every kind of rule. Its blanks are the
     parts of the sentence: which rule, the relationship or attribute, the
@@ -39,7 +42,7 @@ EXPECTED OUTPUT
 */
 
 import type { AnnotationValue, RuleChoices, RuleForm, RuleItem, RuleKey, RuleKind, RuleRef, RuleRestriction } from "../types";
-import { a } from "./sentences";
+import { a, verb } from "./sentences";
 import { plural } from "./shapeSentences";
 
 const XSD = "http://www.w3.org/2001/XMLSchema#";
@@ -115,14 +118,16 @@ export function restrictionSentence(cls: string, parts: RuleParts): string {
   const kind = parts.kind;
   if (parts.form === "defines") {
     const head = `${capital(a(cls))} is exactly ${parts.with ? a(parts.with) : "something"} that`;
-    return `${head} ${definingPhrase(p, kind, f, parts.n)}`;
+    return `${head} ${definingPhrase(parts.property, kind, f, parts.n)}`;
   }
   // A relationship named *has X* is read without its *has* in a count, so
   // *has at most 2 has line* reads *has at most 2 lines* (T-21).
   const counted = parts.property ? hasNoun(parts.property) : null;
   if (kind === "some") return `Every ${cls} has at least one ${counted ?? p} that is ${f ? a(f) : BLANK}`;
   if (kind === "only") return `Every ${cls}'s ${p} can only be ${f ? plural(f) : BLANK}`;
-  if (kind === "value") return `Every ${cls} has ${p} ${f ?? BLANK}`;
+  // The property through `verb`, never after a written *has*: that gave
+  // *Every Mission has has destination Moon* (wording 5.2).
+  if (kind === "value") return `Every ${cls} ${parts.property ? verb(p) : `has ${BLANK}`} ${f ?? BLANK}`;
   if (isCount(kind)) {
     const n = parts.n;
     const count = n === null ? BLANK : countWord(n);
@@ -133,7 +138,10 @@ export function restrictionSentence(cls: string, parts: RuleParts): string {
   return `Every ${cls} ${BLANK}`;
 }
 
-function definingPhrase(p: string, kind: RuleKind | null, f: string | null, n: number | null): string {
+function definingPhrase(property: string | null, kind: RuleKind | null, f: string | null, n: number | null): string {
+  // *that has launch site Kennedy*, *that orbits Earth*: read as a verb, as
+  // the value sentence is.
+  const p = property ? verb(property) : BLANK;
   if (kind === "some") return `${p} at least one ${f ?? BLANK}`;
   if (kind === "only") return `${p} only ${f ? plural(f) : BLANK}`;
   if (kind === "value") return `${p} ${f ?? BLANK}`;

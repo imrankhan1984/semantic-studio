@@ -35,6 +35,7 @@ import {
   openWorldNote,
   partsOf,
   removeCommand,
+  restrictionSentence,
   shortLabel,
   stateOf,
 } from "./ruleSentences";
@@ -123,7 +124,29 @@ describe("a rule as its sentence (5.8)", () => {
 
   it("a thing as a value reads by its name", () => {
     const item = rule({ property: manages, kind: "value", filler: { kind: "link", value: EX + "acme", label: "Acme" } });
-    expect(itemSentence("Employee", item)).toBe("Every Employee has manages Acme");
+    // Through `verb` since wording 5.2: *has manages* was the sentence.
+    expect(itemSentence("Employee", item)).toBe("Every Employee manages Acme");
+  });
+
+  it("a value and the defining phrase read the property as a verb (wording 5.2, AC-3)", () => {
+    const thing = (label: string) => ({ kind: "link" as const, value: EX + label, label });
+    const prop = (label: string) => ({ ...ref(label.replace(/ /g, ""), label), kind: "relationship" as const });
+    const value = (label: string, filler: string) =>
+      itemSentence("Mission", rule({ property: prop(label), kind: "value", filler: thing(filler) }));
+    expect(value("has destination", "Moon")).toBe("Every Mission has destination Moon");
+    expect(value("launch site", "Kennedy")).toBe("Every Mission has launch site Kennedy");
+    expect(itemSentence("Satellite", rule({ property: prop("orbits"), kind: "value", filler: thing("Earth") }))).toBe(
+      "Every Satellite orbits Earth",
+    );
+    const defines = (label: string) =>
+      itemSentence("Lunar mission", rule({ form: "defines", with: ref("Mission", "Mission"), property: prop(label), kind: "value", filler: thing("Moon") }));
+    expect(defines("has destination")).toBe("A Lunar mission is exactly a Mission that has destination Moon");
+    expect(defines("launch site")).toBe("A Lunar mission is exactly a Mission that has launch site Moon");
+    // A blank property still reads with its *has*, so the builder's sentence
+    // keeps its shape before a property is picked.
+    expect(restrictionSentence("Mission", { form: "every", property: null, kind: "value", filler: null, n: null, with: null })).toBe(
+      "Every Mission has … …",
+    );
   });
 });
 

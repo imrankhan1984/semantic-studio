@@ -236,7 +236,7 @@ describe("HomeScreen library", () => {
     const { onRetry } = renderScreen({ error: "Failed to fetch", ontologies: [] });
 
     expect(screen.getByText("Failed to fetch")).toBeTruthy();
-    expect(fileRoutes().every((b) => !b.disabled)).toBe(true);
+    expect(fileRoutes().every((b) => !b.disabled && b.getAttribute("aria-disabled") !== "true")).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /try again/i }));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
@@ -251,7 +251,7 @@ describe("HomeScreen library", () => {
     renderScreen({ loading: true, ontologies: [] });
 
     expect(screen.getByText(/loading your library/i)).toBeTruthy();
-    expect(fileRoutes().every((b) => !b.disabled)).toBe(true);
+    expect(fileRoutes().every((b) => !b.disabled && b.getAttribute("aria-disabled") !== "true")).toBe(true);
   });
 
   it("waits for the project list as well as the ontology list", () => {
@@ -453,6 +453,35 @@ describe("HomeScreen search", () => {
     expect(screen.getByRole("status").textContent).toBe("0 entries match");
   });
 
+  it("busy, the three actions are aria-disabled, never disabled, and keep focus (wording 5.7, AC-8)", () => {
+    const list = projects([], { busyId: "p1" });
+    renderScreen({ workingId: "o0", projects: list });
+    const actions = [screen.getByRole("button", { name: "New project" }) as HTMLButtonElement, ...fileRoutes()];
+    for (const button of actions) {
+      expect(button.hasAttribute("disabled")).toBe(false);
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      button.focus();
+      fireEvent.click(button);
+      expect(document.activeElement).toBe(button);
+    }
+    // The guard in each handler: nothing starts while busy.
+    expect(list.onNew).not.toHaveBeenCalled();
+    expect(document.querySelectorAll(".home-actions button[disabled]")).toHaveLength(0);
+  });
+
+  it("idle, the three actions run", () => {
+    const list = projects([]);
+    const { onOpenDialog } = renderScreen({ projects: list });
+    fireEvent.click(screen.getByRole("button", { name: "New project" }));
+    fireEvent.click(screen.getByRole("button", { name: /open a file/i }));
+    fireEvent.click(screen.getByRole("button", { name: /load from a url/i }));
+    expect(list.onNew).toHaveBeenCalledTimes(1);
+    expect(onOpenDialog.mock.calls).toEqual([["file"], ["url"]]);
+    for (const button of [screen.getByRole("button", { name: "New project" }), ...fileRoutes()]) {
+      expect(button.getAttribute("aria-disabled")).toBe("false");
+    }
+  });
+
   it("the placeholder does not imply concept search", () => {
     // AC-20. "What are you looking for?" invites a concept name and returns
     // nothing, which teaches the user the feature is broken rather than absent.
@@ -460,7 +489,9 @@ describe("HomeScreen search", () => {
     const box = searchBox();
 
     expect(box.getAttribute("type")).toBe("search");
-    expect(box.placeholder).toBe("Search your library by name");
+    // Short, so it fits unclipped at 1280×720 (wording 5.7); the label
+    // still says the library is what it searches.
+    expect(box.placeholder).toBe("Search by name");
     // And it is labelled, not merely placeheld: a placeholder disappears the
     // moment anyone types into it.
     expect(box.getAttribute("id")).toBeTruthy();

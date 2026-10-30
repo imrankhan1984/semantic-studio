@@ -2586,3 +2586,34 @@ EXPECTED OUTPUT
   parse of the same file measured 2.6 to 3.5 s after a first of 1.6 s, with
   no objects left behind to collect, so the first-build budget times each
   sample in a fresh interpreter, the clock inside it.
+
+- **Wording tidy-up** (2026-10-30, spec `wording-and-query-export` Stage A,
+  backlog U-15 with CF-12). **A noun reads after *has*.** The verb rule
+  left a label that was neither a verb nor read after *is* as written, so
+  the relate menu said *A Crewed mission crew member an Astronaut* and a
+  value rule on *has destination*, printed after a written *has*, said
+  *Every Mission has has destination Moon*. Now `verb` gives *has crew
+  member* and `mustVerb` *have crew member*, on both sides with the shared
+  table, and the callers that printed a name raw (the relate menu, an
+  existing relationship, a value rule and the defining phrase) go through
+  `verb`. A bare verb in base form (*contain*) reads *has contain*: no
+  property name in the bundled examples, the templates or FOAF has that
+  form, and `test_no_bundled_property_name_is_a_base_form_verb` lists
+  every one that now takes *has*, so a new one is read before it lands.
+  QUDT's `quantify` and SHACL's `ask`, `construct`, `declare`, `select`
+  and `update` are base-form names; they are vocabulary terms a learner
+  rarely puts in a sentence, and are left to the known limit.
+
+  **A rule is said once on a project's Explore page.** DetailPanel hid a
+  class's rule rows only when its own read-only Rules block showed; with
+  the Edit section saying the rules, the blank-node rows were listed again
+  under Statements (confirmed on a running project before the change). The
+  rows now go whenever the rules are said, but the Edit section says them
+  only in its class form, so DetailPanel asks `saysRules` (EditSection.tsx,
+  beside the branches it mirrors): an imported class, snapshot data, an
+  example and a class of the other kind keep their rows, which an earlier
+  review found lost when hidden behind a form that did not say them.
+
+  **The graph's empty state waits for the build.** It showed through
+  *Building graph…* on every open, telling a person no ontology was open
+  while one was being drawn; GraphView now takes `loading`.

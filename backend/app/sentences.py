@@ -25,10 +25,15 @@ BASIC IDEA
     A label is a verb when its first word is one (*is*, *has*, *can*) or
     ends in a single *s* (*uses*, *works for*); a label ending in a
     preposition, or starting with a participle, reads after *is* or *be*
-    (*part of*, *located in*, *owned by*); anything else, a bare noun such
-    as *holder*, is left as written, since *is holder* would say the subject
-    is the holder. No article is guessed before a label (*Ann is member of
-    Team A* stays): which nouns take one cannot be told from the label.
+    (*part of*, *located in*, *owned by*); anything else is a noun, such as
+    *holder* or *crew member*, and reads after *has* or *have* (*has crew
+    member*): left bare it gave *A Crewed mission crew member an Astronaut*,
+    and *is holder* would say the subject is the holder (wording U-15 5.2).
+    A bare verb in base form (*contain*) reads *has contain*: no name in the
+    bundled examples, the templates or FOAF has that form, and
+    test_sentences.py lists them; QUDT's *quantify* and a few SHACL terms
+    do, and are left to that limit. No article is guessed before a label (*Ann is member of Team A*
+    stays): which nouns take one cannot be told from the label.
 
 INPUTS / INPUT SOURCES
     - Names and labels, already chosen in the display language.
@@ -98,8 +103,8 @@ def _reads_after_is(words: list[str]) -> bool:
 def verb(label: str) -> str:
     """A relationship's label as the verb after a subject. *employs*,
     *worksFor* and *has part* stay as they are; *part of*, *above* and
-    *located in* read after *is*. A bare noun (*holder*) is left alone:
-    *passport 1 is holder Ann* would say the passport holds."""
+    *located in* read after *is*. A noun (*holder*, *crew member*) reads
+    after *has*: *passport 1 is holder Ann* would say the passport holds."""
     words = [w.lower() for w in _WORDS.findall(label)]
     if not words:
         return label
@@ -108,13 +113,13 @@ def verb(label: str) -> str:
         return label
     if _reads_after_is(words):
         return f"is {label}"
-    return label
+    return f"has {label}"
 
 
 def must_verb(label: str) -> str:
     """The same label after *must* or *may*: *uses* -> *use*, *has part* ->
-    *have part*, *is part of* and *part of* -> *be part of*; a bare noun is
-    left alone, as in ``verb``."""
+    *have part*, *is part of* and *part of* -> *be part of*; a noun reads
+    after *have*, as it reads after *has* in ``verb``."""
     found = list(_WORDS.finditer(label))
     if not found:
         return label
@@ -138,4 +143,4 @@ def must_verb(label: str) -> str:
         return f"{label[:head.start()]}{base}{rest}"
     if _reads_after_is(words):
         return f"be {label}"
-    return label
+    return f"have {label}"

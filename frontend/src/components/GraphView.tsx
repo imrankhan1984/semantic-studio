@@ -60,6 +60,8 @@ BASIC IDEA
 INPUTS / INPUT SOURCES (props)
     - data: the VizGraph to draw (or null for the empty state). A node
       carrying `importedFrom` is drawn smaller (external-access Stage 2).
+    - loading: a graph is being built; the empty state waits, so it never
+      shows through App's *Building graph…* (wording 5.1).
     - theme: which colour palette to use.
     - hiddenKinds: kinds toggled off in the legend (hidden).
     - selected + focusTick: the selected node and a counter that, when bumped,
@@ -379,6 +381,9 @@ interface Props {
    * an overlay so it can never hide or swallow clicks on nodes beneath it.
    */
   leftRail?: React.ReactNode;
+  /** A graph is on its way: App's *Building graph…* covers the canvas, and
+   *  the empty state under it would say no ontology is open (wording 5.1). */
+  loading?: boolean;
 }
 
 // Graphs up to this many nodes animate with a per-frame synchronous
@@ -548,6 +553,7 @@ export default function GraphView({
   queryResults,
   frameTick = 0,
   leftRail,
+  loading = false,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
@@ -1424,12 +1430,10 @@ export default function GraphView({
                 : undefined
             }
           />
-          {!data && (
+          {!data && !loading && (
             <div className="graph-empty">
-              <p>No ontology loaded yet.</p>
-              <p className="hint">
-                Use “Load” to upload a file or fetch one from a URL / GitHub.
-              </p>
+              <p>No ontology open.</p>
+              <p className="hint">Go to Home to open a file, load one from a URL or start a project.</p>
             </div>
           )}
           {/* The zoom control, docked bottom right over the canvas (G-5). A

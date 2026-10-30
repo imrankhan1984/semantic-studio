@@ -65,8 +65,8 @@ describe("relateChoices", () => {
       "Order is a kind of Invoice",
       "new relationship…",
       "Every Order has at least one… (a rule)",
-      "Order related to Invoice (existing relationship)",
-      "Order placed by Invoice (existing relationship)",
+      "Order is related to Invoice (existing relationship)",
+      "Order is placed by Invoice (existing relationship)",
       "Share belongs to: an Order belongs to an Invoice too.",
     ]);
     expect(result.choices[2]).toMatchObject({ kind: "rule" });
@@ -238,8 +238,8 @@ describe("relateChoices, relationships Stage A", () => {
     // What the line would complete follows the direction too: *placed by*
     // starts at Order, so it fits only there; *made by* starts at Invoice.
     expect(back.choices.filter((c) => c.kind === "existing").map((c) => c.label)).toEqual([
-      "Invoice related to Order (existing relationship)",
-      "Invoice made by Order (existing relationship)",
+      "Invoice is related to Order (existing relationship)",
+      "Invoice is made by Order (existing relationship)",
     ]);
   });
 

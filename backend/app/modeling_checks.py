@@ -562,7 +562,9 @@ def domain_warning(view: Graph, own: Graph, prop: URIRef, name: Name) -> Optiona
     every = " and ".join(f"{article(name(c))} {name(c)}" for c in reading.classes)
     subject = (
         f"whatever {verb(label)} something" if (prop, RDF.type, OWL.ObjectProperty) in view
-        else f"whatever has {label}"
+        # *a value for*: *whatever has hasName* read the name twice over
+        # (wording 5.3); sentences.ts's `whoever` says the same words.
+        else f"whatever has a value for {label}"
     )
     warning = {
         "block": "domain",

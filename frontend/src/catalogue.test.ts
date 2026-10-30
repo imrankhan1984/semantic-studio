@@ -50,6 +50,7 @@ EXPECTED OUTPUT
 
 import { describe, expect, it } from "vitest";
 import { CATALOGUE } from "./catalogue";
+import catalogueSource from "./catalogue.ts?raw";
 
 /**
  * The intended order, ascending by how much the user has to cope with. This
@@ -173,5 +174,15 @@ describe("CATALOGUE", () => {
     // downloading marker appear on two rows at once.
     const ids = CATALOGUE.map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("catalogue.ts's header (wording 5.7)", () => {
+  it("names Settings → Library, where the list is shown, not the Load dialog's Suggested tab", () => {
+    // Read first: a `?raw` import that came back empty would pass anything.
+    expect(catalogueSource).toContain("FILE: frontend/src/catalogue.ts");
+    const header = catalogueSource.slice(0, catalogueSource.indexOf("*/"));
+    expect(header).toContain("Settings →\n    Library");
+    expect(header).not.toMatch(/Suggested/);
   });
 });

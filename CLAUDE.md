@@ -49,8 +49,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1639 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1884 tests, vitest
+cd backend  && python -m pytest tests    # 1647 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 1908 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -490,6 +490,7 @@ leaves one behind.
 - `index.css`'s kind tokens and `canvas/kindColours.ts` say the same values; `kindColours.test.ts` checks both themes. [Edit page]
 - `HierarchyView` never imports from `canvas/`: App reaches `canvas/` only through `React.lazy`. [Edit page]
 - Canvas markers are sized in user space, one per line kind, coloured by CSS. [Edit page]
+- A rule's raw rows leave Statements exactly when a section says the rule: the Rules block, or the Edit section where `saysRules` holds (wording 5.6). [Wording tidy-up]
 
 ## Skills
 

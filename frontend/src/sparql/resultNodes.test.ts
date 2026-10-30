@@ -77,9 +77,10 @@ describe("frameTarget", () => {
 });
 
 describe("the sentences", () => {
-  it("the announcement counts the results on the graph, and says nothing for none", () => {
-    expect(shownOnGraph(12)).toBe("12 results shown on the graph.");
-    expect(shownOnGraph(1)).toBe("1 result shown on the graph.");
+  it("the announcement counts the entities on the graph, and says nothing for none (wording 5.5, AC-6)", () => {
+    expect(shownOnGraph(33)).toBe("33 entities shown on the graph.");
+    expect(shownOnGraph(1)).toBe("1 entity shown on the graph.");
+    expect(shownOnGraph(1200)).toBe("1,200 entities shown on the graph.");
     expect(shownOnGraph(0)).toBeNull();
   });
 

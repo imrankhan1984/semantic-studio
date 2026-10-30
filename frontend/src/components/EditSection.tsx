@@ -70,7 +70,7 @@ EXPECTED OUTPUT
 
 import { useMemo, useState } from "react";
 import { linkTarget } from "../links";
-import { entityModel, structureOf, type Annotation } from "../modeling/entity";
+import { entityModel, structureOf, type Annotation, type EntityModel } from "../modeling/entity";
 import { examplesOf } from "../modeling/examples";
 import { otherKindReason } from "../modeling/sentences";
 import { describeValue, typeOfValue, valueProblem, toValue } from "../modeling/values";
@@ -99,6 +99,19 @@ interface Props {
 export function annotationKey(a: Annotation): string {
   const v = a.value;
   return `annotation:${a.property.iri}|${v.kind}|${v.datatype ?? ""}|${v.lang ?? ""}|${v.value}`;
+}
+
+/** Whether this section says a class's rules, as RulesBlock's sentences:
+ *  only the editable class form carries it, never the other kind's line, an
+ *  import's, snapshot data's, an entity defined elsewhere or an example.
+ *  The branches below in one test, so DetailPanel hides the rules' raw rows
+ *  exactly when they are said here (wording 5.6), and keeps them when they
+ *  are not (code review: hiding them there lost them). */
+export function saysRules(details: NodeDetails, model: EntityModel, projectKind: ProjectKind | null): boolean {
+  if ((details.rules?.items.length ?? 0) === 0) return false;
+  if (otherKindReason(projectKind, model.kind) && model.defined && !details.importedFrom) return false;
+  if (details.importedFrom || details.fromData || !model.defined) return false;
+  return !details.example && structureOf(model.kind) === "class";
 }
 
 export default function EditSection({

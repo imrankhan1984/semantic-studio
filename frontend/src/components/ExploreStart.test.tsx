@@ -235,9 +235,12 @@ describe("ExploreStart", () => {
     // legend's own, from KIND_LABELS, so the panel and the legend agree.
     renderPanel(graphOf(NODES));
 
+    // Shown by group since wording 5.9: the two classes, then the property,
+    // then the individual.
     expect(rows()[0].textContent).toContain("Class");
-    expect(rows()[1].textContent).toContain("Object property");
-    expect(rows()[2].textContent).toContain("Individual");
+    expect(rows()[1].textContent).toContain("Class");
+    expect(rows()[2].textContent).toContain("Object property");
+    expect(rows()[3].textContent).toContain("Individual");
     // The connection count is text too, and singular when it is one. A second
     // panel in the same body would leave two sets of rows to count, so the
     // first one goes first.

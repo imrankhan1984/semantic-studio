@@ -561,6 +561,32 @@ def test_the_own_prefix_survives_a_visual_change_and_a_save():
     assert f"PREFIX staff: <{OWN}>" in text
 
 
+def test_a_recovered_draft_still_declares_the_projects_own_prefix():
+    """PR #72's gap (wording 5.10): the autosave draft is written by its own
+    keep_prefixes call, and without `document.own` there a new project's
+    draft, after a change that uses no term of its own, lost *staff:*; once
+    recovered, the first Turtle line using it failed as unbound."""
+    pid = _own_project([])
+    header = client.post(f"/api/projects/{pid}/open").json()["documents"][0]["header"]
+    assert _command(pid, "SetComment", {"iri": header, "value": "Who works here."}).status_code == 200
+    document = editing_service.document(pid, "model")
+    editing_service._write_draft(document, document.generation)
+    draft = (project_store.folder(pid) / ".draft" / "model.ttl").read_text(encoding="utf-8")
+    assert "Who works here." in draft, "the draft was written from the change"
+    assert f"PREFIX staff: <{OWN}>" in draft
+
+    # What a killed server leaves: the files, nothing in memory.
+    for doc in editing_service._open.pop(pid).values():
+        editing_service._cancel(doc)
+        editing_service.store.unregister_document(doc.ontology.id)
+    assert client.post(f"/api/projects/{pid}/open").json()["recovery"]["available"] is True
+    assert client.post(f"/api/projects/{pid}/recover", json={"action": "recover"}).status_code == 200
+    source = _source(pid)
+    assert "Who works here." in source and f"staff: <{OWN}>" in source
+    r = _apply(pid, source + "\nstaff:Pump a owl:Class .\n")
+    assert r.status_code == 200, r.text
+
+
 def test_keep_prefixes_writes_the_own_prefix_once():
     text = "PREFIX owl: <http://www.w3.org/2002/07/owl#>\n\n<http://e> a owl:Ontology .\n"
     kept = references.keep_prefixes(text, {}, ("staff", OWN))

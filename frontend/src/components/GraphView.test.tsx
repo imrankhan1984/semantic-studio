@@ -815,6 +815,31 @@ describe("the graph's accessible equivalent", () => {
   });
 });
 
+describe("the empty state (wording 5.1, AC-1, AC-2)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("sends a person to Home, by the actions Home has", async () => {
+    const { view } = await renderView({ data: null });
+    const empty = document.querySelector(".graph-empty")!;
+    expect(empty.textContent).toContain("No ontology open.");
+    expect(empty.textContent).toContain("Go to Home to open a file, load one from a URL or start a project.");
+    expect(empty.textContent).not.toContain("Load”");
+    view.unmount();
+  });
+
+  it("is not drawn while a graph is being built", async () => {
+    // App's *Building graph…* sits over the canvas; the empty state under it
+    // said no ontology was open on every open.
+    const { view, rerender } = await renderView({ data: null, loading: true });
+    expect(document.querySelector(".graph-empty")).toBeNull();
+    await rerender({ data: null, loading: false });
+    expect(document.querySelector(".graph-empty")).not.toBeNull();
+    view.unmount();
+  });
+});
+
 describe("reduced motion", () => {
   beforeEach(() => {
     cameraMoves.to = [];
