@@ -74,7 +74,7 @@ jobs:
       - run: |
           curl -fsSL "https://www.python.org/downloads/release/python-${PYTHON_VERSION//./}/" \
             | tr '\n' ' ' | sed -e 's/<wbr>//g' -e 's/<[^>]*>/ /g' | tr -s ' ' \
-            | grep -oE 'Windows embeddable package \(64-bit\).{0,300}' | grep -oE '[0-9a-f]{16}( [0-9a-f]{16}){0,3}' | head -2 | sed 's/^/page: /'
+            | grep -oE 'Windows embeddable package \(64-bit\).{0,300}' | head -1 | sed 's/^/page: /'
           curl -fsSL -o embed.zip "https://www.python.org/ftp/python/$PYTHON_VERSION/python-$PYTHON_VERSION-embed-amd64.zip"
           sha256sum embed.zip | sed 's/^/downloaded: /'
 
