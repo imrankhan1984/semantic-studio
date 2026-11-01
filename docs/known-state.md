@@ -2862,3 +2862,71 @@ EXPECTED OUTPUT
   no definition (DC-03). The files were brought to `1.0.0` with a version
   IRI and a one-line definition each, their hashes moved with them, which
   replaces them in a library under their fixed ids.
+
+- **Design checks, Stage B** (2026-11-01, spec `design-checks` v1.2, backlog
+  V-1). The twelve hints of 5.6, the review aids of 5.8, and four
+  follow-ups from the Stage A review.
+
+  **A hint is a question at the level Hint, after the other two.** H1 to H12
+  are pinned `.rq` files in `checks/` like the 28 checks, each through
+  `prepare_select`; their word lists (roles, quantities, units, singular
+  words, small words) are `manifest.json`'s, read by `checks.py`, and each
+  sentence asks. `LEVELS` is worst first and a group's level is the worst of
+  its findings' (`_worst`): the old rule (`"Problem" if any else "Worth a
+  look"`) would have turned every hint into a Worth a look. The faults
+  fixture holds one planted case per hint and changes no check's finding;
+  `test_the_hints_change_no_checks_finding` holds that.
+
+  **Hints read the model's own shapes, never their own.** H1 reads a rule
+  only through `axioms.parse_restriction` (a shape it cannot read is
+  Turtle's, never reported); H2 and H9 read a domain only through
+  `axioms.domain_of`, the one reader (D-116). H1 is a heuristic, as Section
+  4 says: under a class, *some*, *at least*, *exactly* and *at most* above
+  one are outside OWL 2 RL; as a definition, anything but a value.
+
+  **H2 and H3 read the current reasoning result, which the router hands
+  in.** `routers/checks.py` asks `editing_service.current_inferred` (imports
+  off, then on) and passes `(individual, class)` pairs; `checks.py` imports
+  neither `reasoning` nor `editing`. With no current result H2 asks its
+  question alone and H3 says in its group's `note` that there is no run to
+  read, and a group with a note is never shown as Passed: nothing was
+  checked. H3 leaves out the types a stated type gives through
+  `rdfs:subClassOf`, or every individual would be listed once per ancestor.
+
+  **Three hints are computed in Python, as DC-13 is.** H3 (no query sees a
+  reasoning result), H10 (the name is asked before any value is read: its
+  query's scan of every value of every attribute was 265 ms of the 3 s
+  budget) and H11 (its query joins every value with every label; one scan
+  does it). Their queries are what *Open as a query* shows. `_COMPUTED`
+  lists the four; the gate test excludes exactly them. With the hints the
+  9,966-statement document runs in about 2.1 s (Stage A's 1.9 s), Space
+  Exploration in about 265 ms.
+
+  **The queries are warmed at the server's start.** `checks.prepare()`
+  reads and pins the manifest, parses every query into the cache
+  `reuse_prepared` reads (`sparql_exec.prewarm`) and builds the reference
+  index; `main.py`'s lifespan calls it in its own `try`, so a failure there
+  costs only the first report's speed, never the server. The first report
+  after a start was about 3.9 s.
+
+  **A read-aloud tick is the manifest's alone.** `PUT
+  /api/projects/{pid}/read-aloud` matches the project before it reads the
+  body (an id not issued is 404 whatever is sent, as every project route
+  answers), reads it under 16 KB twice (the middleware's declared length,
+  the route's count), and calls `editing_service.agree_link`, which takes a
+  tick only for a link the model holds now and writes through
+  `projects.edit_manifest`, a read-modify-write under the store's lock: no
+  revision, no dirty flag, no undo step (AC-14). An untick is always taken,
+  so a tick left by a removed link can go; the count is of current links.
+
+  **Competency questions never leave this computer.** A project's saved
+  queries on its model are run as its questions, each through
+  `execute_select` with one row kept and the true count; one holding a
+  SERVICE block is not run at all (`sparql_exec.asks_a_service`, the gate's
+  own plan), as a SERVICE call would send the model out and the report
+  says it runs on this computer.
+
+  **open scrolls the panel, never the page.** `EditSection` scrolls the
+  nearest ancestor whose `overflow-y` scrolls to the Names, Definition or
+  Annotations block; `scrollIntoView` moved every ancestor, and in the
+  browser took the whole app up off its header.

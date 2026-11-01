@@ -2155,7 +2155,7 @@ describe("App and the Checks report (design-checks 5.4, 5.9, AC-10, AC-12)", () 
   it("Open as a query opens Query with the check's text and name", async () => {
     await openChecks();
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Open as a query" }));
+      fireEvent.click(screen.getByRole("button", { name: "Open as a query: Terms without a definition" }));
     });
     expect(screen.getByRole("tab", { name: "Query" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("incoming").textContent).toBe(

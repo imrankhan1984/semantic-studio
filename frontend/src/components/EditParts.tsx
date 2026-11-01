@@ -231,9 +231,11 @@ export function InlineText({ label, value, missing = "none", multiline, busy, er
   );
 }
 
-export function Block({ title, children }: { title: string; children: ReactNode }) {
+/** `anchor` names the block a design check's *open* may scroll to (label,
+ *  definition, header); the section carries it as data-edit-block. */
+export function Block({ title, anchor, children }: { title: string; anchor?: string; children: ReactNode }) {
   return (
-    <section className="edit-block">
+    <section className="edit-block" data-edit-block={anchor}>
       <h4>{title}</h4>
       {children}
     </section>

@@ -11,7 +11,11 @@ SUMMARY
     the level as a word and a mark, *open* going where 5.9 says, *Open as a
     query* handing over the check's text, Run again, a failure with Try
     again, the empty sentence, a document above the cap shown as one sentence
-    with both numbers (5.10), and the render budget of Section 10.
+    with both numbers (5.10), and the render budget of Section 10. Stage B:
+    hints after Worth a look (AC-13), each Open as a query named by its
+    check, no Run again over the cap, a group's note, and the review aids
+    (5.8): a read-aloud tick showing the server's answer, never the click
+    (AC-14), the four definition tests, and the questions.
 
 BASIC IDEA
     api.ts is mocked, the component tests' pattern. Where *open* goes is
@@ -32,14 +36,19 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { limitMs } from "../budget";
 
-const { getChecks, listChecks } = vi.hoisted(() => ({ getChecks: vi.fn(), listChecks: vi.fn() }));
+const { getChecks, listChecks, putReadAloud } = vi.hoisted(() => ({
+  getChecks: vi.fn(),
+  listChecks: vi.fn(),
+  putReadAloud: vi.fn(),
+}));
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   getChecks,
   listChecks,
+  putReadAloud,
 }));
 
-import type { CheckGroup, ChecksReport } from "../api";
+import type { CheckGroup, ChecksAids, ChecksReport } from "../api";
 import ChecksView from "./ChecksView";
 
 const BASE = "http://example.org/shop#";
@@ -173,7 +182,7 @@ describe("the Checks report (design-checks 5.4)", () => {
     let answer!: (r: ChecksReport) => void;
     getChecks.mockReturnValue(new Promise<ChecksReport>((r) => (answer = r)));
     await show();
-    expect(screen.getByRole("status").textContent).toBe("Checking… (28 checks)");
+    expect(screen.getByRole("status").textContent).toBe("Checking… (28 checks, 12 hints)");
     expect(document.querySelector(".checks-view")!.getAttribute("aria-busy")).toBe("true");
     expect(screen.getByRole("button", { name: "Run again" }).getAttribute("aria-disabled")).toBe("true");
     await act(async () => answer(report(GROUPS)));
@@ -214,14 +223,14 @@ describe("the Checks report (design-checks 5.4)", () => {
     const { onOpenQuery } = await show();
     const dc03 = document.querySelectorAll("details.checks-group")[0] as HTMLElement;
     await act(async () => {
-      fireEvent.click(within(dc03).getByRole("button", { name: "Open as a query" }));
+      fireEvent.click(within(dc03).getByRole("button", { name: "Open as a query: Terms without a definition" }));
     });
     expect(onOpenQuery).toHaveBeenCalledWith(
       "# Terms with no definition.\nSELECT ?iri WHERE { ?iri ?p ?o }",
       "DC-03 Terms without a definition",
     );
     await act(async () => {
-      fireEvent.click(within(dc03).getByRole("button", { name: "Open as a query" }));
+      fireEvent.click(within(dc03).getByRole("button", { name: "Open as a query: Terms without a definition" }));
     });
     expect(listChecks).toHaveBeenCalledTimes(1);
   });
@@ -248,9 +257,15 @@ describe("the Checks report (design-checks 5.4)", () => {
     expect(document.querySelector(".checks-summary")).toBeNull();
     expect(document.querySelector(".checks-findings")).toBeNull();
     expect(screen.getByText("These checks run on this computer.")).toBeTruthy();
-    // Every check is still offered as a query.
-    const queryButtons = screen.getAllByRole("button", { name: "Open as a query" });
-    expect(queryButtons).toHaveLength(2);
+    // Every check is still offered as a query, each button named by its check.
+    const queryButtons = screen.getAllByRole("button", { name: /^Open as a query: / });
+    expect(queryButtons.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Open as a query: Terms without an English label",
+      "Open as a query: Terms without a definition",
+    ]);
+    // Nothing ran: nothing to run again, and no run to time (Stage B follow-up).
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+    expect(document.querySelector(".checks-last-run")).toBeNull();
     await act(async () => {
       fireEvent.click(queryButtons[1]); // DC-03, the one the catalogue mock returns
     });
@@ -258,6 +273,45 @@ describe("the Checks report (design-checks 5.4)", () => {
       "# Terms with no definition.\nSELECT ?iri WHERE { ?iri ?p ?o }",
       "DC-03 Terms without a definition",
     );
+  });
+
+  it("puts hints after Worth a look, each with its word and mark (AC-13)", async () => {
+    const hint: CheckGroup = {
+      id: "H12", level: "Hint", heading: "Functional properties", fix: "Keep the mark if two values can never both be true.", total: 1,
+      findings: [{ iri: `${BASE}launchTime`, sentence: "Can launch time ever have two values?" }],
+    };
+    getChecks.mockResolvedValue(report([hint, ...GROUPS]));
+    await show();
+    expect(groupHeadings()).toEqual([
+      "▲ Problem · Terms without a definition (2)",
+      "● Worth a look · Labels copied from the name (1)",
+      "? Hint · Functional properties (1)",
+      "✓ Passed · Terms without an English label (0)",
+    ]);
+    expect(screen.getByText("Shop: 1 problem, 1 worth a look, 1 hint")).toBeTruthy();
+  });
+
+  it("says a group's note: no reasoning result to read is not a pass", async () => {
+    const h3: CheckGroup = {
+      id: "H3", level: "Hint", heading: "Types reasoning gave that nobody wrote", fix: "Look at the rule that gave it.", total: 0,
+      findings: [], note: "No current reasoning result: run reasoning in Edit, then Run again.",
+    };
+    getChecks.mockResolvedValue(report([h3]));
+    await show();
+    expect(screen.getByText("No current reasoning result: run reasoning in Edit, then Run again.")).toBeTruthy();
+    // Nothing was checked, so no tick says it passed: the level word stays.
+    expect(groupHeadings()).toEqual(["? Hint · Types reasoning gave that nobody wrote (0)"]);
+  });
+
+  it("names each Open as a query by its check's heading (Stage B follow-up)", async () => {
+    await show();
+    const names = screen.getAllByRole("button", { name: /^Open as a query: / }).map((b) => b.getAttribute("aria-label"));
+    expect(names).toEqual([
+      "Open as a query: Terms without a definition",
+      "Open as a query: Labels copied from the name",
+      "Open as a query: Terms without an English label",
+    ]);
+    expect(new Set(names).size).toBe(names.length);
   });
 
   it("[budget] renders 28 groups and 1,000 findings within 200 ms, median of 7", async () => {
@@ -287,5 +341,125 @@ describe("the Checks report (design-checks 5.4)", () => {
     expect(runs[3], `median ${runs[3].toFixed(1)} ms of ${runs.map((r) => r.toFixed(1)).join(", ")}`).toBeLessThanOrEqual(
       limitMs(200),
     );
+  });
+});
+
+const PERSON = `${BASE}Person`;
+const KEY = `${BASE}Customer|subClassOf|${PERSON}`;
+
+function aids(changes: Partial<ChecksAids> = {}): ChecksAids {
+  return {
+    readAloud: {
+      links: [
+        { key: KEY, iri: `${BASE}Customer`, sentence: "Every Customer is a Person.", agreed: false },
+        { key: `${BASE}Vip|subClassOf|${BASE}Customer`, iri: `${BASE}Vip`, sentence: "Every Vip is a Customer.", agreed: true },
+      ],
+      total: 2,
+      agreed: 1,
+      editable: true,
+    },
+    definitions: { items: [{ iri: `${BASE}Customer`, name: "Customer", text: "A person who buys." }], total: 1 },
+    questions: [
+      { id: "q-000000000001", name: "Every customer", total: 12 },
+      { id: "q-000000000002", name: "Overdue invoices", total: 0 },
+      { id: "q-000000000003", name: "Far away", error: "Not run here: it asks another service, and these checks run on this computer." },
+    ],
+    ...changes,
+  };
+}
+
+describe("the review aids (design-checks 5.8, Stage B)", () => {
+  const box = (sentence: string) => screen.getByRole("checkbox", { name: sentence }) as HTMLInputElement;
+
+  it("reads the hierarchy aloud with each link's tick and the count", async () => {
+    getChecks.mockResolvedValue(report(GROUPS, { aids: aids() }));
+    await show({ projectId: "prj-1" });
+    expect(box("Every Customer is a Person.").checked).toBe(false);
+    expect(box("Every Vip is a Customer.").checked).toBe(true);
+    expect(screen.getByText("Read it aloud (1 of 2 read and agreed.)")).toBeTruthy();
+    // The heading is in the summary, as the groups' are.
+    expect(screen.getByText("Read it aloud (1 of 2 read and agreed.)").closest("summary")).toBeTruthy();
+  });
+
+  it("a tick shows the server's answer, never the click (AC-14)", async () => {
+    getChecks.mockResolvedValue(report(GROUPS, { aids: aids() }));
+    let answer!: (r: { key: string; agreed: boolean; count: number; total: number }) => void;
+    putReadAloud.mockReturnValue(new Promise((r) => (answer = r)));
+    await show({ projectId: "prj-1" });
+    fireEvent.click(box("Every Customer is a Person."));
+    expect(putReadAloud).toHaveBeenCalledWith("prj-1", KEY, true);
+    // On its way: unticked still, every box aria-disabled (never disabled,
+    // which would drop the focus), and a second click sends nothing.
+    expect(box("Every Customer is a Person.").checked).toBe(false);
+    expect(box("Every Vip is a Customer.").getAttribute("aria-disabled")).toBe("true");
+    expect(box("Every Vip is a Customer.").disabled).toBe(false);
+    fireEvent.click(box("Every Vip is a Customer."));
+    expect(putReadAloud).toHaveBeenCalledTimes(1);
+    await act(async () => answer({ key: KEY, agreed: true, count: 2, total: 2 }));
+    expect(box("Every Customer is a Person.").checked).toBe(true);
+    expect(document.querySelector(".checks-read-aloud-count")!.textContent).toBe("2 of 2 read and agreed.");
+    // Nothing else is asked for: a tick is no reason to run the checks again.
+    expect(getChecks).toHaveBeenCalledTimes(1);
+  });
+
+  it("a refused tick leaves the box as it was and says why", async () => {
+    getChecks.mockResolvedValue(report(GROUPS, { aids: aids() }));
+    putReadAloud.mockRejectedValue(new Error("That link is not in the model now. Run the checks again to read it as it stands."));
+    await show({ projectId: "prj-1" });
+    await act(async () => {
+      fireEvent.click(box("Every Customer is a Person."));
+    });
+    expect(box("Every Customer is a Person.").checked).toBe(false);
+    expect(screen.getByText("That link is not in the model now. Run the checks again to read it as it stands.")).toBeTruthy();
+  });
+
+  it("reads a library ontology's hierarchy without ticks", async () => {
+    const library = aids({ readAloud: { ...aids().readAloud, editable: false }, questions: null });
+    getChecks.mockResolvedValue(report(GROUPS, { aids: library }));
+    await show({ ownBase: null, ontologyId: "space" });
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+    expect(screen.getByText("Every Customer is a Person.")).toBeTruthy();
+    expect(screen.getByText("Ticks are kept for a project; a library ontology is read without them.")).toBeTruthy();
+    // A library entry has no saved queries of a project to run.
+    expect(screen.queryByText(/^Your questions/)).toBeNull();
+  });
+
+  it("lists the four definition tests and each definition, open going to its block", async () => {
+    getChecks.mockResolvedValue(report(GROUPS, { aids: aids() }));
+    const { onOpen } = await show({ projectId: "prj-1" });
+    const tests = [...document.querySelectorAll(".checks-definition-tests li")].map((li) => li.textContent);
+    expect(tests).toEqual([
+      "What kind of thing is it, and what sets it apart?",
+      "Does the sentence stay true with the definition in place of the term?",
+      "Can you name something almost like it that it excludes?",
+      "Would a new colleague understand it?",
+    ]);
+    expect(screen.getByText("A person who buys.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open the definition of Customer" }));
+    expect(onOpen).toHaveBeenLastCalledWith(
+      expect.objectContaining({ iri: `${BASE}Customer`, block: "definition" }),
+      "edit",
+    );
+  });
+
+  it("lists the saved queries as questions, one that returns nothing as Worth a look", async () => {
+    getChecks.mockResolvedValue(report(GROUPS, { aids: aids() }));
+    await show({ projectId: "prj-1" });
+    expect(screen.getByText("Every customer: 12 rows")).toBeTruthy();
+    const nothing = screen.getByText(/Overdue invoices returns nothing\./);
+    expect(nothing.textContent).toBe("● Worth a look · Overdue invoices returns nothing.");
+    expect(nothing.querySelector("[aria-hidden='true']")!.textContent).toBe("● ");
+    expect(screen.getByText(/^Far away: Not run here/)).toBeTruthy();
+  });
+
+  it("renders a link's sentence and a definition as text, never markup", async () => {
+    const hostile = aids({
+      readAloud: { links: [{ key: KEY, iri: `${BASE}X`, sentence: "Every <img src=x onerror=alert(1)> is a Person.", agreed: false }], total: 1, agreed: 0, editable: true },
+      definitions: { items: [{ iri: `${BASE}X`, name: "X", text: "<b>bold</b>" }], total: 1 },
+    });
+    getChecks.mockResolvedValue(report(GROUPS, { aids: hostile }));
+    await show({ projectId: "prj-1" });
+    expect(document.querySelector(".checks-aids img, .checks-aids b")).toBeNull();
+    expect(screen.getByText("<b>bold</b>")).toBeTruthy();
   });
 });

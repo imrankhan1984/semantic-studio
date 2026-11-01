@@ -8,7 +8,9 @@ SUMMARY
     of ChecksView so they are tested without rendering: the order of the
     groups, the summary line, the measures' lines, the level line, the
     *Showing 100 of N* line, when a report is stale, and where a finding
-    leads.
+    leads. Stage B: the Hint level, after the other two (5.6), and the
+    review aids' words (5.8): the read-aloud count, the four definition
+    tests, and a competency question's line.
 
 BASIC IDEA
     Groups with findings first -- Problems, then Worth a look, and within a
@@ -32,15 +34,18 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import type { CheckFinding, CheckGroup, CheckLevel, CheckMeasures, ChecksReport } from "../api";
+import type { CheckFinding, CheckGroup, CheckLevel, CheckMeasures, ChecksReport, CompetencyQuestion } from "../api";
 
-export const LEVEL_ORDER: CheckLevel[] = ["Problem", "Worth a look"];
+/** Problems, then Worth a look, then the hints (5.6): a question comes after
+ *  every fault. */
+export const LEVEL_ORDER: CheckLevel[] = ["Problem", "Worth a look", "Hint"];
 
-/** The mark beside each level's word: shape, never colour alone. */
-export const LEVEL_MARK: Record<CheckLevel, string> = { Problem: "▲", "Worth a look": "●" };
+/** The mark beside each level's word: shape, never colour alone. A hint's is
+ *  a question mark, as each hint is a question. */
+export const LEVEL_MARK: Record<CheckLevel, string> = { Problem: "▲", "Worth a look": "●", Hint: "?" };
 export const PASSED_MARK = "✓";
 
-export const RUNNING = "Checking… (28 checks)";
+export const RUNNING = "Checking… (28 checks, 12 hints)";
 export const STALE = "The model has changed since these checks ran.";
 export const FAILED = "The checks could not run.";
 
@@ -76,12 +81,16 @@ function plural(n: number, one: string, many: string): string {
   return `${n.toLocaleString("en")} ${n === 1 ? one : many}`;
 }
 
-/** "Space Exploration: 3 problems, 5 worth a look": groups with findings. */
+/** "Space Exploration: 3 problems, 5 worth a look, 2 hints": groups with
+ *  findings. A hint is a question, not a failure: every check can pass with
+ *  questions still to think about. */
 export function summaryLine(name: string, groups: CheckGroup[]): string {
   const problems = groups.filter((g) => g.level === "Problem" && g.total > 0).length;
   const worth = groups.filter((g) => g.level === "Worth a look" && g.total > 0).length;
-  if (problems === 0 && worth === 0) return `${name}: every check passed`;
-  return `${name}: ${plural(problems, "problem", "problems")}, ${worth.toLocaleString("en")} worth a look`;
+  const hints = groups.filter((g) => g.level === "Hint" && g.total > 0).length;
+  const asked = hints > 0 ? `, ${plural(hints, "hint", "hints")}` : "";
+  if (problems === 0 && worth === 0) return `${name}: every check passed${asked}`;
+  return `${name}: ${plural(problems, "problem", "problems")}, ${worth.toLocaleString("en")} worth a look${asked}`;
 }
 
 /** The measures of 5.7, one line each, as the report shows them. */
@@ -114,6 +123,45 @@ export function showingLine(group: CheckGroup): string | null {
   return group.total > group.findings.length
     ? `Showing ${group.findings.length.toLocaleString("en")} of ${group.total.toLocaleString("en")}`
     : null;
+}
+
+/** "Showing 1,000 of 1,204", or null when everything is shown. */
+export function showingOf(shown: number, total: number): string | null {
+  return total > shown ? `Showing ${shown.toLocaleString("en")} of ${total.toLocaleString("en")}` : null;
+}
+
+// --- the review aids (5.8, Stage B) ---------------------------------------------
+
+/** "12 of 30 read and agreed." */
+export function readAloudLine(agreed: number, total: number): string {
+  return `${agreed.toLocaleString("en")} of ${total.toLocaleString("en")} read and agreed.`;
+}
+
+export const READ_ALOUD_INTRO =
+  "Each link of the hierarchy as a sentence. Read it aloud; tick it when it is true of every one.";
+export const READ_ALOUD_LIBRARY = "Ticks are kept for a project; a library ontology is read without them.";
+export const NO_LINKS = "There is no hierarchy to read yet: no term is under another.";
+
+/** The four questions a definition is tested by (5.8). */
+export const DEFINITION_TESTS = [
+  "What kind of thing is it, and what sets it apart?",
+  "Does the sentence stay true with the definition in place of the term?",
+  "Can you name something almost like it that it excludes?",
+  "Would a new colleague understand it?",
+];
+export const NO_DEFINITIONS = "No term has a definition yet.";
+
+export const QUESTIONS_INTRO = "Your saved queries are this project's questions; each was run on the model.";
+export const NO_QUESTIONS =
+  "No saved queries yet. Save a query in Query, and it is listed here as a question the model should answer.";
+
+/** One competency question's line: its rows, or why it did not run. A
+ *  question that returns nothing is Worth a look (5.8): its level word goes
+ *  with it, never a colour alone. */
+export function questionLine(q: CompetencyQuestion): { level: CheckLevel | null; text: string } {
+  if (q.error) return { level: null, text: `${q.name}: ${q.error}` };
+  if (!q.total) return { level: "Worth a look", text: `${q.name} returns nothing.` };
+  return { level: null, text: `${q.name}: ${plural(q.total, "row", "rows")}` };
 }
 
 export function lastRun(ms: number): string {

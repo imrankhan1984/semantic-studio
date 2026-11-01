@@ -1,7 +1,9 @@
 # design-faults.ttl: the design checks' planted faults (design-checks 11,
-# AC-3). One planted case per check, each named in a comment above it; the
-# rest of the file is written to pass every check, so test_checks.py can
-# hold each check to exactly its planted finding.
+# AC-3) and hints (Stage B, AC-13). One planted case per check and per hint,
+# each named in a comment above it; the rest of the file is written to pass
+# every check and ask no question, so test_checks.py can hold each to
+# exactly its planted finding. A hint planted here changes no check's
+# finding (test_the_hints_change_no_checks_finding).
 #
 # The addresses follow the pattern of design-checks 5.1 under the
 # placeholder namespace acme (https://w3id.org/acme/), which the tests set:
@@ -35,8 +37,10 @@ t:Mission a owl:Class ;
     rdfs:label "Mission"@en ;
     rdfs:comment "An undertaking with a goal in space."@en .
 
+# H1: a rule outside OWL 2 RL (some, under a class).
 t:RoboticMission a owl:Class ;
     rdfs:subClassOf t:Mission ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty t:hasPart ; owl:someValuesFrom t:Lander ] ;
     rdfs:label "Robotic mission"@en ;
     rdfs:comment "A mission with no crew on board."@en .
 
@@ -72,9 +76,10 @@ t:Probe a owl:Class ;
     owl:deprecated true .
 
 # DC-11: deprecated, a replacement named, still used by an individual.
+# H5: a definition not finished (TODO).
 t:Capsule a owl:Class ;
     rdfs:label "Capsule"@en ;
-    rdfs:comment "An old word for a crewed vehicle."@en ;
+    rdfs:comment "TODO: say what it is, and who rides in it."@en ;
     owl:deprecated true ;
     dcterms:isReplacedBy t:Mission .
 
@@ -90,34 +95,54 @@ t:LoopB a owl:Class ;
     rdfs:comment "The other half of a loop."@en .
 
 # DC-13: Level5 is five levels below the top.
-t:Level0 a owl:Class ; rdfs:label "Level zero"@en ; rdfs:comment "The top of a deep tree."@en .
-t:Level1 a owl:Class ; rdfs:subClassOf t:Level0 ; rdfs:label "Level one"@en ; rdfs:comment "One down."@en .
-t:Level2 a owl:Class ; rdfs:subClassOf t:Level1 ; rdfs:label "Level two"@en ; rdfs:comment "Two down."@en .
-t:Level3 a owl:Class ; rdfs:subClassOf t:Level2 ; rdfs:label "Level three"@en ; rdfs:comment "Three down."@en .
-t:Level4 a owl:Class ; rdfs:subClassOf t:Level3 ; rdfs:label "Level four"@en ; rdfs:comment "Four down."@en .
-t:Level5 a owl:Class ; rdfs:subClassOf t:Level4 ; rdfs:label "Level five"@en ; rdfs:comment "Five down."@en .
+# H6: an acronym (LEO) not spelled out.
+t:Level0 a owl:Class ; rdfs:label "LEO level"@en ; rdfs:comment "The top of a deep tree."@en .
+t:Level1 a owl:Class ; rdfs:subClassOf t:Level0 ; rdfs:label "Level one"@en ; rdfs:comment "A class one step below the top."@en .
+t:Level2 a owl:Class ; rdfs:subClassOf t:Level1 ; rdfs:label "Level two"@en ; rdfs:comment "A class two steps below the top."@en .
+t:Level3 a owl:Class ; rdfs:subClassOf t:Level2 ; rdfs:label "Level three"@en ; rdfs:comment "A class three steps below the top."@en .
+t:Level4 a owl:Class ; rdfs:subClassOf t:Level3 ; rdfs:label "Level four"@en ; rdfs:comment "A class four steps below the top."@en .
+t:Level5 a owl:Class ; rdfs:subClassOf t:Level4 ; rdfs:label "Level five"@en ; rdfs:comment "A class five steps below the top."@en .
 
 # DC-17: one label on two terms (with the property hasCrew below).
 t:Crew a owl:Class ;
     rdfs:label "Crew"@en ;
-    rdfs:comment "The people on board."@en .
+    rdfs:comment "The people on board a mission."@en .
 
 # DC-18: a copy of a reference term (FOAF's Person).
 t:Person a owl:Class ;
     rdfs:label "Person"@en ;
-    rdfs:comment "A human being."@en .
+    rdfs:comment "A human being, on the ground or in space."@en .
+
+# H8: a role (customer) named as a kind of person. H9: Customer and
+# Passenger, siblings under Person, say the same (one rule each, alike).
+t:Customer a owl:Class ;
+    rdfs:subClassOf t:Person ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty t:hasPart ; owl:allValuesFrom t:Lander ] ;
+    rdfs:label "Customer"@en ;
+    rdfs:comment "A person who pays for a seat."@en .
+
+t:Passenger a owl:Class ;
+    rdfs:subClassOf t:Person ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty t:hasPart ; owl:allValuesFrom t:Lander ] ;
+    rdfs:label "Passenger"@en ;
+    rdfs:comment "A person carried on a flight."@en .
+
+# H7: a class name that looks plural.
+t:Instruments a owl:Class ;
+    rdfs:label "Instruments"@en ;
+    rdfs:comment "The tools a mission takes along."@en .
 
 # DC-23: both a class and a concept.
 t:MissionType a owl:Class , skos:Concept ;
     rdfs:label "Mission type"@en ;
     skos:prefLabel "Mission type"@en ;
-    rdfs:comment "A kind of mission."@en ;
+    rdfs:comment "A kind of mission, by its goal."@en ;
     skos:inScheme t:MissionTypes .
 
-# DC-25: a class no individual is one of.
+# DC-25: a class no individual is one of. H4: a definition with "anything".
 t:Spaceport a owl:Class ;
     rdfs:label "Spaceport"@en ;
-    rdfs:comment "A place rockets are launched from."@en .
+    rdfs:comment "Anything rockets are launched from, on land or at sea."@en .
 
 # DC-27: a term at an editor's default address.
 <http://www.semanticweb.org/learner/ontologies/x#Stray> a owl:Class ;
@@ -132,20 +157,34 @@ t:hasPart a owl:ObjectProperty ;
 
 t:hasCrew a owl:ObjectProperty ;
     rdfs:label "crew"@en ;
-    rdfs:comment "Who flies a mission."@en .
+    rdfs:comment "Who flies a mission, by name or role."@en .
 
 # DC-05: a property name not in lowerCamelCase.
 t:Launched_On a owl:DatatypeProperty ;
     rdfs:label "launched on"@en ;
     rdfs:comment "The day a mission left."@en .
 
-t:launchTime a owl:DatatypeProperty ;
+# H12: a functional property.
+t:launchTime a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "launch time"@en ;
     rdfs:comment "The moment a mission left."@en .
 
 t:diameter a owl:DatatypeProperty ;
     rdfs:label "diameter"@en ;
-    rdfs:comment "How wide something is."@en .
+    rdfs:comment "How wide something is, through its middle."@en .
+
+# H10: a number with no unit.
+t:mass a owl:DatatypeProperty ;
+    rdfs:label "mass"@en ;
+    rdfs:comment "How heavy a lander is, as a whole."@en ;
+    rdfs:range xsd:decimal .
+
+# H2: a domain (and, with the reasoning result the test passes, what it
+# typed). H11: a text that is another individual's name (Crew one).
+t:crewName a owl:DatatypeProperty ;
+    rdfs:label "crew name"@en ;
+    rdfs:comment "The crew a mission flies with, by its name."@en ;
+    rdfs:domain t:Mission .
 
 # --- concepts ---------------------------------------------------------------------
 
@@ -163,7 +202,7 @@ t:Exploration a skos:Concept ;
 # DC-02: two preferred labels in English.
 t:Orbiting a skos:Concept ;
     skos:prefLabel "Orbiting"@en , "Orbit"@en ;
-    skos:definition "Going round a body."@en ;
+    skos:definition "Going round a body without landing on it."@en ;
     skos:broader t:Exploration ;
     skos:inScheme t:MissionTypes .
 
@@ -192,7 +231,8 @@ t:Stranded a skos:Concept ;
 d:mission\/m1 a t:RoboticMission ;
     rdfs:label "Mission one"@en ;
     t:hasPart d:mission\/m2 ;
-    t:Launched_On "1977-09-05"^^xsd:date .
+    t:Launched_On "1977-09-05"^^xsd:date ;
+    t:crewName "Crew one" .
 
 # DC-19: a date-time with no time zone.
 d:mission\/m2 a t:Mission ;
@@ -203,7 +243,8 @@ d:mission\/m2 a t:Mission ;
 # DC-20: a number written as text.
 d:lander\/l1 a t:Lander ;
     rdfs:label "Lander one"@en ;
-    t:diameter "6779 km" .
+    t:diameter "6779 km" ;
+    t:mass 340.5 .
 
 d:rover\/r1 a t:Rover ; rdfs:label "Rover one"@en .
 d:robotic-vehicle\/v1 a t:robotic_vehicle ; rdfs:label "Vehicle one"@en .
@@ -214,6 +255,9 @@ d:loop-a\/a1 a t:LoopA ; rdfs:label "Loop one"@en .
 d:level0\/deep a t:Level5 ; rdfs:label "Deep one"@en .
 d:crew\/c1 a t:Crew ; rdfs:label "Crew one"@en .
 d:person\/ann a t:Person ; rdfs:label "Ann"@en .
+d:person\/cara a t:Customer ; rdfs:label "Cara"@en .
+d:person\/dan a t:Passenger ; rdfs:label "Dan"@en .
+d:instruments\/i1 a t:Instruments ; rdfs:label "Instrument one"@en .
 d:mission-type\/t1 a t:MissionType ; rdfs:label "Type one"@en .
 d:stray\/x1 a <http://www.semanticweb.org/learner/ontologies/x#Stray> ; rdfs:label "Stray one"@en .
 

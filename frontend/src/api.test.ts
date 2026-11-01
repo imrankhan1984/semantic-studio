@@ -217,6 +217,8 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   getLayout: () => api.getLayout("prj-1", "model"),
   putLayout: () =>
     api.putLayout("prj-1", "model", { version: 1, generation: 0, positions: {}, shown: null, viewport: null }),
+  // design-checks 5.8: a read-aloud tick, the manifest only.
+  putReadAloud: () => api.putReadAloud("prj-1", "a|subClassOf|b", true),
   // csv-data-import: the wizard and the snapshot list.
   inspectData: () => api.inspectData("prj-1", { file: new File(["a,b"], "a.csv") }),
   previewData: () => api.previewData("prj-1", { snapshot: "people-abcdef" }, {}, { classIri: "http://example.org/A" }),
@@ -270,13 +272,14 @@ describe("api client header (S-6)", () => {
     // Limits one PUT (home-and-settings Stage B); the corporate network
     // settings two PUTs (the proxy, the certificate file), a DELETE (the
     // file's Remove) and a POST (Test connection, external-access 5.5);
-    // Settings → Naming one PUT (design-checks 5.1).
+    // Settings → Naming one PUT (design-checks 5.1); a read-aloud tick one
+    // PUT (design-checks 5.8).
     const expected = [
       ...Array(7).fill("DELETE"),
       "PATCH",
       "PATCH",
       ...Array(33).fill("POST"),
-      ...Array(7).fill("PUT"),
+      ...Array(8).fill("PUT"),
     ];
     expect(mutating.map((r) => r.method).sort()).toEqual(expected);
     for (const request of mutating) {

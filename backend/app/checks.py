@@ -11,6 +11,8 @@ SUMMARY
     documentation, reuse); and the level the document reaches on six steps.
     Also the one list of standard vocabularies that decides which terms are
     borrowed (5.5.1), and the SPARQL function the queries ask it through.
+    Stage B adds the twelve hints of 5.6 (H1 to H12), patterns a person
+    judges, each a question at the level Hint, after the other two.
 
 BASIC IDEA
     Every check is a .rq file that prepare_select accepts, run through
@@ -51,6 +53,18 @@ BASIC IDEA
     counts it; its query, which counts ancestors, is what *Open as a query*
     shows.
 
+    The hints (5.6) are pinned queries too, each sentence a question. Their
+    word lists (roles, quantities, units, singular words) are the
+    manifest's; their shapes are axioms.py's (a rule read by
+    parse_restriction for H1, a domain by domain_of for H2 and H9). H2 and H3
+    read the project's current reasoning result, which the router hands in
+    as (individual, class) pairs: without one H2 asks its question alone and
+    H3 says in its group that there is no run to read. H3, H10 and H11 are
+    computed in Python, their queries being what *Open as a query* shows.
+
+    prepare() warms what the first report used to pay for, the parsed
+    queries and the reference index; main.py calls it in the lifespan.
+
     A shapes document has only DC-01, DC-03 and DC-08 run (5.11), and DC-26
     runs only with a namespace set. DC-24 is a Problem in a project made
     under the address pattern; DC-27 calls an example address Worth a look.
@@ -62,14 +76,16 @@ INPUTS / INPUT SOURCES
     - checks/*.rq and checks/manifest.json.
     - An Ontology from the store (its graph, its read lock, its revision).
     - The project manifest, for a project document; the namespace from
-      settings.py.
+      settings.py; a project's current reasoning conclusions, for H2 and H3.
 
 EXPECTED OUTPUT
     - catalogue(): [{id, level, heading, fix, query}] for GET /api/checks.
     - run(): {revision, generation, ran_ms, empty, measures, groups: [{id,
       level, heading, fix, total, findings: [{iri, sentence, block?,
-      level?}], error?}], skipped, notes} for GET /api/ontologies/{id}/checks;
-      above the cap, measures is null and overCap is {statements, cap}.
+      level?}], error?, note?}], skipped, notes} for GET
+      /api/ontologies/{id}/checks; above the cap, measures is null and
+      overCap is {statements, cap}.
+    - prepare(), for the server's start.
     - is_own(), STANDARD_NAMESPACES.
 ================================================================================
 """
@@ -83,16 +99,17 @@ import re
 import threading
 import time
 import weakref
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-from rdflib import Graph, Literal, URIRef
+from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 from rdflib.plugins.sparql.operators import register_custom_function
 
-from . import naming, references, sparql_exec
+from . import axioms, naming, references, sparql_exec
 from .graph_builder import pick_label
+from .sentences import a as with_article, verb
 
 CHECKS_DIR = Path(__file__).parent / "checks"
 MANIFEST_PATH = CHECKS_DIR / "manifest.json"
@@ -165,7 +182,9 @@ _NOT_INDIVIDUAL = set(TERM_TYPES) | {SKOS.ConceptScheme, OWL.Ontology, SH_NODE_S
 DEFINING = (SKOS.definition, RDFS.comment, URIRef("http://purl.org/dc/terms/description"))
 LABELLING = (RDFS.label, SKOS.prefLabel)
 
-LEVELS = ("Problem", "Worth a look")
+# Worst first: a group's level is the worst of its findings'. Hints (5.6) are
+# questions, never faults, and always come last.
+LEVELS = ("Problem", "Worth a look", "Hint")
 
 LANGUAGE_NAMES = {
     "": "no language", "en": "English", "fr": "French", "de": "German", "es": "Spanish",
@@ -225,6 +244,20 @@ def catalogue() -> list[dict]:
     ]
 
 
+def prepare() -> None:
+    """Warm what the first report pays for (design-checks Stage B follow-up):
+    the manifest read and pinned, each query parsed and kept for reuse, and the
+    reference index (DC-18) built. The first report after a server start parsed
+    every query and built the index on the caller's thread, so the first run
+    missed Section 10's budget; doing it at startup fixes that. Called once in
+    the server's lifespan, never at import, and the caller swallows any failure
+    as the examples' seeding does: a slow first report is not worth a dead
+    server."""
+    for entry in manifest():
+        sparql_exec.prewarm(entry["query"])
+    _reference_terms()
+
+
 # --- which terms are the document's own (5.5.1) ------------------------------------
 
 
@@ -246,6 +279,13 @@ def owned_namespaces(graph: Graph) -> frozenset:
         ns for ns in STANDARD_NAMESPACES
         if any(h.rstrip("#/") == ns.rstrip("#/") or h.startswith(ns) for h in headers)
     )
+
+
+def own_rule(graph: Graph, project: Optional[dict] = None) -> OwnRule:
+    """The rule for one document: the standard namespaces it owns and, for a
+    project, its bases. The report and the read-aloud tick read this one."""
+    bases = tuple(b for b in ((project or {}).get(k) for k in ("baseIri", "shapesBaseIri", "dataBaseIri")) if b)
+    return OwnRule(owned_namespaces(graph), bases)
 
 
 def is_own(iri, rule: OwnRule) -> bool:
@@ -358,6 +398,19 @@ class Run:
     namespace: Optional[str]
     project: Optional[dict]
     names: dict
+    # The hierarchy's depths (DC-13), and the types the project's current
+    # reasoning result concluded, as (individual, class) IRIs (H2, H3): None
+    # when there is no current result.
+    depths: dict = field(default_factory=dict)
+    inferred: Optional[list] = None
+    _domains: Optional[dict] = None
+
+    def domains(self) -> dict:
+        """Every own property's domain, read once per run by axioms.domain_of,
+        the one reader of a domain (D-116)."""
+        if self._domains is None:
+            self._domains = {p: r for p, r in axioms.domains(self.graph).items() if is_own(p, self.rule)}
+        return self._domains
 
     def name(self, iri) -> str:
         """The document's own name for a term, its local name else."""
@@ -786,16 +839,477 @@ def _dc01(entry, run, rows):
     return [_finding(_cell(r["iri"]), t.format(name=local_name(_cell(r["iri"]))), entry.get("block")) for r in rows]
 
 
+# --- hints (5.6, Stage B) ------------------------------------------------------------
+#
+# Each a question, never a fault: a pattern a person judges. Most read their
+# query's rows further in Python, where a word list (the manifest's) or a
+# shape (axioms.py's) decides; H3 and H11 are computed in Python alone, their
+# query being what *Open as a query* shows, as DC-13's is.
+
+
+def _word_list(entry: dict, key: str) -> frozenset:
+    return frozenset(w.casefold() for w in entry.get(key, ()))
+
+
+def _plain_words(text: str) -> list[str]:
+    """A name or a sentence as lowercase words: camel case split, digits kept."""
+    return [w.casefold() for w in _words(text) for w in re.findall(r"[A-Za-z0-9]+", w)]
+
+
+_RULE_WORDS = {"some": "some", "only": "only", "exactly": "exactly", "atLeast": "at least", "atMost": "at most"}
+
+
+def _h1(entry, run, rows):
+    """A rule outside OWL 2 RL, said in the Edit page's words: only a shape
+    axioms.parse_restriction reads is said, as its words; any other is
+    Turtle's, which the class's Rules block shows."""
+    t = entry["sentences"]["row"]
+    out, seen = [], set()
+    for r in rows:
+        iri, how, node = _cell(r["iri"]), _cell(r["how"]), BNode(_cell(r["rule"]))
+        if (iri, node) in seen:
+            continue
+        seen.add((iri, node))
+        parsed = axioms.parse_restriction(run.graph, node)
+        if parsed is None:
+            continue
+        prop, kind, filler, n = parsed
+        # Under a class, at most one or a value is RL's; as a definition only
+        # a value is, which the query has already left out.
+        if how == str(RDFS.subClassOf) and (kind in ("only", "value") or (kind == "atMost" and (n or 0) <= 1)):
+            continue
+        words = [run.name(prop), _RULE_WORDS.get(kind, kind)]
+        if n is not None:
+            words.append(f"{n:,}")
+        if filler is not None and kind != "value":
+            words.append(run.name(filler))
+        out.append(_finding(iri, t.format(name=run.name(iri), rule=" ".join(words))))
+    return out
+
+
+def _things(n: int) -> tuple[str, str]:
+    return ("one", "thing") if n == 1 else (count_word(n), "things")
+
+
+def _h2(entry, run, rows):
+    """Every domain and range, one question each. A domain is read through
+    axioms.domain_of (D-116), a union or two lines said as domain_names says
+    them; a range only as a named class, a datatype range refusing nothing
+    to type. With a current reasoning result, how many things it typed."""
+    s = entry["sentences"]
+    inferred = set(map(tuple, run.inferred)) if run.inferred is not None else None
+    graph = run.graph
+    # (property, 0 for its domain and 1 for a range, finding): one
+    # property's questions together, its domain first.
+    out = []
+    for prop, reading in run.domains().items():
+        named = axioms.domain_names(reading, run.name)
+        if not named:
+            continue
+        sentence = s["domain"].format(verb=verb(run.name(prop)), a_class=with_article(named))
+        if inferred is not None:
+            typed = {
+                str(x) for x in graph.subjects(prop, None)
+                if any((str(x), str(c)) in inferred for c in reading.classes)
+            }
+            if typed:
+                count, things = _things(len(typed))
+                sentence += s["inferred"].format(count=count, things=things, a_class=with_article(named))
+        out.append((str(prop), 0, _finding(str(prop), sentence)))
+    for r in rows:
+        if _cell(r["how"]) != str(RDFS.range) or r["class"].get("type") != "uri":
+            continue
+        prop, cls = _cell(r["iri"]), _cell(r["class"])
+        if axioms.is_datatype(URIRef(cls)):
+            continue
+        a_class = with_article(run.name(cls))
+        sentence = s["range"].format(verb=verb(run.name(prop)), a_class=a_class)
+        if inferred is not None:
+            typed = {str(o) for o in graph.objects(None, URIRef(prop)) if (str(o), cls) in inferred}
+            if typed:
+                count, things = _things(len(typed))
+                sentence += s["inferred"].format(count=count, things=things, a_class=a_class)
+        out.append((prop, 1, _finding(prop, sentence)))
+    return [f for _, _, f in sorted(out, key=lambda x: (x[0], x[1], x[2]["sentence"]))]
+
+
+def _h3(entry, run) -> list[dict]:
+    """The types the current reasoning result concluded for an own
+    individual that the document never states, leaving out those its stated
+    types already give through rdfs:subClassOf: every Mission is a
+    Mission's superclass, and saying so for each would bury the surprising
+    ones (a domain's, a range's, a rule's)."""
+    t = entry["sentences"]["row"]
+    graph = run.graph
+    out = []
+    for s, c in sorted(set(map(tuple, run.inferred or ()))):
+        subject, cls = URIRef(s), URIRef(c)
+        if not (is_own(subject, run.rule) and is_own(cls, run.rule)) or is_term(graph, subject):
+            continue
+        if (subject, RDF.type, cls) in graph:
+            continue
+        stated = [o for o in graph.objects(subject, RDF.type) if isinstance(o, URIRef)]
+        if any(cls in set(graph.transitive_objects(o, RDFS.subClassOf)) for o in stated):
+            continue
+        out.append(_finding(s, t.format(name=run.name(s), a_class=with_article(run.name(c)))))
+    return out
+
+
+_UNFINISHED = re.compile(r"\b(TODO|TBD)\b", re.IGNORECASE)
+_EXAMPLE = re.compile(r"\bfor example\b|\be\.g\.", re.IGNORECASE)
+
+
+def _h5(entry, run, rows):
+    """One question per term, the first of its reasons in this order: not
+    finished, an example, the name repeated, too short."""
+    s = entry["sentences"]
+    minimum = int(entry.get("minimumWords", 5))
+    out, seen = [], set()
+    for r in rows:
+        iri, definition = _cell(r["iri"]), _cell(r["definition"]) or ""
+        if iri in seen:
+            continue
+        name = _named(run, r)
+        label = _cell(r.get("label"))
+        words = re.findall(r"\w+", definition)
+        found = _UNFINISHED.search(definition) or None
+        sentence = None
+        if found:
+            sentence = s["unfinished"].format(name=name, word=found.group(0))
+        elif (found := _EXAMPLE.search(definition)):
+            sentence = s["example"].format(name=name, word=found.group(0))
+        elif label and re.search(r"(?<!\w)" + re.escape(label.casefold()) + r"(?!\w)", definition.casefold()):
+            sentence = s["repeats"].format(name=name, label=label)
+        elif len(words) < minimum:
+            count = len(words)
+            sentence = s["short"].format(name=name, count="one" if count == 1 else count_word(count), words="word" if count == 1 else "words")
+        if sentence is None:
+            continue
+        seen.add(iri)
+        out.append(_finding(iri, sentence, entry.get("block")))
+    return out
+
+
+_ACRONYM = re.compile(r"\b[A-Z][A-Z0-9]{1,5}\b")
+
+
+def _spelled_out(acronym: str, texts: list[str], small: frozenset) -> bool:
+    """Whether some text holds words whose first letters spell the acronym,
+    small words (of, and, the) left out: *International Space Station*."""
+    letters = acronym.casefold()
+    if not letters.isalpha():
+        letters = "".join(ch for ch in letters if ch.isalpha())
+    for text in texts:
+        words = [w for w in re.findall(r"[A-Za-z]+", text) if w.casefold() not in small]
+        initials = "".join(w[0].casefold() for w in words)
+        if letters and letters in initials:
+            return True
+    return False
+
+
+def _h6(entry, run, rows):
+    t = entry["sentences"]["row"]
+    small = _word_list(entry, "smallWords")
+    texts: dict = {}
+    labels: dict = {}
+    for r in rows:
+        iri = _cell(r["iri"])
+        labels.setdefault(iri, set()).add(_cell(r["label"]))
+        if r.get("text"):
+            texts.setdefault(iri, []).append(_cell(r["text"]))
+    out = []
+    for iri in sorted(labels):
+        said = set()
+        for label in sorted(labels[iri]):
+            # The other labels count as said too: "ISS" beside "International
+            # Space Station".
+            others = [x for x in labels[iri] if x != label] + texts.get(iri, [])
+            for acronym in _ACRONYM.findall(label):
+                if acronym in said or _spelled_out(acronym, others, small):
+                    continue
+                said.add(acronym)
+                out.append(_finding(iri, t.format(acronym=acronym, name=run.name(iri)), entry.get("block")))
+    return out
+
+
+def _singular(name: str) -> str:
+    if name.endswith("ies"):
+        return name[:-3] + "y"
+    if name.endswith(("sses", "xes", "ches", "shes", "zes")):
+        return name[:-2]
+    return name[:-1]
+
+
+def _h7(entry, run, rows):
+    t = entry["sentences"]["row"]
+    singular_words = _word_list(entry, "singularWords")
+    out = []
+    for r in rows:
+        iri, local = _cell(r["iri"]), _cell(r["name"])
+        words = _words(local)
+        if not words or words[-1].casefold() in singular_words:
+            continue
+        out.append(_finding(iri, t.format(name=run.name(iri), singular=_singular(local))))
+    return out
+
+
+def _h8(entry, run, rows):
+    t = entry["sentences"]["row"]
+    roles = _word_list(entry, "roleWords")
+    out, seen = [], set()
+    for r in rows:
+        iri = _cell(r["iri"])
+        if iri in seen:
+            continue
+        words = set(_plain_words(local_name(iri))) | set(_plain_words(run.name(iri)))
+        # A plural is the same role: Employees.
+        words |= {w[:-1] for w in words if w.endswith("s")}
+        if not words & roles:
+            continue
+        seen.add(iri)
+        parent = run.name(_cell(r["parent"]))
+        out.append(_finding(iri, t.format(name=run.name(iri), parent=parent, a_parent=with_article(parent))))
+    return out
+
+
+def _h9(entry, run, rows):
+    """Siblings whose properties (those with the class in their domain, read
+    through axioms.domain_of) and rules (axioms.contents) are the same and
+    not none: one question per such set, under its parent."""
+    t = entry["sentences"]["row"]
+    graph = run.graph
+    by_class: dict = {}
+    for prop, reading in run.domains().items():
+        for cls in reading.classes:
+            by_class.setdefault(cls, set()).add(("property", prop))
+    signatures: dict = {}
+
+    def signature(cls: URIRef) -> frozenset:
+        if cls not in signatures:
+            rules = {("rule", c.kind, c.property, c.filler, c.n) for _, _, c in axioms.contents(graph, cls)}
+            signatures[cls] = frozenset(by_class.get(cls, set()) | rules)
+        return signatures[cls]
+
+    groups: dict = {}
+    for r in rows:
+        parent = _cell(r["parent"])
+        for key in ("iri", "other"):
+            cls = URIRef(_cell(r[key]))
+            sig = signature(cls)
+            if sig:
+                groups.setdefault((parent, sig), set()).add(str(cls))
+    out = []
+    for (parent, _), members in sorted(groups.items(), key=lambda kv: (kv[0][0], sorted(kv[1]))):
+        if len(members) < 2:
+            continue
+        ordered = sorted(members)
+        out.append(_finding(ordered[0], t.format(names=_joined([run.name(m) for m in ordered]), parent=run.name(parent))))
+    return out
+
+
+_NUMBER_TYPES = frozenset(
+    XSD[n] for n in ("decimal", "double", "float", "integer", "int", "long", "short", "nonNegativeInteger", "positiveInteger")
+)
+
+
+def _h10(entry, run) -> list[dict]:
+    """An own attribute named for a quantity that holds numbers (by its
+    range, or a value) and says no unit: in its name, its definition, or an
+    annotation whose property says unit. The name is asked first, so values
+    are read only for the few attributes it leaves: the query's scan of
+    every value of every attribute was a tenth of the 3 s budget."""
+    t = entry["sentences"]["row"]
+    quantities = _word_list(entry, "quantityWords")
+    units = _word_list(entry, "unitWords")
+    graph = run.graph
+    out = []
+    for prop in sorted((p for p in graph.subjects(RDF.type, OWL.DatatypeProperty) if is_own(p, run.rule)), key=str):
+        named = set(_plain_words(local_name(prop))) | set(_plain_words(run.name(prop)))
+        if not named & quantities:
+            continue
+        numeric = any(r in _NUMBER_TYPES for r in graph.objects(prop, RDFS.range)) or any(
+            isinstance(o, Literal) and o.datatype in _NUMBER_TYPES for o in graph.objects(None, prop)
+        )
+        if not numeric or any("unit" in str(p).casefold() for p in graph.predicates(prop, None)):
+            continue
+        said = set(named)
+        for p in DEFINING:
+            for o in graph.objects(prop, p):
+                said |= set(_plain_words(str(o)))
+        if said & units:
+            continue
+        out.append(_finding(str(prop), t.format(name=run.name(prop))))
+    return out
+
+
+_TEXT_PROPERTIES = (OWL.DatatypeProperty, OWL.AnnotationProperty, RDF.Property)
+
+
+def _h11(entry, run) -> list[dict]:
+    """A text value that is, word for word, another own individual's name:
+    one question per property, from its first such value. Computed here in
+    one scan, never by the query's join of every value with every label."""
+    t = entry["sentences"]["row"]
+    graph = run.graph
+    names: dict = {}
+    for p in LABELLING:
+        for s, o in graph.subject_objects(p):
+            if isinstance(o, Literal) and is_own(s, run.rule) and not is_term(graph, s) and any(True for _ in graph.objects(s, RDF.type)):
+                names.setdefault(str(o).casefold(), set()).add(s)
+    if not names:
+        return []
+    properties = sorted({p for kind in _TEXT_PROPERTIES for p in graph.subjects(RDF.type, kind) if is_own(p, run.rule)}, key=str)
+    out = []
+    for prop in properties:
+        hits = sorted(
+            (str(s), str(o), str(ind)) for s, o in graph.subject_objects(prop)
+            if isinstance(o, Literal) for ind in names.get(str(o).casefold(), ()) if ind != s
+        )
+        if not hits:
+            continue
+        subject, value, individual = hits[0]
+        out.append(_finding(str(prop), t.format(
+            property=run.name(prop), subject=run.name(subject), value=value, individual=run.name(individual),
+        )))
+    return out
+
+
 SHAPERS: dict[str, Callable] = {
     "DC-01": _dc01, "DC-02": _dc02, "DC-03": _dc03, "DC-04": _dc04, "DC-05": _dc05, "DC-06": _dc06,
     "DC-07": _dc07, "DC-08": _dc08, "DC-09": _dc09, "DC-11": _variant("how"), "DC-12": _dc12,
     "DC-14": _dc14, "DC-15": _dc15, "DC-16": _variant("what"), "DC-17": _dc17, "DC-18": _dc18,
     "DC-19": _dc19_20, "DC-20": _dc19_20, "DC-21": _dc21, "DC-22": _default, "DC-24": _dc24,
     "DC-25": _variant("what"), "DC-26": _dc26, "DC-27": _dc27, "DC-28": _dc28,
+    "H1": _h1, "H2": _h2, "H4": _default, "H5": _h5, "H6": _h6, "H7": _h7, "H8": _h8, "H9": _h9,
+    "H12": _default,
 }
 # The checks whose findings are not one per row: their total is the
 # findings', counted from the rows read (at most MAX_ROWS of them).
-_REREAD = {"DC-05", "DC-08", "DC-12", "DC-15", "DC-17", "DC-18", "DC-26", "DC-27", "DC-28"}
+_REREAD = {
+    "DC-05", "DC-08", "DC-12", "DC-15", "DC-17", "DC-18", "DC-26", "DC-27", "DC-28",
+    "H1", "H2", "H5", "H6", "H7", "H8", "H9",
+}
+
+
+def _dc13_computed(entry, run):
+    return _dc13(entry, run, run.depths)
+
+
+# The checks computed in Python alone, their query never run by the report:
+# it is what *Open as a query* shows. DC-13 counts the longest path, which a
+# query cannot; H3 reads the reasoning result, which no query sees; H10 asks
+# a name before it reads a value, and H11's query joins every value with
+# every label: in Python each is one short scan, within Section 10's budget.
+_COMPUTED: dict[str, Callable] = {"DC-13": _dc13_computed, "H3": _h3, "H10": _h10, "H11": _h11}
+
+
+def _worst(levels) -> str:
+    return min(levels, key=LEVELS.index)
+
+
+# --- review aids (5.8, Stage B) ------------------------------------------------------
+#
+# What a person reads and judges, beside the findings: the hierarchy read
+# aloud with a tick per link, every definition with the four questions (the
+# questions are the page's words), and a project's saved queries as its
+# competency questions, each run.
+
+READ_ALOUD_MAX = 1000
+DEFINITIONS_SHOWN = 100
+# A tick names its link: the narrower term, the link's kind and the broader
+# one. An IRI never holds "|" (RFC 3987 leaves it out), so the key splits back.
+_LINK_KINDS = {"subClassOf": RDFS.subClassOf, "broader": SKOS.broader}
+QUESTION_SERVICE = "Not run here: it asks another service, and these checks run on this computer."
+QUESTION_TIMEOUT = "This question did not finish in 30 seconds."
+
+
+def link_key(child, kind: str, parent) -> str:
+    return f"{child}|{kind}|{parent}"
+
+
+def hierarchy_links(graph: Graph, rule: OwnRule) -> list[tuple]:
+    """Every own subClassOf and broader link between named terms, as (child,
+    kind, parent), a narrower written the other way round read as its
+    broader; the parent may be borrowed (Every Customer is a Person). In
+    IRI order, so the list reads the same at every run."""
+    found = set()
+    for child, parent in graph.subject_objects(RDFS.subClassOf):
+        if isinstance(child, URIRef) and isinstance(parent, URIRef) and child != parent and is_own(child, rule):
+            found.add((child, "subClassOf", parent))
+    for child, parent in graph.subject_objects(SKOS.broader):
+        if isinstance(child, URIRef) and isinstance(parent, URIRef) and child != parent and is_own(child, rule):
+            found.add((child, "broader", parent))
+    for parent, child in graph.subject_objects(SKOS.narrower):
+        if isinstance(child, URIRef) and isinstance(parent, URIRef) and child != parent and is_own(child, rule):
+            found.add((child, "broader", parent))
+    return sorted(found, key=lambda t: (str(t[0]), t[1], str(t[2])))
+
+
+def _link_sentence(run: Run, child, kind: str, parent) -> str:
+    if kind == "subClassOf":
+        return f"Every {run.name(child)} is {with_article(run.name(parent))}."
+    return f"{run.name(child)} comes under {run.name(parent)}."
+
+
+def read_aloud(run: Run, agreed: Optional[list]) -> dict:
+    """Each link as a sentence, with whether the person ticked it; the count
+    is of the links the model holds now, a tick for a link since removed
+    counting for nothing. `editable` is a project's: only its manifest keeps
+    ticks."""
+    links = hierarchy_links(run.graph, run.rule)
+    ticked = set(agreed or ())
+    items = [
+        {"key": link_key(c, k, p), "iri": str(c), "sentence": _link_sentence(run, c, k, p),
+         "agreed": link_key(c, k, p) in ticked}
+        for c, k, p in links[:READ_ALOUD_MAX]
+    ]
+    return {
+        "links": items,
+        "total": len(links),
+        "agreed": sum(1 for c, k, p in links if link_key(c, k, p) in ticked),
+        "editable": agreed is not None,
+    }
+
+
+def definitions(run: Run) -> dict:
+    """Every own term's definition, its English one first, for the four
+    questions a definition is tested by (5.8)."""
+    graph = run.graph
+    found = []
+    terms = {s for t in TERM_TYPES for s in graph.subjects(RDF.type, t) if is_own(s, run.rule)}
+    for term in sorted(terms, key=str):
+        texts = [o for p in DEFINING for o in graph.objects(term, p) if isinstance(o, Literal)]
+        if not texts:
+            continue
+        text = next((o for o in texts if _english(o)), texts[0])
+        found.append({"iri": str(term), "name": run.name(term), "text": str(text)})
+    return {"items": found[:DEFINITIONS_SHOWN], "total": len(found)}
+
+
+def competency_questions(graph: Graph, saved: list, key: str, timeout: float, reading=None) -> list[dict]:
+    """A project's saved queries, each run on the document as its question
+    (5.8): the true row count, counted past one row kept. Every one passes
+    prepare_select inside execute_select, with the row cap and the timeout;
+    one asking another service is not run, as the report promises to run on
+    this computer alone and a SERVICE call would send the model's text out."""
+    out = []
+    for entry in saved:
+        item = {"id": entry.get("id"), "name": entry.get("name") or "Untitled query"}
+        text = entry.get("sparql") or ""
+        try:
+            if sparql_exec.asks_a_service(text):
+                item["error"] = QUESTION_SERVICE
+            else:
+                result = sparql_exec.execute_select(
+                    graph, text, max_rows=1, timeout=timeout, key=key, reading=reading, count_all=True,
+                )
+                item["total"] = result["total"]
+        except sparql_exec.QueryTimeout:
+            item["error"] = QUESTION_TIMEOUT
+        except (sparql_exec.QueryError, sparql_exec.QueryBusy) as exc:
+            item["error"] = f"This question could not run: {exc}"
+        out.append(item)
+    return out
 
 
 # --- measures (5.7) ------------------------------------------------------------------
@@ -914,7 +1428,7 @@ def measures(graph: Graph, rule: OwnRule) -> dict:
     }
 
 
-def _dc13(entry, run, depths: dict) -> list[dict]:
+def _dc13(entry: dict, run: Run, depths: dict) -> list[dict]:
     t = entry["sentences"]["row"]
     deep = sorted(((d, str(n)) for n, d in depths.items() if d > 4), key=lambda x: (-x[0], x[1]))
     return [_finding(iri, t.format(name=run.name(iri), depth=d)) for d, iri in deep]
@@ -940,9 +1454,14 @@ def run(
     doc: str = "model",
     namespace: Optional[str] = None,
     timeout: Optional[float] = None,
+    inferred: Optional[list] = None,
+    questions: Optional[list] = None,
 ) -> dict:
     """Every check on one document, in the manifest's order; the caller is a
-    worker thread (run_in_threadpool), never the event loop."""
+    worker thread (run_in_threadpool), never the event loop. `inferred` is
+    the project's current reasoning result's conclusions, (individual,
+    class) IRIs, for H2 and H3; None when there is none. `questions` is a
+    project's saved queries, run as its competency questions (5.8)."""
     started = time.perf_counter()
     graph = ontology.ensure_loaded()
     revision, generation = ontology.revision, _generation(ontology)
@@ -968,15 +1487,13 @@ def run(
             "emptySentence": None,
             "overCap": {"statements": size, "cap": CHECKS_MAX_STATEMENTS},
             "measures": None,
+            "aids": None,
             "groups": groups,
             "skipped": [],
             "notes": notes,
             "namespace": namespace,
         }
-    project_bases = tuple(
-        b for b in ((project or {}).get(k) for k in ("baseIri", "shapesBaseIri", "dataBaseIri")) if b
-    )
-    rule = OwnRule(owned_namespaces(graph), project_bases)
+    rule = own_rule(graph, project)
     token = _rule.set(rule)
     try:
         with ontology.reading():
@@ -984,7 +1501,7 @@ def run(
             has_imports = any(True for _ in graph.objects(None, OWL.imports))
             shapes_named = any(True for s in graph.subjects(RDF.type, SH_NODE_SHAPE) if is_own(s, rule))
         depths = measured.pop("depths")
-        run_ctx = Run(graph, rule, namespace, project, {})
+        run_ctx = Run(graph, rule, namespace, project, {}, depths=depths, inferred=inferred)
         empty = not (measured["documentation"]["terms"] or shapes_named)
         groups: list[dict] = []
         skipped: list[str] = []
@@ -1000,10 +1517,14 @@ def run(
                 "id": cid, "level": entry["level"], "heading": entry["heading"], "fix": entry["fix"],
                 "total": 0, "findings": [],
             }
+            if cid == "H3" and inferred is None:
+                # Nothing to read: no current reasoning result, said in the
+                # group so a passing tick is never mistaken for one.
+                group["note"] = entry["sentences"]["noRun" if project is not None else "noProject"]
             try:
-                if cid == "DC-13":
+                if cid in _COMPUTED:
                     with ontology.reading():
-                        findings = _dc13(entry, run_ctx, depths)
+                        findings = _COMPUTED[cid](entry, run_ctx)
                     total = len(findings)
                 else:
                     result = sparql_exec.execute_select(
@@ -1026,13 +1547,28 @@ def run(
                 groups.append(group)
                 continue
             # A group's level is the worst of its findings' (DC-24 in a
-            # pattern project, DC-27's example addresses).
-            levels = {f.get("level", entry["level"]) for f in findings}
-            if findings and levels:
-                group["level"] = "Problem" if "Problem" in levels else "Worth a look"
+            # pattern project, DC-27's example addresses); a hint stays one.
+            if findings:
+                group["level"] = _worst({f.get("level", entry["level"]) for f in findings})
             group["total"] = total
             group["findings"] = findings[:SHOWN]
             groups.append(group)
+        # The review aids (5.8), for a model: a shapes document has no
+        # hierarchy to read aloud and no questions of its own.
+        aids = None
+        if doc == "model":
+            with ontology.reading():
+                aids = {
+                    "readAloud": read_aloud(run_ctx, (project or {}).get("readAloud", []) if project is not None else None),
+                    "definitions": definitions(run_ctx),
+                }
+            aids["questions"] = (
+                competency_questions(
+                    graph, questions, f"checks:{ontology.id}", timeout if timeout is not None else TIMEOUT_SECONDS,
+                    reading=ontology.reading,
+                )
+                if questions is not None else None
+            )
     finally:
         _rule.reset(token)
     notes = [LOCAL_NOTE]
@@ -1053,4 +1589,5 @@ def run(
         "skipped": skipped,
         "notes": notes,
         "namespace": namespace,
+        "aids": aids,
     }

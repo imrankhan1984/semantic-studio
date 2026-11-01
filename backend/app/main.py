@@ -74,7 +74,7 @@ from fastapi.staticfiles import StaticFiles
 # (ontologies vs saved queries) keeps this file small.
 from .local_guard import LocalOnlyMiddleware
 from .network_broker import ApprovalRequired, GrantScopeMiddleware, HostBlocked, Offline
-from . import library_examples, network_broker, settings, tabular
+from . import checks, library_examples, network_broker, settings, tabular
 from .routers import checks as checks_router
 from .routers import data, examples, network, ontologies, projects, queries, references
 from .routers import settings as settings_router
@@ -98,6 +98,15 @@ async def lifespan(_app: FastAPI):
         library_examples.seed(store)
     except Exception:  # noqa: BLE001 -- any failure here must not stop the server
         logging.getLogger("uvicorn.error").exception("The bundled examples were not added to the library")
+    # Warm the design checks (design-checks Stage B follow-up): parse the
+    # pinned queries and build the reference index now, so the first Checks
+    # report after a start meets Section 10. Its own try/except: a failure here
+    # must no more stop the server than the examples' does; the checks still
+    # run, the first report merely paying what it used to.
+    try:
+        checks.prepare()
+    except Exception:  # noqa: BLE001 -- any failure here must not stop the server
+        logging.getLogger("uvicorn.error").exception("The design checks were not prepared at startup")
     yield
 
 
@@ -143,9 +152,10 @@ async def refuse_oversized_bodies(request: Request, call_next):
     the import wizard (csv-data-import Section 9) is a fifth, at 5 MB, on the
     four routes that take one; an edited mapping a sixth, at 1 MB. The IRIs
     a query's results send to /nodes are a seventh, at 4 MB, a settings
-    change (home-and-settings Section 9) an eighth, at 16 KB, and a
+    change (home-and-settings Section 9) an eighth, at 16 KB, a
     certificate file for the corporate network (external-access 5.5) a
-    ninth, at 1 MB.
+    ninth, at 1 MB, and a read-aloud tick (design-checks 5.8) a tenth, at
+    16 KB.
     """
     if request.method not in ("POST", "PUT", "PATCH"):
         return await call_next(request)
@@ -166,6 +176,9 @@ async def refuse_oversized_bodies(request: Request, call_next):
             # chunks by the route.
             limit = network_broker.CA_MAX_BYTES
             detail = network_broker.CA_TOO_LARGE
+        elif _READ_ALOUD_PATH.match(path) and _declared(request) > projects.READ_ALOUD_MAX_BYTES:
+            # One read-aloud tick (design-checks 5.8): 16 KB, read again by the route.
+            return JSONResponse(status_code=413, content={"detail": projects.READ_ALOUD_TOO_LARGE})
         elif path == "/api/settings" and _declared(request) > settings.BODY_MAX_BYTES:
             # Three numbers; the route reads its 16 KB cap again while reading.
             return JSONResponse(status_code=413, content={"detail": settings.BODY_TOO_LARGE})
@@ -199,6 +212,7 @@ async def refuse_oversized_bodies(request: Request, call_next):
 _IMPORT_FILES_PATH = re.compile(r"^/api/ontologies/[^/]+/imports/files$")
 _SOURCE_PATH = re.compile(r"^/api/projects/[^/]+/documents/[^/]+/source$")
 _LAYOUT_PATH = re.compile(r"^/api/projects/[^/]+/documents/[^/]+/layout$")
+_READ_ALOUD_PATH = re.compile(r"^/api/projects/[^/]+/read-aloud$")
 # The data wizard's file routes: inspect, preview, import and refresh.
 _DATA_FILE_PATH = re.compile(r"^/api/projects/[^/]+/data(/inspect|/preview|/[^/]+/refresh)?$")
 _DATA_PATCH_PATH = re.compile(r"^/api/projects/[^/]+/data/[^/]+$")

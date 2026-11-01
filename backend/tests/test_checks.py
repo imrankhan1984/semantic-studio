@@ -13,6 +13,10 @@ SUMMARY
     the revision and generation in the answer (AC-8); DC-26 only with a
     namespace, DC-27's two levels, DC-28 (AC-9); every Avoid row of 5.1
     reported with its reason (AC-17); the routes; and Section 10's budgets.
+    Stage B: each hint H1 to H12 reports exactly its planted case as a
+    question, at the level Hint after the other two (AC-13), changing no
+    check's finding; H3 says when there is no reasoning result, and the
+    route hands it the current one.
 
 BASIC IDEA
     Most tests call checks.run on a parsed graph, through a stand-in for a
@@ -50,7 +54,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from rdflib import Graph
+from rdflib import RDF, Graph, URIRef
 
 from app import checks, settings, sparql_exec
 from app.editing import editing_service
@@ -139,9 +143,13 @@ def faults() -> dict:
     return run(parse(FIXTURES / "design-faults.ttl"), namespace="acme")
 
 
-def test_the_catalogue_has_the_28_checks():
-    assert [e["id"] for e in checks.manifest()] == [f"DC-{n:02d}" for n in range(1, 29)]
-    assert set(EXPECTED) == {e["id"] for e in checks.manifest()}
+HINTS = [f"H{n}" for n in range(1, 13)]
+
+
+def test_the_catalogue_has_the_28_checks_then_the_12_hints():
+    assert [e["id"] for e in checks.manifest()] == [f"DC-{n:02d}" for n in range(1, 29)] + HINTS
+    assert set(EXPECTED) == {e["id"] for e in checks.manifest() if e["id"].startswith("DC-")}
+    assert {e["level"] for e in checks.manifest() if e["id"] in HINTS} == {"Hint"}
 
 
 @pytest.mark.parametrize("cid", sorted(EXPECTED))
@@ -154,7 +162,8 @@ def test_ac3_each_check_reports_exactly_its_planted_finding(faults, cid):
 
 def test_ac3_the_clean_fixture_trips_nothing():
     report = run(parse(FIXTURES / "design-clean.ttl"), namespace="acme")
-    assert len(report["groups"]) == 28
+    assert len(report["groups"]) == 40
+    # No hint either: the clean fixture asks no question.
     assert {g["id"]: g["total"] for g in report["groups"] if g["total"]} == {}
     assert report["measures"]["level"]["step"] == 6
 
@@ -172,6 +181,131 @@ def test_the_levels_and_the_notes(faults):
     assert groups["DC-01"]["level"] == "Problem" and groups["DC-07"]["level"] == "Worth a look"
     assert "Imported terms are not checked." in faults["notes"]
     assert "These checks run on this computer." in faults["notes"]
+
+
+# --- AC-13 (Stage B): one planted case per hint ------------------------------------
+
+# What the tests hand checks.run as a project's current reasoning result. Crew
+# one is concluded a Mission with nothing written that gives it (H3's case);
+# Mission one, a Robotic mission, a Mission through crew name's domain (H2
+# counts it; H3 leaves it out, every Robotic mission being a Mission); Mission
+# two is stated one (left out too).
+INFERRED = [(f"{D}crew/c1", f"{T}#Mission"), (f"{D}mission/m1", f"{T}#Mission"), (f"{D}mission/m2", f"{T}#Mission")]
+
+EXPECTED_HINTS = {
+    "H1": [(f"{T}#RoboticMission", 'Is Robotic mission\'s rule "has part some Atterrisseur" meant for a reasoner? OWL 2 RL, the reasoning Semantic Studio runs, does not use it.')],
+    "H2": [(f"{T}#crewName", "Is whatever has crew name something meant to be a Mission? A domain makes it one; it never refuses data. The last reasoning run made one thing a Mission this way.")],
+    "H3": [(f"{D}crew/c1", "Did you mean Crew one to be a Mission? Reasoning concluded it; nobody wrote it.")],
+    "H4": [(f"{T}#Spaceport", 'Spaceport\'s definition says "anything": what sets it apart from everything else?')],
+    "H5": [(f"{T}#Capsule", 'Is Capsule\'s definition finished? It says "TODO".')],
+    "H6": [(f"{T}#Level0", "What does LEO stand for in LEO level? Spell it out in the definition or an alternative label.")],
+    "H7": [(f"{T}#Instruments", "Is Instruments one thing or many? A class names each of its members, so its name is singular: Instrument.")],
+    "H8": [(f"{T}#Customer", "Is Customer a kind of Person, or a role a Person plays for a while? A role is often better as a relationship.")],
+    "H9": [(f"{T}#Customer", "Are Customer and Passenger different enough to be separate classes? Under Person they have the same properties and rules.")],
+    "H10": [(f"{T}#mass", "What unit is mass in? Say it, so that two values can be compared.")],
+    "H11": [(f"{T}#crewName", 'Should crew name be a relationship? Mission one\'s crew name is the text "Crew one", the name of Crew one.')],
+    "H12": [(f"{T}#launchTime", "Can launch time ever have two values? It is marked functional, so a reasoner reads two values as one thing, or as a contradiction.")],
+}
+
+
+@pytest.fixture(scope="module")
+def hints() -> dict:
+    return run(parse(FIXTURES / "design-faults.ttl"), namespace="acme", inferred=INFERRED)
+
+
+@pytest.mark.parametrize("hid", HINTS)
+def test_ac13_each_hint_reports_its_planted_case_as_a_question(hints, hid):
+    group = by_id(hints)[hid]
+    assert "error" not in group and group["level"] == "Hint"
+    assert [(f["iri"], f["sentence"]) for f in group["findings"]] == EXPECTED_HINTS[hid]
+    assert group["total"] == len(EXPECTED_HINTS[hid])
+    # A question, never a verdict (5.6): each opens by asking.
+    assert all(re.match(r"^[^.]*\?", f["sentence"]) for f in group["findings"])
+
+
+def test_ac13_hints_come_after_the_other_levels(hints):
+    levels = [g["level"] for g in hints["groups"]]
+    first = levels.index("Hint")
+    assert "Hint" not in levels[:first] and set(levels[first:]) == {"Hint"}
+    assert len(levels[first:]) == 12
+
+
+def test_the_hints_change_no_checks_finding(hints, faults):
+    """Stage B asks questions; the 28 checks say what they said before."""
+    def checks_only(report):
+        return {k: v for k, v in findings(report).items() if k.startswith("DC-")}
+    assert checks_only(hints) == checks_only(faults)
+
+
+def test_h3_says_when_there_is_no_reasoning_result_to_read(faults):
+    group = by_id(faults)["H3"]
+    assert group["total"] == 0
+    assert group["note"] == "Reasoning runs on a project; this check reads its last run."
+    report = run(parse(FIXTURES / "design-faults.ttl"), project={"baseIri": f"{T}#", "dataBaseIri": D}, namespace="acme")
+    assert by_id(report)["H3"]["note"] == "No current reasoning result: run reasoning in Edit, then Run again."
+    assert "note" not in by_id(run(parse(FIXTURES / "design-faults.ttl"), inferred=[]))["H3"]
+
+
+def test_h2_says_what_reasoning_typed_only_with_a_result(faults):
+    assert [f["sentence"] for f in by_id(faults)["H2"]["findings"]] == [
+        "Is whatever has crew name something meant to be a Mission? A domain makes it one; it never refuses data.",
+    ]
+
+
+def test_h1_reads_a_rule_only_through_parse_restriction(monkeypatch):
+    monkeypatch.setattr(checks.axioms, "parse_restriction", lambda g, node: None)
+    assert by_id(run(parse(FIXTURES / "design-faults.ttl"), namespace="acme"))["H1"]["total"] == 0
+
+
+def test_h1_leaves_the_rules_owl_2_rl_uses():
+    graph = Graph().parse(data="""
+        @prefix owl: <http://www.w3.org/2002/07/owl#> .
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        @prefix ex: <http://example.org/r#> .
+        <http://example.org/r> a owl:Ontology .
+        ex:p a owl:ObjectProperty .
+        ex:B a owl:Class .
+        ex:Only a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex:p ; owl:allValuesFrom ex:B ] .
+        ex:Value a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex:p ; owl:hasValue ex:b ] .
+        ex:AtMostOne a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex:p ; owl:maxCardinality 1 ] .
+        ex:Defined a owl:Class ; owl:equivalentClass [ a owl:Restriction ; owl:onProperty ex:p ; owl:hasValue ex:b ] .
+        ex:ExactlyTwo a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex:p ; owl:cardinality 2 ] .
+        ex:DefinedBySome a owl:Class ; owl:equivalentClass [ a owl:Restriction ; owl:onProperty ex:p ; owl:someValuesFrom ex:B ] .
+    """, format="turtle")
+    assert sorted(f["iri"] for f in by_id(run(graph))["H1"]["findings"]) == [
+        "http://example.org/r#DefinedBySome", "http://example.org/r#ExactlyTwo",
+    ]
+
+
+def test_h5_h6_h7_read_their_word_rules():
+    graph = Graph().parse(data="""
+        @prefix owl: <http://www.w3.org/2002/07/owl#> .
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        @prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+        @prefix ex: <http://example.org/w#> .
+        <http://example.org/w> a owl:Ontology .
+        ex:Species a owl:Class ; rdfs:label "Species"@en ; rdfs:comment "A group of living things that breed."@en .
+        ex:IssModule a owl:Class ; rdfs:label "ISS module"@en ; skos:altLabel "International Space Station module"@en ;
+            rdfs:comment "A part of a station in low orbit."@en .
+        ex:Rocket a owl:Class ; rdfs:label "Rocket"@en ; rdfs:comment "A rocket that flies, for example to orbit."@en .
+        ex:Planet a owl:Class ; rdfs:label "Planet"@en ; rdfs:comment "A planet is a planet round a star."@en .
+        ex:Moon a owl:Class ; rdfs:label "Moon"@en ; rdfs:comment "A small world."@en .
+    """, format="turtle")
+    groups = by_id(run(graph))
+    assert groups["H7"]["total"] == 0  # a singular word that ends in s
+    assert groups["H6"]["total"] == 0  # spelled out in an alternative label
+    assert {f["iri"].split("#")[1]: f["sentence"] for f in groups["H5"]["findings"]} == {
+        "Rocket": 'Is Rocket\'s definition a definition, or an example? It says "for example".',
+        "Planet": 'Does Planet\'s definition say more than its name? It repeats "Planet".',
+        "Moon": "Is Moon's definition enough to tell it apart? It has three words.",
+    }
+
+
+@pytest.mark.parametrize("name", ["space-exploration.ttl", "middle-earth.ttl"])
+def test_the_hints_run_on_the_examples(name):
+    report = run(parse(APP / "examples" / name))
+    assert not [g["id"] for g in report["groups"] if g.get("error")]
+    assert {g["level"] for g in report["groups"] if g["id"] in HINTS} == {"Hint"}
 
 
 # --- AC-4, AC-5: the bundled examples and borrowed terms ----------------------------
@@ -257,7 +391,7 @@ def test_the_standard_list_lives_in_checks_py_alone():
     ]
     assert copies == []
     queries = list((APP / "checks").glob("*.rq"))
-    assert len(queries) == 28
+    assert len(queries) == 40
     for path in queries:
         text = path.read_text(encoding="utf-8")
         assert not any(ns in text for ns in rare if ns not in ("http://purl.org/dc/terms/", "http://purl.org/dc/elements/1.1/")), path.name
@@ -305,15 +439,18 @@ def test_the_report_runs_every_query_through_the_gate(monkeypatch):
     monkeypatch.setattr(sparql_exec, "_prepare", spy)
     monkeypatch.setattr(sparql_exec, "_prepared_cache", {})
     run(parse(FIXTURES / "design-clean.ttl"), namespace="acme")
-    # Every check but DC-13, whose depth is counted in Python (5.5.3).
-    assert sorted(seen) == sorted(e["query"] for e in checks.manifest() if e["id"] != "DC-13")
+    # Every check but those computed in Python: DC-13's depth (5.5.3), H3's
+    # reasoning result, H10's and H11's short scans; their queries are Open as
+    # a query's.
+    assert sorted(seen) == sorted(e["query"] for e in checks.manifest() if e["id"] not in checks._COMPUTED)
+    assert set(checks._COMPUTED) == {"DC-13", "H3", "H10", "H11"}
 
 
 def test_ac6_open_as_a_query_is_exactly_the_file():
     response = client.get("/api/checks")
     assert response.status_code == 200
     listed = response.json()
-    assert len(listed) == 28
+    assert len(listed) == 40
     for item in listed:
         assert item["query"] == (APP / "checks" / f"{item['id']}.rq").read_text(encoding="utf-8")
         assert set(item) == {"id", "level", "heading", "fix", "query"}
@@ -537,8 +674,119 @@ def test_ac8_the_revision_moves_with_an_edit(project):
 def test_a_shapes_document_runs_three_checks(project):
     body = client.get(f"/api/ontologies/{project}-shapes/checks").json()
     assert [g["id"] for g in body["groups"]] == ["DC-01", "DC-03", "DC-08"]
-    assert len(body["skipped"]) == 25
+    # The other 25 checks and every hint (5.11).
+    assert len(body["skipped"]) == 37
     assert checks.SHAPES_NOTE in body["notes"]
+
+
+def test_the_route_hands_the_current_reasoning_result_to_the_hints(project, monkeypatch):
+    body = client.get(f"/api/ontologies/{project}-model/checks").json()
+    assert by_id(body)["H3"]["note"] == "No current reasoning result: run reasoning in Edit, then Run again."
+    asked = []
+    member = (URIRef("http://example.org/shop#nobody"), RDF.type, URIRef("http://example.org/shop#Customer"))
+    current = types.SimpleNamespace(inferred_members=lambda: [member])
+    monkeypatch.setattr(editing_service, "current_inferred", lambda pid, imports: asked.append((pid, imports)) or current)
+    body = client.get(f"/api/ontologies/{project}-model/checks").json()
+    assert asked == [(project, False)]
+    assert "note" not in by_id(body)["H3"]
+
+
+# --- the review aids (5.8, Stage B) and AC-14 -------------------------------------
+
+
+def test_the_hierarchy_is_read_aloud_with_its_count(faults):
+    aloud = faults["aids"]["readAloud"]
+    sentences = {i["sentence"] for i in aloud["links"]}
+    assert "Every Robotic mission is a Mission." in sentences
+    assert "Every Customer is a Person." in sentences
+    assert "Lander mission comes under Exploration." in sentences  # a broader link
+    assert aloud["total"] == len(aloud["links"]) and aloud["agreed"] == 0
+    # A library entry has no manifest to keep a tick in.
+    assert aloud["editable"] is False
+
+
+def test_every_definition_is_listed_for_the_four_questions(faults):
+    items = {i["name"]: i["text"] for i in faults["aids"]["definitions"]["items"]}
+    assert items["Spaceport"] == "Anything rockets are launched from, on land or at sea."
+    assert "Rover" not in items  # a note is no definition (DC-03's case)
+    assert faults["aids"]["definitions"]["total"] == len(items)
+
+
+def test_a_shapes_document_and_a_document_over_the_cap_have_no_aids(project):
+    assert client.get(f"/api/ontologies/{project}-shapes/checks").json()["aids"] is None
+    assert checks.run(entry(parse(APP / "vocab" / "qudt-3.5.2.ttl")))["aids"] is None
+
+
+def _ship_under_person(pid: str) -> str:
+    person = next(
+        str(s) for s in editing_service.document(pid, "model").graph.subjects(RDF.type, URIRef("http://www.w3.org/2002/07/owl#Class"))
+        if str(s).endswith("#Person")
+    )
+    response = client.post(f"/api/projects/{pid}/documents/model/commands", json={"command": "CreateClass", "args": {"label": "Customer", "parent": person}})
+    assert response.status_code == 200, response.text
+    assert client.post(f"/api/projects/{pid}/documents/model/save").status_code == 200
+    return checks.link_key(response.json()["created"], "subClassOf", person)
+
+
+def test_ac14_a_tick_writes_the_manifest_only(project):
+    key = _ship_under_person(project)
+    document = editing_service.document(project, "model")
+    before = document.state()
+    undo_steps = len(document.undo)
+    response = client.put(f"/api/projects/{project}/read-aloud", json={"key": key, "agreed": True})
+    assert response.status_code == 200, response.text
+    assert response.json() == {"key": key, "agreed": True, "count": 1, "total": 1}
+    assert document.state() == before, "no revision, no dirty flag"
+    assert len(document.undo) == undo_steps, "no undo step"
+    assert editing_service.projects.manifest(project)["readAloud"] == [key]
+    report = client.get(f"/api/ontologies/{project}-model/checks").json()["aids"]["readAloud"]
+    assert report["editable"] is True and report["agreed"] == 1
+    assert [i["agreed"] for i in report["links"]] == [True]
+    # Untick: gone from the manifest, the model still untouched.
+    assert client.put(f"/api/projects/{project}/read-aloud", json={"key": key, "agreed": False}).json()["count"] == 0
+    assert editing_service.projects.manifest(project)["readAloud"] == []
+    assert document.state() == before
+
+
+def test_a_tick_for_a_link_the_model_does_not_hold_is_refused(project):
+    key = checks.link_key("http://example.org/shop#Nobody", "subClassOf", "http://example.org/shop#Person")
+    response = client.put(f"/api/projects/{project}/read-aloud", json={"key": key, "agreed": True})
+    assert response.status_code == 422
+    assert "readAloud" not in editing_service.projects.manifest(project)
+
+
+def test_a_tick_past_its_16_kb_is_refused_before_it_is_read(project):
+    response = client.put(f"/api/projects/{project}/read-aloud", json={"key": "x" * 20_000, "agreed": True})
+    assert response.status_code == 413
+    assert "readAloud" not in editing_service.projects.manifest(project)
+
+
+@pytest.mark.parametrize("pid", ["prj-000000000000", "prj-xyz", "secret", "prj-000000000000%0A"])
+def test_a_tick_on_a_project_not_issued_is_404(pid):
+    assert client.put(f"/api/projects/{pid}/read-aloud", json={"key": "a|subClassOf|b", "agreed": True}).status_code == 404
+
+
+def _save_question(pid: str, name: str, sparql: str) -> None:
+    response = client.post("/api/queries", json={"name": name, "ontologyId": f"{pid}-model", "mode": "text", "sparql": sparql})
+    assert response.status_code == 200, response.text
+
+
+def test_a_projects_saved_queries_are_run_as_its_questions(project, monkeypatch):
+    _save_question(project, "Every class", "SELECT ?c WHERE { ?c a <http://www.w3.org/2002/07/owl#Class> }")
+    _save_question(project, "Nothing", "SELECT ?x WHERE { ?x a <http://example.org/shop#Nowhere> }")
+    _save_question(project, "Far away", "SELECT ?x WHERE { SERVICE <https://query.wikidata.org/sparql> { ?x ?p ?o } }")
+    asked = []
+    monkeypatch.setattr(sparql_exec.sparql_service, "check_before_running", lambda plan: asked.append(plan))
+    questions = {q["name"]: q for q in client.get(f"/api/ontologies/{project}-model/checks").json()["aids"]["questions"]}
+    assert questions["Every class"]["total"] >= 2
+    assert questions["Nothing"]["total"] == 0
+    # Never sent anywhere, not even asked about: the report runs on this computer.
+    assert questions["Far away"]["error"] == checks.QUESTION_SERVICE and "total" not in questions["Far away"]
+    assert asked == []
+
+
+def test_a_library_entry_has_no_questions_to_run(faults):
+    assert faults["aids"]["questions"] is None
 
 
 def test_an_empty_document_says_there_is_nothing_to_check():
@@ -552,6 +800,38 @@ def test_the_report_changes_nothing(project):
     before = (doc.ontology.revision, len(doc.graph))
     client.get(f"/api/ontologies/{project}-model/checks")
     assert (doc.ontology.revision, len(doc.graph)) == before
+
+
+# --- the first report after a start (Stage B follow-up) ------------------------------
+
+
+def test_prepare_warms_every_query_the_report_runs(monkeypatch):
+    monkeypatch.setattr(sparql_exec, "_prepared_cache", {})
+    checks.prepare()
+    assert set(sparql_exec._prepared_cache) == {e["query"] for e in checks.manifest()}
+    parsed = []
+    real = sparql_exec._prepare
+    monkeypatch.setattr(sparql_exec, "_prepare", lambda q: parsed.append(q) or real(q))
+    run(parse(FIXTURES / "design-clean.ttl"), namespace="acme")
+    assert parsed == []  # the report parsed nothing: the start did
+
+
+def test_the_server_start_prepares_the_checks_and_a_failure_never_stops_it(monkeypatch):
+    from app import library_examples
+
+    monkeypatch.setattr(library_examples, "seed", lambda _store: None)  # this test's subject is the checks
+    asked = []
+    monkeypatch.setattr(checks, "prepare", lambda: asked.append(1))
+    with TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"}):
+        pass
+    assert asked == [1]
+
+    def broken():
+        raise checks.CheckFileChanged("DC-01.rq does not match its pinned hash.")
+
+    monkeypatch.setattr(checks, "prepare", broken)
+    with TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studio": "1"}) as started:
+        assert started.get("/api/health").status_code == 200
 
 
 # --- Section 10: budgets, and AC-12a: the cap ---------------------------------------
@@ -645,7 +925,7 @@ def test_ac12a_a_document_under_the_cap_runs_every_check():
     report = run(parse(FIXTURES / "design-clean.ttl"), namespace="acme")
     assert "overCap" not in report
     assert report["measures"] is not None
-    assert len(report["groups"]) == 28
+    assert len(report["groups"]) == 40
 
 
 def test_ac12a_the_route_answers_over_the_cap():

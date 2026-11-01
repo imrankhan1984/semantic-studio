@@ -1,0 +1,22 @@
+# Definitions that may not define: one that repeats its term's name, has fewer than five words, gives an example (for example, e.g.) or is not finished (TODO, TBD).
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX dc: <http://purl.org/dc/elements/1.1/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ss: <urn:semantic-studio:check:>
+SELECT DISTINCT ?iri ?definition ?label WHERE {
+  VALUES ?type { owl:Class rdfs:Class owl:ObjectProperty owl:DatatypeProperty owl:AnnotationProperty rdf:Property skos:Concept }
+  ?iri a ?type ; skos:definition|rdfs:comment|dcterms:description ?definition .
+  FILTER(isIRI(?iri) && ss:own(?iri))
+  OPTIONAL { ?iri rdfs:label|skos:prefLabel ?label . FILTER(LANG(?label) = "" || LANGMATCHES(LANG(?label), "en")) }
+  FILTER(
+    REGEX(STR(?definition), "\\b(TODO|TBD)\\b|\\bfor example\\b|\\be\\.g\\.", "i")
+    || !REGEX(STR(?definition), "^\\W*(\\w+\\W+){4}\\w")
+    || (BOUND(?label) && CONTAINS(LCASE(STR(?definition)), LCASE(STR(?label))))
+  )
+}
+ORDER BY ?iri

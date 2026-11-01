@@ -28,7 +28,10 @@ import {
   levelLines,
   measureLines,
   orderGroups,
+  questionLine,
+  readAloudLine,
   showingLine,
+  showingOf,
   summaryLine,
 } from "./report";
 
@@ -108,5 +111,41 @@ describe("the Checks report's rules", () => {
     expect(destination({ iri: "http://example.org/shop", sentence: "", block: "header" }, base, false)).toBe("edit");
     expect(destination({ iri: "http://example.org/space", sentence: "", block: "header" }, null, false)).toBe("source");
     expect(destination({ iri: `${base}PersonRules`, sentence: "" }, base, true)).toBe("shapes");
+  });
+});
+
+describe("Stage B: hints and the review aids' words", () => {
+  it("puts hints after Worth a look, and a hint with findings before every pass (AC-13)", () => {
+    const ordered = orderGroups([
+      group("H1", "Hint", 3),
+      group("P", "Problem", 0),
+      group("W", "Worth a look", 1),
+      group("H2", "Hint", 7),
+      group("H3", "Hint", 0),
+      group("Q", "Problem", 2),
+    ]);
+    expect(ordered.map((g) => g.id)).toEqual(["Q", "W", "H2", "H1", "P", "H3"]);
+  });
+
+  it("counts hints in the summary, never as a failure", () => {
+    expect(summaryLine("Shop", [group("A", "Problem", 1), group("B", "Hint", 2), group("C", "Hint", 1)])).toBe(
+      "Shop: 1 problem, 0 worth a look, 2 hints",
+    );
+    expect(summaryLine("Shop", [group("B", "Hint", 2)])).toBe("Shop: every check passed, 1 hint");
+    expect(summaryLine("Shop", [group("B", "Hint", 0)])).toBe("Shop: every check passed");
+  });
+
+  it("says the read-aloud count and what is not shown", () => {
+    expect(readAloudLine(12, 30)).toBe("12 of 30 read and agreed.");
+    expect(readAloudLine(0, 1204)).toBe("0 of 1,204 read and agreed.");
+    expect(showingOf(1000, 1204)).toBe("Showing 1,000 of 1,204");
+    expect(showingOf(30, 30)).toBeNull();
+  });
+
+  it("says a question's rows, its failure, or that it returns nothing as Worth a look (5.8)", () => {
+    expect(questionLine({ id: "q", name: "Every customer", total: 1 })).toEqual({ level: null, text: "Every customer: 1 row" });
+    expect(questionLine({ id: "q", name: "Every customer", total: 1204 })).toEqual({ level: null, text: "Every customer: 1,204 rows" });
+    expect(questionLine({ id: "q", name: "Overdue", total: 0 })).toEqual({ level: "Worth a look", text: "Overdue returns nothing." });
+    expect(questionLine({ id: "q", name: "Far", error: "Not run here." })).toEqual({ level: null, text: "Far: Not run here." });
   });
 });

@@ -1474,6 +1474,16 @@ export default function App() {
   // its Turtle editor, so the switch for it lives here; the editor stays
   // mounted, hidden, so nothing typed is lost to a look at the report.
   const [projectChecking, setProjectChecking] = useState(false);
+  // The block a finding's *open* names (label, definition, header), for the
+  // Edit form to scroll to once its term is shown (Stage B follow-up). Held
+  // for that term only: choosing another drops it, so coming back to the
+  // term later does not scroll again.
+  const [checkBlock, setCheckBlock] = useState<{ iri: string; block: string; token: number } | null>(null);
+  useEffect(() => {
+    // A null between is not a choice: opening a project's model clears the
+    // selection before the pending one lands.
+    setCheckBlock((held) => (held && selected !== null && held.iri !== selected ? null : held));
+  }, [selected]);
   // Open as a query: the check's text, handed to Query once (its token).
   const [incomingQuery, setIncomingQuery] = useState<{ text: string; name: string; token: number } | null>(null);
   const openCheckAsQuery = useCallback(
@@ -1503,6 +1513,8 @@ export default function App() {
           const snap = projectStore.getSnapshot();
           const model = snap.documents.find((d) => d.doc === "model");
           if (!model) return;
+          const block = finding.block;
+          setCheckBlock((held) => (block ? { iri, block, token: (held?.token ?? 0) + 1 } : null));
           if (snap.activeDoc !== "model") projectStore.switchDocument("model");
           setMode("hierarchy");
           if (activeId !== model.ontologyId) {
@@ -1912,6 +1924,7 @@ export default function App() {
         onDeleted={onEntityDeleted}
         canvas={canvasLent}
         inferred={detailInferred}
+        scrollTo={checkBlock && checkBlock.iri === selected ? checkBlock : null}
       />
     );
 
@@ -2466,6 +2479,7 @@ export default function App() {
                     revision={revision}
                     ownBase={openProjectSummary.baseIri}
                     shapesDoc={projectDoc.doc === "shapes"}
+                    projectId={openProjectSummary.id}
                     onOpen={openFromChecks}
                     onOpenQuery={openCheckAsQuery}
                   />

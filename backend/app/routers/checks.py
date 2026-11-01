@@ -23,6 +23,10 @@ BASIC IDEA
 INPUTS / INPUT SOURCES
     - The ontology store and, for a project document, its manifest.
     - settings.namespace() for DC-26, read at each run.
+    - For a project's model, its current reasoning result, if any, for the
+      hints H2 and H3 (design-checks 5.6), and its saved queries on the
+      model, run as its competency questions (5.8). The read-aloud ticks
+      are in the manifest, and set by PUT /api/projects/{pid}/read-aloud.
 
 EXPECTED OUTPUT
     - GET /api/ontologies/{id}/checks?doc=  checks.run's answer, 404 for an
@@ -38,7 +42,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException
 
 from .. import checks, settings
-from ..editing import project_store
+from ..editing import NotOpen, editing_service, project_store
 from ..projects import PROJECT_ID, UnknownProject, split_document_id
 from ..store import store
 
@@ -64,14 +68,40 @@ def run_checks(oid: str, doc: Optional[Literal["model", "shapes"]] = None) -> di
         raise HTTPException(status_code=404, detail=NOT_FOUND)
     split = split_document_id(ontology.id)
     project = None
+    inferred = None
+    questions = None
     if split is not None:
         try:
             project = project_store.manifest(split[0])
+            if split[1] == "model":
+                # The project's saved queries on its model are its competency
+                # questions (5.8), each run by the report.
+                questions = [q for q in project_store.queries(split[0]).list() if q.get("ontologyId") == ontology.id]
         except UnknownProject as exc:
             raise HTTPException(status_code=404, detail=NOT_FOUND) from exc
+        if split[1] == "model":
+            inferred = _current_inferred(split[0])
     return checks.run(
         ontology,
         project=project,
         doc=split[1] if split else "model",
         namespace=settings.namespace(),
+        inferred=inferred,
+        questions=questions,
     )
+
+
+def _current_inferred(pid: str) -> Optional[list]:
+    """The types the project's last reasoning run concluded, while that run
+    is current for the model as it stands (with the imports view it ran on),
+    for hints H2 and H3; None when there is no such run. Reasoning keeps its
+    last result per open project (reasoning.service), never on disk."""
+    for imports in (False, True):
+        try:
+            outcome = editing_service.current_inferred(pid, imports)
+        except NotOpen:
+            # A result outlives no project: a closed one has none to read.
+            return None
+        if outcome is not None:
+            return [(str(s), str(o)) for s, _, o in outcome.inferred_members()]
+    return None

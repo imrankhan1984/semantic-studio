@@ -324,6 +324,26 @@ def _prepared_for(query: str):
     return prepared, plan
 
 
+def asks_a_service(query: str) -> bool:
+    """Whether ``query`` holds a SERVICE block, read as the gate reads it:
+    the plan _prepare makes, from the expanded text and the parsed algebra,
+    never from rdflib's service_string. The design checks run a project's
+    saved queries as its
+    competency questions, and run none that would call another service: the
+    report runs on this computer alone. Raises QueryError as the gate does."""
+    return _prepare(query)[1] is not None
+
+
+def prewarm(query: str) -> None:
+    """Parse one fixed, pinned query and keep it for reuse, ahead of its first
+    run (design-checks Stage B follow-up). The design checks' first report
+    after a server start paid to parse every one of its queries; warming the
+    same cache the report reads (reuse_prepared) moves that cost to startup, so
+    the first report meets Section 10. A query with a SERVICE plan is not kept,
+    as reuse_prepared never keeps one; the checks carry none."""
+    _prepared_for(query)
+
+
 def prepare_select(query: str):
     """Parse ``query`` and reject anything that is not a SELECT this
     application may run. Returns the prepared query; raises QueryError.
