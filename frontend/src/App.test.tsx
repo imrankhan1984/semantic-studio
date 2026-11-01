@@ -463,7 +463,7 @@ beforeEach(() => {
   listOntologies.mockResolvedValue([SUMMARY]);
   listProjects.mockResolvedValue([]);
   listData.mockResolvedValue({ generation: 0, snapshots: [] });
-  getSettings.mockResolvedValue({ dataDir: "/data", limits: [] });
+  getSettings.mockResolvedValue({ dataDir: "/data", limits: [], naming: { namespace: null, prefix: "https://w3id.org/" } });
   projectStore._reset();
   getGraph.mockResolvedValue(TRUNCATED);
   listImports.mockResolvedValue({ imports: [], limit: null, resolving: null, offline: false });

@@ -668,3 +668,92 @@ def test_a_settings_put_declaring_past_16_kb_is_refused_before_the_route_reads()
     assert not pulled
     assert not _file().exists()
     assert settings.parse_timeout() == 60.0
+
+
+# --- the naming section (design-checks 5.1, AC-1) ---------------------------------
+
+
+def _put_namespace(value):
+    return client.put("/api/settings", json={"naming": {"namespace": value}})
+
+
+def test_no_namespace_until_one_is_saved():
+    assert _get()["naming"] == {"namespace": None, "prefix": "https://w3id.org/"}
+    assert settings.namespace() is None
+
+
+def test_a_saved_namespace_is_in_settings_json_and_read_at_call_time():
+    response = _put_namespace("acme")
+    assert response.status_code == 200
+    assert response.json()["naming"]["namespace"] == "acme"
+    assert json.loads(_file().read_text(encoding="utf-8"))["naming"] == {"namespace": "acme"}
+    assert settings.namespace() == "acme"
+    # A restart reads it again from the file, nothing held from import.
+    settings.configure(store.data_dir)
+    assert settings.namespace() == "acme"
+
+
+@pytest.mark.parametrize(
+    "value, sentence",
+    [
+        ("Acme", "Use lowercase letters"),
+        ("acme//x", "Use lowercase letters"),
+        ("acme/v2", "never holds a version or a date"),
+        ("acme/2026", "never holds a version or a date"),
+        ("a/b/c/d", "Use lowercase letters"),
+        ("acme>", "Use lowercase letters"),
+        ("acme\n", "Use lowercase letters"),
+    ],
+)
+def test_a_refused_namespace_is_422_with_its_sentence_and_writes_nothing(value, sentence):
+    response = _put_namespace(value)
+    assert response.status_code == 422
+    assert sentence in response.json()["detail"]["message"]
+    assert not _file().exists()
+    assert settings.namespace() is None
+
+
+def test_a_refused_namespace_keeps_a_limit_in_the_same_body_out_too():
+    response = client.put("/api/settings", json={"limits": {"readTime": 90}, "naming": {"namespace": "Acme"}})
+    assert response.status_code == 422
+    assert not _file().exists()
+
+
+def test_saving_a_limit_keeps_the_namespace_and_back():
+    _put_namespace("acme/research")
+    assert _put({"readTime": 90}).status_code == 200
+    data = json.loads(_file().read_text(encoding="utf-8"))
+    assert data == {"limits": {"readTime": 90}, "naming": {"namespace": "acme/research"}}
+    _put_namespace("acme")
+    data = json.loads(_file().read_text(encoding="utf-8"))
+    assert data == {"limits": {"readTime": 90}, "naming": {"namespace": "acme"}}
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_clear_empties_the_namespace(value):
+    _put_namespace("acme")
+    assert _put_namespace(value).status_code == 200
+    assert settings.namespace() is None
+    assert "naming" not in json.loads(_file().read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"naming": "acme"}, {"naming": {"namespace": 3}}, {"naming": {"namespace": "acme", "x": 1}}, {"naming": None}],
+)
+def test_a_naming_body_of_any_other_shape_is_refused(body):
+    assert client.put("/api/settings", json=body).status_code == 422
+    assert not _file().exists()
+
+
+def test_a_hand_edited_namespace_the_rule_refuses_reads_as_none():
+    _file().write_text(json.dumps({"naming": {"namespace": "acme/../x"}}), encoding="utf-8")
+    settings.configure(store.data_dir)
+    assert settings.namespace() is None
+
+
+def test_the_module_refuses_a_namespace_whoever_calls_it():
+    """The router checks first; settings.py checks again for any other caller."""
+    with pytest.raises(settings.NamespaceRefused):
+        settings.update_naming("acme/v2")
+    assert not _file().exists()

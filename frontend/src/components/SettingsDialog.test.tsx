@@ -84,7 +84,11 @@ const LIMITS: LimitSetting[] = [
   { key: "readTime", name: "Longest time to read a file", unit: "s", value: 60, default: 60, min: 10, max: 600, source: "default", variables: [] },
   { key: "firstDrawing", name: "Items drawn when a graph opens", unit: "items", value: 2000, default: 2000, min: 100, max: 20000, source: "default", variables: [] },
 ];
-const SETTINGS: AppSettings = { limits: LIMITS, dataDir: "/home/learner/.local/share/semantic-studio" };
+const SETTINGS: AppSettings = {
+  limits: LIMITS,
+  dataDir: "/home/learner/.local/share/semantic-studio",
+  naming: { namespace: null, prefix: "https://w3id.org/" },
+};
 
 beforeEach(() => {
   getSettings.mockResolvedValue(SETTINGS);
@@ -133,15 +137,21 @@ describe("Settings is a dialog (home-and-settings 5.4, AC-5)", () => {
     expect(document.activeElement).toBe(screen.getByRole("heading", { level: 2, name: "Settings" }));
   });
 
-  it("has Network, Library and Limits tabs in a tablist, and opens on Network", async () => {
+  it("has Network, Library, Limits and Naming tabs in a tablist, and opens on Network", async () => {
     await open();
     const list = screen.getByRole("tablist", { name: "Settings" });
-    expect([...list.querySelectorAll('[role="tab"]')].map((t) => t.textContent)).toEqual(["Network", "Library", "Limits"]);
+    expect([...list.querySelectorAll('[role="tab"]')].map((t) => t.textContent)).toEqual([
+      "Network",
+      "Library",
+      "Limits",
+      "Naming",
+    ]);
     expect(tab("Network").getAttribute("aria-selected")).toBe("true");
     expect(tab("Library").getAttribute("aria-selected")).toBe("false");
     expect(panel("Network").hidden).toBe(false);
     expect(panel("Library").hidden).toBe(true);
     expect(panel("Limits").hidden).toBe(true);
+    expect(panel("Naming").hidden).toBe(true);
     expect(screen.getByRole("tabpanel", { name: "Network" })).toBeTruthy();
   });
 
@@ -221,7 +231,8 @@ describe("the tablist (home-and-settings 5.7)", () => {
     expect(tab("Network").tabIndex).toBe(0);
     expect(tab("Library").tabIndex).toBe(-1);
     expect(tab("Limits").tabIndex).toBe(-1);
-    for (const name of ["Network", "Library", "Limits"]) {
+    expect(tab("Naming").tabIndex).toBe(-1);
+    for (const name of ["Network", "Library", "Limits", "Naming"]) {
       expect(panel(name).getAttribute("role")).toBe("tabpanel");
       expect(panel(name).getAttribute("aria-labelledby")).toBe(tab(name).id);
     }
@@ -238,13 +249,15 @@ describe("the tablist (home-and-settings 5.7)", () => {
     fireEvent.keyDown(tab("Library"), { key: "ArrowRight" });
     expect(document.activeElement).toBe(tab("Limits"));
     fireEvent.keyDown(tab("Limits"), { key: "ArrowRight" });
+    expect(document.activeElement).toBe(tab("Naming"));
+    fireEvent.keyDown(tab("Naming"), { key: "ArrowRight" });
     expect(document.activeElement).toBe(tab("Network"));
     fireEvent.keyDown(tab("Network"), { key: "ArrowLeft" });
-    expect(document.activeElement).toBe(tab("Limits"));
-    fireEvent.keyDown(tab("Limits"), { key: "Home" });
+    expect(document.activeElement).toBe(tab("Naming"));
+    fireEvent.keyDown(tab("Naming"), { key: "Home" });
     expect(document.activeElement).toBe(tab("Network"));
     fireEvent.keyDown(tab("Network"), { key: "End" });
-    expect(document.activeElement).toBe(tab("Limits"));
+    expect(document.activeElement).toBe(tab("Naming"));
     expect(panel("Network").hidden).toBe(true);
   });
 
@@ -709,7 +722,7 @@ describe("Limits (home-and-settings 5.4, AC-7)", () => {
   it("says so when the settings cannot be read", async () => {
     getSettings.mockRejectedValue(new Error("The server did not answer."));
     await open({}, "limits");
-    expect(screen.getByText("Could not read the settings: The server did not answer.")).toBeTruthy();
+    expect(panel("Limits").textContent).toContain("Could not read the settings: The server did not answer.");
   });
 
   it("a value typed survives a look at another tab", async () => {

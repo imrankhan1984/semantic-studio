@@ -3764,6 +3764,85 @@ button.legend-row:hover {
   margin-top: 6px;
 }
 
+/* Settings → Naming (design-checks 5.1): the fixed https://w3id.org/ before
+   the field, the pattern's lines, and the examples' two tables, whose long
+   addresses wrap rather than widening the dialog. */
+.settings-naming p {
+  margin: 4px 0 0;
+}
+
+.naming-field {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.naming-prefix {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.naming-input {
+  width: 16em;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.naming-pattern {
+  margin-top: 16px;
+}
+
+.naming-pattern h3 {
+  margin: 0 0 6px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.naming-lines {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
+.naming-lines > div {
+  display: contents;
+}
+
+.naming-lines dt {
+  color: var(--text-dim);
+}
+
+.naming-lines dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.naming-examples {
+  margin-top: 8px;
+}
+
+.naming-table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: var(--fs-xs);
+}
+
+.naming-table caption {
+  text-align: left;
+  font-weight: 600;
+}
+
+.naming-table th,
+.naming-table td {
+  padding: 3px 6px 3px 0;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
 /* A SERVICE question shows query text, which is the whole point of it, so the
    dialog widens and the text takes the full row under its label. In the
    480px dialog's value column a box showed 319px of a 476px line, and what

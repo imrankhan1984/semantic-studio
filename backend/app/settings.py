@@ -39,6 +39,14 @@ BASIC IDEA
     read, a value outside the range falling back on its default. A damaged
     file reads as no file: the failure mode is the defaults, never no limit.
 
+    The file has a second section, `naming` (design-checks 5.1, D-124): the
+    organization's namespace, which New project reads at each creation. It
+    is held to naming.py's rule when saved and again when read, a value the
+    rule refuses reading as none: example.org again, never an address a
+    hand edit could close an IRI with. Each section's save writes the other
+    as it stands, so saving a limit never forgets the namespace. No
+    environment variable owns it.
+
 INPUTS / INPUT SOURCES
     - The environment: SEMANTIC_STUDIO_MAX_UPLOAD_BYTES,
       SEMANTIC_STUDIO_MAX_FETCH_BYTES, SEMANTIC_STUDIO_PARSE_TIMEOUT and
@@ -51,6 +59,10 @@ EXPECTED OUTPUT
       limits in force now.
     - describe(): the three limits as Settings shows them, with value,
       default, range, unit and source ("default", "settings", "environment").
+    - namespace(), update_naming(), describe_naming(): Settings → Naming's
+      one value (design-checks 5.1, D-124), the organization's namespace
+      after https://w3id.org/, or None; NamespaceRefused (422) with nothing
+      written.
     - update(): the new values saved, or LimitOutOfRange (422) or
       SetByEnvironment (409) with nothing written.
     - too_large_detail(), too_slow_message() and raise_hint(): the refusal
@@ -68,6 +80,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+from . import naming
 
 MB = 1024 * 1024
 
@@ -129,6 +143,9 @@ FILE_NAME = "settings.json"
 _lock = threading.Lock()
 _path: Optional[Path] = None
 _saved: Optional[dict[str, int]] = None  # None until first read
+# The naming section as last read or written; a one-item list so None (no
+# namespace) and "not read yet" are apart.
+_naming: Optional[list] = None
 
 
 class LimitOutOfRange(ValueError):
@@ -157,12 +174,17 @@ class UnknownSetting(ValueError):
     """A key that is not one of the three limits (maps to 422)."""
 
 
+class NamespaceRefused(ValueError):
+    """A namespace naming.py's rule refuses, with its sentence (maps to 422)."""
+
+
 def configure(data_dir: Optional[Path]) -> None:
     """Point at the data folder; the saved values are read again from it."""
-    global _path, _saved
+    global _path, _saved, _naming
     with _lock:
         _path = Path(data_dir) / FILE_NAME if data_dir else None
         _saved = None
+        _naming = None
 
 
 def data_dir() -> Optional[Path]:
@@ -171,7 +193,7 @@ def data_dir() -> Optional[Path]:
 
 def reset() -> None:
     """Forget every saved value and remove the file. For tests."""
-    global _saved
+    global _saved, _naming
     with _lock:
         if _path is not None:
             try:
@@ -179,6 +201,7 @@ def reset() -> None:
             except FileNotFoundError:
                 pass
         _saved = {}
+        _naming = [None]
 
 
 # --- environment ------------------------------------------------------------
@@ -225,7 +248,7 @@ def _in_range(limit: Limit, value: object) -> bool:
     )
 
 
-def _read_file() -> dict[str, int]:
+def _read_raw() -> dict:
     if _path is None or not _path.exists():
         return {}
     try:
@@ -233,9 +256,18 @@ def _read_file() -> dict[str, int]:
     except (OSError, ValueError):
         # A damaged file is no file: the defaults, never no limit.
         return {}
-    if not isinstance(data, dict):
-        return {}
-    limits = data.get("limits")
+    return data if isinstance(data, dict) else {}
+
+
+def _read_naming() -> Optional[str]:
+    section = _read_raw().get("naming")
+    value = section.get("namespace") if isinstance(section, dict) else None
+    # The rule the PUT holds to, so a hand edit cannot pass it either.
+    return value if isinstance(value, str) and naming.namespace_error(value) is None else None
+
+
+def _read_file() -> dict[str, int]:
+    limits = _read_raw().get("limits")
     if not isinstance(limits, dict):
         return {}
     # The same range the PUT holds to, so a hand edit cannot pass it either.
@@ -258,12 +290,23 @@ def _page_value(key: str) -> int:
     return _saved_values().get(key, LIMITS[key].default)
 
 
-def _write_file(values: dict[str, int]) -> None:
+def _current_naming() -> Optional[str]:
+    """The namespace, read once; the caller holds the lock."""
+    global _naming
+    if _naming is None:
+        _naming = [_read_naming()]
+    return _naming[0]
+
+
+def _write_file(values: dict[str, int], namespace: Optional[str]) -> None:
     if _path is None:
         return
     _path.parent.mkdir(parents=True, exist_ok=True)
     tmp = _path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"limits": values}, indent=2), encoding="utf-8")
+    data: dict = {"limits": values}
+    if namespace is not None:
+        data["naming"] = {"namespace": namespace}
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     # Replace rather than rewrite, so a crash mid-write cannot leave half a
     # file; retried, as Windows briefly holds a just-written file (the
     # broker's policy file measured one save in thirty).
@@ -300,8 +343,41 @@ def update(changes: dict) -> None:
         # A value equal to its default is not kept: Reset to defaults then
         # means the default, and a default a later release moves applies.
         current = {key: value for key, value in current.items() if value != LIMITS[key].default}
-        _write_file(current)
+        _write_file(current, _current_naming())
         _saved = current
+
+
+# --- the naming section (design-checks 5.1) ---------------------------------------
+
+
+def namespace() -> Optional[str]:
+    """The organization's namespace after https://w3id.org/, or None: read
+    by New project at each creation, and by the checks at each run."""
+    with _lock:
+        return _current_naming()
+
+
+def update_naming(value: Optional[str]) -> None:
+    """Save the namespace, or clear it with None or "". Checked by
+    naming.py's rule before anything is written; the limits are written
+    back as they stand."""
+    global _naming, _saved
+    if value == "":
+        value = None
+    if value is not None:
+        error = naming.namespace_error(value)
+        if error:
+            raise NamespaceRefused(error)
+    with _lock:
+        limits = dict(_saved) if _saved is not None else _read_file()
+        _write_file(limits, value)
+        _saved = limits
+        _naming = [value]
+
+
+def describe_naming() -> dict:
+    """Settings → Naming's value as the page shows it."""
+    return {"namespace": namespace(), "prefix": naming.PREFIX}
 
 
 # --- the readers --------------------------------------------------------------

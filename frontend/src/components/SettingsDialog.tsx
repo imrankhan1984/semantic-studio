@@ -5,11 +5,13 @@ FILE: frontend/src/components/SettingsDialog.tsx
 
 SUMMARY
     Settings (home-and-settings 5.4, D-120): the one dialog for choices about
-    the application itself, opened from the header's Settings button. Three
+    the application itself, opened from the header's Settings button. Four
     tabs: Network (today's panel, NetworkPanel), Library (the catalogue,
     *Bundled with Semantic Studio* and where the work is kept,
-    LibrarySettings) and
-    Limits (the three limits a person can change, LimitsSettings).
+    LibrarySettings),
+    Limits (the three limits a person can change, LimitsSettings) and
+    Naming (the organization's namespace and the address pattern,
+    NamingSettings; design-checks 5.1).
 
 BASIC IDEA
     A modal like About and the Load dialog: role="dialog", aria-modal,
@@ -25,19 +27,21 @@ BASIC IDEA
     Every panel stays mounted and the hidden ones are `hidden`, rather than
     unmounting: a catalogue load running in Library is cancelled by
     unmounting (useLoadRun), and a look at Network must not do that; nor
-    must it lose a limit typed but not yet saved.
+    must it lose a limit or a namespace typed but not yet saved.
     Network reads its two lists again each time its tab is chosen (it is
     keyed on the visit), so a site allowed or a download made while Library
     showed is there to see and to revoke.
 
     GET /api/settings is read once, when the dialog opens (never on the app's
     mount, whose two requests are a load-bearing rule): Library shows its
-    data folder and Limits its three limits. A Save's answer replaces it.
+    data folder, Limits its three limits and Naming the namespace. A Save's
+    answer replaces it.
 
-    Closing with a limit typed but not saved asks once, in the dialog, as the
-    Load dialog asks over a mapping: *Close* closes and discards, *Keep
-    editing* (or Escape again) goes back to Limits. The ✕, Escape and the
-    backdrop ask. Limits' Cancel closes without asking, and so does a
+    Closing with a limit or a namespace typed but not saved asks once, in
+    the dialog, as the Load dialog asks over a mapping: *Close* closes and
+    discards, *Keep editing* (or Escape again) goes back to the tab holding
+    it. The ✕, Escape and the backdrop ask. Limits' and Naming's Cancel
+    close without asking, and so does a
     catalogue entry that finished loading: in both the person chose that
     (AC-12).
 
@@ -64,19 +68,22 @@ EXPECTED OUTPUT
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { getSettings, type AppSettings, type ExamplesRestored } from "../api";
 import { LEAVE_QUESTION } from "../limitWords";
+import { LEAVE_QUESTION as LEAVE_NAMING } from "../naming/words";
 import type { OntologySummary } from "../types";
 import LibrarySettings from "./LibrarySettings";
 import LimitsSettings from "./LimitsSettings";
+import NamingSettings from "./NamingSettings";
 import NetworkPanel from "./NetworkPanel";
 import { wrapTab } from "./useDialogTrap";
 
-export type SettingsTab = "network" | "library" | "limits";
+export type SettingsTab = "network" | "library" | "limits" | "naming";
 
 /** The tabs in their order (home-and-settings 5.4). */
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: "network", label: "Network" },
   { id: "library", label: "Library" },
   { id: "limits", label: "Limits" },
+  { id: "naming", label: "Naming" },
 ];
 
 interface Props {
@@ -136,18 +143,21 @@ export default function SettingsDialog({
   // question standing in the dialog.
   const [limitsDirty, setLimitsDirty] = useState(false);
   const onDirtyChange = useCallback((dirty: boolean) => setLimitsDirty(dirty), []);
+  const [namingDirty, setNamingDirty] = useState(false);
+  const onNamingDirty = useCallback((dirty: boolean) => setNamingDirty(dirty), []);
+  const dirty = limitsDirty || namingDirty;
   const [asking, setAsking] = useState(false);
   // Saved or put back while the question stands: nothing is left to lose.
   useEffect(() => {
-    if (!limitsDirty) setAsking(false);
-  }, [limitsDirty]);
+    if (!dirty) setAsking(false);
+  }, [dirty]);
   const askOrClose = () => {
-    if (limitsDirty) setAsking(true);
+    if (dirty) setAsking(true);
     else onClose();
   };
   const keepEditing = () => {
     setAsking(false);
-    select("limits");
+    select(limitsDirty ? "limits" : "naming");
   };
 
   const escape = useRef(askOrClose);
@@ -207,7 +217,7 @@ export default function SettingsDialog({
 
         {asking && (
           <div className="wizard-actions wizard-leave" role="group" aria-label="Close without saving?">
-            <span>{LEAVE_QUESTION}</span>
+            <span>{limitsDirty ? LEAVE_QUESTION : LEAVE_NAMING}</span>
             <button type="button" onClick={onClose}>
               Close
             </button>
@@ -275,6 +285,20 @@ export default function SettingsDialog({
             failed={settingsFailed}
             onSaved={setSettings}
             onDirtyChange={onDirtyChange}
+            onCancel={onClose}
+          />
+        </div>
+        <div
+          id="settings-panel-naming"
+          role="tabpanel"
+          aria-labelledby="settings-tab-naming"
+          hidden={tab !== "naming"}
+        >
+          <NamingSettings
+            settings={settings}
+            failed={settingsFailed}
+            onSaved={setSettings}
+            onDirtyChange={onNamingDirty}
             onCancel={onClose}
           />
         </div>

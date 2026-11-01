@@ -773,6 +773,14 @@ export interface AppSettings {
   /** The data folder's full path: where projects, the library and saved
    *  queries are kept. */
   dataDir: string;
+  /** Settings → Naming (design-checks 5.1): the organization's namespace
+   *  after `prefix`, or null when none is set. */
+  naming: NamingSetting;
+}
+
+export interface NamingSetting {
+  namespace: string | null;
+  prefix: string;
 }
 
 // The three limits and the data folder. Read when Settings opens, never on mount.
@@ -786,6 +794,16 @@ export function saveLimits(limits: Partial<Record<LimitKey, number>>): Promise<A
     method: "PUT",
     headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
     body: JSON.stringify({ limits }),
+  }).then((r) => handle<AppSettings>(r));
+}
+
+// Save the organization's namespace (design-checks 5.1), or clear it with
+// null. A refused value comes back as a 422 whose sentence is the field's.
+export function saveNamespace(namespace: string | null): Promise<AppSettings> {
+  return send("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
+    body: JSON.stringify({ naming: { namespace } }),
   }).then((r) => handle<AppSettings>(r));
 }
 

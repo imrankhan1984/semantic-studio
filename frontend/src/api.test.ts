@@ -160,6 +160,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   setNetworkOffline: () => api.setNetworkOffline(true),
   getSettings: () => api.getSettings(),
   saveLimits: () => api.saveLimits({ largestFile: 100 }),
+  saveNamespace: () => api.saveNamespace("acme"),
   getNetworkActivity: () => api.getNetworkActivity(),
   // external-access Stage 4: the connection settings and Test connection.
   getNetworkConnection: () => api.getNetworkConnection(),
@@ -266,13 +267,14 @@ describe("api client header (S-6)", () => {
     // one POST (SetClassType's dry run, attribute-reuse 5.7); Settings →
     // Limits one PUT (home-and-settings Stage B); the corporate network
     // settings two PUTs (the proxy, the certificate file), a DELETE (the
-    // file's Remove) and a POST (Test connection, external-access 5.5).
+    // file's Remove) and a POST (Test connection, external-access 5.5);
+    // Settings → Naming one PUT (design-checks 5.1).
     const expected = [
       ...Array(7).fill("DELETE"),
       "PATCH",
       "PATCH",
       ...Array(33).fill("POST"),
-      ...Array(6).fill("PUT"),
+      ...Array(7).fill("PUT"),
     ];
     expect(mutating.map((r) => r.method).sort()).toEqual(expected);
     for (const request of mutating) {

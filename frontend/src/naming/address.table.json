@@ -1,0 +1,268 @@
+{
+  "description": "design-checks 5.1, the examples table and the Avoid table, read by backend/tests/test_naming.py and frontend/src/naming/address.test.ts: one table, so the two sides of the address rule cannot drift. 'built' rows are built from their parts and read back into them. 'avoid' rows name the address to avoid, what it is meant to be, and the departure each side's rule reports (a code of naming.py's DEPARTURES), or 'name:' plus the check that reports it among the design checks, for a rule about the name after '#'. 'namespaces' are Settings → Naming's accepted and refused values.",
+  "namespace": "acme",
+  "built": [
+    {
+      "what": "A core ontology",
+      "role": "artifact",
+      "parts": {
+        "layer": "core",
+        "area": "",
+        "subject": "organization",
+        "type": "ontology"
+      },
+      "address": "https://w3id.org/acme/core/organization-ontology"
+    },
+    {
+      "what": "A domain ontology",
+      "role": "artifact",
+      "parts": {
+        "layer": "domain",
+        "area": "finance",
+        "subject": "invoice",
+        "type": "ontology"
+      },
+      "address": "https://w3id.org/acme/domain/finance/invoice-ontology"
+    },
+    {
+      "what": "A domain taxonomy",
+      "role": "artifact",
+      "parts": {
+        "layer": "domain",
+        "area": "finance",
+        "subject": "payment-terms",
+        "type": "taxonomy"
+      },
+      "address": "https://w3id.org/acme/domain/finance/payment-terms-taxonomy"
+    },
+    {
+      "what": "A domain vocabulary",
+      "role": "artifact",
+      "parts": {
+        "layer": "domain",
+        "area": "people",
+        "subject": "job-title",
+        "type": "vocabulary"
+      },
+      "address": "https://w3id.org/acme/domain/people/job-title-vocabulary"
+    },
+    {
+      "what": "An application's shapes",
+      "role": "artifact",
+      "parts": {
+        "layer": "app",
+        "area": "helpdesk",
+        "subject": "ticket",
+        "type": "shapes"
+      },
+      "address": "https://w3id.org/acme/app/helpdesk/ticket-shapes"
+    },
+    {
+      "what": "A mapping",
+      "role": "artifact",
+      "parts": {
+        "layer": "domain",
+        "area": "finance",
+        "subject": "invoice",
+        "type": "mapping"
+      },
+      "address": "https://w3id.org/acme/domain/finance/invoice-mapping"
+    },
+    {
+      "what": "A class",
+      "role": "term",
+      "parts": {
+        "artifact": "https://w3id.org/acme/domain/finance/invoice-ontology",
+        "name": "Invoice"
+      },
+      "address": "https://w3id.org/acme/domain/finance/invoice-ontology#Invoice"
+    },
+    {
+      "what": "A property",
+      "role": "term",
+      "parts": {
+        "artifact": "https://w3id.org/acme/domain/finance/invoice-ontology",
+        "name": "hasDueDate"
+      },
+      "address": "https://w3id.org/acme/domain/finance/invoice-ontology#hasDueDate"
+    },
+    {
+      "what": "A concept",
+      "role": "term",
+      "parts": {
+        "artifact": "https://w3id.org/acme/domain/finance/payment-terms-taxonomy",
+        "name": "NetThirtyDays"
+      },
+      "address": "https://w3id.org/acme/domain/finance/payment-terms-taxonomy#NetThirtyDays"
+    },
+    {
+      "what": "A shape",
+      "role": "term",
+      "parts": {
+        "artifact": "https://w3id.org/acme/app/helpdesk/ticket-shapes",
+        "name": "TicketShape"
+      },
+      "address": "https://w3id.org/acme/app/helpdesk/ticket-shapes#TicketShape"
+    },
+    {
+      "what": "One invoice (identifier INV/10442)",
+      "role": "data",
+      "parts": {
+        "dataDomain": "finance",
+        "class": "invoice",
+        "id": "INV/10442"
+      },
+      "address": "https://w3id.org/acme/data/finance/invoice/inv-10442"
+    }
+  ],
+  "avoid": [
+    {
+      "address": "https://w3id.org/acme/domain/finance/invoice-ontology#Invoice2026",
+      "role": "term",
+      "instead": "https://w3id.org/acme/domain/finance/invoice-ontology#Invoice",
+      "reported": "name:DC-06",
+      "why": "A date or version in a name changes; the name must not"
+    },
+    {
+      "address": "https://w3id.org/acme/domain/finance/invoice-ontology#Invoice_v2",
+      "role": "term",
+      "instead": "https://w3id.org/acme/domain/finance/invoice-ontology#Invoice",
+      "reported": "name:DC-06",
+      "why": "Versions belong to the artifact: the version goes in the header"
+    },
+    {
+      "address": "https://w3id.org/acme/domain/finance/invoice-ontology#INV_HDR",
+      "role": "term",
+      "instead": "https://w3id.org/acme/domain/finance/invoice-ontology#InvoiceHeader",
+      "reported": "name:DC-04",
+      "why": "Codes need tribal knowledge"
+    },
+    {
+      "address": "https://w3id.org/acme/domain/finance/billing-system/invoice-ontology",
+      "role": "artifact",
+      "instead": "https://w3id.org/acme/domain/finance/invoice-ontology",
+      "reported": "layer",
+      "why": "A system's name outlives nothing"
+    },
+    {
+      "address": "https://w3id.org/acme/domain/finance/invoices",
+      "role": "artifact",
+      "instead": "https://w3id.org/acme/domain/finance/invoice-ontology",
+      "reported": "type",
+      "why": "The last segment says what the artifact is"
+    },
+    {
+      "address": "https://w3id.org/acme/domain/finance/invoice-ontology#INV-10442",
+      "role": "data",
+      "instead": "https://w3id.org/acme/data/finance/invoice/inv-10442",
+      "reported": "data",
+      "why": "Data never lives inside an ontology"
+    },
+    {
+      "address": "https://w3id.org/acme/data/finance/inv-10442",
+      "role": "data",
+      "instead": "https://w3id.org/acme/data/finance/invoice/inv-10442",
+      "reported": "data",
+      "why": "Without the class, two kinds of thing with one number collide"
+    },
+    {
+      "address": "https://w3id.org/acme/data/finance/overdue-invoice/inv-10442",
+      "role": "data",
+      "generalClass": "invoice",
+      "instead": "https://w3id.org/acme/data/finance/invoice/inv-10442",
+      "reported": "class",
+      "why": "Overdue is a state it leaves; the address would have to change"
+    },
+    {
+      "address": "https://w3id.org/acme/domain/finance/invoice-ontology#FactureClient",
+      "role": "term",
+      "instead": "https://w3id.org/acme/domain/finance/invoice-ontology#CustomerInvoice",
+      "reported": "none",
+      "why": "One language in addresses; translations go in labels"
+    }
+  ],
+  "namespaces": {
+    "accepted": [
+      "acme",
+      "acme/research",
+      "a1",
+      "my-org/r-and-d/team-a"
+    ],
+    "refused": [
+      [
+        "Acme",
+        "shape"
+      ],
+      [
+        "acme//x",
+        "shape"
+      ],
+      [
+        "acme/",
+        "shape"
+      ],
+      [
+        "-acme",
+        "shape"
+      ],
+      [
+        "acme-",
+        "shape"
+      ],
+      [
+        "ac_me",
+        "shape"
+      ],
+      [
+        "a/b/c/d",
+        "shape"
+      ],
+      [
+        "",
+        "shape"
+      ],
+      [
+        "acme/v2",
+        "version"
+      ],
+      [
+        "acme/2026",
+        "version"
+      ],
+      [
+        "v1.2",
+        "shape"
+      ],
+      [
+        "acme/V3",
+        "shape"
+      ]
+    ]
+  },
+  "slugs": [
+    [
+      "INV/10442",
+      "inv-10442"
+    ],
+    [
+      "Invoices",
+      "invoices"
+    ],
+    [
+      "Payment terms",
+      "payment-terms"
+    ],
+    [
+      "  Net 30 days! ",
+      "net-30-days"
+    ],
+    [
+      "Café",
+      "caf"
+    ],
+    [
+      "___",
+      ""
+    ]
+  ]
+}
