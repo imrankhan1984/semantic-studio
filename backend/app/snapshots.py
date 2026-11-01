@@ -85,7 +85,7 @@ from typing import Callable, Optional
 from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import RDF, RDFS, SKOS, XSD
 
-from . import lexical, rml, tabular
+from . import lexical, naming, rml, tabular
 from .examples import is_class
 from .projects import ProjectStore, _replace
 from .shapes_form import paths_for
@@ -147,6 +147,17 @@ def local_name(iri: str) -> str:
 def class_slug(iri) -> str:
     """{class} in the IRI pattern {base}data/{class}/{id}: Person -> person."""
     return _slug(local_name(str(iri)), 60)
+
+
+def row_prefix(manifest: dict, cls) -> str:
+    """Where a snapshot's rows of a class are minted: {base}data/{class}/,
+    or, for a project made under the address pattern, the data base the
+    manifest names followed by {class}/ (design-checks 5.3), the class
+    slugged word by word as an example's is."""
+    data_base = manifest.get("dataBaseIri")
+    if data_base:
+        return f"{data_base}{naming.class_slug(str(cls))}/"
+    return f"{manifest['baseIri']}{DATA_DIR}/{class_slug(cls)}/"
 
 
 def _simple(text: str) -> str:
@@ -329,7 +340,6 @@ def plan(
     if not isinstance(choices, dict):
         raise SnapshotError("The mapping choices are an object.")
     kind = manifest.get("kind") or "ontology"
-    base = manifest["baseIri"]
     primary = manifest.get("primaryLanguage", "en")
     raw_class = choices.get("classIri")
     if not isinstance(raw_class, str) or not raw_class:
@@ -345,7 +355,7 @@ def plan(
     if id_column is None:
         row_column = tabular.unique_name("row", table.columns)
     reference = id_column if id_column is not None else row_column
-    subject = rml.escape(f"{base}{DATA_DIR}/{class_slug(cls)}/") + "{" + rml.escape(reference) + "}"
+    subject = rml.escape(row_prefix(manifest, cls)) + "{" + rml.escape(reference) + "}"
     offered = {f["property"]: f for f in fields(model, cls, kind, names, [primary])}
     poms: list = []
     links: list = []
@@ -387,7 +397,7 @@ def plan(
                 raise SnapshotError(
                     f"Column {column}: {field['label']} has no end class, so its ids cannot name rows."
                 )
-            prefix = (patterns or {}).get(str(target)) or f"{base}{DATA_DIR}/{class_slug(target)}/"
+            prefix = (patterns or {}).get(str(target)) or row_prefix(manifest, target)
             template = rml.escape(prefix) + "{" + rml.escape(column) + "}"
             poms.append((prop_iri, rml.ObjectMap("template", template)))
             links.append({

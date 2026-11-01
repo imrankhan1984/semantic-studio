@@ -51,7 +51,8 @@ INPUTS / INPUT SOURCES
 EXPECTED OUTPUT
     - namespace_error / segment_error: the refusal sentence, or None.
     - artifact_iri, term_iri, data_base, data_iri, project_addresses: the
-      addresses, or NamingError.
+      addresses, or NamingError; slug and class_slug for an identifier and
+      a class as data address segments.
     - read(address, role, namespace, ...): {"parts": ..., "departures":
       [(code, detail), ...]}; path_departures(address) alone for DC-28.
 ================================================================================
@@ -138,6 +139,14 @@ def segment_error(value: object) -> Optional[str]:
 def slug(text: str) -> str:
     """An identifier as a data address's last segment: INV/10442 -> inv-10442."""
     return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+
+
+def class_slug(iri_or_name: str) -> str:
+    """A class as a data address's {class} segment: its local name, its
+    words split where a capital follows a lowercase letter or a digit, then
+    slugged: Invoice -> invoice, OverdueInvoice -> overdue-invoice."""
+    local = re.split(r"[#/]", str(iri_or_name).rstrip("#/"))[-1]
+    return slug(re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "-", local))
 
 
 def _check(field: str, value: object) -> str:

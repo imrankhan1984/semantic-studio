@@ -3764,6 +3764,33 @@ button.legend-row:hover {
   margin-top: 6px;
 }
 
+/* New project's Address group (design-checks 5.2): the layers on one line,
+   the three addresses under the parts. */
+.new-project-address {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.new-project-layers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+}
+
+.new-project-layer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.new-project-lines {
+  margin-top: 8px;
+}
+
 /* Settings → Naming (design-checks 5.1): the fixed https://w3id.org/ before
    the field, the pattern's lines, and the examples' two tables, whose long
    addresses wrap rather than widening the dialog. */

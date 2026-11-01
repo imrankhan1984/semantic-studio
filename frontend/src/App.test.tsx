@@ -2080,6 +2080,28 @@ async function openLibrarySettings() {
   });
 }
 
+describe("New project's line to Settings → Naming (design-checks 5.2, AC-2)", () => {
+  it("opens Settings on Naming over the form, and closing returns to the form as typed", async () => {
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New project" }));
+    });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Spare parts" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Settings → Naming" }));
+    });
+    expect(screen.getByRole("tab", { name: "Naming" }).getAttribute("aria-selected")).toBe("true");
+    // The form is still there under Settings, out of the modal stack.
+    expect(document.querySelectorAll('[aria-modal="true"]')).toHaveLength(1);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Close Settings" }));
+    });
+    const dialog = screen.getByRole("dialog", { name: "New project" });
+    expect((within(dialog).getByLabelText("Name") as HTMLInputElement).value).toBe("Spare parts");
+    expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Settings → Naming" }));
+  });
+});
+
 describe("App examples (home-and-examples 5.8)", () => {
   const EXAMPLE = {
     ...SUMMARY,

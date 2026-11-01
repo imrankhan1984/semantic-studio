@@ -2538,6 +2538,10 @@ export default function App() {
           initialSource={newProject.source}
           onCreate={onCreateProject}
           onClose={() => setNewProject(null)}
+          // Its line without a namespace opens Settings on Naming over the
+          // form, which stays mounted under it (design-checks 5.2).
+          onOpenNaming={() => setSettingsTab("naming")}
+          covered={settingsTab !== null}
         />
       )}
 

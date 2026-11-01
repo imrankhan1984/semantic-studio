@@ -190,10 +190,11 @@ from .projects import (
     DESCRIPTION_MAX,
     graph_counts,
     header_of,
+    shapes_prefix,
     split_document_id,
     valid_lang,
 )
-from . import axioms, examples, lexical, modeling_checks, reasoning, references, sentences, settings, shacl, shapes_form
+from . import axioms, examples, lexical, modeling_checks, naming, reasoning, references, sentences, settings, shacl, shapes_form
 from .canvas import build_canvas, restrict, with_inferred
 from .imports import imports_service, load_state
 from .snapshots import SnapshotService
@@ -620,6 +621,11 @@ class Context:
         self.primary = manifest.get("primaryLanguage", "en")
         self.languages = [self.primary, *manifest.get("languages", [])]
         self.base = manifest["baseIri"]
+        # A pattern project's own bases for its shapes and its examples
+        # (design-checks 5.3); None for any other project, which mints both
+        # at the model's base as before.
+        self.shapes_base = manifest.get("shapesBaseIri")
+        self.data_base = manifest.get("dataBaseIri")
         self.doc = doc
         self._imported = imported
         self._imported_view: Optional[Graph] = None
@@ -720,6 +726,16 @@ class Context:
 
     def name(self, iri: URIRef) -> str:
         return pick_label_in(self.graph, iri, [self.primary])[0]
+
+    def base_for(self, role: str = "model") -> str:
+        """The base a new name is minted under, by role: "model", "shapes"
+        or "data". A shapes or data base only when the manifest names it
+        (design-checks 5.3); otherwise the model's, as before."""
+        if role == "shapes" and self.shapes_base:
+            return self.shapes_base
+        if role == "data" and self.data_base:
+            return self.data_base
+        return self.base
 
     def minted(self, args: dict, label: str, lower_first: bool) -> URIRef:
         """The IRI a create command gives: the one sent, else base + the
@@ -1848,6 +1864,48 @@ def _class_graph(ctx: Context) -> Graph:
     return ctx.imported if ctx.imported is not None else ctx.graph
 
 
+def most_general_class(graph: Graph, cls: URIRef, own: Graph) -> URIRef:
+    """The most general class above `cls` that the document itself
+    declares (design-checks 5.3): Overdue invoice under Invoice gives
+    Invoice. Walked up rdfs:subClassOf through named classes `own` types,
+    a loop cut; of two tops the first by IRI, so the answer never depends
+    on set order. An import's class is never the answer: the address is
+    the project's."""
+    seen = {cls}
+    frontier = [cls]
+    tops: set = set()
+    while frontier:
+        current = frontier.pop()
+        parents = [
+            p for p in graph.objects(current, RDFS.subClassOf)
+            if isinstance(p, URIRef) and examples.is_class(own, p)
+        ]
+        if not parents:
+            tops.add(current)
+        for parent in parents:
+            if parent not in seen:
+                seen.add(parent)
+                frontier.append(parent)
+    # A loop has no top: the chosen class stands.
+    return sorted(tops)[0] if tops else cls
+
+
+def _data_address(ctx: Context, cls: URIRef, label: str) -> URIRef:
+    """An example's address under a pattern project's data base:
+    <data base><class>/<id>, the class the most general own one above the
+    chosen, the id the name slugged by 5.1's rule, -2, -3 after a taken
+    one. Written once: a later reclassification leaves it where it is."""
+    top = most_general_class(_class_graph(ctx), cls, ctx.graph)
+    local = naming.slug(label)
+    if not local:
+        raise CommandError("An address cannot be made from that name; give the IRI as well.")
+    stem = f"{ctx.base_for('data')}{naming.class_slug(top)}/{local}"
+    iri, n = URIRef(stem), 2
+    while ctx.mentioned(iri):
+        iri, n = URIRef(f"{stem}-{n}"), n + 1
+    return iri
+
+
 def cmd_create_example(ctx: Context, a: dict) -> Change:
     """An individual of a class, named in the primary language (5.8). Typed
     owl:NamedIndividual as well, so every view knows it for an example."""
@@ -1856,7 +1914,10 @@ def cmd_create_example(ctx: Context, a: dict) -> Change:
     if not examples.is_class(_class_graph(ctx), cls):
         raise CommandError(f"{ctx.short(cls)} is not a class of this model; an example belongs to a class.")
     label = ctx.primary_label(a)
-    iri = ctx.minted(a, label, lower_first=True)
+    if ctx.data_base and not a.get("iri"):
+        iri = _data_address(ctx, cls, label)
+    else:
+        iri = ctx.minted(a, label, lower_first=True)
     ctx.require_new(iri)
     adds = [
         (iri, RDF.type, cls),
@@ -2704,6 +2765,9 @@ def _bind_shapes(ctx: Context) -> None:
         ctx.graph.bind(prefix, namespace, override=False)
     if ctx.manifest.get("prefix"):
         ctx.graph.bind(ctx.manifest["prefix"], ctx.base, override=False)
+        if ctx.shapes_base:
+            # A pattern project's shapes prefix beside the model's (5.3).
+            ctx.graph.bind(shapes_prefix(ctx.manifest["prefix"]), ctx.shapes_base, override=False)
 
 
 def cmd_create_shape(ctx: Context, a: dict) -> Change:
@@ -2727,10 +2791,12 @@ def cmd_create_shape(ctx: Context, a: dict) -> Change:
                 "Concept rules" if target == SKOS.Concept else f"{_model_name(ctx, target)} rules")
     name = name.strip()
     local = shapes_form.local_name(name) or "Shape"
-    iri = URIRef(ctx.base + local)
+    # A pattern project's shapes live at their own base (design-checks 5.3).
+    base = ctx.base_for("shapes")
+    iri = URIRef(base + local)
     n = 2
     while ctx.mentioned(iri) or (iri, None, None) in ctx.model:
-        iri = URIRef(f"{ctx.base}{local}{n}")
+        iri = URIRef(f"{base}{local}{n}")
         n += 1
     adds = [
         (iri, RDF.type, SH.NodeShape),

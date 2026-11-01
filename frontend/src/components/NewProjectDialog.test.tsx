@@ -52,12 +52,17 @@ const REFERENCES: ReferenceOntology[] = [
     sentence: "It reuses QUDT for quantities and units.",
   },
 ];
-const { listReferences } = vi.hoisted(() => ({ listReferences: vi.fn() }));
+const { listReferences, getSettings } = vi.hoisted(() => ({ listReferences: vi.fn(), getSettings: vi.fn() }));
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   listReferences,
+  getSettings,
 }));
 listReferences.mockResolvedValue(REFERENCES);
+// No namespace unless a test sets one (design-checks 5.2).
+const withNamespace = (namespace: string | null) =>
+  getSettings.mockResolvedValue({ limits: [], dataDir: "/data", naming: { namespace, prefix: "https://w3id.org/" } });
+withNamespace(null);
 
 const LIBRARY = [
   { id: "ont-1", name: "foaf.rdf" },
@@ -77,7 +82,10 @@ const kind = (name: "Ontology" | "Taxonomy") =>
   fireEvent.click(screen.getByRole("radio", { name: new RegExp(`^${name}`) }));
 const reasonOf = (button: HTMLElement) => document.getElementById(button.getAttribute("aria-describedby")!)!.textContent;
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  withNamespace(null);
+});
 
 describe("NewProjectDialog", () => {
   it("is a named dialog whose heading takes focus", () => {
@@ -357,5 +365,159 @@ describe("the form's rules (projects/form.ts)", () => {
   it("writes the default description from the name and the references, in order", () => {
     expect(defaultDescription("Plant", [])).toBe("An ontology for Plant.");
     expect(defaultDescription("  ", [REFERENCES[1]])).toBe("It reuses QUDT for quantities and units.");
+  });
+});
+
+
+describe("the Address group (design-checks 5.2)", () => {
+  async function open(props: Partial<React.ComponentProps<typeof NewProjectDialog>> = {}) {
+    let handlers!: ReturnType<typeof renderDialog>;
+    await act(async () => {
+      handlers = renderDialog(props);
+    });
+    return handlers;
+  }
+  const lineOf = (what: string) => {
+    const dt = [...document.querySelectorAll(".new-project-lines dt")].find((d) => d.textContent === what);
+    return dt ? dt.nextElementSibling!.textContent : null;
+  };
+
+  it("without a namespace: no group, the example address and a button to Settings → Naming (AC-2)", async () => {
+    const onOpenNaming = vi.fn();
+    await open({ onOpenNaming });
+    kind("Ontology");
+    fireEvent.change(field("Name"), { target: { value: "Spare parts" } });
+    expect(screen.queryByRole("group", { name: "Address" })).toBeNull();
+    expect(field("Base IRI").value).toBe("http://example.org/spare-parts#");
+    const line = document.querySelector(".new-project-example-address")!;
+    expect(line.textContent).toBe("Using an example address. Set your organization's namespace in Settings → Naming.");
+    fireEvent.click(screen.getByRole("button", { name: "Settings → Naming" }));
+    expect(onOpenNaming).toHaveBeenCalled();
+  });
+
+  it("with a namespace: the group above the base IRI, Domain first, and the three lines (AC-15)", async () => {
+    withNamespace("acme");
+    await open();
+    kind("Ontology");
+    fireEvent.change(field("Name"), { target: { value: "Invoice" } });
+    const group = screen.getByRole("group", { name: "Address" });
+    const radios = [...group.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
+    expect(radios.map((r) => r.closest("label")!.textContent)).toEqual(["Domain", "Core", "Application"]);
+    expect(radios[0].checked).toBe(true);
+    // The group comes before the base IRI field, in document order.
+    expect(group.compareDocumentPosition(field("Base IRI")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.change(field("Domain name"), { target: { value: "finance" } });
+    expect(lineOf("Model")).toBe("https://w3id.org/acme/domain/finance/invoice-ontology#");
+    expect(lineOf("Shapes")).toBe("https://w3id.org/acme/domain/finance/invoice-shapes#");
+    expect(lineOf("Data")).toBe("https://w3id.org/acme/data/finance/{class}/{id}");
+    expect(field("Base IRI").value).toBe("https://w3id.org/acme/domain/finance/invoice-ontology#");
+    expect(field("Data domain").value).toBe("finance");
+    expect(group.textContent).toContain("Use the official IRI guidelines from your organization.");
+    expect(document.querySelector(".new-project-example-address")).toBeNull();
+  });
+
+  it("the area field's label follows the layer, and Core asks for none", async () => {
+    withNamespace("acme");
+    await open();
+    kind("Ontology");
+    fireEvent.change(field("Name"), { target: { value: "Invoice" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Application" }));
+    fireEvent.change(field("Application name"), { target: { value: "helpdesk" } });
+    fireEvent.change(field("Data domain"), { target: { value: "finance" } });
+    expect(lineOf("Model")).toBe("https://w3id.org/acme/app/helpdesk/invoice-ontology#");
+    fireEvent.click(screen.getByRole("radio", { name: "Core" }));
+    expect(screen.queryByLabelText("Domain name")).toBeNull();
+    expect(screen.queryByLabelText("Application name")).toBeNull();
+    expect(lineOf("Model")).toBe("https://w3id.org/acme/core/invoice-ontology#");
+  });
+
+  it("Type follows the kind: ontology alone, or taxonomy and vocabulary", async () => {
+    withNamespace("acme");
+    await open();
+    kind("Ontology");
+    const options = () => [...(field("Type") as unknown as HTMLSelectElement).options].map((o) => o.value);
+    expect(options()).toEqual(["ontology"]);
+    kind("Taxonomy");
+    expect(options()).toEqual(["taxonomy", "vocabulary"]);
+    fireEvent.change(field("Name"), { target: { value: "Payment terms" } });
+    fireEvent.change(field("Domain name"), { target: { value: "finance" } });
+    expect(field("Base IRI").value).toBe("https://w3id.org/acme/domain/finance/payment-terms-taxonomy#");
+  });
+
+  it.each([["Finance"], ["fin_ance"]])("refuses the domain %s inline, its sentence the field's description, and Create waits", async (value) => {
+    withNamespace("acme");
+    const { onCreate } = await open();
+    kind("Ontology");
+    fireEvent.change(field("Name"), { target: { value: "Invoice" } });
+    fireEvent.change(field("Domain name"), { target: { value } });
+    const input = field("Domain name");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    const described = document.getElementById(input.getAttribute("aria-describedby")!)!;
+    expect(described.textContent).toBe("Use lowercase letters, digits and hyphens, for example finance.");
+    expect(create().getAttribute("aria-disabled")).toBe("true");
+    expect(reasonOf(create())).toBe("Use lowercase letters, digits and hyphens, for example finance.");
+    await act(async () => {
+      fireEvent.click(create());
+    });
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
+  it("sends the group with the request", async () => {
+    withNamespace("acme");
+    const { onCreate } = await open();
+    kind("Ontology");
+    fireEvent.change(field("Name"), { target: { value: "Invoices" } });
+    expect(field("Subject").value).toBe("invoices");
+    fireEvent.change(field("Subject"), { target: { value: "invoice" } });
+    fireEvent.change(field("Domain name"), { target: { value: "finance" } });
+    await act(async () => {
+      fireEvent.click(create());
+    });
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseIri: "https://w3id.org/acme/domain/finance/invoice-ontology#",
+        address: { layer: "domain", area: "finance", subject: "invoice", type: "ontology", dataDomain: "finance" },
+      }),
+    );
+  });
+
+  it("a hand-written base: the group says so; it keeps the lines only while it ends in -type#", async () => {
+    withNamespace("acme");
+    const { onCreate } = await open();
+    kind("Ontology");
+    fireEvent.change(field("Name"), { target: { value: "Invoice" } });
+    fireEvent.change(field("Domain name"), { target: { value: "finance" } });
+    fireEvent.change(field("Base IRI"), { target: { value: "https://w3id.org/acme/domain/finance/billing-ontology#" } });
+    expect(lineOf("Shapes")).toBe("https://w3id.org/acme/domain/finance/billing-shapes#");
+    fireEvent.change(field("Base IRI"), { target: { value: "http://example.org/mine#" } });
+    expect(document.body.textContent).toContain("You have written your own address; the pattern no longer fills it in.");
+    expect(lineOf("Shapes")).toBeNull();
+    expect(lineOf("Data")).toBeNull();
+    await act(async () => {
+      fireEvent.click(create());
+    });
+    expect(onCreate.mock.calls[0][0].address).toBeUndefined();
+  });
+
+  it("covered by Settings: hidden, out of the modal stack, keys left alone; focus back on the button after", async () => {
+    const onCreate = vi.fn(async () => undefined);
+    const onClose = vi.fn();
+    let rerender!: (ui: React.ReactElement) => void;
+    await act(async () => {
+      ({ rerender } = render(<NewProjectDialog library={LIBRARY} onCreate={onCreate} onClose={onClose} />));
+    });
+    kind("Ontology");
+    fireEvent.change(field("Name"), { target: { value: "Spare parts" } });
+    rerender(<NewProjectDialog library={LIBRARY} onCreate={onCreate} onClose={onClose} covered />);
+    const panel = document.querySelector(".new-project-dialog") as HTMLElement;
+    expect(panel.hidden).toBe(true);
+    expect(panel.getAttribute("aria-modal")).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    rerender(<NewProjectDialog library={LIBRARY} onCreate={onCreate} onClose={onClose} />);
+    expect(panel.hidden).toBe(false);
+    expect(panel.getAttribute("aria-modal")).toBe("true");
+    expect(field("Name").value).toBe("Spare parts");
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Settings → Naming" }));
   });
 });

@@ -1069,3 +1069,35 @@ def test_x3_a_link_uses_the_iri_pattern_of_the_target_classs_snapshot(pid):
     assert not any("data/organization/" in str(t) for t in targets)
     assert people["report"]["unmatched"][0]["count"] == 12
     assert members(pid) == 6
+
+
+# --- a row's address under the pattern (design-checks 5.3, AC-16) -------------------
+
+from app import settings as _settings  # noqa: E402
+
+
+def test_ac16_a_row_mints_under_the_data_base():
+    """A Small project made under the pattern: rows of Person are minted at
+    the data base followed by person/ and the row's id; a relationship to
+    Organization rows follows the same rule."""
+    _settings.update_naming("acme")
+    try:
+        response = client.post("/api/projects", json={
+            "name": "Invoices", "template": "small", "prefix": "inv",
+            "address": {"layer": "domain", "area": "finance", "subject": "invoice",
+                        "type": "ontology", "dataDomain": "finance"},
+        })
+    finally:
+        _settings.update_naming(None)
+    assert response.status_code == 200, response.text
+    project = response.json()["id"]
+    assert client.post(f"/api/projects/{project}/open").status_code == 200
+    base = "https://w3id.org/acme/domain/finance/invoice-ontology#"
+    made = import_csv(project, "id,name,org\ninv-10442,Alice,acme\n", {
+        "classIri": base + "Person", "idColumn": "id",
+        "columns": {"name": {"as": "name"}, "org": {"as": "relationship", "property": base + "memberOf"}},
+    })
+    g = data_graph(project, made["snapshot"]["id"])
+    row = URIRef("https://w3id.org/acme/data/finance/person/inv-10442")
+    assert (row, RDF.type, URIRef(base + "Person")) in g
+    assert (row, URIRef(base + "memberOf"), URIRef("https://w3id.org/acme/data/finance/organization/acme")) in g

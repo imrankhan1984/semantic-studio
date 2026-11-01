@@ -18,8 +18,8 @@
     rdfs:domain {{prefix}}:Person ;
     rdfs:range {{prefix}}:Organization .
 
-{{prefix}}:alice a {{prefix}}:Person, owl:NamedIndividual ;
+{{data:person/alice}} a {{prefix}}:Person, owl:NamedIndividual ;
     rdfs:label "Alice"@{{lang}} .
 
-{{prefix}}:acme a {{prefix}}:Organization, owl:NamedIndividual ;
+{{data:organization/acme}} a {{prefix}}:Organization, owl:NamedIndividual ;
     rdfs:label "Acme"@{{lang}} .

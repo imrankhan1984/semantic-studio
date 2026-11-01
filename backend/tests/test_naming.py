@@ -155,3 +155,13 @@ def test_the_path_spelling_needs_no_namespace():
 def test_outside_the_namespace_is_one_departure():
     reading = naming.read("http://example.org/space", "artifact", NS)
     assert reading["departures"] == [("outside", "https://w3id.org/acme/")]
+
+
+@pytest.mark.parametrize(
+    "name, expected",
+    [("Invoice", "invoice"), ("OverdueInvoice", "overdue-invoice"),
+     ("http://x.org/o#TerrestrialPlanet", "terrestrial-planet"), ("http://x.org/o/Mars2Rover", "mars2-rover"),
+     ("person", "person")],
+)
+def test_a_class_is_slugged_word_by_word(name, expected):
+    assert naming.class_slug(name) == expected

@@ -115,7 +115,7 @@ from typing import Optional
 from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import DCTERMS, OWL, RDF, RDFS, SKOS
 
-from . import references
+from . import naming, references, settings
 from .queries_store import SavedQueryStore
 
 # What create() mints. fullmatch, never match: `$` also matches before a
@@ -268,9 +268,48 @@ def slugify(name: str) -> str:
     return slug or "project"
 
 
-def default_base_iri(name: str) -> str:
-    """Open question 2, closed as recommended: http://example.org/<slug>#."""
-    return f"http://example.org/{slugify(name)}#"
+def default_base_iri(name: str, kind: str = "ontology") -> str:
+    """Open question 2, closed as recommended: http://example.org/<slug>#.
+    With a namespace in Settings → Naming (design-checks 5.2), the pattern's
+    core address for the name and the kind: a request that sends no address
+    group still gets an address under the namespace rather than
+    example.org."""
+    lines = pattern_addresses(name, kind, None)
+    return lines["model"] if lines else f"http://example.org/{slugify(name)}#"
+
+
+def pattern_addresses(name: str, kind: str, address: Optional[dict]) -> Optional[dict]:
+    """The three addresses of 5.2 and the parts that made them, or None
+    when no namespace is set. `address` is New project's group (layer,
+    area, subject, type, dataDomain); without one, the core layer, the
+    name's slug as the subject, the kind's first type and the slug as the
+    data domain. Each part is held to naming.py's rule (NamingError).
+
+    The namespace is read here, at each creation: a setting saved later
+    never reaches a project already made (5.1: nothing written changes)."""
+    namespace = settings.namespace()
+    if namespace is None:
+        return None
+    subject = slugify(name)
+    group = address or {}
+    parts = {
+        "namespace": namespace,
+        "layer": group.get("layer", "core"),
+        "area": group.get("area", "") or "",
+        "subject": group.get("subject", subject),
+        "type": group.get("type", naming.PROJECT_TYPES.get(kind, ("ontology",))[0]),
+        "dataDomain": group.get("dataDomain", subject),
+    }
+    lines = naming.project_addresses(
+        namespace, parts["layer"], parts["area"], parts["subject"], parts["type"],
+        parts["dataDomain"], kind=kind,
+    )
+    return {**lines, "parts": parts}
+
+
+def shapes_prefix(prefix: str) -> str:
+    """The shapes document's prefix under the pattern (5.3): invsh for inv."""
+    return f"{prefix}sh"
 
 
 def default_prefix(name: str) -> str:
@@ -355,13 +394,34 @@ def template_shapes(template: str) -> Optional[Path]:
     return path if template in TEMPLATES and path.is_file() else None
 
 
+# A template's example individual: {{data:<class>/<id>}} (design-checks 5.3).
+_DATA_PLACEHOLDER = re.compile(r"\{\{data:([a-z0-9-]+)/([a-z0-9-]+)\}\}")
+
+
 def render_template(
-    template: str, *, name: str, base_iri: str, prefix: str, lang: str, part: str = ""
+    template: str, *, name: str, base_iri: str, prefix: str, lang: str, part: str = "",
+    shapes_base: Optional[str] = None, data_base: Optional[str] = None,
 ) -> str:
-    """A template's model, or with part=".shapes" its starter shapes."""
+    """A template's model, or with part=".shapes" its starter shapes.
+
+    `shapes_base` and `data_base` are a pattern project's own bases (5.3):
+    the starter shapes are named under the first, with their own prefix
+    declared, and the examples at <data base><class>/<id>. Without them the
+    text is today's, byte for byte: a shape at {{prefix}}:Name and an
+    example at {{prefix}}:<id>."""
     if template not in TEMPLATES:
         raise ProjectError(f"There is no template called {template!r}.")
     text = (TEMPLATE_DIR / f"{template}{part}.ttl").read_text(encoding="utf-8")
+    if shapes_base is not None:
+        shape_prefix = shapes_prefix(prefix)
+        text = text.replace("{{shapesDecl}}", f"\n@prefix {shape_prefix}: <{shapes_base}> .")
+        text = text.replace("{{shape}}", shape_prefix)
+    else:
+        text = text.replace("{{shapesDecl}}", "").replace("{{shape}}", "{{prefix}}")
+    if data_base is not None:
+        text = _DATA_PLACEHOLDER.sub(lambda m: f"<{data_base}{m.group(1)}/{m.group(2)}>", text)
+    else:
+        text = _DATA_PLACEHOLDER.sub(lambda m: f"{{{{prefix}}}}:{m.group(2)}", text)
     # The ontology's own IRI is the base without its separator, the usual
     # shape: http://example.org/invoices# names <http://example.org/invoices>.
     replacements = {
@@ -499,6 +559,11 @@ class ProjectStore:
             # The reference ontologies chosen at creation (reference-
             # ontologies 5.4): a record, never what puts one in use.
             "references": manifest.get("references", []),
+            # The address pattern (design-checks 5.2): absent for a project
+            # made before it or with its own base IRI.
+            "naming": manifest.get("naming"),
+            "shapesBaseIri": manifest.get("shapesBaseIri"),
+            "dataBaseIri": manifest.get("dataBaseIri"),
         }
 
     def list(self) -> list[dict]:
@@ -534,6 +599,7 @@ class ProjectStore:
         source_name: Optional[str] = None,
         reference_keys: Optional[list[str]] = None,
         description: Optional[str] = None,
+        address: Optional[dict] = None,
     ) -> dict:
         """A new project with model.ttl written, from a template or a library copy.
 
@@ -542,13 +608,45 @@ class ProjectStore:
         other format, written as clean Turtle. `reference_keys` are the
         reference ontologies a template reuses; `description` the header's
         rdfs:comment, none when empty.
+
+        `address` is New project's Address group (design-checks 5.2):
+        {layer, area, subject, type, dataDomain}, each part held to
+        naming.py's rule. With a namespace set, the project is made under
+        the pattern -- with the group, or with the defaults when none is
+        sent and no base IRI either -- and its manifest records `naming`,
+        `shapesBaseIri` and `dataBaseIri`. A base IRI written by hand
+        keeps the pattern only while it still ends in -<type>#, the shapes
+        base then following it; any other hand-written base is a project
+        as before, with none of the three.
         """
         name = (name or "").strip()
         if not name:
             raise ProjectError("A project needs a name.")
         if len(name) > NAME_MAX:
             raise ProjectError(f"A project name can be at most {NAME_MAX} characters.")
-        base_iri = (base_iri or default_base_iri(name)).strip()
+        if address is not None and settings.namespace() is None:
+            raise ProjectError("Set your organization's namespace in Settings → Naming to use the address pattern.")
+        pattern_kind = TEMPLATE_KINDS.get(template or "empty", "ontology")
+        if address is not None and (source_text is not None or source_graph is not None):
+            # A copy's kind is judged from its content below; its type is
+            # held to the three a project can be, whichever it turns out.
+            pattern_kind = "taxonomy" if address.get("type") in ("taxonomy", "vocabulary") else "ontology"
+        try:
+            lines = (
+                pattern_addresses(name, pattern_kind, address)
+                if address is not None or not base_iri
+                else None
+            )
+        except naming.NamingError as exc:
+            raise ProjectError(str(exc)) from exc
+        if lines is not None and base_iri and base_iri.strip() != lines["model"]:
+            suffix = f"-{lines['parts']['type']}#"
+            written = base_iri.strip()
+            if written.endswith(suffix):
+                lines = {**lines, "model": written, "shapes": written[: -len(suffix)] + "-shapes#"}
+            else:
+                lines = None
+        base_iri = (base_iri or (lines["model"] if lines else default_base_iri(name))).strip()
         if not BASE_IRI.fullmatch(base_iri):
             raise ProjectError(
                 "The base IRI must be an absolute IRI ending in # or /, "
@@ -597,7 +695,8 @@ class ProjectStore:
             text = graph.serialize(format="longturtle")
         else:
             text = render_template(
-                template or "empty", name=name, base_iri=base_iri, prefix=prefix, lang=primary_language
+                template or "empty", name=name, base_iri=base_iri, prefix=prefix, lang=primary_language,
+                data_base=lines["data"] if lines else None,
             )
             graph = Graph()
             graph.parse(data=text, format="turtle")
@@ -634,6 +733,7 @@ class ProjectStore:
             shapes = render_template(
                 template or "empty", name=name, base_iri=base_iri, prefix=prefix,
                 lang=primary_language, part=".shapes",
+                shapes_base=lines["shapes"] if lines else None,
             )
             (folder / DOCUMENTS["shapes"]).write_text(shapes, encoding="utf-8")
             documents.append({"file": "shapes.ttl", "role": "shapes"})
@@ -657,6 +757,13 @@ class ProjectStore:
             # For the summary only: the file is the truth (5.4 item 5).
             "references": [e["key"] for e in chosen],
         }
+        if lines is not None:
+            # The address pattern this project was made under (design-checks
+            # 5.2): shapes and examples mint at their own bases (5.3), and
+            # the checks read it. A project without these behaves as before.
+            manifest["naming"] = lines["parts"]
+            manifest["shapesBaseIri"] = lines["shapes"]
+            manifest["dataBaseIri"] = lines["data"]
         (folder / MANIFEST).write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -672,9 +779,16 @@ class ProjectStore:
             manifest = self.manifest(pid)
             if any(d["role"] == "shapes" for d in manifest["documents"]):
                 raise ProjectError("This project already has a shapes document.")
+            # A pattern project's shapes have their own base (design-checks
+            # 5.3), declared beside the model's.
+            own = (
+                f"@prefix {shapes_prefix(manifest['prefix'])}: <{manifest['shapesBaseIri']}> .\n"
+                if manifest.get("shapesBaseIri") else ""
+            )
             path.write_text(
                 f"@prefix {manifest['prefix']}: <{manifest['baseIri']}> .\n"
-                "@prefix sh: <http://www.w3.org/ns/shacl#> .\n",
+                + own
+                + "@prefix sh: <http://www.w3.org/ns/shacl#> .\n",
                 encoding="utf-8",
             )
             manifest["documents"].append({"file": "shapes.ttl", "role": "shapes"})

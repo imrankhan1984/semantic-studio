@@ -18,6 +18,14 @@ BASIC IDEA
     Open question 2 closed as recommended: the base IRI defaults to
     http://example.org/<slug>#, editable, and the prefix to the slug.
 
+    With a namespace set in Settings → Naming (design-checks 5.2) the base
+    IRI comes from the Address group instead: a layer, its area, a subject
+    following the name, a type by kind, and a data domain following the
+    area. addressLines gives the three lines the group shows; the base IRI
+    still follows the Model line until edited, and an edited base keeps the
+    pattern's Shapes and Data lines only while it ends in -<type>#. The
+    names are naming/address.ts's rule, the server's naming.py restated.
+
     The description (reference-ontologies 5.4 item 3) defaults to a
     sentence about the name and one per reference ontology chosen, and the
     project's prefix may not be a chosen reference's (item 4): the server's
@@ -32,6 +40,13 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
+import {
+  projectAddresses,
+  segmentError,
+  slug,
+  type ArtifactType,
+  type Layer,
+} from "../naming/address";
 import type { ProjectKind, ProjectTemplate, ReferenceOntology } from "../types";
 
 /** The two kinds a project can be, asked first (relationships 5.1). The
@@ -144,4 +159,80 @@ export function firstReason(errors: FieldErrors): string | null {
     if (errors[key]) return errors[key]!;
   }
   return null;
+}
+
+/* --- the Address group (design-checks 5.2) ------------------------------- */
+
+/** The layers in the order the radio group offers them, Domain first. */
+export const LAYERS: { value: Layer; label: string }[] = [
+  { value: "domain", label: "Domain" },
+  { value: "core", label: "Core" },
+  { value: "app", label: "Application" },
+];
+
+/** The area field's label by layer; Core asks for none. "Domain name",
+ *  not "Domain": the radio beside it is called Domain, and two controls
+ *  with one name are one too many for a screen reader. */
+export function areaLabel(layer: Layer): string | null {
+  return layer === "domain" ? "Domain name" : layer === "app" ? "Application name" : null;
+}
+
+/** The types a project of a kind may be: shapes and mapping never are. A
+ *  library copy's kind is the server's to judge, so it is offered all three. */
+export function typeChoices(kind: ProjectKind | null): { value: ArtifactType; label: string }[] {
+  const all = { ontology: "Ontology", taxonomy: "Taxonomy", vocabulary: "Vocabulary" } as const;
+  const values: ("ontology" | "taxonomy" | "vocabulary")[] =
+    kind === "ontology" ? ["ontology"] : kind === "taxonomy" ? ["taxonomy", "vocabulary"] : ["ontology", "taxonomy", "vocabulary"];
+  return values.map((value) => ({ value, label: all[value] }));
+}
+
+/** The subject a name gives until it is edited: Invoices -> invoices. */
+export function defaultSubject(name: string): string {
+  return slug(name);
+}
+
+export interface AddressFields {
+  layer: Layer;
+  area: string;
+  subject: string;
+  type: ArtifactType;
+  dataDomain: string;
+}
+
+export type AddressErrors = Partial<Record<"area" | "subject" | "dataDomain", string>>;
+
+/** Each name in the group under 5.1's rule, the area only where the layer
+ *  asks for one. */
+export function addressErrors(fields: AddressFields): AddressErrors {
+  const errors: AddressErrors = {};
+  if (fields.layer !== "core") {
+    const e = segmentError(fields.area);
+    if (e) errors.area = e;
+  }
+  const s = segmentError(fields.subject);
+  if (s) errors.subject = s;
+  const d = segmentError(fields.dataDomain);
+  if (d) errors.dataDomain = d;
+  return errors;
+}
+
+export const OWN_ADDRESS = "You have written your own address; the pattern no longer fills it in.";
+export const EXAMPLE_ADDRESS = "Using an example address. Set your organization's namespace in Settings → Naming.";
+
+/** The three lines under the group. `written` is a base IRI typed by hand,
+ *  or null while it follows the Model line; `follows` says whether the
+ *  pattern still applies (the Shapes and Data lines are then shown and the
+ *  group is sent). */
+export function addressLines(
+  namespace: string,
+  fields: AddressFields,
+  written: string | null,
+): { model: string; shapes: string | null; data: string | null; follows: boolean } {
+  const lines = projectAddresses(namespace, fields);
+  if (written === null || written === lines.model) return { ...lines, follows: true };
+  const suffix = `-${fields.type}#`;
+  if (written.endsWith(suffix)) {
+    return { model: written, shapes: written.slice(0, -suffix.length) + "-shapes#", data: lines.data, follows: true };
+  }
+  return { model: written, shapes: null, data: null, follows: false };
 }

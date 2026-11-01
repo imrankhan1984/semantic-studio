@@ -26,8 +26,10 @@ BASIC IDEA
     About panel is named in this spec only for its wording.
 
 INPUTS / INPUT SOURCES
-    - A ref to the dialog element, a ref to its heading, and the Escape
-      callback.
+    - A ref to the dialog element, a ref to its heading, the Escape
+      callback, and whether the dialog holds the keyboard now (false while
+      another dialog covers it: New project under Settings, design-checks
+      5.2).
 
 EXPECTED OUTPUT
     - Effects only.
@@ -46,6 +48,7 @@ export function useDialogTrap(
   panelRef: RefObject<HTMLElement | null>,
   headingRef: RefObject<HTMLElement | null>,
   onEscape: () => void,
+  active = true,
 ): void {
   // Heading on open; the previous holder of focus back on close. The ref to
   // the previous element is taken in the effect body, which runs before any
@@ -60,6 +63,7 @@ export function useDialogTrap(
   }, []);
 
   useEffect(() => {
+    if (!active) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -70,7 +74,7 @@ export function useDialogTrap(
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [panelRef, onEscape]);
+  }, [panelRef, onEscape, active]);
 }
 
 /** Tab and Shift+Tab kept inside `panel`, wrapping at either end. Shared with

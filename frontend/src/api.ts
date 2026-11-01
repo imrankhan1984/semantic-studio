@@ -73,6 +73,7 @@ import type {
   LanguageReport,
   OpenedProject,
   ProjectDocName,
+  ProjectNaming,
   ProjectSummary,
   ProjectKind,
   ProjectTemplate,
@@ -934,6 +935,8 @@ export function createProject(payload: {
   references?: string[];
   /** The header's rdfs:comment; empty writes none. */
   description?: string;
+  /** New project's Address group (design-checks 5.2), with a namespace set. */
+  address?: Omit<ProjectNaming, "namespace">;
 }): Promise<ProjectSummary> {
   return send("/api/projects", {
     method: "POST",
