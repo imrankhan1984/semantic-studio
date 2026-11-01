@@ -1,0 +1,235 @@
+# design-faults.ttl: the design checks' planted faults (design-checks 11,
+# AC-3). One planted case per check, each named in a comment above it; the
+# rest of the file is written to pass every check, so test_checks.py can
+# hold each check to exactly its planted finding.
+#
+# The addresses follow the pattern of design-checks 5.1 under the
+# placeholder namespace acme (https://w3id.org/acme/), which the tests set:
+# DC-26 and DC-28 read addresses, so example.org would trip them at every
+# line. A few planted cases are, by their nature, two checks' finding: an
+# individual inside the ontology's namespace is also off the data pattern
+# (DC-24 and DC-26), and a term at an editor's default address is also
+# outside the namespace (DC-27 and DC-26). test_checks.py names them.
+
+@prefix t:       <https://w3id.org/acme/domain/test/faults-ontology#> .
+@prefix d:       <https://w3id.org/acme/data/test/> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+
+# DC-08: no creator. DC-09: the version IRI says 1.0.0, the version 1.1.0.
+# DC-21: an import.
+<https://w3id.org/acme/domain/test/faults-ontology> a owl:Ontology ;
+    dcterms:title "Faults"@en ;
+    dcterms:description "One design fault of each kind, for the checks' tests."@en ;
+    owl:versionInfo "1.1.0" ;
+    owl:versionIRI <https://w3id.org/acme/domain/test/faults-ontology/1.0.0> ;
+    owl:imports <https://w3id.org/acme/core/unit-ontology> .
+
+# --- classes that pass --------------------------------------------------------
+
+t:Mission a owl:Class ;
+    rdfs:label "Mission"@en ;
+    rdfs:comment "An undertaking with a goal in space."@en .
+
+t:RoboticMission a owl:Class ;
+    rdfs:subClassOf t:Mission ;
+    rdfs:label "Robotic mission"@en ;
+    rdfs:comment "A mission with no crew on board."@en .
+
+# DC-01: a label in French only.
+t:Lander a owl:Class ;
+    rdfs:label "Atterrisseur"@fr ;
+    rdfs:comment "A spacecraft that sets down on a surface."@en .
+
+# DC-03: a note, but no definition.
+t:Rover a owl:Class ;
+    rdfs:label "Rover"@en ;
+    skos:note "Ask the team what this covers."@en .
+
+# DC-04: a class name not in UpperCamelCase.
+t:robotic_vehicle a owl:Class ;
+    rdfs:label "Robotic vehicle"@en ;
+    rdfs:comment "A vehicle driven from afar."@en .
+
+# DC-06: a year in a name.
+t:Site2026 a owl:Class ;
+    rdfs:label "Site"@en ;
+    rdfs:comment "A place a mission works at."@en .
+
+# DC-07: a label copied from the name.
+t:LaunchPad a owl:Class ;
+    rdfs:label "LaunchPad" ;
+    rdfs:comment "The structure a rocket leaves from."@en .
+
+# DC-10: deprecated, no replacement (and, deprecated, unused without a word).
+t:Probe a owl:Class ;
+    rdfs:label "Probe"@en ;
+    rdfs:comment "An old word for a robotic mission."@en ;
+    owl:deprecated true .
+
+# DC-11: deprecated, a replacement named, still used by an individual.
+t:Capsule a owl:Class ;
+    rdfs:label "Capsule"@en ;
+    rdfs:comment "An old word for a crewed vehicle."@en ;
+    owl:deprecated true ;
+    dcterms:isReplacedBy t:Mission .
+
+# DC-12: a loop.
+t:LoopA a owl:Class ;
+    rdfs:subClassOf t:LoopB ;
+    rdfs:label "Loop a"@en ;
+    rdfs:comment "One half of a loop."@en .
+
+t:LoopB a owl:Class ;
+    rdfs:subClassOf t:LoopA ;
+    rdfs:label "Loop b"@en ;
+    rdfs:comment "The other half of a loop."@en .
+
+# DC-13: Level5 is five levels below the top.
+t:Level0 a owl:Class ; rdfs:label "Level zero"@en ; rdfs:comment "The top of a deep tree."@en .
+t:Level1 a owl:Class ; rdfs:subClassOf t:Level0 ; rdfs:label "Level one"@en ; rdfs:comment "One down."@en .
+t:Level2 a owl:Class ; rdfs:subClassOf t:Level1 ; rdfs:label "Level two"@en ; rdfs:comment "Two down."@en .
+t:Level3 a owl:Class ; rdfs:subClassOf t:Level2 ; rdfs:label "Level three"@en ; rdfs:comment "Three down."@en .
+t:Level4 a owl:Class ; rdfs:subClassOf t:Level3 ; rdfs:label "Level four"@en ; rdfs:comment "Four down."@en .
+t:Level5 a owl:Class ; rdfs:subClassOf t:Level4 ; rdfs:label "Level five"@en ; rdfs:comment "Five down."@en .
+
+# DC-17: one label on two terms (with the property hasCrew below).
+t:Crew a owl:Class ;
+    rdfs:label "Crew"@en ;
+    rdfs:comment "The people on board."@en .
+
+# DC-18: a copy of a reference term (FOAF's Person).
+t:Person a owl:Class ;
+    rdfs:label "Person"@en ;
+    rdfs:comment "A human being."@en .
+
+# DC-23: both a class and a concept.
+t:MissionType a owl:Class , skos:Concept ;
+    rdfs:label "Mission type"@en ;
+    skos:prefLabel "Mission type"@en ;
+    rdfs:comment "A kind of mission."@en ;
+    skos:inScheme t:MissionTypes .
+
+# DC-25: a class no individual is one of.
+t:Spaceport a owl:Class ;
+    rdfs:label "Spaceport"@en ;
+    rdfs:comment "A place rockets are launched from."@en .
+
+# DC-27: a term at an editor's default address.
+<http://www.semanticweb.org/learner/ontologies/x#Stray> a owl:Class ;
+    rdfs:label "Stray"@en ;
+    rdfs:comment "A class left at the editor's address."@en .
+
+# --- properties -----------------------------------------------------------------
+
+t:hasPart a owl:ObjectProperty ;
+    rdfs:label "has part"@en ;
+    rdfs:comment "A piece of a mission."@en .
+
+t:hasCrew a owl:ObjectProperty ;
+    rdfs:label "crew"@en ;
+    rdfs:comment "Who flies a mission."@en .
+
+# DC-05: a property name not in lowerCamelCase.
+t:Launched_On a owl:DatatypeProperty ;
+    rdfs:label "launched on"@en ;
+    rdfs:comment "The day a mission left."@en .
+
+t:launchTime a owl:DatatypeProperty ;
+    rdfs:label "launch time"@en ;
+    rdfs:comment "The moment a mission left."@en .
+
+t:diameter a owl:DatatypeProperty ;
+    rdfs:label "diameter"@en ;
+    rdfs:comment "How wide something is."@en .
+
+# --- concepts ---------------------------------------------------------------------
+
+t:MissionTypes a skos:ConceptScheme ;
+    skos:prefLabel "Mission types"@en ;
+    skos:definition "The kinds of mission."@en ;
+    skos:hasTopConcept t:Exploration .
+
+t:Exploration a skos:Concept ;
+    skos:prefLabel "Exploration"@en ;
+    skos:definition "Going somewhere to learn about it."@en ;
+    skos:inScheme t:MissionTypes ;
+    skos:topConceptOf t:MissionTypes .
+
+# DC-02: two preferred labels in English.
+t:Orbiting a skos:Concept ;
+    skos:prefLabel "Orbiting"@en , "Orbit"@en ;
+    skos:definition "Going round a body."@en ;
+    skos:broader t:Exploration ;
+    skos:inScheme t:MissionTypes .
+
+# DC-14: under two broader concepts.
+t:LanderMission a skos:Concept ;
+    skos:prefLabel "Lander mission"@en ;
+    skos:definition "Setting down on a body."@en ;
+    skos:broader t:Exploration , t:Orbiting ;
+    skos:inScheme t:MissionTypes .
+
+# DC-15: related to and under one concept.
+t:Flyby a skos:Concept ;
+    skos:prefLabel "Flyby"@en ;
+    skos:definition "Passing a body without stopping."@en ;
+    skos:broader t:Exploration ;
+    skos:related t:Exploration ;
+    skos:inScheme t:MissionTypes .
+
+# DC-16: a concept in no scheme.
+t:Stranded a skos:Concept ;
+    skos:prefLabel "Stranded"@en ;
+    skos:definition "A concept no scheme holds."@en .
+
+# --- individuals: each at its data address, under its most general class -----
+
+d:mission\/m1 a t:RoboticMission ;
+    rdfs:label "Mission one"@en ;
+    t:hasPart d:mission\/m2 ;
+    t:Launched_On "1977-09-05"^^xsd:date .
+
+# DC-19: a date-time with no time zone.
+d:mission\/m2 a t:Mission ;
+    rdfs:label "Mission two"@en ;
+    t:launchTime "1969-07-16T13:32:00"^^xsd:dateTime ;
+    t:hasCrew d:crew\/c1 .
+
+# DC-20: a number written as text.
+d:lander\/l1 a t:Lander ;
+    rdfs:label "Lander one"@en ;
+    t:diameter "6779 km" .
+
+d:rover\/r1 a t:Rover ; rdfs:label "Rover one"@en .
+d:robotic-vehicle\/v1 a t:robotic_vehicle ; rdfs:label "Vehicle one"@en .
+d:site2026\/s1 a t:Site2026 ; rdfs:label "Site one"@en .
+d:launch-pad\/p1 a t:LaunchPad ; rdfs:label "Pad one"@en .
+d:capsule\/k1 a t:Capsule ; rdfs:label "Capsule one"@en .
+d:loop-a\/a1 a t:LoopA ; rdfs:label "Loop one"@en .
+d:level0\/deep a t:Level5 ; rdfs:label "Deep one"@en .
+d:crew\/c1 a t:Crew ; rdfs:label "Crew one"@en .
+d:person\/ann a t:Person ; rdfs:label "Ann"@en .
+d:mission-type\/t1 a t:MissionType ; rdfs:label "Type one"@en .
+d:stray\/x1 a <http://www.semanticweb.org/learner/ontologies/x#Stray> ; rdfs:label "Stray one"@en .
+
+# DC-22: a same-as link.
+d:person\/bea a t:Person ;
+    rdfs:label "Bea"@en ;
+    owl:sameAs d:person\/ann .
+
+# DC-24 (and DC-26): an individual inside the ontology's namespace.
+t:apollo11 a t:Mission ;
+    rdfs:label "Apollo 11"@en .
+
+# DC-26: at a class that is not its most general own one.
+d:robotic-mission\/m3 a t:RoboticMission ;
+    rdfs:label "Mission three"@en .
+
+# DC-28: a version in a path (the data domain test-v2).
+<https://w3id.org/acme/data/test-v2/mission/m9> a t:Mission ;
+    rdfs:label "Mission nine"@en .

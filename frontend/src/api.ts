@@ -73,6 +73,7 @@ import type {
   LanguageReport,
   OpenedProject,
   ProjectDocName,
+  ProjectNaming,
   ProjectSummary,
   ProjectKind,
   ProjectTemplate,
@@ -773,6 +774,14 @@ export interface AppSettings {
   /** The data folder's full path: where projects, the library and saved
    *  queries are kept. */
   dataDir: string;
+  /** Settings → Naming (design-checks 5.1): the organization's namespace
+   *  after `prefix`, or null when none is set. */
+  naming: NamingSetting;
+}
+
+export interface NamingSetting {
+  namespace: string | null;
+  prefix: string;
 }
 
 // The three limits and the data folder. Read when Settings opens, never on mount.
@@ -787,6 +796,87 @@ export function saveLimits(limits: Partial<Record<LimitKey, number>>): Promise<A
     headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
     body: JSON.stringify({ limits }),
   }).then((r) => handle<AppSettings>(r));
+}
+
+// Save the organization's namespace (design-checks 5.1), or clear it with
+// null. A refused value comes back as a 422 whose sentence is the field's.
+export function saveNamespace(namespace: string | null): Promise<AppSettings> {
+  return send("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...CLIENT_HEADER },
+    body: JSON.stringify({ naming: { namespace } }),
+  }).then((r) => handle<AppSettings>(r));
+}
+
+/* --- design checks (design-checks 5.4, D-124) ------------------------------ */
+
+export type CheckLevel = "Problem" | "Worth a look";
+
+/** One finding: the entity, its sentence, and the Edit block it opens at. */
+export interface CheckFinding {
+  iri: string | null;
+  sentence: string;
+  block?: "label" | "definition" | "header";
+  level?: CheckLevel;
+}
+
+export interface CheckGroup {
+  id: string;
+  level: CheckLevel;
+  heading: string;
+  fix: string;
+  /** The true total; at most 100 findings are sent (house rule 6). */
+  total: number;
+  findings: CheckFinding[];
+  error?: string;
+}
+
+export interface CheckMeasures {
+  counts: { classes: number; properties: number; concepts: number; individuals: number };
+  hierarchy: { depth: number; widest: number; tops: number };
+  documentation: { documented: number; terms: number };
+  reuse: { namespaces: number; reused: number; used: number };
+  level: { step: number; of: number; name: string; next: string | null };
+}
+
+export interface ChecksReport {
+  revision: number;
+  generation: number;
+  ran_ms: number;
+  empty: boolean;
+  emptySentence: string | null;
+  /** Null above the cap (design-checks 5.10, D-125): no query ran, nothing
+   *  was measured. */
+  measures: CheckMeasures | null;
+  groups: CheckGroup[];
+  skipped: string[];
+  notes: string[];
+  namespace: string | null;
+  /** Set when the document has more than CHECKS_MAX_STATEMENTS statements:
+   *  the count and the cap. No check ran; each is still offered as a query. */
+  overCap?: { statements: number; cap: number };
+}
+
+/** One check as *Open as a query* opens it: its text, exactly the file. */
+export interface CheckEntry {
+  id: string;
+  level: CheckLevel;
+  heading: string;
+  fix: string;
+  query: string;
+}
+
+// Run every design check on one document. Made only when View's Checks is
+// chosen or Run again is pressed: reading a file pays nothing (5.4).
+export function getChecks(ontologyId: string, signal?: AbortSignal): Promise<ChecksReport> {
+  return send(`/api/ontologies/${encodeURIComponent(ontologyId)}/checks`, { signal }).then((r) =>
+    handle<ChecksReport>(r),
+  );
+}
+
+// The catalogue, for Open as a query. Read when first asked, never on mount.
+export function listChecks(): Promise<CheckEntry[]> {
+  return send("/api/checks").then((r) => handle<CheckEntry[]>(r));
 }
 
 /* --- owl:imports (external-access Stage 2) --------------------------------- */
@@ -916,6 +1006,8 @@ export function createProject(payload: {
   references?: string[];
   /** The header's rdfs:comment; empty writes none. */
   description?: string;
+  /** New project's Address group (design-checks 5.2), with a namespace set. */
+  address?: Omit<ProjectNaming, "namespace">;
 }): Promise<ProjectSummary> {
   return send("/api/projects", {
     method: "POST",

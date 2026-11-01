@@ -115,6 +115,8 @@ const {
   getResultNodes,
   getSettings,
   exportSavedQueries,
+  getChecks,
+  listChecks,
 } = vi.hoisted(() => ({
   listOntologies: vi.fn(),
   getGraph: vi.fn(),
@@ -172,6 +174,9 @@ const {
   getSettings: vi.fn(),
   // wording-and-query-export 5.11: the removal dialog's Download.
   exportSavedQueries: vi.fn(),
+  // design-checks 5.4: asked only when View's Checks is chosen.
+  getChecks: vi.fn(),
+  listChecks: vi.fn(),
 }));
 
 // The browser's save, recorded: jsdom has no object URLs to hand a blob to.
@@ -224,6 +229,8 @@ vi.mock("./api", async (importOriginal) => ({
   getResultNodes,
   getSettings,
   exportSavedQueries,
+  getChecks,
+  listChecks,
 }));
 
 /** Every mocked client function, so a test can count what mount actually did. */
@@ -383,7 +390,9 @@ vi.mock("./components/QueryPanel", () => ({
     onFrameResults,
     resultsNote,
     questions,
+    incoming,
   }: {
+    incoming?: { text: string; name: string } | null;
     onPickIri: (iri: string) => void;
     onViewInSource: (iri: string, prefixed?: string) => void;
     includeImports?: boolean;
@@ -405,6 +414,7 @@ vi.mock("./components/QueryPanel", () => ({
       <span data-testid="results-on-graph">{resultsOnGraph ?? 0}</span>
       <span data-testid="results-note">{resultsNote ?? ""}</span>
       <span data-testid="questions">{(questions ?? []).map((q) => q.title).join("|")}</span>
+      <span data-testid="incoming">{incoming ? `${incoming.name}|${incoming.text}` : ""}</span>
       <button onClick={() => onPickIri(pick.iri)}>fake result chip</button>
       <button onClick={() => onViewInSource(pick.iri, pick.prefixed)}>fake source control</button>
       {/* What App hands over for the "Querying ..." sentence (external-access
@@ -463,7 +473,7 @@ beforeEach(() => {
   listOntologies.mockResolvedValue([SUMMARY]);
   listProjects.mockResolvedValue([]);
   listData.mockResolvedValue({ generation: 0, snapshots: [] });
-  getSettings.mockResolvedValue({ dataDir: "/data", limits: [] });
+  getSettings.mockResolvedValue({ dataDir: "/data", limits: [], naming: { namespace: null, prefix: "https://w3id.org/" } });
   projectStore._reset();
   getGraph.mockResolvedValue(TRUNCATED);
   listImports.mockResolvedValue({ imports: [], limit: null, resolving: null, offline: false });
@@ -2079,6 +2089,80 @@ async function openLibrarySettings() {
     fireEvent.click(screen.getByRole("tab", { name: "Library" }));
   });
 }
+
+describe("New project's line to Settings → Naming (design-checks 5.2, AC-2)", () => {
+  it("opens Settings on Naming over the form, and closing returns to the form as typed", async () => {
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New project" }));
+    });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Spare parts" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Settings → Naming" }));
+    });
+    expect(screen.getByRole("tab", { name: "Naming" }).getAttribute("aria-selected")).toBe("true");
+    // The form is still there under Settings, out of the modal stack.
+    expect(document.querySelectorAll('[aria-modal="true"]')).toHaveLength(1);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Close Settings" }));
+    });
+    const dialog = screen.getByRole("dialog", { name: "New project" });
+    expect((within(dialog).getByLabelText("Name") as HTMLInputElement).value).toBe("Spare parts");
+    expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Settings → Naming" }));
+  });
+});
+
+describe("App and the Checks report (design-checks 5.4, 5.9, AC-10, AC-12)", () => {
+  const REPORT = {
+    revision: 0, generation: 0, ran_ms: 10, empty: false, emptySentence: null,
+    measures: {
+      counts: { classes: 1, properties: 0, concepts: 0, individuals: 0 },
+      hierarchy: { depth: 1, widest: 0, tops: 1 },
+      documentation: { documented: 0, terms: 1 },
+      reuse: { namespaces: 0, reused: 0, used: 1 },
+      level: { step: 1, of: 6, name: "Named terms", next: "Write a definition." },
+    },
+    groups: [{
+      id: "DC-03", level: "Problem", heading: "Terms without a definition", fix: "Write what it is.", total: 1,
+      findings: [{ iri: "http://example.org/Bond", sentence: "Bond has no definition.", block: "definition" }],
+    }],
+    skipped: [], notes: [], namespace: null,
+  };
+
+  async function openChecks() {
+    getChecks.mockResolvedValue(REPORT);
+    listChecks.mockResolvedValue([{ id: "DC-03", level: "Problem", heading: "Terms without a definition", fix: "Write what it is.", query: "# Terms with no definition.\nSELECT ?iri WHERE { ?iri ?p ?o }" }]);
+    await renderAppOpened();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "View" }));
+    });
+    expect(getChecks).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Checks" }));
+    });
+    expect(getChecks).toHaveBeenCalledTimes(1);
+  }
+
+  it("open on a library term goes to Explore with the term selected", async () => {
+    await openChecks();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open: Bond has no definition." }));
+    });
+    expect(screen.getByRole("tab", { name: "Explore" }).getAttribute("aria-selected")).toBe("true");
+    expect(getNodeDetails.mock.lastCall?.slice(0, 2)).toEqual(["o1", "http://example.org/Bond"]);
+  });
+
+  it("Open as a query opens Query with the check's text and name", async () => {
+    await openChecks();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open as a query" }));
+    });
+    expect(screen.getByRole("tab", { name: "Query" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("incoming").textContent).toBe(
+      "DC-03 Terms without a definition|# Terms with no definition.\nSELECT ?iri WHERE { ?iri ?p ?o }",
+    );
+  });
+});
 
 describe("App examples (home-and-examples 5.8)", () => {
   const EXAMPLE = {

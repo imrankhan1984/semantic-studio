@@ -101,19 +101,21 @@ NOUN_NAMES = {
     "year founded", "year of discovery",
 }
 
-_FILL = {
-    "{{base}}": "http://example.org/x#", "{{ontology}}": "http://example.org/x",
-    "{{prefix}}": "ex", "{{name}}": "X", "{{lang}}": "en",
-}
-
-
 def _bundled_graphs():
     from rdflib import Graph
 
-    for path in sorted((APP / "examples").glob("*.ttl")) + sorted((APP / "templates").glob("*.ttl")):
-        text = path.read_text(encoding="utf-8")
-        for key, value in _FILL.items():
-            text = text.replace(key, value)
+    from app.projects import render_template
+
+    for path in sorted((APP / "examples").glob("*.ttl")):
+        yield path.name, Graph().parse(path, format="turtle")
+    # Templates through the one renderer: its placeholders are its own
+    # (design-checks 5.3 added the shapes and data ones).
+    for path in sorted((APP / "templates").glob("*.ttl")):
+        template, _, part = path.stem.partition(".")
+        text = render_template(
+            template, name="X", base_iri="http://example.org/x#", prefix="ex", lang="en",
+            part=f".{part}" if part else "",
+        )
         yield path.name, Graph().parse(data=text, format="turtle")
     yield "foaf.rdf", Graph().parse(APP / "vocab" / "foaf.rdf", format="xml")
 

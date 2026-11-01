@@ -28,7 +28,8 @@
     dcterms:creator "Semantic Studio" ;
     dcterms:created "2026-10-15"^^xsd:date ;
     dcterms:license <https://creativecommons.org/licenses/by/4.0/> ;
-    owl:versionInfo "1.0" ;
+    owl:versionInfo "1.0.0" ;
+    owl:versionIRI <http://example.org/middle-earth/1.0.0> ;
     rdfs:label "The Lord of the Rings"@en .
 
 # ---------------------------------------------------------------------------
@@ -146,7 +147,8 @@ me:Council a owl:Class ;
 me:memberOf a owl:ObjectProperty ;
     rdfs:domain me:Character ;
     rdfs:range me:Group ;
-    rdfs:label "member of"@en .
+    rdfs:label "member of"@en ;
+    rdfs:comment "A group a character belongs to."@en .
 
 me:livesIn a owl:ObjectProperty ;
     rdfs:domain me:Character ;
@@ -158,23 +160,27 @@ me:parentOf a owl:ObjectProperty ;
     owl:inverseOf me:childOf ;
     rdfs:domain me:Character ;
     rdfs:range me:Character ;
-    rdfs:label "parent of"@en .
+    rdfs:label "parent of"@en ;
+    rdfs:comment "A character's son or daughter."@en .
 
 me:childOf a owl:ObjectProperty ;
     owl:inverseOf me:parentOf ;
     rdfs:domain me:Character ;
     rdfs:range me:Character ;
-    rdfs:label "child of"@en .
+    rdfs:label "child of"@en ;
+    rdfs:comment "A character's mother or father."@en .
 
 me:spouseOf a owl:ObjectProperty, owl:SymmetricProperty ;
     rdfs:domain me:Character ;
     rdfs:range me:Character ;
-    rdfs:label "spouse of"@en .
+    rdfs:label "spouse of"@en ;
+    rdfs:comment "The character someone is married to."@en .
 
 me:siblingOf a owl:ObjectProperty, owl:SymmetricProperty ;
     rdfs:domain me:Character ;
     rdfs:range me:Character ;
-    rdfs:label "sibling of"@en .
+    rdfs:label "sibling of"@en ;
+    rdfs:comment "A character with the same mother or father."@en .
 
 me:bears a owl:ObjectProperty ;
     rdfs:domain me:Character ;
@@ -191,22 +197,26 @@ me:wields a owl:ObjectProperty ;
 me:madeBy a owl:ObjectProperty ;
     rdfs:domain me:Artifact ;
     rdfs:range me:Character ;
-    rdfs:label "made by"@en .
+    rdfs:label "made by"@en ;
+    rdfs:comment "The character who made an artifact."@en .
 
 me:takesPartIn a owl:ObjectProperty ;
     rdfs:domain me:Character ;
     rdfs:range me:Event ;
-    rdfs:label "takes part in"@en .
+    rdfs:label "takes part in"@en ;
+    rdfs:comment "An event a character is part of."@en .
 
 me:takesPlaceIn a owl:ObjectProperty ;
     rdfs:domain me:Event ;
     rdfs:range me:Place ;
-    rdfs:label "takes place in"@en .
+    rdfs:label "takes place in"@en ;
+    rdfs:comment "The place an event happens in."@en .
 
 me:appearsIn a owl:ObjectProperty ;
     rdfs:domain me:Character ;
     rdfs:range me:Book ;
-    rdfs:label "appears in"@en .
+    rdfs:label "appears in"@en ;
+    rdfs:comment "A book a character appears in."@en .
 
 me:locatedIn a owl:ObjectProperty, owl:TransitiveProperty ;
     rdfs:domain me:Place ;
@@ -238,7 +248,8 @@ me:inYear a owl:DatatypeProperty ;
 me:publishedIn a owl:DatatypeProperty ;
     rdfs:domain me:Book ;
     rdfs:range xsd:gYear ;
-    rdfs:label "published in"@en .
+    rdfs:label "published in"@en ;
+    rdfs:comment "The year a book was first published."@en .
 
 # ---------------------------------------------------------------------------
 # Places

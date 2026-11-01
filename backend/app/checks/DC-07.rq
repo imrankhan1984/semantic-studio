@@ -1,0 +1,19 @@
+# Labels that copy a name of two words or more (RoboticMission labelled RoboticMission).
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX dc: <http://purl.org/dc/elements/1.1/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ss: <urn:semantic-studio:check:>
+SELECT DISTINCT ?iri ?label WHERE {
+  VALUES ?type { owl:Class rdfs:Class owl:ObjectProperty owl:DatatypeProperty owl:AnnotationProperty rdf:Property skos:Concept sh:NodeShape }
+  ?iri a ?type .
+  FILTER(isIRI(?iri) && ss:own(?iri))
+  ?iri rdfs:label|skos:prefLabel ?label .
+  BIND(REPLACE(STR(?iri), "^.*[#/]", "") AS ?name)
+  FILTER(STR(?label) = ?name && REGEX(?name, "[a-z][A-Z]|_"))
+}
+ORDER BY ?iri

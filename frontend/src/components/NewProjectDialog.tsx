@@ -37,6 +37,23 @@ BASIC IDEA
     through a live region rendered while empty. A prefix equal to a ticked
     reference's is refused under the field, in the server's words.
 
+    With a namespace set in Settings → Naming (design-checks 5.2), an
+    **Address** group stands above the base IRI: Layer as native radios in
+    a fieldset (Domain first, arrow keys move between them), the area
+    named by the layer (Domain or Application; Core asks for none), the
+    subject following the name, the type by kind, the data domain
+    following the area, and the three lines the pattern gives. The base IRI
+    field holds the Model line and may still be written by hand; the group
+    then says so, and keeps its Shapes and Data lines only while the base
+    ends in -<type>#. Each name is refused inline, its sentence the field's
+    description, and Create's reason names the first. With no namespace
+    the group is absent and one line under the base IRI points to Settings
+    → Naming; its button opens Settings over this form, which stays mounted
+    (`covered`, hidden and out of the modal stack) so what was typed is
+    there when Settings closes, focus back on that button. The namespace
+    is read once, when the form opens: a Save while it is open changes
+    nothing here until the form is opened again (5.11).
+
     The dialog does not create anything itself; it hands the fields to
     onCreate and shows the server's sentence if that fails.
 
@@ -46,6 +63,9 @@ INPUTS / INPUT SOURCES (props)
       this" on a library card), or undefined to start by choosing a kind.
     - onCreate: carries out the creation; resolves when the project is open.
     - onClose: the dialog's three exits (Cancel, Escape, backdrop).
+    - onOpenNaming: opens Settings on Naming over the form.
+    - covered: Settings is open over the form; it hides and lets go of the
+      keyboard until it is not.
 
 EXPECTED OUTPUT
     - The form; one onCreate call per valid submission.
@@ -53,19 +73,30 @@ EXPECTED OUTPUT
 */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { listReferences } from "../api";
+import { getSettings, listReferences } from "../api";
+import { GUIDELINES } from "../naming/words";
+import type { ArtifactType, Layer } from "../naming/address";
 import {
   CHOOSE_KIND,
   DESCRIPTION_MAX,
+  EXAMPLE_ADDRESS,
+  LAYERS,
+  OWN_ADDRESS,
+  addressErrors,
+  addressLines,
+  areaLabel,
   defaultBaseIri,
   defaultDescription,
   defaultPrefix,
+  defaultSubject,
   firstReason,
   KIND_CHOICES,
+  typeChoices,
   validate,
+  type AddressFields,
   type NewProjectFields,
 } from "../projects/form";
-import type { ProjectKind, ProjectTemplate, ReferenceOntology } from "../types";
+import type { ProjectKind, ProjectNaming, ProjectTemplate, ReferenceOntology } from "../types";
 import { useDialogTrap } from "./useDialogTrap";
 
 export interface NewProjectRequest {
@@ -79,6 +110,8 @@ export interface NewProjectRequest {
   references?: string[];
   /** The header's rdfs:comment; "" when cleared, which writes none. */
   description: string;
+  /** The Address group (design-checks 5.2), sent while the pattern applies. */
+  address?: Omit<ProjectNaming, "namespace">;
 }
 
 interface Props {
@@ -86,9 +119,18 @@ interface Props {
   initialSource?: string;
   onCreate: (request: NewProjectRequest) => Promise<void>;
   onClose: () => void;
+  onOpenNaming?: () => void;
+  covered?: boolean;
 }
 
-export default function NewProjectDialog({ library, initialSource, onCreate, onClose }: Props) {
+export default function NewProjectDialog({
+  library,
+  initialSource,
+  onCreate,
+  onClose,
+  onOpenNaming,
+  covered = false,
+}: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const reasonId = useId();
@@ -132,28 +174,67 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
       live = false;
     };
   }, []);
+  // The organization's namespace, read once as the form opens (5.2): null
+  // when none is set, undefined until the answer comes. A failed read is
+  // no namespace, the form as it was before the pattern.
+  const [namespace, setNamespace] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    getSettings()
+      .then((answer) => live && setNamespace(answer.naming?.namespace ?? null))
+      .catch(() => live && setNamespace(null));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const [layer, setLayer] = useState<Layer>("domain");
+  const [area, setArea] = useState("");
+  // null while each follows: the subject the name, the data domain the area.
+  const [subject, setSubject] = useState<string | null>(null);
+  const [dataDomain, setDataDomain] = useState<string | null>(null);
+  const [type, setType] = useState<ArtifactType | null>(null);
   const [touched, setTouched] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const escape = useCallback(() => {
-    if (!busy) onClose();
-  }, [busy, onClose]);
-  useDialogTrap(panelRef, headingRef, escape);
+    if (!busy && !covered) onClose();
+  }, [busy, covered, onClose]);
+  useDialogTrap(panelRef, headingRef, escape, !covered);
+
+  // Back from Settings: focus returns to the button that opened it.
+  const namingLinkRef = useRef<HTMLButtonElement>(null);
+  const wasCovered = useRef(covered);
+  useEffect(() => {
+    if (wasCovered.current && !covered) namingLinkRef.current?.focus();
+    wasCovered.current = covered;
+  }, [covered]);
 
   // A copy keeps its own file: only a template reuses terms.
   const chosen = fromLibrary ? [] : references.filter((r) => ticked.has(r.key));
+  const types = typeChoices(fromLibrary ? null : kind);
+  const address: AddressFields = {
+    layer,
+    area: layer === "core" ? "" : area,
+    subject: subject ?? defaultSubject(name),
+    type: type && types.some((t) => t.value === type) ? type : types[0].value,
+    dataDomain: dataDomain ?? (layer === "domain" ? area : ""),
+  };
+  const lines = namespace ? addressLines(namespace, address, baseIri) : null;
   const fields: NewProjectFields = {
     name,
-    baseIri: baseIri ?? defaultBaseIri(name),
+    baseIri: baseIri ?? (lines ? lines.model : defaultBaseIri(name)),
     prefix: prefix ?? defaultPrefix(name),
     primaryLanguage,
     description: description ?? defaultDescription(name, chosen),
   };
   const errors = useMemo(
     () => validate(fields, chosen),
-    [name, baseIri, prefix, primaryLanguage, description, references, ticked, fromLibrary],
+    [name, baseIri, prefix, primaryLanguage, description, references, ticked, fromLibrary, namespace, layer, area, subject, type],
   );
+  // The group's names count only while the pattern applies.
+  const groupErrors = lines?.follows ? addressErrors(address) : {};
+  const groupReason = groupErrors.area ?? groupErrors.subject ?? groupErrors.dataDomain ?? null;
   const toggle = (key: string) => {
     // A clash with the prefix is said at once, under the field (5.4 item 4).
     touch("prefix");
@@ -167,12 +248,12 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
   const descriptionLength = (fields.description ?? "").trim().length;
   const overLimit = descriptionLength > DESCRIPTION_MAX;
   // The kind first: it is the first question the form asks (Section 6).
-  const reason = source === "" ? CHOOSE_KIND : firstReason(errors);
+  const reason = source === "" ? CHOOSE_KIND : (firstReason(errors) ?? groupReason);
   const touch = (field: string) => setTouched((prev) => new Set(prev).add(field));
   const shown = (field: keyof NewProjectFields) => (touched.has(field) ? errors[field] : undefined);
 
   const submit = async () => {
-    setTouched(new Set(["name", "description", "baseIri", "prefix", "primaryLanguage"]));
+    setTouched(new Set(["name", "description", "baseIri", "prefix", "primaryLanguage", "area", "subject", "dataDomain"]));
     if (reason || busy) return;
     const [from, value] = source.split(/:(.*)/s);
     setBusy(true);
@@ -186,6 +267,17 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
         primaryLanguage: fields.primaryLanguage.trim(),
         ...(from === "library" ? {} : { references: chosen.map((r) => r.key) }),
         description: (fields.description ?? "").trim(),
+        ...(lines?.follows
+          ? {
+              address: {
+                layer: address.layer,
+                area: address.area,
+                subject: address.subject,
+                type: address.type as ProjectNaming["type"],
+                dataDomain: address.dataDomain,
+              },
+            }
+          : {}),
       });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
@@ -230,13 +322,16 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
 
   return (
     <>
-      <div className="modal-backdrop confirm-backdrop" aria-hidden="true" onClick={escape} />
+      <div className="modal-backdrop confirm-backdrop" aria-hidden="true" onClick={escape} hidden={covered} />
+      {/* Covered by Settings: hidden and out of the modal stack, so
+          Settings' keys are its own; mounted, so what was typed stays. */}
       <div
         ref={panelRef}
         className="confirm-dialog new-project-dialog"
         role="dialog"
-        aria-modal="true"
+        aria-modal={covered ? undefined : "true"}
         aria-labelledby="new-project-title"
+        hidden={covered}
       >
         <h2 id="new-project-title" ref={headingRef} tabIndex={-1} className="confirm-title">
           New project
@@ -345,12 +440,43 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
               </p>
             </fieldset>
           )}
+          {lines && (
+            <AddressGroup
+              address={address}
+              lines={lines}
+              types={types}
+              errors={groupErrors}
+              touched={touched}
+              onTouch={touch}
+              onLayer={setLayer}
+              onArea={setArea}
+              onSubject={setSubject}
+              onType={setType}
+              onDataDomain={setDataDomain}
+            />
+          )}
           {field(
             "baseIri",
             "Base IRI",
             fields.baseIri,
             setBaseIri,
-            "New entities are named under this. It follows the name until you change it.",
+            lines
+              ? "New entities are named under this. It follows the Address group until you change it."
+              : "New entities are named under this. It follows the name until you change it.",
+          )}
+          {namespace === null && (
+            <p className="form-hint new-project-example-address">
+              {EXAMPLE_ADDRESS.replace(" Settings → Naming.", " ")}
+              <button
+                ref={namingLinkRef}
+                type="button"
+                className="link-btn"
+                onClick={() => onOpenNaming?.()}
+              >
+                Settings → Naming
+              </button>
+              .
+            </p>
           )}
           {field("prefix", "Prefix", fields.prefix, setPrefix)}
           {field(
@@ -382,5 +508,144 @@ export default function NewProjectDialog({ library, initialSource, onCreate, onC
         </form>
       </div>
     </>
+  );
+}
+
+const ADDRESS_FIELD_IDS = { area: "new-project-area", subject: "new-project-subject", dataDomain: "new-project-data-domain" };
+
+/** The Address group of design-checks 5.2: the parts and the three lines. */
+function AddressGroup({
+  address,
+  lines,
+  types,
+  errors,
+  touched,
+  onTouch,
+  onLayer,
+  onArea,
+  onSubject,
+  onType,
+  onDataDomain,
+}: {
+  address: AddressFields;
+  lines: { model: string; shapes: string | null; data: string | null; follows: boolean };
+  types: { value: ArtifactType; label: string }[];
+  errors: Partial<Record<"area" | "subject" | "dataDomain", string>>;
+  touched: Set<string>;
+  onTouch: (field: string) => void;
+  onLayer: (layer: Layer) => void;
+  onArea: (v: string) => void;
+  onSubject: (v: string) => void;
+  onType: (t: ArtifactType) => void;
+  onDataDomain: (v: string) => void;
+}) {
+  const part = (key: "area" | "subject" | "dataDomain", label: string, value: string, set: (v: string) => void, hint?: string) => {
+    const id = ADDRESS_FIELD_IDS[key];
+    // A name is refused as soon as something is typed, or once touched.
+    const message = (value !== "" || touched.has(key)) && lines.follows ? errors[key] : undefined;
+    return (
+      <div className="form-field">
+        <label htmlFor={id}>{label}</label>
+        <input
+          id={id}
+          value={value}
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(e) => set(e.target.value)}
+          onBlur={() => onTouch(key)}
+          aria-invalid={message ? true : undefined}
+          aria-describedby={message ? `${id}-error` : hint ? `${id}-hint` : undefined}
+        />
+        {message ? (
+          <p id={`${id}-error`} className="form-error">
+            {message}
+          </p>
+        ) : (
+          hint && (
+            <p id={`${id}-hint`} className="form-hint">
+              {hint}
+            </p>
+          )
+        )}
+      </div>
+    );
+  };
+  const areaName = areaLabel(address.layer);
+  return (
+    <fieldset className="form-field new-project-address">
+      <legend>Address</legend>
+      <fieldset className="new-project-layers">
+        <legend>Layer</legend>
+        {LAYERS.map((l) => (
+          <label key={l.value} className="new-project-layer">
+            <input
+              type="radio"
+              name="new-project-layer"
+              value={l.value}
+              checked={address.layer === l.value}
+              onChange={() => onLayer(l.value)}
+            />
+            {l.label}
+          </label>
+        ))}
+      </fieldset>
+      {areaName && part("area", areaName, address.area, onArea)}
+      {part("subject", "Subject", address.subject, onSubject, "Follows the project name until you edit it.")}
+      <div className="form-field">
+        <label htmlFor="new-project-type">Type</label>
+        <select
+          id="new-project-type"
+          value={address.type}
+          onChange={(e) => onType(e.target.value as ArtifactType)}
+          aria-describedby="new-project-type-hint"
+        >
+          {types.map((t) => (
+            <option key={t.value} value={t.value}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+        <p id="new-project-type-hint" className="form-hint">
+          {types.length === 2
+            ? "Taxonomy for a hierarchy, Vocabulary for a flat list."
+            : types.length === 1
+              ? "Ontology for an ontology project."
+              : "A copy's kind is judged from what it holds."}
+        </p>
+      </div>
+      {part(
+        "dataDomain",
+        "Data domain",
+        address.dataDomain,
+        onDataDomain,
+        address.layer === "domain" ? "Follows Domain until you edit it." : undefined,
+      )}
+      {!lines.follows && <p className="form-hint">{OWN_ADDRESS}</p>}
+      <dl className="naming-lines new-project-lines" aria-label="The addresses this project will use">
+        <div>
+          <dt>Model</dt>
+          <dd>
+            <code>{lines.model}</code>
+          </dd>
+        </div>
+        {lines.shapes && (
+          <div>
+            <dt>Shapes</dt>
+            <dd>
+              <code>{lines.shapes}</code>
+            </dd>
+          </div>
+        )}
+        {lines.data && (
+          <div>
+            <dt>Data</dt>
+            <dd>
+              <code>{lines.data}</code>
+            </dd>
+          </div>
+        )}
+      </dl>
+      <p className="form-hint">{GUIDELINES}</p>
+    </fieldset>
   );
 }

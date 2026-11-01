@@ -78,6 +78,14 @@ from . import ontologies
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 
+class AddressGroup(BaseModel):
+    layer: Literal["core", "domain", "app"]
+    area: str = Field(default="", max_length=64)
+    subject: str = Field(max_length=64)
+    type: Literal["ontology", "taxonomy", "vocabulary"]
+    dataDomain: str = Field(max_length=64)
+
+
 class CreateProject(BaseModel):
     name: str
     template: Optional[Literal["empty", "small", "taxonomy-empty", "taxonomy-small", "vocabulary"]] = None
@@ -90,6 +98,9 @@ class CreateProject(BaseModel):
     references: list[str] = []
     # The header's rdfs:comment; empty writes none (5.4 item 3).
     description: Optional[str] = Field(default=None, max_length=DESCRIPTION_MAX)
+    # New project's Address group (design-checks 5.2), sent only with a
+    # namespace set; each part is held to naming.py's rule in projects.py.
+    address: Optional[AddressGroup] = None
 
     @field_validator("references")
     @classmethod
@@ -198,17 +209,20 @@ def create_project(body: CreateProject) -> dict:
                     primary_language=body.primaryLanguage, source_text=text,
                     source_name=source.name, reference_keys=body.references,
                     description=body.description,
+                    address=body.address.model_dump() if body.address else None,
                 )
             return project_store.create(
                 name=body.name, base_iri=body.baseIri, prefix=body.prefix,
                 primary_language=body.primaryLanguage, source_graph=source.ensure_loaded(),
                 source_name=source.name, reference_keys=body.references,
                 description=body.description,
+                address=body.address.model_dump() if body.address else None,
             )
         return project_store.create(
             name=body.name, base_iri=body.baseIri, prefix=body.prefix,
             primary_language=body.primaryLanguage, template=body.template or "empty",
             reference_keys=body.references, description=body.description,
+            address=body.address.model_dump() if body.address else None,
         )
 
 

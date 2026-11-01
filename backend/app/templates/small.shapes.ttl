@@ -1,10 +1,10 @@
-@prefix {{prefix}}: <{{base}}> .
+@prefix {{prefix}}: <{{base}}> .{{shapesDecl}}
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix skos: <http://www.w3.org/2004/02/skos/core#> .
 
-{{prefix}}:CheckMyModel a sh:NodeShape ;
+{{shape}}:CheckMyModel a sh:NodeShape ;
     rdfs:label "Check my model"@{{lang}} ;
     sh:targetClass owl:Class ;
     sh:property [
@@ -16,7 +16,7 @@
         sh:minCount 1
     ] .
 
-{{prefix}}:PersonRules a sh:NodeShape ;
+{{shape}}:PersonRules a sh:NodeShape ;
     rdfs:label "Person rules"@{{lang}} ;
     sh:targetClass {{prefix}}:Person ;
     sh:property [
@@ -29,7 +29,7 @@
         sh:class {{prefix}}:Organization
     ] .
 
-{{prefix}}:OrganizationRules a sh:NodeShape ;
+{{shape}}:OrganizationRules a sh:NodeShape ;
     rdfs:label "Organization rules"@{{lang}} ;
     sh:targetClass {{prefix}}:Organization ;
     sh:property [

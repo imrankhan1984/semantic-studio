@@ -610,3 +610,143 @@ def test_the_description_later_is_one_set_comment_on_the_header_and_one_undo():
     assert editing_service.document(project["id"], "model").graph.value(header, RDFS.comment) == Literal("Pumps and valves.", lang="en")
     assert client.post(f"{url}/undo").status_code == 200
     assert editing_service.document(project["id"], "model").graph.value(header, RDFS.comment) is None
+
+
+# --- the address pattern (design-checks 5.2, AC-2, AC-15) ---------------------------
+
+from app import settings  # noqa: E402
+
+ADDRESS = {"layer": "domain", "area": "finance", "subject": "invoice", "type": "ontology", "dataDomain": "finance"}
+
+
+@pytest.fixture
+def acme():
+    settings.update_naming("acme")
+    yield "acme"
+    settings.update_naming(None)
+
+
+def test_no_namespace_keeps_example_org_and_no_pattern_fields():
+    created = _create(name="Spare parts", template="empty")
+    assert created["baseIri"] == "http://example.org/spare-parts#"
+    manifest = project_store.manifest(created["id"])
+    for field in ("naming", "shapesBaseIri", "dataBaseIri"):
+        assert field not in manifest
+
+
+def test_an_address_group_without_a_namespace_is_refused():
+    response = client.post("/api/projects", json={"name": "X", "template": "empty", "address": ADDRESS})
+    assert response.status_code == 422
+    assert "Settings → Naming" in response.json()["detail"]
+
+
+def test_ac2_a_taxonomy_in_a_domain(acme):
+    created = _create(
+        name="Payment terms", template="taxonomy-empty",
+        address={"layer": "domain", "area": "finance", "subject": "payment-terms", "type": "taxonomy", "dataDomain": "finance"},
+    )
+    assert created["baseIri"] == "https://w3id.org/acme/domain/finance/payment-terms-taxonomy#"
+    assert created["shapesBaseIri"] == "https://w3id.org/acme/domain/finance/payment-terms-shapes#"
+    assert created["dataBaseIri"] == "https://w3id.org/acme/data/finance/"
+
+
+@pytest.mark.parametrize(
+    "layer, area, model",
+    [
+        ("core", "", "https://w3id.org/acme/core/invoice-ontology#"),
+        ("domain", "finance", "https://w3id.org/acme/domain/finance/invoice-ontology#"),
+        ("app", "helpdesk", "https://w3id.org/acme/app/helpdesk/invoice-ontology#"),
+    ],
+)
+def test_ac15_each_layer_and_the_manifest_records_the_parts(acme, layer, area, model):
+    created = _create(name="Invoices", template="empty", address={**ADDRESS, "layer": layer, "area": area})
+    assert created["baseIri"] == model
+    assert created["shapesBaseIri"].endswith("invoice-shapes#")
+    manifest = project_store.manifest(created["id"])
+    assert manifest["naming"] == {
+        "namespace": "acme", "layer": layer, "area": area, "subject": "invoice",
+        "type": "ontology", "dataDomain": "finance",
+    }
+    assert _model(created["id"]).value(URIRef(model.rstrip("#")), RDF.type) == OWL.Ontology
+
+
+@pytest.mark.parametrize("field, value", [("area", "Finance"), ("area", "fin_ance"), ("subject", "v2"), ("dataDomain", "a b")])
+def test_ac15_a_refused_part_is_422_with_its_sentence_and_no_folder(acme, field, value):
+    before = len(list(project_store.dir.iterdir()))
+    response = client.post("/api/projects", json={"name": "X", "template": "empty", "address": {**ADDRESS, field: value}})
+    assert response.status_code == 422
+    assert "lowercase letters" in response.text or "version or a date" in response.text
+    assert len(list(project_store.dir.iterdir())) == before
+
+
+def test_a_type_that_is_not_the_kinds_is_refused(acme):
+    response = client.post("/api/projects", json={"name": "X", "template": "empty", "address": {**ADDRESS, "type": "taxonomy"}})
+    assert response.status_code == 422
+
+
+def test_without_a_group_a_namespace_gives_the_core_address(acme):
+    created = _create(name="Spare parts", template="empty")
+    assert created["baseIri"] == "https://w3id.org/acme/core/spare-parts-ontology#"
+    assert created["naming"]["layer"] == "core"
+
+
+def test_a_hand_written_base_ending_in_its_type_keeps_the_pattern(acme):
+    created = _create(
+        name="Invoices", template="empty", address=ADDRESS,
+        baseIri="https://w3id.org/acme/domain/finance/billing-ontology#",
+    )
+    assert created["baseIri"] == "https://w3id.org/acme/domain/finance/billing-ontology#"
+    assert created["shapesBaseIri"] == "https://w3id.org/acme/domain/finance/billing-shapes#"
+
+
+def test_any_other_hand_written_base_is_a_project_as_before(acme):
+    for body in (
+        {"address": ADDRESS, "baseIri": "http://example.org/mine#"},
+        {"baseIri": "http://example.org/mine#"},
+    ):
+        created = _create(name="Invoices", template="empty", **body)
+        assert created["baseIri"] == "http://example.org/mine#"
+        manifest = project_store.manifest(created["id"])
+        assert "naming" not in manifest and "shapesBaseIri" not in manifest and "dataBaseIri" not in manifest
+
+
+def test_the_small_template_puts_its_examples_and_shapes_at_their_own_bases(acme):
+    created = _create(name="Invoices", template="small", address=ADDRESS)
+    model = _model(created["id"])
+    alice = URIRef("https://w3id.org/acme/data/finance/person/alice")
+    assert (alice, RDF.type, OWL.NamedIndividual) in model
+    assert (URIRef("https://w3id.org/acme/data/finance/organization/acme"), RDF.type, OWL.NamedIndividual) in model
+    shapes_text = (project_store.folder(created["id"]) / "shapes.ttl").read_text(encoding="utf-8")
+    shapes = Graph().parse(data=shapes_text, format="turtle")
+    shape = URIRef("https://w3id.org/acme/domain/finance/invoice-shapes#CheckMyModel")
+    assert (shape, RDF.type, URIRef("http://www.w3.org/ns/shacl#NodeShape")) in shapes
+    assert f"@prefix {created['prefix']}sh: <https://w3id.org/acme/domain/finance/invoice-shapes#>" in shapes_text
+
+
+def test_without_a_namespace_the_small_template_is_written_as_before():
+    """The templates gained placeholders; a project without the pattern gets
+    the text it always did, byte for byte (rendered here from the old
+    template's lines)."""
+    created = _create(name="Shop", template="small", baseIri="http://example.org/shop#", prefix="shop")
+    text = (project_store.folder(created["id"]) / "model.ttl").read_text(encoding="utf-8")
+    assert "shop:alice a shop:Person, owl:NamedIndividual ;" in text
+    assert "shop:acme a shop:Organization, owl:NamedIndividual ;" in text
+    assert "{{" not in text
+    shapes = (project_store.folder(created["id"]) / "shapes.ttl").read_text(encoding="utf-8")
+    assert shapes.startswith("@prefix shop: <http://example.org/shop#> .\n@prefix owl:")
+    assert "shop:CheckMyModel a sh:NodeShape ;" in shapes and "{{" not in shapes
+
+
+def test_a_setting_saved_later_changes_no_project(acme):
+    created = _create(name="Invoices", template="empty", address=ADDRESS)
+    settings.update_naming("other")
+    assert project_store.manifest(created["id"])["baseIri"] == "https://w3id.org/acme/domain/finance/invoice-ontology#"
+    settings.update_naming(None)
+    assert project_store.manifest(created["id"])["naming"]["namespace"] == "acme"
+
+
+def test_an_added_shapes_document_declares_the_shapes_prefix(acme):
+    created = _create(name="Invoices", template="empty", address=ADDRESS)
+    assert client.post(f"/api/projects/{created['id']}/documents", json={"role": "shapes"}).status_code == 200
+    text = (project_store.folder(created["id"]) / "shapes.ttl").read_text(encoding="utf-8")
+    assert f"@prefix {created['prefix']}sh: <{created['shapesBaseIri']}> ." in text

@@ -1,0 +1,345 @@
+{
+  "description": "design-checks 5.5.2 (D-124): the built-in design checks, each a SELECT file in this folder pinned by SHA-256. 'level' is the group's (Problem or Worth a look); DC-24 is a Problem in a project made under the address pattern, and DC-27 calls an example address Worth a look. 'sentences' are what each row becomes, by variant, filled by checks.py from the row; 'fix' is the one-sentence fix. 'block' is the part of the Edit form a finding opens at. Change a file and its hash together; test_checks.py fails on a mismatch. The functions ss:own and ss:term (urn:semantic-studio:check:) are checks.py's: a term is the document's own unless it is in a standard vocabulary (5.5.1), and ss:term says a subject is typed as a term, never an individual.",
+  "checks": [
+    {
+      "id": "DC-01",
+      "file": "DC-01.rq",
+      "sha256": "19450e18c968e9df7482b938a007722470c797ec8d91b0ef01bd06bec99ba4b3",
+      "level": "Problem",
+      "heading": "Terms without an English label",
+      "fix": "Add a label in English; other languages are welcome beside it.",
+      "sentences": {
+        "row": "{name} has no English label."
+      },
+      "block": "label"
+    },
+    {
+      "id": "DC-02",
+      "file": "DC-02.rq",
+      "sha256": "1e5ba81c45a9e5edd002962ffa6c3df4a43bcb84adffbe6de3d1d4491f2e2e4e",
+      "level": "Problem",
+      "heading": "Concepts with two preferred labels in one language",
+      "fix": "Keep one; move the other to alternative labels.",
+      "sentences": {
+        "row": "{name} has {count} preferred labels in {language}."
+      },
+      "block": "label"
+    },
+    {
+      "id": "DC-03",
+      "file": "DC-03.rq",
+      "sha256": "a4ab8a1594630cb60beb897437950306890eb7d1c11404b7b16fce8fc0be8b43",
+      "level": "Problem",
+      "heading": "Terms without a definition",
+      "fix": "Write what it is: the kind of thing, then what sets it apart.",
+      "sentences": {
+        "note": "{name} has a note but no definition.",
+        "row": "{name} has no definition."
+      },
+      "block": "definition"
+    },
+    {
+      "id": "DC-04",
+      "file": "DC-04.rq",
+      "sha256": "d8f568156d649baca9b083477ba1dd19a128bc562b1be1698366462d34b5f96f",
+      "level": "Problem",
+      "heading": "Class names not in UpperCamelCase",
+      "fix": "Rename in the Edit form or the Turtle editor.",
+      "sentences": {
+        "row": "The class {local} is named {local}; class names read {suggested}."
+      }
+    },
+    {
+      "id": "DC-05",
+      "file": "DC-05.rq",
+      "sha256": "ec5982215fc105fc0d0a335269f5de4664bcb09d361f3178d11d3b421877ffd7",
+      "level": "Problem",
+      "heading": "Property names not in lowerCamelCase",
+      "fix": "Rename in the Edit form or the Turtle editor.",
+      "sentences": {
+        "row": "The {what} {local} is named {local}; {what} names read {suggested}."
+      }
+    },
+    {
+      "id": "DC-06",
+      "file": "DC-06.rq",
+      "sha256": "165e09b2bd37714387242565c2ebb7f7976b1f274a3bffd09c81deb1bbedbe33",
+      "level": "Problem",
+      "heading": "Names holding a version or a date",
+      "fix": "Names stay the same for ever; versions go in the header.",
+      "sentences": {
+        "date": "{local} has a date in its name.",
+        "version": "{local} has a version in its name."
+      }
+    },
+    {
+      "id": "DC-07",
+      "file": "DC-07.rq",
+      "sha256": "0d9d165bea0fcebe8b932b61d1492ba71812c09f75c61efa10b516980f3e607d",
+      "level": "Worth a look",
+      "heading": "Labels copied from the name",
+      "fix": "Write the label for people: {suggested}.",
+      "sentences": {
+        "row": "{local}'s label reads {label}."
+      },
+      "block": "label"
+    },
+    {
+      "id": "DC-08",
+      "file": "DC-08.rq",
+      "sha256": "633c9ec8238a262b301d103be38045a6e26c7bdc671642ba641c1b8ff5a040f3",
+      "level": "Problem",
+      "heading": "Header details missing",
+      "fix": "Add it in the Edit page's ontology details or the Turtle.",
+      "sentences": {
+        "none": "The document has no ontology header.",
+        "title": "The ontology has no title.",
+        "description": "The ontology has no description.",
+        "creator": "The ontology has no creator.",
+        "version": "The ontology has no version number.",
+        "semver": "The ontology's version {version} is not MAJOR.MINOR.PATCH.",
+        "versionIri": "The ontology has no version IRI."
+      },
+      "block": "header"
+    },
+    {
+      "id": "DC-09",
+      "file": "DC-09.rq",
+      "sha256": "b5c1c333f77139bddadb7fc31297d25e1c87de912c4843cb5381688d356947c9",
+      "level": "Problem",
+      "heading": "Version IRI does not match the version",
+      "fix": "The version IRI is the ontology IRI, a slash and the version.",
+      "sentences": {
+        "row": "The version IRI ends in {tail} but the version is {version}."
+      },
+      "block": "header"
+    },
+    {
+      "id": "DC-10",
+      "file": "DC-10.rq",
+      "sha256": "239f562d2bdd458719e97a63b020e2ea148e698adfbc9b71a6f07d0c9089b73a",
+      "level": "Worth a look",
+      "heading": "Deprecated terms without a replacement",
+      "fix": "Name what replaces it, where something does.",
+      "sentences": {
+        "row": "{name} is deprecated and names no replacement."
+      }
+    },
+    {
+      "id": "DC-11",
+      "file": "DC-11.rq",
+      "sha256": "538d83bb16a89bcbd84f849a0149c3dc65220e89e386ed95f2143936068bef0a",
+      "level": "Worth a look",
+      "heading": "Deprecated terms still in use",
+      "fix": "Move what uses it to the replacement.",
+      "sentences": {
+        "one": "{name} is deprecated but {user} is still one.",
+        "uses": "{name} is deprecated but {user} still uses it.",
+        "under": "{name} is deprecated but {user} is still under it."
+      }
+    },
+    {
+      "id": "DC-12",
+      "file": "DC-12.rq",
+      "sha256": "b6d1287bf8872f96bd8a88bdd3165130835e39186f29346e369c7ed5bac92191",
+      "level": "Problem",
+      "heading": "Loops in a hierarchy",
+      "fix": "Remove one of the links in the loop.",
+      "sentences": {
+        "row": "{names} are in a loop."
+      }
+    },
+    {
+      "id": "DC-13",
+      "file": "DC-13.rq",
+      "sha256": "687e35904cf327526041c61dd8910df8e4ca81cd711d934cdac541b802e403f3",
+      "level": "Worth a look",
+      "heading": "Hierarchies deeper than four levels",
+      "fix": "Keep four levels until a need shows; say why if it has.",
+      "sentences": {
+        "row": "{name} is {depth} levels below the top."
+      }
+    },
+    {
+      "id": "DC-14",
+      "file": "DC-14.rq",
+      "sha256": "66ac10115d5acf532b9c169123490d6ba17d78bfb8a778cd2419ef04135aaa39",
+      "level": "Worth a look",
+      "heading": "Concepts with more than one broader concept",
+      "fix": "Keep one parent unless navigation needs two.",
+      "sentences": {
+        "row": "{name} is under {count} broader concepts."
+      }
+    },
+    {
+      "id": "DC-15",
+      "file": "DC-15.rq",
+      "sha256": "4daa666baf2cf7ba1243352ed8974a3bad62f98230f09eab313f019542a9f3ce",
+      "level": "Problem",
+      "heading": "Related and broader at once",
+      "fix": "Keep the one that is true.",
+      "sentences": {
+        "row": "{name} is both related to and under {other}."
+      }
+    },
+    {
+      "id": "DC-16",
+      "file": "DC-16.rq",
+      "sha256": "41f18a95f5739c0ce7bdb144340b4aa4cebea83925e43c4eb6c154a335764588",
+      "level": "Problem",
+      "heading": "Concepts in no scheme; schemes with no top concept",
+      "fix": "Add it to a scheme.",
+      "sentences": {
+        "concept": "{name} is in no concept scheme.",
+        "scheme": "The scheme {name} has no top concept."
+      }
+    },
+    {
+      "id": "DC-17",
+      "file": "DC-17.rq",
+      "sha256": "90f399db0cf820b1c2c3d0025564b66dbe9aba2984b4b4039be2cb23444e2921",
+      "level": "Worth a look",
+      "heading": "One label on two terms",
+      "fix": "Make the labels say how they differ.",
+      "sentences": {
+        "row": "{count} terms are called {label}: {names}."
+      },
+      "block": "label"
+    },
+    {
+      "id": "DC-18",
+      "file": "DC-18.rq",
+      "sha256": "f3a6da290f33fdcf94a1651fa32f49d7954f8a9c1253498f8446d662ae1920ef",
+      "level": "Worth a look",
+      "heading": "Terms already in a reference ontology",
+      "fix": "Reuse the reference term (Edit offers it) instead of a copy.",
+      "sentences": {
+        "row": "{name} matches {match} in {reference}."
+      }
+    },
+    {
+      "id": "DC-19",
+      "file": "DC-19.rq",
+      "sha256": "76f56b0f31d6c4737932a49f0317af1948279ecb0c6fe3d9f12a8c9493184de2",
+      "level": "Problem",
+      "heading": "Date-times without a time zone",
+      "fix": "Add Z for UTC or an offset such as +01:00.",
+      "sentences": {
+        "row": "{name}'s {property} has no time zone."
+      }
+    },
+    {
+      "id": "DC-20",
+      "file": "DC-20.rq",
+      "sha256": "19f9df6831d8956adb570292481e97e166aceb8ad1db41cf4bb35b4f096db63e",
+      "level": "Problem",
+      "heading": "Numbers written as text",
+      "fix": "Store the number with a number type, and the unit apart.",
+      "sentences": {
+        "row": "{name}'s {property} is written as the text \"{value}\"."
+      }
+    },
+    {
+      "id": "DC-21",
+      "file": "DC-21.rq",
+      "sha256": "58900912b2800230682ab8746e6dc18d05e7e962864e92a35b162cbe89340a3e",
+      "level": "Worth a look",
+      "heading": "The document imports others",
+      "fix": "Reuse terms by their address instead; an import brings everything it holds.",
+      "sentences": {
+        "row": "This ontology imports {imported}."
+      },
+      "block": "header"
+    },
+    {
+      "id": "DC-22",
+      "file": "DC-22.rq",
+      "sha256": "df365f2fc8ae2828136be8f1fe2d99cc458146ae2ddc25f0832c4c4bcd797490",
+      "level": "Worth a look",
+      "heading": "Same-as links",
+      "fix": "Same-as merges two things completely; a close or exact match is weaker and safer.",
+      "sentences": {
+        "row": "{name} is declared the same as {other}."
+      }
+    },
+    {
+      "id": "DC-23",
+      "file": "DC-23.rq",
+      "sha256": "695cc8ac3343b86442fbe884fa493079a3e734c27543ed8f34ea95aa1dea192c",
+      "level": "Worth a look",
+      "heading": "Both a class and a concept",
+      "fix": "Keep two linked terms, one of each.",
+      "sentences": {
+        "row": "{name} is both a class and a concept."
+      }
+    },
+    {
+      "id": "DC-24",
+      "file": "DC-24.rq",
+      "sha256": "9024db5eaad1dfc1bbe2a59d9b049ecce8a02bd6e338da6f9507f6b46467e7bb",
+      "level": "Worth a look",
+      "heading": "Individuals in the ontology's namespace",
+      "fix": "Keep data at a data address: .../data/<data-domain>/<class>/<id>.",
+      "sentences": {
+        "row": "{name} lives in the ontology's namespace."
+      }
+    },
+    {
+      "id": "DC-25",
+      "file": "DC-25.rq",
+      "sha256": "b30acf9f14aff2babb2127dd9e835b76ed047645530b859412e2cd4b01cb8448",
+      "level": "Worth a look",
+      "heading": "Individuals without a label; unused declarations",
+      "fix": "Add an example, or ask whether it is needed.",
+      "sentences": {
+        "unlabelled": "{name} has no label.",
+        "class": "{name} is never used by any individual.",
+        "property": "{name} is never used by any statement."
+      }
+    },
+    {
+      "id": "DC-26",
+      "file": "DC-26.rq",
+      "sha256": "1afeedaf998c2ec73972f235ad5d66d7654057a8646897fdfe58437b96e31965",
+      "level": "Worth a look",
+      "heading": "Addresses off the pattern",
+      "fix": "Follow the address pattern in Settings → Naming; existing published addresses stay, new ones follow it.",
+      "sentences": {
+        "type": "The ontology's address does not end in -ontology, -taxonomy, -vocabulary, -shapes or -mapping.",
+        "layer": "The ontology is not under core/, domain/<domain>/ or app/<application>/.",
+        "term": "{name} is not under the ontology's address followed by #.",
+        "data": "{name} is not at data/<data-domain>/<class>/<id>.",
+        "class": "{name} is at data/…/{found}/ but its most general class is {expected}.",
+        "outside": "{name} is not under {namespace}."
+      }
+    },
+    {
+      "id": "DC-27",
+      "file": "DC-27.rq",
+      "sha256": "093306eb0e49fbe06e3fc40b77bab36ef29c6c7878121ab540dce1df0fcc8913",
+      "level": "Problem",
+      "heading": "Tool-default or example addresses",
+      "fix": "Move to your organization's namespace.",
+      "sentences": {
+        "example": "The ontology uses an example address ({host}).",
+        "default": "The ontology uses an editor's default address.",
+        "termsExample": "Terms under {namespace} use an example address ({host}).",
+        "termsDefault": "Terms under {namespace} use an editor's default address."
+      },
+      "block": "header"
+    },
+    {
+      "id": "DC-28",
+      "file": "DC-28.rq",
+      "sha256": "a6c1d9e23fad5bdd453c3e88516836a920b1c07ef2e65099baa3a0fcd6a89fc4",
+      "level": "Problem",
+      "heading": "Addresses with capitals, underscores or versions in their path",
+      "fix": "Path segments are lowercase words joined by hyphens; versions go in the header.",
+      "sentences": {
+        "capital": "{whose} address has a capital letter in its path ({segment}).",
+        "underscore": "{whose} address has an underscore in its path ({segment}).",
+        "version": "{whose} address has a version in its path ({segment})."
+      }
+    }
+  ]
+}

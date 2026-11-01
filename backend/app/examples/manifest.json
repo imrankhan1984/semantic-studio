@@ -8,7 +8,7 @@
       "format": "turtle",
       "name": "Space Exploration",
       "purpose": "The Solar System, the agencies that explore it and their missions: something to try in every tab.",
-      "sha256": "1edb0156834b1ae9b734b3ffd62dfe082016d5b89520419428aeb1b02abf7d30",
+      "sha256": "ea4154ce00062818fae0b5a5dcfcfb57651047a0229e153291b63882ad334193",
       "questions": [
         {
           "id": "space-missions-to-mars",
@@ -37,7 +37,7 @@
       "format": "turtle",
       "name": "The Lord of the Rings",
       "purpose": "People, places and the links between them, from a story many people already know.",
-      "sha256": "be43b1cf20234e7168e191bc8e2c3226fae61c3244034d4cd4e78ffc2756f0f1",
+      "sha256": "4947dd9087f500fb434248622ddc3931bf68bd461624b2b91f5935f7de5213b2",
       "questions": [
         {
           "id": "middle-earth-ring-bearers",
@@ -70,7 +70,9 @@
       "reuse": {
         "title": "FOAF",
         "ontology": "http://xmlns.com/foaf/0.1/",
-        "prefixes": {"foaf": "http://xmlns.com/foaf/0.1/"},
+        "prefixes": {
+          "foaf": "http://xmlns.com/foaf/0.1/"
+        },
         "purpose": "people, organizations and their links",
         "sentence": "It reuses FOAF for people and organizations."
       },
@@ -100,7 +102,9 @@
       "reuse": {
         "title": "QUDT",
         "ontology": "http://qudt.org/3.5.2/qudt-all",
-        "prefixes": {"qudt": "http://qudt.org/schema/qudt/"},
+        "prefixes": {
+          "qudt": "http://qudt.org/schema/qudt/"
+        },
         "purpose": "quantities, units and dimensions",
         "sentence": "It reuses QUDT for quantities and units."
       }

@@ -977,6 +977,21 @@ export interface ProjectSummary {
   // The reference ontologies chosen at creation (reference-ontologies 5.4),
   // a record only: what puts one in use is its prefix in the file.
   references?: string[];
+  // The address pattern the project was made under (design-checks 5.2):
+  // absent or null for a project made before it or with its own base.
+  naming?: ProjectNaming | null;
+  shapesBaseIri?: string | null;
+  dataBaseIri?: string | null;
+}
+
+/** New project's Address group as the manifest records it (5.2). */
+export interface ProjectNaming {
+  namespace: string;
+  layer: "core" | "domain" | "app";
+  area: string;
+  subject: string;
+  type: "ontology" | "taxonomy" | "vocabulary";
+  dataDomain: string;
 }
 
 /** SetClassType's dry run (5.7): what the class becomes, what goes with it

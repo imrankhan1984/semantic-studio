@@ -1,0 +1,18 @@
+# Concepts under more than one broader concept.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX dc: <http://purl.org/dc/elements/1.1/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ss: <urn:semantic-studio:check:>
+SELECT ?iri (COUNT(DISTINCT ?broader) AS ?count) WHERE {
+  ?iri a skos:Concept .
+  { ?iri skos:broader ?broader . } UNION { ?broader skos:narrower ?iri . }
+  FILTER(isIRI(?iri) && ss:own(?iri))
+}
+GROUP BY ?iri
+HAVING (COUNT(DISTINCT ?broader) > 1)
+ORDER BY ?iri

@@ -58,6 +58,9 @@ INPUTS / INPUT SOURCES (props)
       bar's colours (portal-foundations 5.3).
     - questions: a bundled example's ready-made questions, first in Try one
       of these; a click opens one as a text query and runs it (5.4).
+    - incoming / onIncomingTaken: a design check's text, opened once as a
+      new unsaved text query under the check's name, not run
+      (design-checks 5.4, *Open as a query*).
     - onResults / resultsOnGraph / onFrameResults / resultsNote: the results
       on the graph (query-page-rework 5.2): each change reported, Frame on
       graph while any are drawn, and the header's sentence for the undrawn.
@@ -143,6 +146,12 @@ interface Props {
   /** A bundled example's ready-made questions (query-page-rework 5.4);
    *  App hands them over only for an example, told by its record. */
   questions?: ExampleQuestion[];
+  /** A text handed over to open as a new unsaved query, once per token:
+   *  a design check's *Open as a query* (design-checks 5.4). */
+  incoming?: { text: string; name: string; token: number } | null;
+  /** Called once the incoming text is open (or declined), so it is not
+   *  opened again when the panel next mounts. */
+  onIncomingTaken?: () => void;
 }
 
 /** One of the toolbar's four switches: a toggle button that says whether it
@@ -221,6 +230,8 @@ export default function QueryPanel({
   onFrameResults,
   resultsNote = null,
   questions = NO_QUESTIONS,
+  incoming = null,
+  onIncomingTaken,
 }: Props) {
   const {
     schema,
@@ -619,6 +630,19 @@ export default function QueryPanel({
     startText(question.text, { name: question.title });
     void runText(question.text);
   };
+
+  // A design check opened as a query: text, its name the check's, not run
+  // (the person asked to read it; Run gives the same rows as the report).
+  // Unsaved typed text is asked about first, as a question's opening is.
+  // Keyed on the token, and App drops the text once taken, so a remount
+  // never opens it twice.
+  useEffect(() => {
+    if (!incoming) return;
+    if (!(inText && !mayDiscard())) startText(incoming.text, { name: incoming.name });
+    onIncomingTaken?.();
+    // Keyed on the token alone: the panel's own state is read as it stands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incoming?.token]);
 
   const openEmbedded = (query: EmbeddedQuery) => {
     if (!mayDiscard()) return;

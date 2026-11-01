@@ -1808,3 +1808,69 @@ def test_set_class_type_to_rdfs_is_refused_while_another_class_s_rule_names_it(k
         "form": "every", "property": EX + "manages", "kind": "atLeast", "filler": EX + "Team", "n": 1}})
     ok(pid, "SetClassType", **{"class": EX + "Team", "type": "rdfs"})
     assert _types(pid, "Team") == {RDFS.Class}
+
+
+# --- shapes and examples at their own addresses (design-checks 5.3, AC-16) ---------
+
+from app import settings as _settings  # noqa: E402
+
+INV = "https://w3id.org/acme/domain/finance/invoice-ontology#"
+
+
+@pytest.fixture
+def pattern():
+    """An empty project made under the pattern, with Invoice and Overdue
+    invoice below it, open."""
+    _settings.update_naming("acme")
+    try:
+        response = client.post("/api/projects", json={
+            "name": "Invoices", "template": "empty", "prefix": "inv",
+            "address": {"layer": "domain", "area": "finance", "subject": "invoice",
+                        "type": "ontology", "dataDomain": "finance"},
+        })
+    finally:
+        _settings.update_naming(None)
+    assert response.status_code == 200, response.text
+    project = response.json()["id"]
+    assert client.post(f"/api/projects/{project}/open").status_code == 200
+    ok(project, "CreateClass", label="Invoice")
+    ok(project, "CreateClass", label="Overdue invoice", parent=INV + "Invoice")
+    return project
+
+
+def test_ac16_an_example_mints_at_the_data_base_under_the_most_general_class(pattern):
+    made = ok(pattern, "CreateExample", **{"class": INV + "OverdueInvoice", "label": "INV/10442"})
+    assert made["created"] == "https://w3id.org/acme/data/finance/invoice/inv-10442"
+    # A taken address gets -2, then -3.
+    again = ok(pattern, "CreateExample", **{"class": INV + "Invoice", "label": "inv 10442"})
+    assert again["created"] == "https://w3id.org/acme/data/finance/invoice/inv-10442-2"
+    third = ok(pattern, "CreateExample", **{"class": INV + "Invoice", "label": "INV-10442"})
+    assert third["created"] == "https://w3id.org/acme/data/finance/invoice/inv-10442-3"
+
+
+def test_ac16_a_shape_mints_at_the_shapes_base(pattern):
+    made = shapes_ok(pattern, "CreateShape", target=INV + "Invoice", name="Invoice shape")
+    assert made["created"] == "https://w3id.org/acme/domain/finance/invoice-shapes#InvoiceShape"
+    assert any(
+        str(ns) == "https://w3id.org/acme/domain/finance/invoice-shapes#"
+        for _, ns in editing_service.document(pattern, "shapes").graph.namespaces()
+    )
+
+
+def test_an_example_given_its_own_iri_keeps_it(pattern):
+    made = ok(pattern, "CreateExample", **{"class": INV + "Invoice", "label": "X", "iri": "http://example.org/mine"})
+    assert made["created"] == "http://example.org/mine"
+
+
+def test_a_reclassified_example_keeps_its_address(pattern):
+    made = ok(pattern, "CreateExample", **{"class": INV + "Invoice", "label": "INV 1"})["created"]
+    ok(pattern, "CreateClass", label="Document")
+    ok(pattern, "AddSubClassOf", child=INV + "Invoice", parent=INV + "Document")
+    assert made == "https://w3id.org/acme/data/finance/invoice/inv-1"
+    assert (URIRef(made), RDF.type, URIRef(INV + "Invoice")) in doc(pattern).graph
+
+
+def test_ac16_without_the_pattern_both_mint_at_the_model_base_as_before(pid):
+    made = ok(pid, "CreateExample", **{"class": EX + "Person", "label": "Bob"})
+    assert made["created"] == EX + "bob"
+    assert shapes_ok(pid, "CreateShape", target="shop:Organization", name="Invoice shape")["created"] == EX + "InvoiceShape"

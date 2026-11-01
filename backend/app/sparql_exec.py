@@ -37,7 +37,10 @@ INPUTS / INPUT SOURCES
     - Optional max_rows / timeout overrides (tests use small values).
 
 EXPECTED OUTPUT
-    - A JSON-ready dict: {"vars", "rows", "rowCount", "truncated", "durationMs"}
+    - A JSON-ready dict: {"vars", "rows", "rowCount", "truncated", "durationMs"},
+      and "total" -- every row the query has, counted past the cap without
+      being kept -- when the caller asks (the design checks' true totals,
+      design-checks 5.5.3)
       where each cell is a serialized term (uri/literal/bnode) or None for an
       unbound OPTIONAL variable, plus "services" -- one entry per endpoint
       called -- when the query has SERVICE blocks.
@@ -303,6 +306,24 @@ def _prepare(query: str):
         raise QueryError(str(exc)) from exc
 
 
+# Parsed queries kept by their text, for callers that run the same fixed
+# texts again (reuse_prepared). Only a query with no SERVICE plan is kept.
+_prepared_cache: dict[str, object] = {}
+_prepared_lock = threading.Lock()
+
+
+def _prepared_for(query: str):
+    with _prepared_lock:
+        held = _prepared_cache.get(query)
+    if held is not None:
+        return held, None
+    prepared, plan = _prepare(query)
+    if plan is None:
+        with _prepared_lock:
+            _prepared_cache[query] = prepared
+    return prepared, plan
+
+
 def prepare_select(query: str):
     """Parse ``query`` and reject anything that is not a SELECT this
     application may run. Returns the prepared query; raises QueryError.
@@ -356,6 +377,8 @@ def execute_select(
     timeout: Optional[float] = None,
     key: Optional[str] = None,
     reading: Callable[[], contextlib.AbstractContextManager] = contextlib.nullcontext,
+    count_all: bool = False,
+    reuse_prepared: bool = False,
 ) -> dict:
     """Run a SELECT query and return JSON-serializable results.
 
@@ -364,7 +387,13 @@ def execute_select(
     cell. ``key`` names the ontology for the one-abandoned-query rule;
     ``reading`` is its read lock, which the worker takes itself, so a caller
     must not hold it. The timeout is read when called, so a test can lower
-    the module's default.
+    the module's default. ``count_all`` counts the rows past the cap
+    without keeping them, under the same timeout and stop, so a caller can
+    say the true total (house rule 6); the cap on what is kept is the same.
+    ``reuse_prepared`` keeps the parsed query by its text for the next call:
+    for the design checks' fixed, pinned queries, whose parse was most of
+    their time. The text still passes the gate, once; a query with a
+    SERVICE block is never kept, its plan being per request.
     """
     if timeout is None:
         timeout = DEFAULT_TIMEOUT_SECONDS
@@ -375,7 +404,7 @@ def execute_select(
                 raise QueryBusy(BUSY_DETAIL)
             _abandoned.pop(key, None)
     # Validate/parse first so a bad query fails before we spin up a thread.
-    prepared, plan = _prepare(query)
+    prepared, plan = _prepared_for(query) if reuse_prepared else _prepare(query)
     # Every SERVICE host is asked about now, all in one 409, before a row is
     # evaluated or a byte sent.
     if plan is not None:
@@ -401,6 +430,7 @@ def execute_select(
         variables = [str(var) for var in (result.vars or [])]
         rows = []
         hit_cap = False
+        total = 0
         # rdflib yields a SELECT's rows lazily, so the flag ends a query the
         # stop could not reach (in C, or held round a SERVICE call) within
         # one row; part of the rows is no answer.
@@ -410,14 +440,18 @@ def execute_select(
             # Stop collecting once we reach the server cap; flag truncation.
             if len(rows) >= max_rows:
                 hit_cap = True
-                break
+                if not count_all:
+                    break
+                total += 1
+                continue
             rows.append(tuple(row))
+        total += len(rows)
         # Serialized under the same hold of the read lock as the query, so a
         # row's labels are of the revision it was computed on. The cache
         # dedupes label lookups across rows.
         cache: dict[str, dict] = {}
         serialized = [[_term_json(graph, term, cache) for term in row] for row in rows]
-        return variables, serialized, hit_cap
+        return variables, serialized, hit_cap, total
 
     # The worker holds the read lock itself, so a stopped query lets go of it
     # in its own cleanup rather than reading on after the request let go.
@@ -500,7 +534,7 @@ def execute_select(
     if isinstance(answer, BaseException):
         # Any other evaluation error becomes a QueryError (HTTP 400).
         raise QueryError(f"The query could not be evaluated: {answer}") from answer
-    variables, serialized, truncated = answer
+    variables, serialized, truncated, total = answer
     response = {
         "vars": variables,
         "rows": serialized,
@@ -508,6 +542,8 @@ def execute_select(
         "truncated": truncated,
         "durationMs": round((time.perf_counter() - started) * 1000, 1),
     }
+    if count_all:
+        response["total"] = total
     if run_state is not None:
         # Returned, never stored: the server keeps no SERVICE result (D-029).
         response["services"] = run_state.report

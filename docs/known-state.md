@@ -2771,3 +2771,94 @@ EXPECTED OUTPUT
   standard library zip, `.`, `lib` and `..` and no `import site`: no
   `PYTHONPATH`, no user site folder, and none of Python's own environment
   variables reach it.
+
+- **Design checks** (2026-11-01, spec `design-checks` v1.1 Stage A, backlog
+  V-1, D-124 and D-125). Settings → Naming, New project's Address group,
+  shapes and examples at their own bases, and the Checks report in View.
+
+  **A check is a pinned SELECT run through `prepare_select`.** Each of the
+  28 is a `.rq` file in `backend/app/checks/`, pinned by SHA-256 in
+  `checks/manifest.json` and `binary` in `.gitattributes`; a file whose
+  bytes moved is refused, never run. The report runs every query through
+  `sparql_exec.execute_select`, its row cap and its wall-clock timeout, one
+  after another on a worker thread; `test_checks.py` spies on the gate and
+  sees every query but DC-13's (depth, counted in Python from the
+  hierarchy's edges, as 5.5.3 says). Two options were added to
+  `execute_select`, both off unless asked: `count_all` counts rows past the
+  cap without keeping them, for the true total, and `reuse_prepared` keeps
+  a parsed query by its text, as the checks' parse was 558 ms of a 2 s run.
+  A query with a SERVICE block is never kept.
+
+  **Only own terms are checked, and the standard list is in `checks.py`
+  alone.** The queries call `ss:own(?iri)` and `ss:term(?iri)`
+  (`urn:semantic-studio:check:`), two read-only functions `checks.py`
+  registers with rdflib. A term is own unless its IRI is in
+  `STANDARD_NAMESPACES` -- except the vocabulary whose ontology the
+  document is (FOAF owns FOAF) -- and, for a project, unless it is outside
+  all of its bases: model, shapes and data. The data base was found in the
+  browser: a Small project made under the pattern counted no individuals.
+  Opened in Query, with no run, the function works its rule out from the
+  graph queried, so the same text gives the same rows. `ss:term` exists for
+  speed: a `FILTER NOT EXISTS` on the subject's types ran once per row, 6.8
+  s over QUDT's 10,145 individuals; `MINUS` was slower still.
+  `test_checks.py` scans `app/` for a second copy of the list and the
+  `.rq` files for any namespace from it.
+
+  **The report runs only when Checks is chosen.** `SourceView` mounts
+  `ChecksView` only on the third switch; `SourceView.test.tsx` counts zero
+  requests to `/checks` across Original and Formatted Turtle. A project's
+  View is its Turtle editor, so App holds a Turtle / Checks switch above
+  it, the editor kept mounted and `hidden`. The editor is a full-pane
+  overlay (`.source-view`, absolute): inside `.project-view` it is made a
+  flex child, or it covers the switch (found in the browser).
+
+  **rdflib's `&&` evaluates every operand on every row.** A FILTER's order
+  buys nothing; a nested group (`{ ?s ?p ?o FILTER(cheap) } FILTER(rest)`)
+  is what cuts rows first, and a one-row subquery asks a document-wide
+  question once rather than per row (DC-25's "holds any individual").
+
+  **A cap makes Section 10's budgets met, not quietly missed (D-125,
+  v1.1).** Twenty-eight SELECTs on rdflib's evaluator never fit 3 s over a
+  document the size of QUDT (132,166 statements, about 15 s here; DC-19 and
+  DC-20 scan every statement). So the report runs only at or under
+  `CHECKS_MAX_STATEMENTS`, a fixed 10,000 in `checks.py` -- not a setting.
+  The value was measured: a worst-case document of 9,966 statements, every
+  individual carrying a date-time and a number-as-text, runs every check in
+  about 1.9 s, and the 3 s line is crossed near 15,000; 10,000 sits below it
+  with room. Above the cap `checks.run` reads only `len(graph)` -- no query,
+  no measures scan -- and returns `overCap` (the count and the cap), `measures`
+  null, and every check that would be listed with no findings, so each is
+  still offered as *Open as a query*. In View this is one sentence with both
+  numbers over that list. The `[perf]` tests now hold Space Exploration to
+  500 ms (measured 187 ms) and a 9,966-statement document to 3 s (measured
+  1.9 s); the count-based `test_ac12a_over_the_cap` proves QUDT runs no query,
+  and stays in the blocking job because it is a count, not a timing.
+
+  **One address rule, tested with one table.** `naming.py` and
+  `frontend/src/naming/address.ts` build and read every address of 5.1;
+  `frontend/src/naming/address.table.json` is read by `test_naming.py` and
+  `address.test.ts`, as the grammar table is (X-12). New project, minting
+  and DC-26 use it; DC-28 reads the path with it. The one Avoid row no
+  rule sees is a name in another language (FactureClient): the table says
+  `none`, and the tests hold it to that.
+
+  **The namespace never renames an existing IRI.** It is read at each New
+  project and nowhere else; a project records the parts it was made with
+  (`naming`, `shapesBaseIri`, `dataBaseIri`) and keeps them when the
+  setting changes. `settings.json` holds it beside the limits; each
+  section's save writes the other as it stands.
+
+  **Shapes and examples mint at their own base only when the manifest
+  names it.** `editing.Context.base_for(role)`; an example's address is
+  `dataBaseIri` + the most general own class's slug + the name's slug,
+  `-2`, `-3` after a taken one; a snapshot's rows take `dataBaseIri` +
+  class. Without the fields nothing changes: the Small template, which
+  gained `{{data:…}}`, `{{shape}}` and `{{shapesDecl}}`, renders byte for
+  byte as it did (checked against main's template in the build).
+
+  **The bundled examples now pass every Problem.** AC-4 says Space
+  Exploration and The Lord of the Rings report none; both had version
+  `1.0` and no version IRI (DC-08), and Middle-earth's ten properties had
+  no definition (DC-03). The files were brought to `1.0.0` with a version
+  IRI and a one-line definition each, their hashes moved with them, which
+  replaces them in a library under their fixed ids.

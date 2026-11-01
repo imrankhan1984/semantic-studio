@@ -3764,6 +3764,233 @@ button.legend-row:hover {
   margin-top: 6px;
 }
 
+/* The Checks report (design-checks 5.4): measures, then one <details> per
+   check. Each level is a word and a mark; nothing rests on colour. */
+.checks-view {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 16px;
+  overflow: auto;
+}
+
+.checks-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.checks-title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.checks-status:empty {
+  margin: 0;
+}
+
+.checks-summary {
+  margin: 8px 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+/* Above the cap (design-checks 5.10, D-125): the one sentence, then every
+   check as a plain row with Open as a query. */
+.checks-over-cap {
+  margin: 8px 0;
+  font-size: var(--fs-md);
+}
+
+.checks-over-cap-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: var(--fs-sm);
+}
+
+.checks-over-cap-list li {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+
+.checks-measures h4,
+.checks-group-heading {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.checks-measures ul {
+  margin: 4px 0 12px;
+  padding-left: 18px;
+  font-size: var(--fs-sm);
+}
+
+.checks-group {
+  border-top: 1px solid var(--border);
+  padding: 6px 0;
+}
+
+.checks-group > summary {
+  cursor: pointer;
+}
+
+.checks-group > summary .checks-group-heading {
+  display: inline;
+}
+
+.checks-group-body {
+  padding: 4px 0 4px 18px;
+}
+
+.checks-findings {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: var(--fs-sm);
+}
+
+.checks-findings li {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+/* A project's View: the switch above the Turtle editor or the report. The
+   pane is the overlay .source-view is elsewhere; the editor inside it is a
+   flex child, never a second overlay over the switch (browser pass). */
+.project-view {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.project-view-body:not([hidden]) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.project-view .source-view {
+  position: relative;
+  inset: auto;
+  flex: 1;
+}
+
+.project-view-switch {
+  margin: 8px 16px 0;
+  align-self: flex-start;
+}
+
+/* New project's Address group (design-checks 5.2): the layers on one line,
+   the three addresses under the parts. */
+.new-project-address {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.new-project-layers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+}
+
+.new-project-layer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.new-project-lines {
+  margin-top: 8px;
+}
+
+/* Settings → Naming (design-checks 5.1): the fixed https://w3id.org/ before
+   the field, the pattern's lines, and the examples' two tables, whose long
+   addresses wrap rather than widening the dialog. */
+.settings-naming p {
+  margin: 4px 0 0;
+}
+
+.naming-field {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.naming-prefix {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.naming-input {
+  width: 16em;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.naming-pattern {
+  margin-top: 16px;
+}
+
+.naming-pattern h3 {
+  margin: 0 0 6px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.naming-lines {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
+.naming-lines > div {
+  display: contents;
+}
+
+.naming-lines dt {
+  color: var(--text-dim);
+}
+
+.naming-lines dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.naming-examples {
+  margin-top: 8px;
+}
+
+.naming-table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: var(--fs-xs);
+}
+
+.naming-table caption {
+  text-align: left;
+  font-weight: 600;
+}
+
+.naming-table th,
+.naming-table td {
+  padding: 3px 6px 3px 0;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
 /* A SERVICE question shows query text, which is the whole point of it, so the
    dialog widens and the text takes the full row under its label. In the
    480px dialog's value column a box showed 319px of a 476px line, and what

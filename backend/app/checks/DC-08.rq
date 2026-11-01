@@ -1,0 +1,21 @@
+# Each ontology header with the details a review asks for: title, description, creator, version and version IRI.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX dc: <http://purl.org/dc/elements/1.1/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ss: <urn:semantic-studio:check:>
+SELECT ?iri (SAMPLE(?t) AS ?title) (SAMPLE(?d) AS ?description) (SAMPLE(?c) AS ?creator) (SAMPLE(?v) AS ?version) (SAMPLE(?vi) AS ?versionIri) WHERE {
+  ?iri a owl:Ontology .
+  FILTER(isIRI(?iri))
+  OPTIONAL { VALUES ?tp { dcterms:title dc:title rdfs:label } ?iri ?tp ?t . }
+  OPTIONAL { VALUES ?dp { dcterms:description dc:description rdfs:comment } ?iri ?dp ?d . }
+  OPTIONAL { VALUES ?cp { dcterms:creator dc:creator } ?iri ?cp ?c . }
+  OPTIONAL { ?iri owl:versionInfo ?v . }
+  OPTIONAL { ?iri owl:versionIRI ?vi . }
+}
+GROUP BY ?iri
+ORDER BY ?iri

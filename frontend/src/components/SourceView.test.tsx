@@ -39,15 +39,15 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SourceView from "./SourceView";
 import { findTargetLine, targetMissingMessage } from "../sourceTarget";
 import type { OntologySource } from "../types";
 import { limitMs } from "../budget";
 
-const { getSource } = vi.hoisted(() => ({ getSource: vi.fn() }));
-vi.mock("../api", () => ({ getSource }));
+const { getSource, getChecks, listChecks } = vi.hoisted(() => ({ getSource: vi.fn(), getChecks: vi.fn(), listChecks: vi.fn() }));
+vi.mock("../api", () => ({ getSource, getChecks, listChecks }));
 
 /** A small pretty-printed document, with the entity written in prefixed form. */
 const PRETTY = [
@@ -404,5 +404,68 @@ describe("SourceView with nothing open (wording 5.1, AC-1)", () => {
     const hint = document.querySelector(".source-view.empty .hint")!;
     expect(hint.textContent).toBe("Open an ontology from Home, then come back to read its source here.");
     expect(getSource).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("SourceView's Checks switch (design-checks 5.4, AC-12)", () => {
+  const CHECKS = { name: "FIBO", revision: 0, onOpen: vi.fn(), onOpenQuery: vi.fn() };
+  const REPORT = {
+    revision: 0, generation: 0, ran_ms: 10, empty: false, emptySentence: null,
+    measures: {
+      counts: { classes: 1, properties: 0, concepts: 0, individuals: 0 },
+      hierarchy: { depth: 1, widest: 0, tops: 1 },
+      documentation: { documented: 1, terms: 1 },
+      reuse: { namespaces: 0, reused: 0, used: 1 },
+      level: { step: 2, of: 6, name: "Defined terms", next: "Put one term under another." },
+    },
+    groups: [{
+      id: "DC-08", level: "Problem", heading: "Header details missing", fix: "Add it.", total: 1,
+      findings: [{ iri: "http://example.org/onto", sentence: "The ontology has no creator.", block: "header" }],
+    }],
+    skipped: [], notes: [], namespace: null,
+  };
+
+  beforeEach(() => {
+    getChecks.mockReset().mockResolvedValue(REPORT);
+  });
+
+  it("asks for no checks while Original or Formatted Turtle shows, then once when Checks is chosen", async () => {
+    render(<SourceView ontologyId="fibo" checks={CHECKS} />);
+    await settle();
+    const button = (name: string) => screen.getByRole("button", { name });
+    fireEvent.click(button("Formatted Turtle"));
+    await settle();
+    fireEvent.click(button("Original"));
+    await settle();
+    expect(getChecks).not.toHaveBeenCalled();
+    expect(button("Original").getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(button("Checks"));
+    await settle();
+    expect(getChecks).toHaveBeenCalledTimes(1);
+    expect(button("Checks").getAttribute("aria-pressed")).toBe("true");
+    expect(button("Original").getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByText("The ontology has no creator.")).toBeTruthy();
+    // The text is not shown under the report.
+    expect(document.querySelector(".source-scroll")).toBeNull();
+  });
+
+  it("offers no Checks without the checks prop", async () => {
+    render(<SourceView ontologyId="fibo" />);
+    await settle();
+    expect(screen.queryByRole("button", { name: "Checks" })).toBeNull();
+  });
+
+  it("a library header finding opens Original at the ontology's line (5.9)", async () => {
+    getSource.mockResolvedValue(sourceOf("@prefix ex: <http://example.org/onto#> .\n\n<http://example.org/onto> a owl:Ontology ."));
+    render(<SourceView ontologyId="fibo" checks={CHECKS} />);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Checks" }));
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Open: The ontology has no creator." }));
+    await settle();
+    expect(CHECKS.onOpen).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Original" }).getAttribute("aria-pressed")).toBe("true");
+    expect(document.querySelector(".source-line.target")?.textContent).toContain("owl:Ontology");
   });
 });
