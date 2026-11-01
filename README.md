@@ -62,6 +62,20 @@ them by clicking, without writing SPARQL by hand.
 - **Visual SPARQL query builder** (*Query* mode): build queries by clicking
   the graph — no SPARQL typing required. See
   [Building queries visually](#building-queries-visually).
+- **Design checks** (*View*, the *Checks* switch beside Original and
+  Formatted Turtle): 28 checks of good design practice on the document's own
+  terms — missing labels and definitions, names in the wrong case, a header
+  without a version, loops and deep hierarchies, concepts in no scheme,
+  numbers written as text, addresses off your organization's pattern — worst
+  first, each finding a sentence with *open* to the entity and each check
+  *Open as a query*, with the measures a review asks for and the level the
+  model reaches. They run on this computer, only when you choose *Checks*.
+- **Your organization's namespace** (**Settings → Naming**): set
+  `https://w3id.org/<your namespace>/`, and New project proposes addresses
+  by one pattern (`core/`, `domain/<domain>/` or `app/<application>/`, then
+  `<subject>-<type>`; data at `data/<data-domain>/<class>/<id>`), with its
+  shapes and examples at their own addresses. Nothing already written is
+  renamed; without a namespace projects start under `example.org` as before.
 - **About panel** (header, after *Query*): what the application is, who made
   it, a link to this repository for source and issues, the MIT licence and its
   no-warranty notice, and the promise that ontologies you load stay on your

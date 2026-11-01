@@ -56,8 +56,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1755 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 1945 tests, vitest
+cd backend  && python -m pytest tests    # 1949 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 2030 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -69,8 +69,8 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Thirty-nine backend tests carry
-`@pytest.mark.perf`; eleven frontend tests have `[budget]` in their title. CI runs
+**Timing budgets are separated, not deleted.** Forty-one backend tests carry
+`@pytest.mark.perf`; twelve frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
 `network` again. Count-based budgets (renders, calls) are not timings and stay
@@ -217,7 +217,15 @@ backend/app/
   provenance.py      Activity records for exports
   settings.py        The three limits Settings → Limits changes (D-120): every
                      read at call time, the ranges, an environment variable
-                     winning, settings.json in the data folder
+                     winning, settings.json in the data folder; and its
+                     second section, Settings → Naming's namespace (D-124)
+  naming.py          The one address rule (D-124): artifact, term and data
+                     addresses under https://w3id.org/<namespace>/, built
+                     from their parts and read back; frontend naming/ the same
+  checks.py          The design checks (D-124): the own-term rule and the one
+                     standard-vocabulary list, ss:own and ss:term, the runner,
+                     the sentences, the measures and the level
+  checks/            The 28 pinned SELECT files and manifest.json
   routers/           HTTP layer only; the real work lives in the modules above
 
 frontend/src/
@@ -256,6 +264,11 @@ frontend/src/
                      and statementCount, the one place *statements* is said
   limitWords.ts      Settings → Limits' words and its one rule: which typed
                      text is a value, and what a Save sends (D-120)
+  naming/            The address rule (address.ts, with address.table.json,
+                     the one table both sides test) and Settings → Naming's
+                     words (words.ts) (D-124)
+  checks/            Pure Checks report logic: the groups' order, the
+                     measures' words, staleness, where a finding leads
   connectionWords.ts Settings → Network's Connection words: the system proxy,
                      the trust, the file, and what a Save sends (D-123)
   referenceWords.ts  The Turtle editor's line for a reference term it does
@@ -273,7 +286,7 @@ release/             The Windows release: the start file, README.txt,
 docs/known-state.md  Why each load-bearing rule below exists
 ```
 
-`sparql/`, `explore/`, `home/`, `projects/`, `modeling/`, `reasoning/` and `explain/` are the same idea seven times: logic a
+`sparql/`, `explore/`, `home/`, `projects/`, `modeling/`, `reasoning/`, `explain/`, `naming/` and `checks/` are the same idea nine times: logic a
 component needs, kept out of the component so it can be tested without
 rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts`, `connectionWords.ts`, `statusWords.ts`, `limitWords.ts`, `referenceWords.ts`,
 `links.ts` and `catalogue.ts` are the same idea for one function and one constant. Prefer this
@@ -481,6 +494,16 @@ leaves one behind.
 **Query page**
 - Only an explicit run (Execute, Run, Ctrl+Enter, a starter, a question) moves the camera to the results or draws hidden ones; an Auto re-run moves the rings only (D-118). [graph shows the answers]
 - A ready-made question is told by its example's record (`source === "example"`, `example`), never by its name; questions are attached when listed, never stored. [graph shows the answers]
+
+**Design checks and naming**
+- A check is a pinned SELECT in `checks/`, run through `execute_select` (`prepare_select`, row cap, timeout); a file whose hash moved is refused (D-124). [Design checks]
+- Only own terms are checked: `STANDARD_NAMESPACES` in `checks.py` alone, asked through `ss:own`; a project owns its model, shapes and data bases; `test_checks.py` scans for another list. [Design checks]
+- The report runs only when Checks is chosen: `ChecksView` mounts on the switch, never before; zero `/checks` requests otherwise. [Design checks]
+- A FILTER's order buys nothing in rdflib; a nested group or a one-row subquery is what cuts rows first. [Design checks]
+- One address rule: `naming.py` and `naming/address.ts`, tested with one table (`naming/address.table.json`). [Design checks]
+- The namespace never renames an existing IRI: read at each New project only; a project keeps the parts it was made with. [Design checks]
+- Shapes and examples mint at their own base only when the manifest names `shapesBaseIri` and `dataBaseIri`; without them the templates render byte for byte as before. [Design checks]
+- A project's View is `.project-view`, the overlay; the Turtle editor inside it is a flex child, never a second overlay over the switch. [Design checks]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]
