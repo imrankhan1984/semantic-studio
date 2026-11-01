@@ -497,6 +497,7 @@ leaves one behind.
 
 **Design checks and naming**
 - A check is a pinned SELECT in `checks/`, run through `execute_select` (`prepare_select`, row cap, timeout); a file whose hash moved is refused (D-124). [Design checks]
+- Above `CHECKS_MAX_STATEMENTS` (10,000, a fixed constant in `checks.py`, not a setting) the report runs no query and scans no statement: `checks.run` returns `overCap {statements, cap}` and null measures, every check still listed for *Open as a query*; the count-based `test_ac12a_over_the_cap` proves QUDT runs none (D-125). [Design checks]
 - Only own terms are checked: `STANDARD_NAMESPACES` in `checks.py` alone, asked through `ss:own`; a project owns its model, shapes and data bases; `test_checks.py` scans for another list. [Design checks]
 - The report runs only when Checks is chosen: `ChecksView` mounts on the switch, never before; zero `/checks` requests otherwise. [Design checks]
 - A FILTER's order buys nothing in rdflib; a nested group or a one-row subquery is what cuts rows first. [Design checks]
