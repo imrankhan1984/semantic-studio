@@ -1,0 +1,15 @@
+# Numbers written as text: a plain or English value that is a number, with or without a unit after it.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX dc: <http://purl.org/dc/elements/1.1/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ss: <urn:semantic-studio:check:>
+SELECT ?iri ?property ?value WHERE {
+  { ?iri ?property ?value . FILTER(REGEX(STR(?value), "^[-+]?[0-9]+([.,][0-9]+)*( ?[A-Za-z%°]+)?$")) }
+  FILTER(isLiteral(?value) && (DATATYPE(?value) = xsd:string || LANG(?value) != "") && ?property NOT IN (rdfs:label, skos:prefLabel, skos:altLabel, skos:hiddenLabel, skos:notation, dcterms:identifier, dc:identifier, owl:versionInfo, rdfs:comment, skos:definition, dcterms:title, dcterms:description) && isIRI(?iri) && ss:own(?iri))
+}
+ORDER BY ?iri ?property

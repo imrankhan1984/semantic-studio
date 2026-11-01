@@ -5,7 +5,8 @@ FILE: frontend/src/components/SourceView.tsx
 
 SUMMARY
     The View tab. Shows the ontology's source text with line numbers and syntax
-    highlighting, an Original / Formatted-Turtle toggle, find-in-file with match
+    highlighting, an Original / Formatted Turtle / Checks switch (the third is
+    the design checks' report, design-checks 5.4), find-in-file with match
     navigation, copy, safe handling of very large files, and a way in from a
     query result: given a target entity it scrolls to and highlights the first
     line that mentions it.
@@ -19,6 +20,11 @@ BASIC IDEA
     rendered window) and scrolls the active match into view. The correct
     highlighter (Turtle vs XML) is chosen from the format.
 
+    Checks shows ChecksView in place of the text, mounted only once Checks is
+    chosen: the report runs then and not before, so choosing Original or
+    Formatted Turtle never asks for it (AC-12). A library header finding's
+    *open* comes back here, to Original at the owl:Ontology line.
+
     A `target` is the same idea driven from outside: "View in source" on a
     result row hands over one entity, this locates it with findTargetLine and
     reports back through onTargetResolved so App can announce a miss. It is
@@ -30,6 +36,8 @@ INPUTS / INPUT SOURCES (props)
     - ontologyId: which ontology's source to show (null = empty state).
     - target: an entity to scroll to and highlight, or null.
     - onTargetResolved: called with the outcome, so App can say what happened.
+    - checks: what the Checks report needs (the name, the revision, and
+      where open and Open as a query go); without it there is no Checks.
     Plus getSource (the API) and highlighterFor (the tokenizer picker).
 
 EXPECTED OUTPUT
@@ -39,7 +47,9 @@ EXPECTED OUTPUT
 */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getSource } from "../api";
+import { getSource, type CheckFinding } from "../api";
+import type { Destination } from "../checks/report";
+import ChecksView from "./ChecksView";
 import { findTargetLine, targetMissingMessage } from "../sourceTarget";
 import type { SourceTarget } from "../sourceTarget";
 import { highlighterFor } from "../sparql/highlight";
@@ -52,6 +62,13 @@ interface Props {
   target?: SourceTarget | null;
   /** null when the target was found, otherwise the sentence explaining why not. */
   onTargetResolved?: (missing: string | null) => void;
+  /** The Checks report's needs (design-checks 5.4). */
+  checks?: {
+    name: string;
+    revision: number;
+    onOpen: (finding: CheckFinding, to: Destination) => void;
+    onOpenQuery: (text: string, name: string) => void;
+  };
 }
 
 /** Lines rendered at once; more are revealed on demand or by a search hit. */
@@ -60,9 +77,14 @@ const WINDOW = 800;
 /** The heading focus lands on when the mode switches, and the pane's name. */
 const HEADING_ID = "source-view-heading";
 
-export default function SourceView({ ontologyId, target = null, onTargetResolved }: Props) {
+export default function SourceView({ ontologyId, target = null, onTargetResolved, checks }: Props) {
   const [source, setSource] = useState<OntologySource | null>(null);
   const [pretty, setPretty] = useState(false);
+  // The third switch: the report in place of the text (design-checks 5.4).
+  const [checking, setChecking] = useState(false);
+  // A library header finding's open: Original, at the owl:Ontology line.
+  const [ownTarget, setOwnTarget] = useState<SourceTarget | null>(null);
+  const shownTarget = ownTarget ?? target;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [visible, setVisible] = useState(WINDOW);
@@ -118,7 +140,11 @@ export default function SourceView({ ontologyId, target = null, onTargetResolved
   // fell back to. Keyed on `target`, so switching to View from the tab bar does
   // not steal focus from the tab the user just pressed.
   useEffect(() => {
-    if (target) headingRef.current?.focus();
+    if (target) {
+      setChecking(false);
+      setOwnTarget(null);
+      headingRef.current?.focus();
+    }
   }, [target]);
 
   // Locate the target once there is a document to look in, then reveal enough
@@ -128,6 +154,7 @@ export default function SourceView({ ontologyId, target = null, onTargetResolved
   // runs against an empty `lines` while the fetch is still in flight, finds
   // nothing, and announces that the entity is not in a file nobody has read yet.
   useEffect(() => {
+    const target = shownTarget;
     if (!target) {
       setTargetLine(null);
       return;
@@ -154,7 +181,7 @@ export default function SourceView({ ontologyId, target = null, onTargetResolved
         ?.querySelector(`[data-line="${line}"]`)
         ?.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
     }, 40);
-  }, [lines, source, target]);
+  }, [lines, source, shownTarget]);
 
   const goToMatch = (next: number) => {
     if (matches.length === 0) return;
@@ -192,23 +219,42 @@ export default function SourceView({ ontologyId, target = null, onTargetResolved
         <h2 id={HEADING_ID} ref={headingRef} tabIndex={-1} className="source-title">
           Source
         </h2>
-        <div className="mode-switch small">
+        <div className="mode-switch small" role="group" aria-label="Show">
           <button
-            className={pretty ? "mode-tab" : "mode-tab active"}
-            onClick={() => setPretty(false)}
+            className={!pretty && !checking ? "mode-tab active" : "mode-tab"}
+            aria-pressed={!pretty && !checking}
+            onClick={() => {
+              setPretty(false);
+              setChecking(false);
+            }}
             title="The file exactly as it was uploaded or fetched"
           >
             Original
           </button>
           <button
-            className={pretty ? "mode-tab active" : "mode-tab"}
-            onClick={() => setPretty(true)}
+            className={pretty && !checking ? "mode-tab active" : "mode-tab"}
+            aria-pressed={pretty && !checking}
+            onClick={() => {
+              setPretty(true);
+              setChecking(false);
+            }}
             title="Re-serialized as tidy, prefixed Turtle"
           >
             Formatted Turtle
           </button>
+          {checks && (
+            <button
+              className={checking ? "mode-tab active" : "mode-tab"}
+              aria-pressed={checking}
+              onClick={() => setChecking(true)}
+              title="What a reviewer would say about this model, worst first"
+            >
+              Checks
+            </button>
+          )}
         </div>
 
+        {!checking && (
         <div className="source-search">
           <input
             type="search"
@@ -235,6 +281,7 @@ export default function SourceView({ ontologyId, target = null, onTargetResolved
             </>
           )}
         </div>
+        )}
 
         <div className="spacer" />
         {source && (
@@ -258,10 +305,32 @@ export default function SourceView({ ontologyId, target = null, onTargetResolved
         </button>
       </div>
 
-      {loading && <p className="detail-note">Reading the file…</p>}
-      {error && <p className="detail-error">{error}</p>}
+      {checking && checks && ontologyId && (
+        <ChecksView
+          ontologyId={ontologyId}
+          name={checks.name}
+          revision={checks.revision}
+          ownBase={null}
+          onOpen={(finding, to) => {
+            if (to === "source" && finding.iri) {
+              // The header is the library's file: Original, at its line.
+              setChecking(false);
+              setPretty(false);
+              // `<iri>` first: the subject as Turtle writes it, never the
+              // prefix line before it (<…/space#> also starts with the IRI);
+              // the bare IRI after, for RDF/XML's rdf:about.
+              setOwnTarget({ iri: `<${finding.iri}>`, prefixed: finding.iri });
+              return;
+            }
+            checks.onOpen(finding, to);
+          }}
+          onOpenQuery={checks.onOpenQuery}
+        />
+      )}
+      {!checking && loading && <p className="detail-note">Reading the file…</p>}
+      {!checking && error && <p className="detail-error">{error}</p>}
 
-      {source?.truncated && source.statements && (
+      {!checking && source?.truncated && source.statements && (
         <p className="query-hint">
           This ontology is too large to format in full: you are reading its first{" "}
           {source.statements.shown.toLocaleString()} of{" "}
@@ -269,7 +338,7 @@ export default function SourceView({ ontologyId, target = null, onTargetResolved
           this part — Explore and Query still work across the whole ontology.
         </p>
       )}
-      {source?.truncated && !source.statements && (
+      {!checking && source?.truncated && !source.statements && (
         <p className="query-hint">
           This file is too large to show in full: you are reading the first{" "}
           {lines.length.toLocaleString()} lines (
@@ -279,7 +348,7 @@ export default function SourceView({ ontologyId, target = null, onTargetResolved
         </p>
       )}
 
-      {source && (
+      {!checking && source && (
         <div className="source-scroll" ref={scrollRef}>
           <pre>
             <code>

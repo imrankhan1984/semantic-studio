@@ -682,3 +682,42 @@ describe("only the latest answer is shown (query-page-rework 5.2)", () => {
     }
   });
 });
+
+describe("QueryPanel opens a design check as a query (design-checks 5.4, AC-6)", () => {
+  function panel(incoming: { text: string; name: string; token: number } | null, builder = builderStub(), onIncomingTaken = vi.fn()) {
+    return (
+      <QueryPanel
+        ontologyId="ont-1"
+        theme="light"
+        builder={builder}
+        onPickIri={vi.fn()}
+        onViewInSource={vi.fn()}
+        ontologyTriples={0}
+        incoming={incoming}
+        onIncomingTaken={onIncomingTaken}
+      />
+    );
+  }
+
+  it("opens the text, exactly, under the check's name, once, and runs nothing", async () => {
+    const builder = builderStub();
+    const taken = vi.fn();
+    const incoming = { text: "# Terms with no definition.\nSELECT ?iri WHERE { ?iri ?p ?o }", name: "DC-03 Terms without a definition", token: 1 };
+    const { rerender } = render(panel(incoming, builder, taken));
+    await act(async () => undefined);
+    expect(builder.openTextQuery).toHaveBeenCalledTimes(1);
+    expect(builder.openTextQuery).toHaveBeenCalledWith(incoming.text, { name: incoming.name });
+    expect(taken).toHaveBeenCalledTimes(1);
+    expect(runSparql).not.toHaveBeenCalled();
+    rerender(panel(incoming, builder, taken));
+    await act(async () => undefined);
+    expect(builder.openTextQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens nothing without one", async () => {
+    const builder = builderStub();
+    render(panel(null, builder));
+    await act(async () => undefined);
+    expect(builder.openTextQuery).not.toHaveBeenCalled();
+  });
+});

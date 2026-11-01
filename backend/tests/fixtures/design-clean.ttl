@@ -1,0 +1,56 @@
+# design-clean.ttl: a small ontology that trips no design check (design-
+# checks 11, AC-3), with the namespace acme set: header complete, names in
+# their case, every term labelled and defined, a scheme with its top, and
+# every class with an individual at its data address.
+
+@prefix c:       <https://w3id.org/acme/domain/test/clean-ontology#> .
+@prefix d:       <https://w3id.org/acme/data/test/> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+
+<https://w3id.org/acme/domain/test/clean-ontology> a owl:Ontology ;
+    dcterms:title "Clean"@en ;
+    dcterms:description "An ontology the design checks find nothing in."@en ;
+    dcterms:creator "The test suite" ;
+    owl:versionInfo "1.0.0" ;
+    owl:versionIRI <https://w3id.org/acme/domain/test/clean-ontology/1.0.0> .
+
+c:Vessel a owl:Class ;
+    rdfs:label "Vessel"@en ;
+    rdfs:comment "A craft that travels in space."@en .
+
+c:CargoVessel a owl:Class ;
+    rdfs:subClassOf c:Vessel ;
+    rdfs:label "Cargo vessel"@en ;
+    rdfs:comment "A vessel that carries goods."@en .
+
+c:carries a owl:ObjectProperty ;
+    rdfs:label "carries"@en ;
+    rdfs:comment "What a vessel takes on board."@en .
+
+c:launchedAt a owl:DatatypeProperty ;
+    rdfs:label "launched at"@en ;
+    rdfs:comment "The moment a vessel left."@en .
+
+c:Kinds a skos:ConceptScheme ;
+    skos:prefLabel "Kinds"@en ;
+    skos:definition "Kinds of vessel."@en ;
+    skos:hasTopConcept c:Freighter .
+
+c:Freighter a skos:Concept ;
+    skos:prefLabel "Freighter"@en ;
+    skos:definition "A vessel for goods."@en ;
+    skos:altLabel "Cargo ship"@en ;
+    skos:inScheme c:Kinds ;
+    skos:topConceptOf c:Kinds .
+
+d:vessel\/v1 a c:CargoVessel ;
+    rdfs:label "Vessel one"@en ;
+    c:carries d:vessel\/v2 ;
+    c:launchedAt "2026-01-02T10:00:00Z"^^xsd:dateTime .
+
+d:vessel\/v2 a c:Vessel ;
+    rdfs:label "Vessel two"@en .

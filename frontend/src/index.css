@@ -3764,6 +3764,109 @@ button.legend-row:hover {
   margin-top: 6px;
 }
 
+/* The Checks report (design-checks 5.4): measures, then one <details> per
+   check. Each level is a word and a mark; nothing rests on colour. */
+.checks-view {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 16px;
+  overflow: auto;
+}
+
+.checks-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.checks-title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.checks-status:empty {
+  margin: 0;
+}
+
+.checks-summary {
+  margin: 8px 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.checks-measures h4,
+.checks-group-heading {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.checks-measures ul {
+  margin: 4px 0 12px;
+  padding-left: 18px;
+  font-size: var(--fs-sm);
+}
+
+.checks-group {
+  border-top: 1px solid var(--border);
+  padding: 6px 0;
+}
+
+.checks-group > summary {
+  cursor: pointer;
+}
+
+.checks-group > summary .checks-group-heading {
+  display: inline;
+}
+
+.checks-group-body {
+  padding: 4px 0 4px 18px;
+}
+
+.checks-findings {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: var(--fs-sm);
+}
+
+.checks-findings li {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+/* A project's View: the switch above the Turtle editor or the report. The
+   pane is the overlay .source-view is elsewhere; the editor inside it is a
+   flex child, never a second overlay over the switch (browser pass). */
+.project-view {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.project-view-body:not([hidden]) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.project-view .source-view {
+  position: relative;
+  inset: auto;
+  flex: 1;
+}
+
+.project-view-switch {
+  margin: 8px 16px 0;
+  align-self: flex-start;
+}
+
 /* New project's Address group (design-checks 5.2): the layers on one line,
    the three addresses under the parts. */
 .new-project-address {

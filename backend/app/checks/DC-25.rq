@@ -1,0 +1,44 @@
+# Individuals with no label; and, when the document holds individuals, classes no individual is one of and properties no statement uses.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX dc: <http://purl.org/dc/elements/1.1/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ss: <urn:semantic-studio:check:>
+SELECT DISTINCT ?iri ?what WHERE {
+  {
+    ?class a ?classType .
+    FILTER(?classType IN (owl:Class, rdfs:Class))
+    ?iri a ?class .
+    FILTER(isIRI(?iri) && ss:own(?iri) && !ss:term(?iri))
+    FILTER NOT EXISTS { ?iri rdfs:label|skos:prefLabel ?label . }
+    BIND("unlabelled" AS ?what)
+  } UNION {
+    # Asked once, not per row: does the document hold any individual?
+    {
+      SELECT ?someone WHERE {
+        ?someClass a ?someClassType .
+        FILTER(?someClassType IN (owl:Class, rdfs:Class))
+        ?someone a ?someClass .
+        FILTER(!ss:term(?someone))
+      }
+      LIMIT 1
+    }
+    {
+      ?iri a ?type . VALUES ?type { owl:Class rdfs:Class }
+      FILTER NOT EXISTS { ?sub rdfs:subClassOf* ?iri . ?member a ?sub . FILTER(!ss:term(?member)) }
+      BIND("class" AS ?what)
+    } UNION {
+      ?iri a ?type . VALUES ?type { owl:ObjectProperty owl:DatatypeProperty }
+      FILTER NOT EXISTS { ?subject ?iri ?object . }
+      BIND("property" AS ?what)
+    }
+    FILTER(isIRI(?iri) && ss:own(?iri))
+    # A deprecated term is meant to go unused: DC-10 and DC-11 speak of it.
+    FILTER NOT EXISTS { ?iri owl:deprecated ?flag . FILTER(STR(?flag) IN ("true", "1")) }
+  }
+}
+ORDER BY ?what ?iri

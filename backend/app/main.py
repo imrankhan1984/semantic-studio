@@ -75,6 +75,7 @@ from fastapi.staticfiles import StaticFiles
 from .local_guard import LocalOnlyMiddleware
 from .network_broker import ApprovalRequired, GrantScopeMiddleware, HostBlocked, Offline
 from . import library_examples, network_broker, settings, tabular
+from .routers import checks as checks_router
 from .routers import data, examples, network, ontologies, projects, queries, references
 from .routers import settings as settings_router
 from .store import store
@@ -231,6 +232,7 @@ app.include_router(data.router)
 app.include_router(examples.router)
 app.include_router(references.router)
 app.include_router(settings_router.router)
+app.include_router(checks_router.router)
 
 
 # The broker's three policy decisions, mapped once for every route. They can

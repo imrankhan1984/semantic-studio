@@ -40,3 +40,7 @@ backend/app/examples/questions/*.rq binary
 # The release's start file (release-packaging 5.2): cmd.exe reads a batch
 # file with LF endings unreliably, so it is CRLF in every checkout.
 *.cmd   text eol=crlf
+
+# The design checks (design-checks 5.5.2, D-124) are pinned by SHA-256 in
+# backend/app/checks/manifest.json, so their bytes are never touched either.
+backend/app/checks/*.rq binary

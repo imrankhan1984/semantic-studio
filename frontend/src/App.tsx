@@ -216,6 +216,9 @@ import SettingsDialog, { type SettingsTab } from "./components/SettingsDialog";
 import QueryPanel from "./components/QueryPanel";
 import SearchBox from "./components/SearchBox";
 import SourceView from "./components/SourceView";
+import ChecksView from "./components/ChecksView";
+import type { CheckFinding } from "./api";
+import type { Destination } from "./checks/report";
 import {
   IconAbout,
   IconClose,
@@ -1467,6 +1470,56 @@ export default function App() {
     setNotice(missing);
   }, []);
 
+  // The design checks (design-checks 5.4, 5.9). A project document's View is
+  // its Turtle editor, so the switch for it lives here; the editor stays
+  // mounted, hidden, so nothing typed is lost to a look at the report.
+  const [projectChecking, setProjectChecking] = useState(false);
+  // Open as a query: the check's text, handed to Query once (its token).
+  const [incomingQuery, setIncomingQuery] = useState<{ text: string; name: string; token: number } | null>(null);
+  const openCheckAsQuery = useCallback(
+    (text: string, name: string) => {
+      guardEditor(() => {
+        setSourceTarget(null);
+        setIncomingQuery((prev) => ({ text, name, token: (prev?.token ?? 0) + 1 }));
+        setMode("query");
+      });
+    },
+    [guardEditor],
+  );
+  // *open* (5.9): a project's own term to Edit with its form, a shape to
+  // Shapes, anything else to Explore with the term selected.
+  const openFromChecks = useCallback(
+    (finding: CheckFinding, to: Destination) => {
+      const iri = finding.iri;
+      guardEditor(() => {
+        setSourceTarget(null);
+        setProjectChecking(false);
+        if (to === "shapes") {
+          setMode("shapes");
+          return;
+        }
+        if (!iri) return;
+        if (to === "edit") {
+          const snap = projectStore.getSnapshot();
+          const model = snap.documents.find((d) => d.doc === "model");
+          if (!model) return;
+          if (snap.activeDoc !== "model") projectStore.switchDocument("model");
+          setMode("hierarchy");
+          if (activeId !== model.ontologyId) {
+            pendingSelection.current = iri;
+            setActiveId(model.ontologyId);
+          } else {
+            selectAndFocus(iri, true);
+          }
+          return;
+        }
+        setMode("explore");
+        selectFromOutsideGraph(iri);
+      });
+    },
+    [activeId, guardEditor, selectAndFocus, selectFromOutsideGraph],
+  );
+
   // Switching mode from the tab bar drops any source target. Without this,
   // leaving View and coming back re-runs the lookup, which moves focus to the
   // source heading — stealing it from the tab the user has just pressed, which
@@ -2379,18 +2432,56 @@ export default function App() {
               with its Original and Formatted toggle. */}
           {mode === "view" &&
             (editingProjectDoc && openProjectSummary && projectDoc ? (
-              <TurtleEditor
-                projectId={openProjectSummary.id}
-                doc={projectDoc.doc}
-                revision={revision}
-                onSelectEntity={selectFromResults}
-                onError={(message) => setError(message)}
-              />
+              <div className="project-view">
+                <div className="mode-switch small project-view-switch" role="group" aria-label="Show">
+                  <button
+                    className={projectChecking ? "mode-tab" : "mode-tab active"}
+                    aria-pressed={!projectChecking}
+                    onClick={() => setProjectChecking(false)}
+                  >
+                    Turtle
+                  </button>
+                  <button
+                    className={projectChecking ? "mode-tab active" : "mode-tab"}
+                    aria-pressed={projectChecking}
+                    onClick={() => setProjectChecking(true)}
+                  >
+                    Checks
+                  </button>
+                </div>
+                <div className="project-view-body" hidden={projectChecking}>
+                  <TurtleEditor
+                    projectId={openProjectSummary.id}
+                    doc={projectDoc.doc}
+                    revision={revision}
+                    onSelectEntity={selectFromResults}
+                    onError={(message) => setError(message)}
+                  />
+                </div>
+                {projectChecking && activeId && (
+                  <ChecksView
+                    key={activeId}
+                    ontologyId={activeId}
+                    name={projectDoc.doc === "shapes" ? `${openProjectSummary.name} shapes` : openProjectSummary.name}
+                    revision={revision}
+                    ownBase={openProjectSummary.baseIri}
+                    shapesDoc={projectDoc.doc === "shapes"}
+                    onOpen={openFromChecks}
+                    onOpenQuery={openCheckAsQuery}
+                  />
+                )}
+              </div>
             ) : (
               <SourceView
                 ontologyId={activeId}
                 target={sourceTarget}
                 onTargetResolved={onSourceTargetResolved}
+                checks={{
+                  name: active?.name ?? "This ontology",
+                  revision,
+                  onOpen: openFromChecks,
+                  onOpenQuery: openCheckAsQuery,
+                }}
               />
             ))}
           {mode === "query" ? (
@@ -2411,6 +2502,8 @@ export default function App() {
               onFrameResults={frameResults}
               resultsNote={resultsNote}
               questions={exampleQuestions}
+              incoming={incomingQuery}
+              onIncomingTaken={() => setIncomingQuery(null)}
             />
           ) : mode === "explore" ? (
             // The two halves of the Explore column. Which one shows is decided

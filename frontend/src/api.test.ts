@@ -161,6 +161,8 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   getSettings: () => api.getSettings(),
   saveLimits: () => api.saveLimits({ largestFile: 100 }),
   saveNamespace: () => api.saveNamespace("acme"),
+  getChecks: () => api.getChecks("o1"),
+  listChecks: () => api.listChecks(),
   getNetworkActivity: () => api.getNetworkActivity(),
   // external-access Stage 4: the connection settings and Test connection.
   getNetworkConnection: () => api.getNetworkConnection(),

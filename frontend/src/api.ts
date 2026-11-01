@@ -808,6 +808,72 @@ export function saveNamespace(namespace: string | null): Promise<AppSettings> {
   }).then((r) => handle<AppSettings>(r));
 }
 
+/* --- design checks (design-checks 5.4, D-124) ------------------------------ */
+
+export type CheckLevel = "Problem" | "Worth a look";
+
+/** One finding: the entity, its sentence, and the Edit block it opens at. */
+export interface CheckFinding {
+  iri: string | null;
+  sentence: string;
+  block?: "label" | "definition" | "header";
+  level?: CheckLevel;
+}
+
+export interface CheckGroup {
+  id: string;
+  level: CheckLevel;
+  heading: string;
+  fix: string;
+  /** The true total; at most 100 findings are sent (house rule 6). */
+  total: number;
+  findings: CheckFinding[];
+  error?: string;
+}
+
+export interface CheckMeasures {
+  counts: { classes: number; properties: number; concepts: number; individuals: number };
+  hierarchy: { depth: number; widest: number; tops: number };
+  documentation: { documented: number; terms: number };
+  reuse: { namespaces: number; reused: number; used: number };
+  level: { step: number; of: number; name: string; next: string | null };
+}
+
+export interface ChecksReport {
+  revision: number;
+  generation: number;
+  ran_ms: number;
+  empty: boolean;
+  emptySentence: string | null;
+  measures: CheckMeasures;
+  groups: CheckGroup[];
+  skipped: string[];
+  notes: string[];
+  namespace: string | null;
+}
+
+/** One check as *Open as a query* opens it: its text, exactly the file. */
+export interface CheckEntry {
+  id: string;
+  level: CheckLevel;
+  heading: string;
+  fix: string;
+  query: string;
+}
+
+// Run every design check on one document. Made only when View's Checks is
+// chosen or Run again is pressed: reading a file pays nothing (5.4).
+export function getChecks(ontologyId: string, signal?: AbortSignal): Promise<ChecksReport> {
+  return send(`/api/ontologies/${encodeURIComponent(ontologyId)}/checks`, { signal }).then((r) =>
+    handle<ChecksReport>(r),
+  );
+}
+
+// The catalogue, for Open as a query. Read when first asked, never on mount.
+export function listChecks(): Promise<CheckEntry[]> {
+  return send("/api/checks").then((r) => handle<CheckEntry[]>(r));
+}
+
 /* --- owl:imports (external-access Stage 2) --------------------------------- */
 
 // Each import and its status. Reads files on the server; never connects.

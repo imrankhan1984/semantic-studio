@@ -29,7 +29,8 @@
     dcterms:creator "Semantic Studio" ;
     dcterms:created "2026-10-15"^^xsd:date ;
     dcterms:license <https://creativecommons.org/licenses/by/4.0/> ;
-    owl:versionInfo "1.0" ;
+    owl:versionInfo "1.0.0" ;
+    owl:versionIRI <http://example.org/space/1.0.0> ;
     rdfs:label "Space Exploration"@en, "Exploration spatiale"@fr .
 
 # ---------------------------------------------------------------------------

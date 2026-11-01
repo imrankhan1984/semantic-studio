@@ -1,0 +1,26 @@
+# Concepts in no concept scheme, and schemes with no top concept.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX dc: <http://purl.org/dc/elements/1.1/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ss: <urn:semantic-studio:check:>
+SELECT DISTINCT ?iri ?what WHERE {
+  {
+    ?iri a skos:Concept .
+    FILTER NOT EXISTS { ?iri skos:inScheme ?scheme . }
+    FILTER NOT EXISTS { ?iri skos:topConceptOf ?scheme . }
+    FILTER NOT EXISTS { ?scheme skos:hasTopConcept ?iri . }
+    BIND("concept" AS ?what)
+  } UNION {
+    ?iri a skos:ConceptScheme .
+    FILTER NOT EXISTS { ?iri skos:hasTopConcept ?top . }
+    FILTER NOT EXISTS { ?top skos:topConceptOf ?iri . }
+    BIND("scheme" AS ?what)
+  }
+  FILTER(isIRI(?iri) && ss:own(?iri))
+}
+ORDER BY ?what ?iri
