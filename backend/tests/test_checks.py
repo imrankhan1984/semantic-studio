@@ -554,7 +554,7 @@ def test_the_report_changes_nothing(project):
     assert (doc.ontology.revision, len(doc.graph)) == before
 
 
-# --- Section 10: budgets ------------------------------------------------------------
+# --- Section 10: budgets, and AC-12a: the cap ---------------------------------------
 
 
 def _median_ms(action, samples: int = 5) -> float:
@@ -571,14 +571,41 @@ def _median_ms(action, samples: int = 5) -> float:
     return sorted(times)[samples // 2]
 
 
-# design-checks 10 asks 150 ms for Space Exploration and 3 s for QUDT. On
-# rdflib's evaluator 28 queries do not fit those: measured here 270-340 ms
-# and about 25 s (a full scan for DC-19 and DC-20 alone takes 5 to 7 s of
-# QUDT). The limits below are the measured numbers with room, set so a
-# regression is caught; the spec's are said in the build report, as a
-# decision to take, not met quietly.
-SPACE_LIMIT_MS = 600
-QUDT_LIMIT_MS = 40_000
+def _dense_graph(individuals: int) -> Graph:
+    """A model-and-data document, worst case for DC-19 and DC-20: every
+    individual carries a date-time and a number-as-text, which those two
+    scan on every statement. The size is set by the number of individuals."""
+    b, d = "http://example.org/o#", "http://example.org/d/"
+    lines = [
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .",
+        "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .",
+        "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .",
+        "<http://example.org/o> a owl:Ontology .",
+    ]
+    for c in range(40):
+        parent = f" ; rdfs:subClassOf <{b}C{c // 8}>" if c % 8 else ""
+        lines.append(f'<{b}C{c}> a owl:Class ; rdfs:label "Class {c}"@en ; rdfs:comment "d"@en{parent} .')
+    for p in range(20):
+        lines.append(f'<{b}p{p}> a owl:DatatypeProperty ; rdfs:label "p{p}"@en ; rdfs:comment "d"@en .')
+    for i in range(individuals):
+        lines.append(
+            f'<{d}i{i}> a <{b}C{i % 40}> ; rdfs:label "Item {i}"@en ; '
+            f'<{b}p{i % 20}> "2026-01-01T10:00:00"^^xsd:dateTime ; '
+            f'<{b}p{(i + 1) % 20}> "6779 km" ; <{b}p{(i + 2) % 20}> "plain text value" .'
+        )
+    return Graph().parse(data="\n".join(lines), format="turtle")
+
+
+# design-checks 10 (v1.1, D-125). The report runs only on documents at or
+# under CHECKS_MAX_STATEMENTS, and the budget holds there. Space Exploration
+# (833 statements) runs every check well inside 500 ms. The worst case under
+# the cap -- 9,966 statements, every individual with a date-time and a
+# number-as-text -- runs in about 1.9 s, inside 3 s. QUDT (132,166 statements)
+# is over the cap and runs no query at all; test_ac12a_over_the_cap, a count,
+# proves it. So neither budget is a measured number the spec did not ask for:
+# both are the spec's, now met because the input is bounded.
+SPACE_LIMIT_MS = 500
+UNDER_CAP_LIMIT_MS = 3_000
 
 
 @pytest.mark.perf
@@ -588,7 +615,51 @@ def test_budget_space_exploration():
 
 
 @pytest.mark.perf
-def test_budget_qudt():
+def test_budget_the_largest_document_under_the_cap():
+    graph = _dense_graph(1_950)
+    # Genuinely near the top of what the report runs on.
+    assert checks.CHECKS_MAX_STATEMENTS - 500 < len(graph) <= checks.CHECKS_MAX_STATEMENTS
+    assert _median_ms(lambda: run(graph)) <= limit_ms(UNDER_CAP_LIMIT_MS)
+
+
+def test_ac12a_over_the_cap(monkeypatch):
+    """The count-based QUDT test: QUDT has more statements than the cap, so
+    the report runs no query (a count, not a timing: it stays in the blocking
+    job), names both numbers, measures nothing, and still lists every check so
+    each is offered as a query."""
     graph = parse(APP / "vocab" / "qudt-3.5.2.ttl")
-    assert len(graph) > 130_000
-    assert _median_ms(lambda: run(graph), samples=3) <= limit_ms(QUDT_LIMIT_MS)
+    assert len(graph) > checks.CHECKS_MAX_STATEMENTS
+    ran = []
+    real = sparql_exec.execute_select
+    monkeypatch.setattr(sparql_exec, "execute_select", lambda *a, **k: ran.append(1) or real(*a, **k))
+    report = run(graph, namespace="acme")
+    assert ran == []
+    assert report["overCap"] == {"statements": len(graph), "cap": checks.CHECKS_MAX_STATEMENTS}
+    assert report["measures"] is None
+    assert report["empty"] is False
+    assert [g["id"] for g in report["groups"]] == [e["id"] for e in checks.manifest()]
+    assert all(g["total"] == 0 and g["findings"] == [] for g in report["groups"])
+
+
+def test_ac12a_a_document_under_the_cap_runs_every_check():
+    report = run(parse(FIXTURES / "design-clean.ttl"), namespace="acme")
+    assert "overCap" not in report
+    assert report["measures"] is not None
+    assert len(report["groups"]) == 28
+
+
+def test_ac12a_the_route_answers_over_the_cap():
+    data = "\n".join(
+        f'<http://example.org/d/i{i}> a <http://example.org/o#C{i % 40}> . '
+        for i in range(checks.CHECKS_MAX_STATEMENTS + 200)
+    )
+    response = client.post(
+        "/api/ontologies/upload", files={"file": ("big.ttl", data.encode("utf-8"), "text/turtle")}
+    )
+    assert response.status_code == 200, response.text
+    oid = response.json()["id"]
+    body = client.get(f"/api/ontologies/{oid}/checks").json()
+    assert body["overCap"]["cap"] == checks.CHECKS_MAX_STATEMENTS
+    assert body["overCap"]["statements"] > checks.CHECKS_MAX_STATEMENTS
+    assert body["measures"] is None
+    assert len(body["groups"]) >= 27  # DC-26 only with a namespace set

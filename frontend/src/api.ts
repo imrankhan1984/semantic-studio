@@ -845,11 +845,16 @@ export interface ChecksReport {
   ran_ms: number;
   empty: boolean;
   emptySentence: string | null;
-  measures: CheckMeasures;
+  /** Null above the cap (design-checks 5.10, D-125): no query ran, nothing
+   *  was measured. */
+  measures: CheckMeasures | null;
   groups: CheckGroup[];
   skipped: string[];
   notes: string[];
   namespace: string | null;
+  /** Set when the document has more than CHECKS_MAX_STATEMENTS statements:
+   *  the count and the cap. No check ran; each is still offered as a query. */
+  overCap?: { statements: number; cap: number };
 }
 
 /** One check as *Open as a query* opens it: its text, exactly the file. */

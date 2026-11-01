@@ -20,6 +20,11 @@ BASIC IDEA
     taking the document's read lock itself. A check that times out says so
     in its group and the rest still run.
 
+    A document above CHECKS_MAX_STATEMENTS (5.10, D-125) is too large for the
+    3 s budget: the report runs no query and scans no statement, naming the
+    count and the cap instead, while still listing every check so each can be
+    opened as a query.
+
     Which terms are the document's own is asked inside the queries, by
     ss:own(?iri) (urn:semantic-studio:check:own), a function this module
     registers with rdflib. So the rows a query returns are its findings,
@@ -63,7 +68,8 @@ EXPECTED OUTPUT
     - catalogue(): [{id, level, heading, fix, query}] for GET /api/checks.
     - run(): {revision, generation, ran_ms, empty, measures, groups: [{id,
       level, heading, fix, total, findings: [{iri, sentence, block?,
-      level?}], error?}], skipped, notes} for GET /api/ontologies/{id}/checks.
+      level?}], error?}], skipped, notes} for GET /api/ontologies/{id}/checks;
+      above the cap, measures is null and overCap is {statements, cap}.
     - is_own(), STANDARD_NAMESPACES.
 ================================================================================
 """
@@ -95,6 +101,17 @@ MANIFEST_PATH = CHECKS_DIR / "manifest.json"
 MAX_ROWS = 1000
 SHOWN = 100
 TIMEOUT_SECONDS = 30.0
+
+# design-checks 5.10 and Section 10 (D-125): above this many statements the
+# report runs no query. Twenty-eight SELECTs over a document this large do not
+# fit the 3 s budget on rdflib's evaluator -- DC-19 and DC-20 scan every
+# statement -- and QUDT (132,166 statements, about 15 s) is the case that forced
+# the decision. The value was measured, not a setting: a worst-case document of
+# 9,966 statements (classes, properties and individuals carrying a date-time and
+# a number-as-text each) runs every Stage A check in about 1.9 s, and the 3 s
+# budget is crossed near 15,000. The cap sits below that, with room; the largest
+# bundled document under it, dcat3 (1,695 statements), runs in about 0.6 s.
+CHECKS_MAX_STATEMENTS = 10_000
 
 # 5.5.1: the standard vocabularies. A term in one of these is borrowed, never
 # the document's own, unless the document is that vocabulary's ontology. The
@@ -929,6 +946,33 @@ def run(
     started = time.perf_counter()
     graph = ontology.ensure_loaded()
     revision, generation = ontology.revision, _generation(ontology)
+    # 5.10 (D-125): too large to check. No query runs; the report names the
+    # count and the cap, and still lists every check that would be listed, so
+    # each can be opened as a query. The measures scan the whole graph too, so
+    # they are left out: this answer touches no statement.
+    size = len(graph)
+    if size > CHECKS_MAX_STATEMENTS:
+        groups = [
+            {"id": e["id"], "level": e["level"], "heading": e["heading"], "fix": e["fix"],
+             "total": 0, "findings": []}
+            for e in manifest()
+            if not (doc == "shapes" and e["id"] not in SHAPES_CHECKS)
+            and not (e["id"] == "DC-26" and namespace is None)
+        ]
+        notes = [LOCAL_NOTE] + ([SHAPES_NOTE] if doc == "shapes" else [])
+        return {
+            "revision": revision,
+            "generation": generation,
+            "ran_ms": round((time.perf_counter() - started) * 1000),
+            "empty": False,
+            "emptySentence": None,
+            "overCap": {"statements": size, "cap": CHECKS_MAX_STATEMENTS},
+            "measures": None,
+            "groups": groups,
+            "skipped": [],
+            "notes": notes,
+            "namespace": namespace,
+        }
     project_bases = tuple(
         b for b in ((project or {}).get(k) for k in ("baseIri", "shapesBaseIri", "dataBaseIri")) if b
     )

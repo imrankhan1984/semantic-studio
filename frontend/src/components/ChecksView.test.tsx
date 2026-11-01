@@ -5,12 +5,13 @@ FILE: frontend/src/components/ChecksView.test.tsx
 ================================================================================
 
 SUMMARY
-    The Checks report (design-checks 5.4, AC-3, AC-7, AC-8, AC-10, AC-11):
-    Problems before Worth a look, a passing group closed with (0) and a tick,
-    *Showing 100 of N*, the stale line keeping the old findings, the level
-    as a word and a mark, *open* going where 5.9 says, *Open as a query*
-    handing over the check's text, Run again, a failure with Try again, the
-    empty sentence, and the render budget of Section 10.
+    The Checks report (design-checks 5.4, AC-3, AC-7, AC-8, AC-10, AC-11,
+    AC-12a): Problems before Worth a look, a passing group closed with (0)
+    and a tick, *Showing 100 of N*, the stale line keeping the old findings,
+    the level as a word and a mark, *open* going where 5.9 says, *Open as a
+    query* handing over the check's text, Run again, a failure with Try
+    again, the empty sentence, a document above the cap shown as one sentence
+    with both numbers (5.10), and the render budget of Section 10.
 
 BASIC IDEA
     api.ts is mocked, the component tests' pattern. Where *open* goes is
@@ -230,6 +231,33 @@ describe("the Checks report (design-checks 5.4)", () => {
     await show();
     expect(document.querySelector(".checks-findings img")).toBeNull();
     expect(screen.getByText("<img src=x onerror=alert(1)> has no label.")).toBeTruthy();
+  });
+
+  it("above the cap shows one sentence with both numbers and offers each check as a query (AC-12a)", async () => {
+    const groups: CheckGroup[] = [
+      { id: "DC-01", level: "Problem", heading: "Terms without an English label", fix: "Add a label.", total: 0, findings: [] },
+      { id: "DC-03", level: "Problem", heading: "Terms without a definition", fix: "Write what it is.", total: 0, findings: [] },
+    ];
+    getChecks.mockResolvedValue(report(groups, { measures: null, overCap: { statements: 132166, cap: 10000 } }));
+    const { onOpenQuery } = await show();
+    expect(
+      screen.getByText("Shop has 132,166 statements, more than the 10,000 these checks run on, so they were not run."),
+    ).toBeTruthy();
+    // No measures, no summary, no findings: nothing ran.
+    expect(document.querySelector(".checks-measures")).toBeNull();
+    expect(document.querySelector(".checks-summary")).toBeNull();
+    expect(document.querySelector(".checks-findings")).toBeNull();
+    expect(screen.getByText("These checks run on this computer.")).toBeTruthy();
+    // Every check is still offered as a query.
+    const queryButtons = screen.getAllByRole("button", { name: "Open as a query" });
+    expect(queryButtons).toHaveLength(2);
+    await act(async () => {
+      fireEvent.click(queryButtons[1]); // DC-03, the one the catalogue mock returns
+    });
+    expect(onOpenQuery).toHaveBeenCalledWith(
+      "# Terms with no definition.\nSELECT ?iri WHERE { ?iri ?p ?o }",
+      "DC-03 Terms without a definition",
+    );
   });
 
   it("[budget] renders 28 groups and 1,000 findings within 200 ms, median of 7", async () => {

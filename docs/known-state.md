@@ -2772,9 +2772,9 @@ EXPECTED OUTPUT
   `PYTHONPATH`, no user site folder, and none of Python's own environment
   variables reach it.
 
-- **Design checks** (2026-11-01, spec `design-checks` v1.0 Stage A, backlog
-  V-1, D-124). Settings → Naming, New project's Address group, shapes and
-  examples at their own bases, and the Checks report in View.
+- **Design checks** (2026-11-01, spec `design-checks` v1.1 Stage A, backlog
+  V-1, D-124 and D-125). Settings → Naming, New project's Address group,
+  shapes and examples at their own bases, and the Checks report in View.
 
   **A check is a pinned SELECT run through `prepare_select`.** Each of the
   28 is a `.rq` file in `backend/app/checks/`, pinned by SHA-256 in
@@ -2817,11 +2817,22 @@ EXPECTED OUTPUT
   is what cuts rows first, and a one-row subquery asks a document-wide
   question once rather than per row (DC-25's "holds any individual").
 
-  **Section 10's budgets are not met, and the tests say by how much.**
-  Space Exploration takes 270-340 ms against 150 ms, QUDT about 25 s
-  against 3 s (DC-19 and DC-20 scan every statement, 5 to 7 s each). The
-  `[perf]` tests hold 600 ms and 40 s, the measured numbers with room, and
-  name the spec's in a comment, pending a decision.
+  **A cap makes Section 10's budgets met, not quietly missed (D-125,
+  v1.1).** Twenty-eight SELECTs on rdflib's evaluator never fit 3 s over a
+  document the size of QUDT (132,166 statements, about 15 s here; DC-19 and
+  DC-20 scan every statement). So the report runs only at or under
+  `CHECKS_MAX_STATEMENTS`, a fixed 10,000 in `checks.py` -- not a setting.
+  The value was measured: a worst-case document of 9,966 statements, every
+  individual carrying a date-time and a number-as-text, runs every check in
+  about 1.9 s, and the 3 s line is crossed near 15,000; 10,000 sits below it
+  with room. Above the cap `checks.run` reads only `len(graph)` -- no query,
+  no measures scan -- and returns `overCap` (the count and the cap), `measures`
+  null, and every check that would be listed with no findings, so each is
+  still offered as *Open as a query*. In View this is one sentence with both
+  numbers over that list. The `[perf]` tests now hold Space Exploration to
+  500 ms (measured 187 ms) and a 9,966-statement document to 3 s (measured
+  1.9 s); the count-based `test_ac12a_over_the_cap` proves QUDT runs no query,
+  and stays in the blocking job because it is a count, not a timing.
 
   **One address rule, tested with one table.** `naming.py` and
   `frontend/src/naming/address.ts` build and read every address of 5.1;

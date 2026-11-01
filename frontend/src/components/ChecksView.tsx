@@ -30,6 +30,10 @@ BASIC IDEA
     Every name in a finding is text React renders, never markup (house rule
     5): ontology content is untrusted.
 
+    A document above the cap (5.10, D-125) comes back with overCap set and no
+    measures: the report shows one sentence with the count and the cap, and
+    lists every check with Open as a query so each can still be run by hand.
+
 INPUTS / INPUT SOURCES (props)
     - ontologyId, name: what is checked and what the summary calls it.
     - revision / generation: the document's now, for the stale line.
@@ -58,6 +62,7 @@ import {
   levelLines,
   measureLines,
   orderGroups,
+  overCapLine,
   showingLine,
   summaryLine,
   type Destination,
@@ -163,48 +168,72 @@ export default function ChecksView({
           </button>
         </div>
       )}
-      {report && (
+      {report && report.overCap ? (
         <>
-          {stale && <p className="query-hint checks-stale">{STALE}</p>}
-          {report.empty ? (
-            <p className="checks-empty">{report.emptySentence}</p>
-          ) : (
-            <>
-              <p className="checks-summary">{summaryLine(name, report.groups)}</p>
-              <section className="checks-measures" aria-labelledby="checks-measures-heading">
-                <h4 id="checks-measures-heading">Measures</h4>
-                <ul>
-                  {measureLines(report.measures).map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                  {levelLines(report.measures).map((line) => (
-                    <li key={line} className="checks-level">
-                      {line}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            </>
-          )}
+          {/* Too large to check (5.10, D-125): one sentence with both
+              numbers, and every check still offered as a query. */}
+          <p className="checks-over-cap">{overCapLine(name, report.overCap)}</p>
           {report.notes.map((note) => (
             <p key={note} className="hint checks-note">
               {note}
             </p>
           ))}
           {queryError && <p className="form-error">{queryError}</p>}
-          {!report.empty && (
-            <div className="checks-groups">
-              {groups.map((group) => (
-                <Group
-                  key={group.id}
-                  group={group}
-                  onOpen={(finding) => onOpen(finding, destination(finding, ownBase, shapesDoc))}
-                  onOpenQuery={() => openAsQuery(group)}
-                />
-              ))}
-            </div>
-          )}
+          <ul className="checks-over-cap-list">
+            {report.groups.map((group) => (
+              <li key={group.id}>
+                <span>{group.heading}</span>{" "}
+                <button type="button" className="link-btn checks-open-query" onClick={() => openAsQuery(group)}>
+                  Open as a query
+                </button>
+              </li>
+            ))}
+          </ul>
         </>
+      ) : (
+        report && (
+          <>
+            {stale && <p className="query-hint checks-stale">{STALE}</p>}
+            {report.empty ? (
+              <p className="checks-empty">{report.emptySentence}</p>
+            ) : report.measures ? (
+              <>
+                <p className="checks-summary">{summaryLine(name, report.groups)}</p>
+                <section className="checks-measures" aria-labelledby="checks-measures-heading">
+                  <h4 id="checks-measures-heading">Measures</h4>
+                  <ul>
+                    {measureLines(report.measures).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                    {levelLines(report.measures).map((line) => (
+                      <li key={line} className="checks-level">
+                        {line}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              </>
+            ) : null}
+            {report.notes.map((note) => (
+              <p key={note} className="hint checks-note">
+                {note}
+              </p>
+            ))}
+            {queryError && <p className="form-error">{queryError}</p>}
+            {!report.empty && (
+              <div className="checks-groups">
+                {groups.map((group) => (
+                  <Group
+                    key={group.id}
+                    group={group}
+                    onOpen={(finding) => onOpen(finding, destination(finding, ownBase, shapesDoc))}
+                    onOpenQuery={() => openAsQuery(group)}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        )
       )}
     </section>
   );

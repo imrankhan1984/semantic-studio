@@ -3795,6 +3795,24 @@ button.legend-row:hover {
   font-weight: 600;
 }
 
+/* Above the cap (design-checks 5.10, D-125): the one sentence, then every
+   check as a plain row with Open as a query. */
+.checks-over-cap {
+  margin: 8px 0;
+  font-size: var(--fs-md);
+}
+
+.checks-over-cap-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: var(--fs-sm);
+}
+
+.checks-over-cap-list li {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+
 .checks-measures h4,
 .checks-group-heading {
   margin: 0;

@@ -44,6 +44,14 @@ export const RUNNING = "Checking… (28 checks)";
 export const STALE = "The model has changed since these checks ran.";
 export const FAILED = "The checks could not run.";
 
+/** Above the cap (design-checks 5.10, D-125): one sentence, both numbers.
+ *  No check ran; each is still offered as a query below. */
+export function overCapLine(name: string, over: { statements: number; cap: number }): string {
+  return `${name} has ${over.statements.toLocaleString("en")} statements, more than the ${over.cap.toLocaleString(
+    "en",
+  )} these checks run on, so they were not run.`;
+}
+
 /** Groups with findings first: Problems, then Worth a look, most findings
  *  first. Then the groups that passed, in the same level order: listed, so
  *  a learner sees what good looks like, but never above a finding (read in
