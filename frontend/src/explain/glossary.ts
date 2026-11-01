@@ -109,7 +109,6 @@ export const GLOSSARY: Record<string, string> = {
   [`${OWL}sameAs`]: "says two names refer to the very same thing.",
   [`${OWL}differentFrom`]: "says two names refer to two different things.",
   [`${OWL}versionInfo`]: "a note saying which version this is, such as a number or a date.",
-  [`${OWL}versionIRI`]: "the address of this particular version of the ontology: its own address, a slash and the version.",
   [`${OWL}versionIRI`]: "the web address of this particular version of the ontology.",
   [`${OWL}priorVersion`]: "the web address of the version before this one.",
   [`${OWL}imports`]: "says this ontology uses another one, and includes everything that one states.",
