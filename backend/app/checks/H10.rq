@@ -1,0 +1,23 @@
+# Attributes that hold numbers, by their range or their values, with any unit annotation, so the report can see which name a quantity (length, mass, price, ...) and say no unit (the report asks the name first, in Python, and reads values only then).
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX dc: <http://purl.org/dc/elements/1.1/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ss: <urn:semantic-studio:check:>
+SELECT DISTINCT ?iri ?unit WHERE {
+  ?iri a owl:DatatypeProperty .
+  FILTER(isIRI(?iri) && ss:own(?iri))
+  {
+    ?iri rdfs:range ?range .
+    FILTER(?range IN (xsd:decimal, xsd:double, xsd:float, xsd:integer, xsd:int, xsd:long, xsd:short, xsd:nonNegativeInteger, xsd:positiveInteger))
+  } UNION {
+    ?subject ?iri ?value .
+    FILTER(isLiteral(?value) && DATATYPE(?value) IN (xsd:decimal, xsd:double, xsd:float, xsd:integer, xsd:int, xsd:long, xsd:short, xsd:nonNegativeInteger, xsd:positiveInteger))
+  }
+  OPTIONAL { ?iri ?unitProperty ?unit . FILTER(REGEX(STR(?unitProperty), "unit", "i")) }
+}
+ORDER BY ?iri

@@ -3854,6 +3854,51 @@ button.legend-row:hover {
   overflow-wrap: anywhere;
 }
 
+/* The review aids (design-checks 5.8, Stage B): the hierarchy read aloud
+   with a tick per link, the four definition tests, the saved queries as the
+   project's questions. Each a <details>, as the groups are. */
+.checks-aids {
+  margin-top: 16px;
+}
+
+.checks-aids-title {
+  margin: 0 0 4px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.checks-aid-body p {
+  margin: 4px 0;
+  font-size: var(--fs-sm);
+}
+
+.checks-aid-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: var(--fs-sm);
+}
+
+.checks-aid-list li {
+  margin: 3px 0;
+  overflow-wrap: anywhere;
+}
+
+.checks-read-aloud {
+  list-style: none;
+  padding-left: 0;
+}
+
+.checks-read-aloud label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.checks-definition-name {
+  font-weight: 600;
+}
+
 /* A project's View: the switch above the Turtle editor or the report. The
    pane is the overlay .source-view is elsewhere; the editor inside it is a
    flex child, never a second overlay over the switch (browser pass). */

@@ -810,7 +810,8 @@ export function saveNamespace(namespace: string | null): Promise<AppSettings> {
 
 /* --- design checks (design-checks 5.4, D-124) ------------------------------ */
 
-export type CheckLevel = "Problem" | "Worth a look";
+/** Worst first. A Hint (design-checks 5.6, Stage B) is a question, never a fault. */
+export type CheckLevel = "Problem" | "Worth a look" | "Hint";
 
 /** One finding: the entity, its sentence, and the Edit block it opens at. */
 export interface CheckFinding {
@@ -829,6 +830,9 @@ export interface CheckGroup {
   total: number;
   findings: CheckFinding[];
   error?: string;
+  /** Why a group holds nothing to say, when that is not a pass: H3 with no
+   *  current reasoning result to read. */
+  note?: string;
 }
 
 export interface CheckMeasures {
@@ -855,6 +859,36 @@ export interface ChecksReport {
   /** Set when the document has more than CHECKS_MAX_STATEMENTS statements:
    *  the count and the cap. No check ran; each is still offered as a query. */
   overCap?: { statements: number; cap: number };
+  /** The review aids (5.8, Stage B), for a model; null for a shapes document
+   *  and over the cap. Optional: an answer from before Stage B has none. */
+  aids?: ChecksAids | null;
+}
+
+/** One hierarchy link read aloud, with the person's tick (5.8). */
+export interface ReadAloudLink {
+  key: string;
+  iri: string;
+  sentence: string;
+  agreed: boolean;
+}
+
+export interface CompetencyQuestion {
+  id: string;
+  name: string;
+  /** The true row count; absent when the question could not run. */
+  total?: number;
+  error?: string;
+}
+
+export interface ChecksAids {
+  /** At most 1,000 links are sent; total and agreed are the true counts.
+   *  editable: a project's model, whose manifest keeps the ticks. */
+  readAloud: { links: ReadAloudLink[]; total: number; agreed: number; editable: boolean };
+  /** Each own term's definition, at most 100 sent; total is the true count. */
+  definitions: { items: { iri: string; name: string; text: string }[]; total: number };
+  /** A project's saved queries run as its competency questions; null for a
+   *  library entry. */
+  questions: CompetencyQuestion[] | null;
 }
 
 /** One check as *Open as a query* opens it: its text, exactly the file. */
@@ -877,6 +911,20 @@ export function getChecks(ontologyId: string, signal?: AbortSignal): Promise<Che
 // The catalogue, for Open as a query. Read when first asked, never on mount.
 export function listChecks(): Promise<CheckEntry[]> {
   return send("/api/checks").then((r) => handle<CheckEntry[]>(r));
+}
+
+// Tick or untick one link the report reads aloud (5.8). The project manifest
+// only: no revision, no dirty flag, no undo step (AC-14).
+export function putReadAloud(
+  pid: string,
+  key: string,
+  agreed: boolean,
+): Promise<{ key: string; agreed: boolean; count: number; total: number }> {
+  return send(`/api/projects/${encodeURIComponent(pid)}/read-aloud`, {
+    method: "PUT",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ key, agreed }),
+  }).then((r) => handle<{ key: string; agreed: boolean; count: number; total: number }>(r));
 }
 
 /* --- owl:imports (external-access Stage 2) --------------------------------- */

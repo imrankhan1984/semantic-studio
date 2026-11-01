@@ -42,7 +42,7 @@ c:Kinds a skos:ConceptScheme ;
 
 c:Freighter a skos:Concept ;
     skos:prefLabel "Freighter"@en ;
-    skos:definition "A vessel for goods."@en ;
+    skos:definition "A vessel built to carry goods."@en ;
     skos:altLabel "Cargo ship"@en ;
     skos:inScheme c:Kinds ;
     skos:topConceptOf c:Kinds .

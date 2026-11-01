@@ -55,6 +55,9 @@ INPUTS / INPUT SOURCES (props)
     - onSelect: select another entity (a created one, a renamed one, a link).
     - onDeleted: the entity is gone; the caller clears the selection.
     - canvas: past 300 boxes, *Show on canvas* and *Hide from canvas* (5.6).
+    - scrollTo: a design check's *open* (design-checks 5.9): the Names,
+      Definition or Annotations block (a label, a definition, a header's
+      details) is scrolled into view, once per token.
 
     Stage 2's follow-ups (5.8) are here too: one runner for the section, the
     annotation adder and the delete dialog; focus back to whatever opened a
@@ -68,7 +71,7 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { linkTarget } from "../links";
 import { entityModel, structureOf, type Annotation, type EntityModel } from "../modeling/entity";
 import { examplesOf } from "../modeling/examples";
@@ -92,6 +95,22 @@ interface Props {
   onSelect: (iri: string) => void;
   onDeleted: (iri: string) => void;
   canvas?: CanvasSet | null;
+  /** The block a design check's *open* named, scrolled into view. */
+  scrollTo?: { block: string; token: number } | null;
+}
+
+/** The block a finding's *open* names, as the form calls it: a label is
+ *  one of the Names, and a header's title, description, creator and
+ *  version are the ontology's annotations (design-checks 5.9). */
+const BLOCK_ANCHOR: Record<string, string> = { label: "label", definition: "definition", header: "header" };
+
+/** The nearest ancestor that scrolls its content: the side panel. */
+function scrollingParent(from: HTMLElement): HTMLElement | null {
+  for (let el = from.parentElement; el; el = el.parentElement) {
+    const overflow = getComputedStyle(el).overflowY;
+    if (overflow === "auto" || overflow === "scroll") return el;
+  }
+  return null;
 }
 
 /** The key a refusal is kept under: the statement, which survives the list
@@ -123,7 +142,26 @@ export default function EditSection({
   onSelect,
   onDeleted,
   canvas = null,
+  scrollTo = null,
 }: Props) {
+  const sectionRef = useRef<HTMLElement>(null);
+  // Keyed on the token, so asking for the same block twice scrolls twice.
+  // Only the panel that scrolls moves, never the page: scrollIntoView moved
+  // every ancestor, and in the browser took the whole app up off its header.
+  // Smooth is motion, so it asks, as SourceView's target does.
+  const scrollToken = scrollTo?.token;
+  const scrollBlock =
+    scrollTo && Object.prototype.hasOwnProperty.call(BLOCK_ANCHOR, scrollTo.block) ? BLOCK_ANCHOR[scrollTo.block] : null;
+  useEffect(() => {
+    if (!scrollBlock) return;
+    const block = sectionRef.current?.querySelector<HTMLElement>(`[data-edit-block="${scrollBlock}"]`);
+    const box = block ? scrollingParent(block) : null;
+    if (!block || !box) return;
+    const top = block.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (typeof box.scrollTo === "function") box.scrollTo({ top, behavior: reduceMotion ? "auto" : "smooth" });
+    else box.scrollTop = top;
+  }, [scrollToken, scrollBlock]);
   const model = useMemo(
     () => entityModel(details, primaryLanguage, languages),
     [details, primaryLanguage, languages],
@@ -238,7 +276,7 @@ export default function EditSection({
   const annotations = model.annotations.filter((a) => !fieldProperties.has(a.property.iri));
   const examples = model.kind === "class" ? examplesOf(details) : [];
   return (
-    <section className="edit-section" aria-label="Edit" aria-busy={busy}>
+    <section ref={sectionRef} className="edit-section" aria-label="Edit" aria-busy={busy}>
       <h3>Edit</h3>
       <p className="detail-note edit-status" role="status">
         {busy ? "Saving change…" : ""}
@@ -272,7 +310,7 @@ export default function EditSection({
         <PropertyHead model={model} name={name} iri={iri} warnings={details.warnings ?? []} />
       )}
 
-      <Block title="Names">
+      <Block title="Names" anchor="label">
         <dl className="detail-names">
           {model.names.map((n, i) => (
             <div key={n.lang}>
@@ -295,7 +333,7 @@ export default function EditSection({
         </dl>
       </Block>
 
-      <Block title="Definition">
+      <Block title="Definition" anchor="definition">
         <InlineText
           label="definition"
           value={model.definition ? model.definition.value.value : null}
@@ -306,7 +344,7 @@ export default function EditSection({
         />
       </Block>
 
-      <Block title="Annotations">
+      <Block title="Annotations" anchor="header">
         {annotations.length === 0 && <p className="detail-note">No other annotations.</p>}
         <ul className="edit-list">
           {annotations.map((a) => (

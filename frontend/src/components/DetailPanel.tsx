@@ -53,6 +53,8 @@ INPUTS / INPUT SOURCES (props)
       (visual-modeling 5.6).
     - inferred: a current reasoning result, while Show inferred is on: the
       Inferred block under the statements (axioms-and-reasoning 5.7).
+    - scrollTo: the Edit block a design check's *open* named (label,
+      definition, header), handed to the Edit section to scroll to.
 
     A class's rules come with its details for every ontology (explore-rules
     5.3, D-113). Without the Edit section they are a Rules block of their
@@ -120,6 +122,9 @@ interface Props {
   canvas?: CanvasSet | null;
   /** A current reasoning result to show under the statements (5.7). */
   inferred?: { projectId: string; resultKey: string; imports: boolean } | null;
+  /** The Edit block a design check's *open* named, to scroll to (a fresh
+   *  token each time it is asked for). */
+  scrollTo?: { block: string; token: number } | null;
 }
 
 /** The predicates a class's rules hang from (axioms.class_rules): with the
@@ -185,6 +190,7 @@ export default function DetailPanel({
   onDeleted,
   canvas = null,
   inferred = null,
+  scrollTo = null,
 }: Props) {
   const [details, setDetails] = useState<NodeDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -355,6 +361,7 @@ export default function DetailPanel({
               onSelect={onNavigate}
               onDeleted={(deleted) => (onDeleted ? onDeleted(deleted) : onClose())}
               canvas={canvas}
+              scrollTo={scrollTo}
             />
           )}
           {details.names && !editing && (

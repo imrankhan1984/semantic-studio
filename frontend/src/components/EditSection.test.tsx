@@ -1263,3 +1263,61 @@ describe("an RDFS class's form (attribute-reuse 5.7, 5.8, code review)", () => {
     expect(screen.getAllByText("Invoice is an OWL class already.")).toHaveLength(1);
   });
 });
+
+describe("a design check's open scrolls to its block (design-checks 5.9, Stage B follow-up)", () => {
+  const rect = Element.prototype.getBoundingClientRect;
+  // jsdom has no layout: each block is given its place in the panel, the
+  // panel its own at the top, and the panel's scrollTo is recorded.
+  const PLACE: Record<string, number> = { label: 100, definition: 260, header: 420 };
+  let scrolled: { box: Element; top: number }[];
+  beforeEach(() => {
+    scrolled = [];
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      const at = (this as HTMLElement).dataset?.editBlock;
+      return { top: at ? PLACE[at] : 0 } as DOMRect;
+    };
+    (Element.prototype as unknown as { scrollTo: unknown }).scrollTo = function (this: Element, o: ScrollToOptions) {
+      scrolled.push({ box: this, top: o.top ?? -1 });
+    };
+  });
+  afterEach(() => {
+    Element.prototype.getBoundingClientRect = rect;
+    delete (Element.prototype as unknown as { scrollTo?: unknown }).scrollTo;
+  });
+
+  const props = () => ({ ontologyId: OID, details: invoice(), primaryLanguage: "en", languages: ["fr"], onSelect, onDeleted });
+  const inPanel = (scrollTo: { block: string; token: number } | null) => (
+    <div className="panel" style={{ overflowY: "auto" }}>
+      <EditSection {...props()} scrollTo={scrollTo} />
+    </div>
+  );
+
+  it.each([
+    ["label", 100],
+    ["definition", 260],
+    ["header", 420],
+  ])("scrolls the panel, never the page, to the %s finding's block, and again when asked again", async (block, top) => {
+    let rerender!: (ui: React.ReactElement) => void;
+    await act(async () => {
+      ({ rerender } = render(inPanel({ block, token: 1 })));
+    });
+    const panel = document.querySelector(".panel")!;
+    expect(scrolled).toEqual([{ box: panel, top }]);
+    // The same token again is the same request: no second scroll.
+    await act(async () => rerender(inPanel({ block, token: 1 })));
+    expect(scrolled).toHaveLength(1);
+    await act(async () => rerender(inPanel({ block, token: 2 })));
+    expect(scrolled).toEqual([{ box: panel, top }, { box: panel, top }]);
+  });
+
+  it("scrolls nothing without a request, or for a block it does not know", async () => {
+    await act(async () => {
+      render(inPanel(null));
+    });
+    cleanup();
+    await act(async () => {
+      render(inPanel({ block: "constructor", token: 1 }));
+    });
+    expect(scrolled).toEqual([]);
+  });
+});

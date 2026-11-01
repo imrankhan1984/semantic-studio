@@ -110,7 +110,7 @@ import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import DCTERMS, OWL, RDF, RDFS, SKOS
@@ -531,6 +531,17 @@ class ProjectStore:
         with self._lock:
             manifest = self.manifest(pid)
             manifest.update(fields)
+            self.write_manifest(pid, manifest)
+        return manifest
+
+    def edit_manifest(self, pid: str, change: Callable[[dict], None]) -> dict:
+        """Read, change and write the manifest under the store's lock, for a
+        change that depends on what is there (the read-aloud ticks, design-
+        checks 5.8): two at once never lose one. `change` edits in place and
+        may raise to write nothing."""
+        with self._lock:
+            manifest = self.manifest(pid)
+            change(manifest)
             self.write_manifest(pid, manifest)
         return manifest
 

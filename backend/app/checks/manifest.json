@@ -1,5 +1,5 @@
 {
-  "description": "design-checks 5.5.2 (D-124): the built-in design checks, each a SELECT file in this folder pinned by SHA-256. 'level' is the group's (Problem or Worth a look); DC-24 is a Problem in a project made under the address pattern, and DC-27 calls an example address Worth a look. 'sentences' are what each row becomes, by variant, filled by checks.py from the row; 'fix' is the one-sentence fix. 'block' is the part of the Edit form a finding opens at. Change a file and its hash together; test_checks.py fails on a mismatch. The functions ss:own and ss:term (urn:semantic-studio:check:) are checks.py's: a term is the document's own unless it is in a standard vocabulary (5.5.1), and ss:term says a subject is typed as a term, never an individual.",
+  "description": "design-checks 5.5.2 and 5.6 (D-124): the built-in design checks and hints, each a SELECT file in this folder pinned by SHA-256. 'level' is the group's: Problem or Worth a look for the 28 checks (DC-24 is a Problem in a project made under the address pattern, and DC-27 calls an example address Worth a look), Hint for the twelve hints, each phrased as a question. 'sentences' are what each row becomes, by variant, filled by checks.py from the row; 'fix' is the one-sentence fix. 'block' is the part of the Edit form a finding opens at. A hint's word lists (roleWords, quantityWords, unitWords, singularWords, smallWords) are read by checks.py from here. Change a file and its hash together; test_checks.py fails on a mismatch. The functions ss:own and ss:term (urn:semantic-studio:check:) are checks.py's: a term is the document's own unless it is in a standard vocabulary (5.5.1), and ss:term says a subject is typed as a term, never an individual.",
   "checks": [
     {
       "id": "DC-01",
@@ -339,6 +339,251 @@
         "capital": "{whose} address has a capital letter in its path ({segment}).",
         "underscore": "{whose} address has an underscore in its path ({segment}).",
         "version": "{whose} address has a version in its path ({segment})."
+      }
+    },
+    {
+      "id": "H1",
+      "file": "H1.rq",
+      "sha256": "e2b37791ce972275d5fd20917a49c376716c5e845deac6d348d4e325621f1841",
+      "level": "Hint",
+      "heading": "Rules that OWL 2 RL reasoning does not use",
+      "fix": "Keep it if it documents the model; a reasoner in OWL 2 RL will not act on it.",
+      "sentences": {
+        "row": "Is {name}'s rule \"{rule}\" meant for a reasoner? OWL 2 RL, the reasoning Semantic Studio runs, does not use it."
+      }
+    },
+    {
+      "id": "H2",
+      "file": "H2.rq",
+      "sha256": "b461330fca80bae6b20399cae78d8a2c855ea58a11c1cbd4585527a429784278",
+      "level": "Hint",
+      "heading": "Domains and ranges, which add types",
+      "fix": "Keep a domain or range that should add the type; to refuse data that breaks it, write a shape.",
+      "sentences": {
+        "domain": "Is whatever {verb} something meant to be {a_class}? A domain makes it one; it never refuses data.",
+        "range": "Is whatever something {verb} meant to be {a_class}? A range makes it one; it never refuses data.",
+        "inferred": " The last reasoning run made {count} {things} {a_class} this way."
+      }
+    },
+    {
+      "id": "H3",
+      "file": "H3.rq",
+      "sha256": "5d9e8710cd86beb51ba63d86f384d342760776ee29737c98ed5e638e7ace2af7",
+      "level": "Hint",
+      "heading": "Types reasoning gave that nobody wrote",
+      "fix": "If the type is wrong, look at the domain, range or rule that gave it.",
+      "sentences": {
+        "row": "Did you mean {name} to be {a_class}? Reasoning concluded it; nobody wrote it.",
+        "noRun": "No current reasoning result: run reasoning in Edit, then Run again.",
+        "noProject": "Reasoning runs on a project; this check reads its last run."
+      }
+    },
+    {
+      "id": "H4",
+      "file": "H4.rq",
+      "sha256": "2c67d6be9c6de377550b56dead0f9734197c5afe58f6c5f2d78568f907f7ab38",
+      "level": "Hint",
+      "heading": "Definitions that say anything",
+      "fix": "Say what kind of thing it is, then what sets it apart.",
+      "sentences": {
+        "row": "{name}'s definition says \"anything\": what sets it apart from everything else?"
+      },
+      "block": "definition"
+    },
+    {
+      "id": "H5",
+      "file": "H5.rq",
+      "sha256": "83138388f11b82500991bf6e1a7285293b9761432ce79b3a69d19cedc63521a5",
+      "level": "Hint",
+      "heading": "Definitions that may not define",
+      "fix": "Write what it is: the kind of thing, then what sets it apart; examples go in skos:example.",
+      "sentences": {
+        "unfinished": "Is {name}'s definition finished? It says \"{word}\".",
+        "example": "Is {name}'s definition a definition, or an example? It says \"{word}\".",
+        "repeats": "Does {name}'s definition say more than its name? It repeats \"{label}\".",
+        "short": "Is {name}'s definition enough to tell it apart? It has {count} {words}."
+      },
+      "block": "definition",
+      "minimumWords": 5
+    },
+    {
+      "id": "H6",
+      "file": "H6.rq",
+      "sha256": "019ee3d549969055e99ee79d7401140ff75c0a5029265bab0be5d58c47390fd9",
+      "level": "Hint",
+      "heading": "Acronyms not spelled out",
+      "fix": "Write the full words once, in the definition or an alternative label.",
+      "sentences": {
+        "row": "What does {acronym} stand for in {name}? Spell it out in the definition or an alternative label."
+      },
+      "block": "definition",
+      "smallWords": [
+        "a",
+        "an",
+        "and",
+        "for",
+        "in",
+        "of",
+        "on",
+        "the",
+        "to"
+      ]
+    },
+    {
+      "id": "H7",
+      "file": "H7.rq",
+      "sha256": "9c542f61702a9394d03adb45f0aced939e0324fcff339dad904eddee667dd24e",
+      "level": "Hint",
+      "heading": "Class names that look plural",
+      "fix": "Name the class for one member: Mission, not Missions.",
+      "sentences": {
+        "row": "Is {name} one thing or many? A class names each of its members, so its name is singular: {singular}."
+      },
+      "singularWords": [
+        "alias",
+        "atlas",
+        "bias",
+        "canvas",
+        "chaos",
+        "cosmos",
+        "ethos",
+        "gas",
+        "kudos",
+        "lens",
+        "means",
+        "news",
+        "series",
+        "species",
+        "status",
+        "thesis"
+      ]
+    },
+    {
+      "id": "H8",
+      "file": "H8.rq",
+      "sha256": "50fd904391e6379ec4c58ccb6706c0da6bb59c171abb02bcafe5402aa3788d00",
+      "level": "Hint",
+      "heading": "Roles named as kinds",
+      "fix": "Make the role a relationship, or say why it is a kind, if the same one can stop playing it.",
+      "sentences": {
+        "row": "Is {name} a kind of {parent}, or a role {a_parent} plays for a while? A role is often better as a relationship."
+      },
+      "roleWords": [
+        "customer",
+        "supplier",
+        "operator",
+        "owner",
+        "tenant",
+        "employee"
+      ]
+    },
+    {
+      "id": "H9",
+      "file": "H9.rq",
+      "sha256": "b09b265a452a7be4cd3cb07ea878c03c8e6fdd9c845ff6b813a3892e3960e318",
+      "level": "Hint",
+      "heading": "Sibling classes that say the same",
+      "fix": "Merge them, or give each what sets it apart.",
+      "sentences": {
+        "row": "Are {names} different enough to be separate classes? Under {parent} they have the same properties and rules."
+      }
+    },
+    {
+      "id": "H10",
+      "file": "H10.rq",
+      "sha256": "3dc3554e627186e09ca07dec2dc95ad3e0fd20561aa5f585dafb537eb118f295",
+      "level": "Hint",
+      "heading": "Numbers with no unit",
+      "fix": "Put the unit in the name, the definition or a unit annotation.",
+      "sentences": {
+        "row": "What unit is {name} in? Say it, so that two values can be compared."
+      },
+      "quantityWords": [
+        "altitude",
+        "area",
+        "cost",
+        "depth",
+        "diameter",
+        "distance",
+        "duration",
+        "elevation",
+        "energy",
+        "height",
+        "length",
+        "mass",
+        "power",
+        "pressure",
+        "price",
+        "radius",
+        "speed",
+        "temperature",
+        "velocity",
+        "volume",
+        "weight",
+        "width"
+      ],
+      "unitWords": [
+        "celsius",
+        "cm",
+        "day",
+        "days",
+        "dollar",
+        "dollars",
+        "eur",
+        "euro",
+        "euros",
+        "fahrenheit",
+        "g",
+        "gram",
+        "grams",
+        "hour",
+        "hours",
+        "kelvin",
+        "kg",
+        "kilogram",
+        "kilograms",
+        "kilometer",
+        "kilometers",
+        "kilometre",
+        "kilometres",
+        "km",
+        "m",
+        "meter",
+        "meters",
+        "metre",
+        "metres",
+        "minute",
+        "minutes",
+        "mm",
+        "percent",
+        "s",
+        "second",
+        "seconds",
+        "tonne",
+        "tonnes",
+        "usd"
+      ]
+    },
+    {
+      "id": "H11",
+      "file": "H11.rq",
+      "sha256": "0d99bbc88d34666732a181de6098a6c86a2666a229aac019a17de62ced99df2c",
+      "level": "Hint",
+      "heading": "Text that names another individual",
+      "fix": "Make it a relationship to the individual, if that is what it means.",
+      "sentences": {
+        "row": "Should {property} be a relationship? {subject}'s {property} is the text \"{value}\", the name of {individual}."
+      }
+    },
+    {
+      "id": "H12",
+      "file": "H12.rq",
+      "sha256": "6f1c522faffb42d87d9f4177eef126573985343406062ccd79050a966d39ccbf",
+      "level": "Hint",
+      "heading": "Functional properties",
+      "fix": "Keep the mark if two values can never both be true; else remove it.",
+      "sentences": {
+        "row": "Can {name} ever have two values? It is marked functional, so a reasoner reads two values as one thing, or as a contradiction."
       }
     }
   ]

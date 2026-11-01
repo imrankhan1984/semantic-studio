@@ -56,8 +56,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 1949 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 2030 tests, vitest
+cd backend  && python -m pytest tests    # 1990 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 2049 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -224,8 +224,10 @@ backend/app/
                      from their parts and read back; frontend naming/ the same
   checks.py          The design checks (D-124): the own-term rule and the one
                      standard-vocabulary list, ss:own and ss:term, the runner,
-                     the sentences, the measures and the level
-  checks/            The 28 pinned SELECT files and manifest.json
+                     the sentences, the measures and the level; the hints,
+                     the review aids (read aloud, definitions, questions)
+  checks/            The 28 pinned SELECT files, the 12 hints' (H1 to H12)
+                     and manifest.json
   routers/           HTTP layer only; the real work lives in the modules above
 
 frontend/src/
@@ -505,6 +507,12 @@ leaves one behind.
 - The namespace never renames an existing IRI: read at each New project only; a project keeps the parts it was made with. [Design checks]
 - Shapes and examples mint at their own base only when the manifest names `shapesBaseIri` and `dataBaseIri`; without them the templates render byte for byte as before. [Design checks]
 - A project's View is `.project-view`, the overlay; the Turtle editor inside it is a flex child, never a second overlay over the switch. [Design checks]
+- A hint (H1 to H12) is a pinned SELECT too, a question at the level Hint after the other two; a group's level is the worst of its findings' (`_worst`), and its word lists are `manifest.json`'s. [Design checks, Stage B]
+- H2 and H3 read the current reasoning result the router hands in; `checks.py` imports neither `reasoning` nor `editing`, and a group with a `note` is never shown as Passed. [Design checks, Stage B]
+- `checks.prepare()` runs in the lifespan, never at import, in its own `try`: a failure costs the first report's speed, never the server. [Design checks, Stage B]
+- A read-aloud tick writes the manifest only, through `projects.edit_manifest`: no revision, no dirty flag, no undo step (AC-14); the route matches the project before it reads its 16 KB body. [Design checks, Stage B]
+- A saved query run as a competency question never holds SERVICE (`sparql_exec.asks_a_service`): the report runs on this computer. [Design checks, Stage B]
+- A check's *open* scrolls the nearest scrolling ancestor, never `scrollIntoView`, which took the whole app off its header. [Design checks, Stage B]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

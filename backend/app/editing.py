@@ -194,7 +194,7 @@ from .projects import (
     split_document_id,
     valid_lang,
 )
-from . import axioms, examples, lexical, modeling_checks, naming, reasoning, references, sentences, settings, shacl, shapes_form
+from . import axioms, checks, examples, lexical, modeling_checks, naming, reasoning, references, sentences, settings, shacl, shapes_form
 from .canvas import build_canvas, restrict, with_inferred
 from .imports import imports_service, load_state
 from .snapshots import SnapshotService
@@ -3793,6 +3793,37 @@ class EditingService:
         document = self.document(pid, doc)
         with document.lock:
             return self.projects.write_layout(pid, doc, layout)
+
+    # The read-aloud ticks a manifest keeps (design-checks 5.8): far above any
+    # hierarchy under the checks' statement cap, so a full list is a bug, said.
+    READ_ALOUD_KEPT = 20_000
+
+    def agree_link(self, pid: str, key: str, agreed: bool) -> dict:
+        """Tick, or untick, one hierarchy link the Checks report reads aloud
+        (design-checks 5.8, AC-14). Kept in the project manifest, never in the
+        Turtle: like the layout, no revision, no dirty flag, no undo step. A
+        tick is taken only for a link the model holds now; an untick always,
+        so a tick left by a link since removed can still go."""
+        document = self.document(pid, "model")
+        manifest = self.projects.manifest(pid)
+        with document.lock:
+            links = {
+                checks.link_key(*link)
+                for link in checks.hierarchy_links(document.graph, checks.own_rule(document.graph, manifest))
+            }
+        if agreed and key not in links:
+            raise CommandError("That link is not in the model now. Run the checks again to read it as it stands.")
+
+        def tick(manifest: dict) -> None:
+            kept = [k for k in manifest.get("readAloud", []) if k != key]
+            if agreed:
+                if len(kept) >= self.READ_ALOUD_KEPT:
+                    raise CommandError(f"A project keeps at most {self.READ_ALOUD_KEPT:,} read-aloud ticks.")
+                kept.append(key)
+            manifest["readAloud"] = kept
+
+        kept = self.projects.edit_manifest(pid, tick)["readAloud"]
+        return {"key": key, "agreed": agreed, "count": sum(1 for k in kept if k in links), "total": len(links)}
 
     def _move_layout(self, document: OpenDocument, old: str, new: str) -> None:
         """Positions follow the IRI: a rename, its undo and its redo."""

@@ -31,7 +31,9 @@ BASIC IDEA
     upload does, because typed Turtle is the same input as an uploaded file;
     main.py refuses a declared oversize before this runs (D-015 pattern).
     The layout PUT is read the same way under its own 1 MB cap: a layout is
-    positions, not Turtle, and has no reason to be large.
+    positions, not Turtle, and has no reason to be large. So is a read-aloud
+    tick (design-checks 5.8), under 16 KB, after its project is matched:
+    a manifest write, like the layout no revision, no dirty flag, no undo.
 
 INPUTS / INPUT SOURCES
     - HTTP requests from the frontend, every mutating one carrying the client
@@ -56,7 +58,7 @@ from contextlib import contextmanager
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from .. import reasoning, references, settings
@@ -367,6 +369,35 @@ async def put_layout(pid: str, doc: str, request: Request) -> dict:
     payload = await ontologies.read_json_capped(request, LAYOUT_MAX_BYTES, LAYOUT_TOO_LARGE)
     with _errors():
         return editing_service.put_layout(pid, doc, payload)
+
+
+class ReadAloudTick(BaseModel):
+    # A link's key: two IRIs and the link's kind (checks.link_key).
+    key: str = Field(min_length=1, max_length=8192)
+    agreed: bool
+
+
+# Two IRIs and a word, with room: the body is read under this cap.
+READ_ALOUD_MAX_BYTES = 16 * 1024
+READ_ALOUD_TOO_LARGE = "A read-aloud tick is at most 16 KB."
+
+
+@router.put("/{pid}/read-aloud")
+async def put_read_aloud(pid: str, request: Request) -> dict:
+    """Tick or untick one link the Checks report reads aloud (design-checks
+    5.8). The manifest only: no revision, no dirty flag, no undo step
+    (AC-14). The project is matched before the body is read, so an id not
+    issued is 404 whatever is sent; a tick for a link the model does not
+    hold is 422."""
+    with _errors():
+        project_store.folder(pid)
+    payload = await ontologies.read_json_capped(request, READ_ALOUD_MAX_BYTES, READ_ALOUD_TOO_LARGE)
+    try:
+        tick = ReadAloudTick.model_validate(payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="A tick names a link and whether it is agreed.") from exc
+    with _errors():
+        return await run_in_threadpool(editing_service.agree_link, pid, tick.key, tick.agreed)
 
 
 @router.post("/{pid}/documents/{doc}/undo")

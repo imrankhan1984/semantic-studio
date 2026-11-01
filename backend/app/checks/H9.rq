@@ -1,0 +1,17 @@
+# Sibling classes, under one parent, so the report can compare what each says (its properties and its rules): two siblings that say the same are perhaps one class.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX dc: <http://purl.org/dc/elements/1.1/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ss: <urn:semantic-studio:check:>
+SELECT DISTINCT ?iri ?other ?parent WHERE {
+  VALUES ?type { owl:Class rdfs:Class }
+  ?iri a ?type ; rdfs:subClassOf ?parent .
+  ?other a ?type ; rdfs:subClassOf ?parent .
+  FILTER(isIRI(?iri) && isIRI(?other) && isIRI(?parent) && STR(?iri) < STR(?other) && ss:own(?iri) && ss:own(?other))
+}
+ORDER BY ?parent ?iri ?other
