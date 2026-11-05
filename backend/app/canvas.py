@@ -85,8 +85,10 @@ from typing import Optional, Sequence
 from rdflib import Graph, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 
-from . import axioms
+from . import axioms, shapes_form
 from .graph_builder import labeler, lang_matches, pick_label_in, prefixed
+
+SH = shapes_form.SH
 
 # Past this many classes and concepts the canvas draws only a chosen set
 # (5.6). Measured in the browser pass: see the constant's test and known-state.
@@ -99,14 +101,34 @@ def _typed(graph: Graph, types) -> set[URIRef]:
     return found
 
 
+def _branch_concepts(shapes: Optional[Graph]) -> dict:
+    """relationship -> the concept its values are taken from (skos-and-owl
+    5.3): read from the shapes document's branch rules, so the canvas can draw
+    a branch line to the concept. One reader of the shape, shapes_form's."""
+    out: dict = {}
+    if shapes is None:
+        return out
+    for _, pshape in shapes.subject_objects(SH.property):
+        path = shapes_form.path_of(shapes, shapes.value(pshape, SH.path))
+        if path is not None and len(path) == 1:
+            under = shapes_form.branch_under(shapes, pshape)
+            if under is not None:
+                out[path[0]] = under
+    return out
+
+
 def build_canvas(
     graph: Graph,
     langs: Optional[Sequence[str]],
     imported: Optional[Graph] = None,
     imported_from: Optional[dict] = None,
+    shapes: Optional[Graph] = None,
 ) -> dict:
     """Boxes, lines and the undrawn relationships of one document."""
     label = labeler(graph, langs)
+    # A relationship whose values are a branch of concepts (skos-and-owl 5.3) is
+    # drawn as a branch line to its concept, read from the shapes document.
+    branches = _branch_concepts(shapes)
     display, primary = (langs[0], langs[-1]) if langs else (None, None)
     imported_from = imported_from or {}
     # Imported boxes are named from the merged view, where their labels are.
@@ -209,6 +231,10 @@ def build_canvas(
 
     for prop in sorted(_typed(graph, (OWL.ObjectProperty,))):
         reading, rng, expression = ends(prop)
+        # A relationship whose range is skos:Concept takes its values from a
+        # branch of concepts (5.3): it is drawn to the branch concept, never
+        # to skos:Concept, which is no box.
+        is_branch = rng == SKOS.Concept and not expression
         domain = reading.classes[0] if reading.form == "one" else None
         missing = (
             "expression" if expression
@@ -227,6 +253,24 @@ def build_canvas(
                 "range": str(rng) if rng is not None else None,
                 **({"domains": [str(c) for c in reading.classes]} if len(reading.classes) > 1 else {}),
             })
+            continue
+        if is_branch:
+            # One branch line from each class of the domain to the branch
+            # concept; with no branch rule yet, nothing is drawn (the Edit form
+            # reads it as "Any concept").
+            branch = branches.get(prop)
+            if branch is not None and end(branch, "concept"):
+                for member in reading.classes:
+                    if end(member, "class"):
+                        edges.append({
+                            "kind": "branch",
+                            "source": str(member),
+                            "target": str(branch),
+                            "property": str(prop),
+                            "label": label(prop),
+                            **({"member": str(member), **mark(reading, member)}
+                               if len(reading.classes) > 1 else {}),
+                        })
             continue
         # One line from each class of the domain (attribute-reuse 5.3): a
         # shared relationship's line names its member, so two lines of one

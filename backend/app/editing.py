@@ -4301,14 +4301,24 @@ class EditingService:
         document = self.document(pid, doc)
         ontology = document.ontology
         langs = ontology.label_langs(lang)
-        with document.lock:
+        # A branch relationship is drawn to its concept, read from the shapes
+        # document (skos-and-owl 5.3); the shapes lock is taken first, the
+        # documented order, and the cache is keyed on its revision too, so the
+        # canvas changes when only the shapes revision moves.
+        shapes_doc = self._open.get(pid, {}).get("shapes") if doc == "model" else None
+        with contextlib.ExitStack() as stack:
+            if shapes_doc is not None:
+                stack.enter_context(shapes_doc.lock)
+            stack.enter_context(document.lock)
             # Keyed on the imports view as well: resolving imports saves new
             # import state without moving the revision, and an imported box
             # kept "outside this model" until an unrelated edit (found in
             # review). merged() is itself cached, so the same view is the
             # same object until the imports change.
             merged = imports_service.merged(ontology) if load_state(ontology) else None
-            key = (ontology.revision, langs)
+            shapes_graph = shapes_doc.graph if shapes_doc is not None else None
+            shapes_rev = shapes_doc.ontology.revision if shapes_doc is not None else None
+            key = (ontology.revision, langs, shapes_rev)
             held = document._canvas
             # The view itself is kept and compared by identity, not by id(),
             # which a freed view's successor can be given.
@@ -4318,6 +4328,7 @@ class EditingService:
                     langs,
                     merged["graph"] if merged else None,
                     merged["importedFrom"] if merged else None,
+                    shapes=shapes_graph,
                 )
                 document._canvas = (key, view, merged)
             view = document._canvas[1]
@@ -4331,6 +4342,23 @@ class EditingService:
         if outcome is not None:
             drawn = with_inferred(drawn, outcome.inferred_kinds(), outcome.never_members())
         return {"revision": revision, "kind": kind, **drawn, "layout": layout}
+
+    def branch_map(self, pid: str) -> dict:
+        """relationship -> its branch concept, read from the project's shapes
+        document (skos-and-owl 5.3.4), so an example form's value picker offers
+        the branch and the concepts under it. {} when no shapes document is
+        open. Only the shapes lock is taken, never nested under the model."""
+        shapes_doc = self._open.get(pid, {}).get("shapes")
+        if shapes_doc is None:
+            return {}
+        out: dict = {}
+        with shapes_doc.lock:
+            g = shapes_doc.graph
+            for _, pshape in g.subject_objects(SH.property):
+                path = shapes_form.path_of(g, g.value(pshape, SH.path))
+                if path is not None and len(path) == 1 and shapes_form.branch_under(g, pshape) is not None:
+                    out[path[0]] = shapes_form.branch_under(g, pshape)
+        return out
 
     def get_layout(self, pid: str, doc: str) -> dict:
         document = self.document(pid, doc)

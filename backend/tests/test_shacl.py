@@ -607,3 +607,36 @@ def test_suggestions_budget(pid):
     median = _median_ms(lambda: client.get(f"/api/projects/{pid}/shapes/suggestions", params=params))
     assert median <= limit_ms(100), f"suggestions took {median:.1f} ms (median of 5)"
 
+
+
+# --- skos-and-owl (E-15): a branch rule validates values in the branch (5.3) --------------
+
+BRANCH_MODEL = PREFIXES + """
+<http://example.org/shop> a owl:Ontology .
+shop:Gadget a owl:Class ; rdfs:label "Gadget"@en .
+shop:Widget a owl:Class ; rdfs:label "Widget"@en .
+shop:hasStatus a owl:ObjectProperty ; rdfs:label "has status"@en ;
+    rdfs:domain shop:Gadget ; rdfs:range skos:Concept .
+shop:Status a skos:Concept ; skos:prefLabel "Status"@en .
+shop:Active a skos:Concept ; skos:prefLabel "Active"@en ; skos:broader shop:Status .
+shop:Draft a skos:Concept ; skos:prefLabel "Draft"@en .
+shop:w1 a shop:Widget, owl:NamedIndividual ; rdfs:label "W1"@en .
+shop:g1 a shop:Gadget, owl:NamedIndividual ; rdfs:label "G1"@en ; shop:hasStatus shop:Active .
+shop:g2 a shop:Gadget, owl:NamedIndividual ; rdfs:label "G2"@en ; shop:hasStatus shop:Status .
+shop:g3 a shop:Gadget, owl:NamedIndividual ; rdfs:label "G3"@en ; shop:hasStatus shop:Draft .
+shop:g4 a shop:Gadget, owl:NamedIndividual ; rdfs:label "G4"@en ; shop:hasStatus shop:w1 .
+"""
+
+
+def test_ac7_a_branch_rule_passes_the_branch_and_under_it_and_reports_the_rest(pid):
+    assert client.put(f"/api/projects/{pid}/documents/model/source",
+                      json={"text": BRANCH_MODEL}).status_code == 200
+    sid = shape(pid, EX + "Gadget", {"path": [EX + "hasStatus"], "under": EX + "Status"})
+    p = panel(validate(pid), sid)
+    assert p["state"] == "fails"
+    reported = {prob["focus"] for prob in p["problems"]}
+    # Under the branch (g1 -> Active) and the branch itself (g2 -> Status) pass.
+    assert EX + "g1" not in reported and EX + "g2" not in reported
+    # Outside the branch (g3 -> Draft) and a non-concept value (g4 -> w1) are reported.
+    assert EX + "g3" in reported and EX + "g4" in reported
+    assert any("not a Concept" in prob["sentence"] for prob in p["problems"])

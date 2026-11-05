@@ -834,9 +834,13 @@ def get_node(
         # panel reads, so a class from an import gives its fields too.
         if (details is not None and ontology.editable and from_data is None
                 and details.get("kind") in ("individual", "other")):
+            # A concept-valued relationship offers the branch and the concepts
+            # under it (skos-and-owl 5.3.4), read from the project's shapes.
+            split = split_document_id(ontology.id)
+            branches = editing_service.branch_map(split[0]) if split else {}
             example = examples.example_view(
                 graph, URIRef(iri), labeler(graph, ontology.label_langs(lang)),
-                list(ontology.languages or ()), own=ontology.graph,
+                list(ontology.languages or ()), own=ontology.graph, branches=branches,
             )
             if example is not None:
                 details["example"] = example

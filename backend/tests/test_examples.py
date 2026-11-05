@@ -560,3 +560,21 @@ def test_an_example_of_a_union_member_is_offered_the_shared_attribute():
     assert {"hasName", "leads"} <= fields("bob")
     assert "hasName" not in fields("t")
     assert "badge" not in fields("alice"), "two domain lines: alice is no Team"
+
+
+# --- skos-and-owl (E-15): a branch relationship's value picker (5.3.4) --------------------
+
+
+def test_ac7_branch_relationship_offers_only_the_branch_and_concepts_under_it(pid):
+    ok(pid, "CreateConcept", prefLabel="Status")
+    ok(pid, "CreateConcept", prefLabel="Active", broader="shop:Status")
+    ok(pid, "CreateConcept", prefLabel="Retired", broader="shop:Status")
+    ok(pid, "CreateConcept", prefLabel="Draft")  # a top concept, not under Status
+    ok(pid, "CreateBranchRelationship", label="has status", domain="shop:Person", branch="shop:Status")
+    field = next(f for f in node(pid, EX + "alice")["example"]["fields"] if f["label"] == "has status")
+    assert {o["label"] for o in field["options"]} == {"Status", "Active", "Retired"}
+    assert field["optionsTotal"] == 3
+    # A concept under the branch is accepted as the value.
+    assert run(pid, "SetExampleValue", iri="shop:alice", property="shop:hasStatus",
+               value={"kind": "link", "value": "shop:Active"}).status_code == 200
+    assert (U("alice"), U("hasStatus"), U("Active")) in graph(pid)
