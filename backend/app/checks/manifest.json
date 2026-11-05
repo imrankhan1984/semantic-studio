@@ -78,7 +78,7 @@
       "sha256": "0d9d165bea0fcebe8b932b61d1492ba71812c09f75c61efa10b516980f3e607d",
       "level": "Worth a look",
       "heading": "Labels copied from the name",
-      "fix": "Write the label for people: {suggested}.",
+      "fix": "Write the label for people, in words; each line suggests one.",
       "sentences": {
         "row": "{local}'s label reads {label}."
       },
@@ -347,7 +347,7 @@
       "sha256": "6358af6bc26cba9e74c58d18995fe13f231ac13eee4dcf22152431c9fc43700c",
       "level": "Problem",
       "heading": "Home-made copies of standard terms",
-      "fix": "Use {curie} instead; Edit shows how.",
+      "fix": "Use the standard term each line names; Edit shows how.",
       "sentences": {
         "row": "{name} copies {curie}."
       },

@@ -155,6 +155,14 @@ def test_the_catalogue_has_the_29_checks_then_the_12_hints():
     assert {e["level"] for e in checks.manifest() if e["id"] in HINTS} == {"Hint"}
 
 
+def test_no_fix_line_holds_an_unfilled_placeholder():
+    # The Checks page shows a group's fix line verbatim, so a "{...}" token in
+    # it would reach the person unfilled (unlike a sentences.row, which is
+    # filled per finding). Every check's and hint's fix must be plain words.
+    offenders = [e["id"] for e in checks.manifest() if "{" in e["fix"] or "}" in e["fix"]]
+    assert offenders == []
+
+
 @pytest.mark.parametrize("cid", sorted(EXPECTED))
 def test_ac3_each_check_reports_exactly_its_planted_finding(faults, cid):
     group = by_id(faults)[cid]
