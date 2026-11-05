@@ -68,11 +68,13 @@ EXPECTED OUTPUT
 
 from __future__ import annotations
 
+import re
 from typing import Callable, Iterable, Optional
 
 from rdflib import BNode, Graph, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS
 
+from . import standard_terms
 from .axioms import class_type, defined, disjoint_pairs, disjoint_with, domain_of, named_pairs
 from .sentences import article, verb
 
@@ -484,6 +486,23 @@ def inverses(graph: Graph, prop: URIRef) -> list[URIRef]:
     found |= {s for s in graph.subjects(OWL.inverseOf, prop) if isinstance(s, URIRef)}
     found.discard(prop)
     return sorted(found)
+
+
+def standard_term_warning(graph: Graph, iri: URIRef, kind_group: str, name: Name) -> Optional[dict]:
+    """The term's name looks like a standard term at level warn (standard-terms
+    5.4): the change is kept and the warning stands under the term's block,
+    naming the standard term and how to reuse it. `kind_group` is "property"
+    or "class"; a concept or an example is never passed here. None when the
+    name is no standard term, or one that refuses (the door stopped that)."""
+    label = name(iri)
+    local = re.split(r"[#/]", str(iri).rstrip("#/"))[-1]
+    entry = standard_terms.match([label, local], kind_group)
+    if entry is None or entry["level"] != "warn":
+        return None
+    return {
+        "text": f"{label} looks like {entry['curie']}, a standard term other tools already read. {entry['how']}",
+        "block": "standard-term",
+    }
 
 
 def warnings(graph: Graph, prop: URIRef, name: Name) -> list[dict]:

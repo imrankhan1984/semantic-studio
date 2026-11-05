@@ -45,9 +45,16 @@ EXPECTED OUTPUT
 */
 
 import { useEffect, useId, useRef, useState } from "react";
-import { relationshipSentence } from "../modeling/sentences";
+import { relationshipSentence, standardWayButton } from "../modeling/sentences";
 import { keep } from "./ClassNode";
 import type { RelateChoice } from "./relate";
+
+/** A new-relationship name the server refused as a copy of a standard axiom
+ *  (standard-terms 5.5): the sentence, and the standard way to offer. */
+export interface NameRefusal {
+  message: string;
+  offer: { command: string; args: Record<string, string> } | null;
+}
 
 interface Props {
   from: string;
@@ -61,6 +68,10 @@ interface Props {
   anchor: { x: number; y: number };
   busy: boolean;
   error: string | null;
+  /** A standard-term refusal of the typed name, with its offer (5.5). */
+  nameRefusal?: NameRefusal | null;
+  onOffer: (offer: { command: string; args: Record<string, string> }) => void;
+  onClearRefusal: () => void;
   onChoose: (choice: RelateChoice, name?: string) => void;
   onClose: () => void;
 }
@@ -76,11 +87,15 @@ export default function RelateMenu({
   anchor,
   busy,
   error,
+  nameRefusal = null,
+  onOffer,
+  onClearRefusal,
   onChoose,
   onClose,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const sentenceId = useId();
+  const offerRef = useRef<HTMLButtonElement>(null);
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState("");
 
@@ -88,6 +103,11 @@ export default function RelateMenu({
   useEffect(() => {
     if (!naming) (ref.current?.querySelector<HTMLElement>('[role="menuitem"]') ?? ref.current?.querySelector<HTMLElement>(".relate-swap"))?.focus();
   }, [naming, from, to]);
+
+  // The offer button takes focus when it appears (5.5, 5.8).
+  useEffect(() => {
+    if (nameRefusal?.offer) offerRef.current?.focus();
+  }, [nameRefusal]);
 
   const move = (step: number | "first" | "last") => {
     const all = Array.from(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
@@ -147,15 +167,39 @@ export default function RelateMenu({
             value={name}
             readOnly={busy}
             aria-describedby={sentenceId}
-            onChange={(e) => setName(e.target.value)}
+            aria-invalid={nameRefusal ? true : undefined}
+            onChange={(e) => {
+              // Any edit clears the refusal, so Create is available again as
+              // soon as the name changes to one that does not match (5.5).
+              if (nameRefusal) onClearRefusal();
+              setName(e.target.value);
+            }}
           />
-          <p id={sentenceId} className="relate-sentence">
-            {relationshipSentence(from, name, to)}
-          </p>
+          {nameRefusal ? (
+            <p id={sentenceId} className="relate-refusal" role="alert">
+              {nameRefusal.message}
+            </p>
+          ) : (
+            <p id={sentenceId} className="relate-sentence">
+              {relationshipSentence(from, name, to)}
+            </p>
+          )}
           <div className="edit-actions">
-            <button type="submit" className="primary" aria-disabled={busy || !name.trim()}>
-              {busy ? "Saving change…" : "Create"}
-            </button>
+            {nameRefusal?.offer ? (
+              <button
+                ref={offerRef}
+                type="button"
+                className="primary"
+                aria-disabled={busy}
+                onClick={() => !busy && onOffer(nameRefusal.offer!)}
+              >
+                {standardWayButton(nameRefusal.offer.command)}
+              </button>
+            ) : (
+              <button type="submit" className="primary" aria-disabled={busy || !name.trim() || !!nameRefusal}>
+                {busy ? "Saving change…" : "Create"}
+              </button>
+            )}
             <button type="button" className="ghost" onClick={onClose}>
               Cancel
             </button>

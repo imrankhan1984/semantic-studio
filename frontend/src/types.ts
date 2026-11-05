@@ -650,6 +650,30 @@ export interface AlreadyDefined {
   };
 }
 
+/** The standard term a refused name copies (standard-terms 5.3, D-126): the
+ *  409 standard_term carries it so a door can offer the standard way. */
+export interface StandardTermDetail {
+  code: "standard_term";
+  message: string;
+  term: {
+    iri: string;
+    curie: string;
+    means: string;
+    how: string;
+    /** The command that says it the standard way, when a door knows both
+     *  ends (5.5); null otherwise. */
+    offer: { command: string; args: Record<string, string> } | null;
+  };
+}
+
+/** The 422 standard_term a Turtle Apply answers (standard-terms 5.6): each
+ *  own property or class the text introduces that copies a standard axiom. */
+export interface StandardTermInText {
+  code: "standard_term";
+  message: string;
+  terms: { name: string; curie: string; line: number }[];
+}
+
 export interface ClassProperty {
   iri: string;
   label: string;

@@ -1,0 +1,41 @@
+# standard-copies.ttl: Section 1's probe for V-8 (standard-terms, D-126). A
+# learner's project with home-made copies of standard terms, each under the
+# project's own namespace: four refuse copies named like OWL/RDFS/SKOS axioms
+# (disjointWith, sameAs, subClassOf, broader), two warn copies named like a
+# standard metadata/label term (creator, prefLabel), and a Person class that
+# matches FOAF through DC-18's reference index. DC-29 lists the four refuse
+# copies at Problem; DC-18 lists the two warn copies and Person.
+
+@prefix ex:   <http://example.org/probe#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<http://example.org/probe> a owl:Ontology .
+
+ex:Person a owl:Class ;
+    rdfs:label "Person"@en .
+ex:Circuit a owl:Class ;
+    rdfs:label "Circuit"@en .
+ex:Motor a owl:Class ;
+    rdfs:label "Motor"@en .
+
+# Refuse copies: named like a standard axiom a reasoner understands.
+ex:disjointWith a owl:ObjectProperty ;
+    rdfs:label "disjoint with"@en ;
+    rdfs:domain ex:Circuit ;
+    rdfs:range ex:Motor .
+ex:sameAs a owl:ObjectProperty ;
+    rdfs:label "same as"@en .
+ex:subClassOf a owl:ObjectProperty ;
+    rdfs:label "sub class of"@en .
+ex:broader a owl:ObjectProperty ;
+    rdfs:label "broader"@en .
+
+# Warn copies: named like a standard metadata or label term.
+ex:creator a owl:DatatypeProperty ;
+    rdfs:label "creator"@en ;
+    rdfs:range xsd:string .
+ex:prefLabel a owl:DatatypeProperty ;
+    rdfs:label "preferred label"@en ;
+    rdfs:range xsd:string .

@@ -523,6 +523,27 @@ export function memberDeleteQuestion(member: string, name: string): string {
   return `Remove ${member} from ${name}, or delete ${name}?`;
 }
 
+// --- The standard way, offered on the line menu (standard-terms 5.5) ---------------
+
+/** The line menu's *never both* entry: *Nothing is both a Circuit breaker
+ *  and a Motor (never both).* */
+export function disjointEntry(from: string, to: string): string {
+  return `Nothing is both ${a(from)} and ${a(to)} (never both)`;
+}
+
+/** The line menu's *equivalent* entry: *A Circuit breaker is the same as a
+ *  Motor (equivalent).* */
+export function equivalentEntry(from: string, to: string): string {
+  const first = a(from);
+  return `${first[0].toUpperCase()}${first.slice(1)} is the same as ${a(to)} (equivalent)`;
+}
+
+/** The button that makes the standard axiom when a refused name carries an
+ *  offer (5.5): *Make them never both* / *Make them the same*. */
+export function standardWayButton(command: string): string {
+  return command === "AddEquivalentClass" ? "Make them the same" : "Make them never both";
+}
+
 // --- OWL or RDFS for each class (attribute-reuse 5.6 to 5.8, D-117) -----------------
 
 /** The *Kind of class* radio group (5.6): each choice and what it means. */

@@ -53,7 +53,8 @@ EXPECTED OUTPUT
 */
 
 import { useEffect, useRef, useState } from "react";
-import { alreadyDefined } from "../api";
+import { alreadyDefined, standardTerm } from "../api";
+import { standardWayButton } from "../modeling/sentences";
 import { structureOf, type EntityModel, type Ref } from "../modeling/entity";
 import { projectStore, useProjectSelector } from "../state/projectStore";
 import type { AlreadyDefined, ClassProperty, ClassRules, ModelWarning, SearchKind } from "../types";
@@ -224,6 +225,9 @@ export default function EditStructure({
   // under the list once the form has closed.
   const [reuse, setReuse] = useState<{ iri: string; label: string } | null>(null);
   const [existing, setExisting] = useState<AlreadyDefined | null>(null);
+  // A create refused as a copy of a standard axiom (standard-terms 5.5): the
+  // sentence and the offer, kept under the field until the name changes.
+  const [stdRefusal, setStdRefusal] = useState<{ message: string; offer: { command: string; args: Record<string, string> } | null } | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const formBox = useRef<HTMLDivElement>(null);
   const lists = useRef<Record<string, HTMLHeadingElement | null>>({});
@@ -235,6 +239,7 @@ export default function EditStructure({
   useEffect(() => {
     setReuse(null);
     setExisting(null);
+    setStdRefusal(null);
     setNote(null);
   }, [iri]);
   // A reuse begun on the canvas for this class: open its plan once.
@@ -257,6 +262,7 @@ export default function EditStructure({
     setPickingRange(false);
     setReuse(null);
     setExisting(null);
+    setStdRefusal(null);
     if (was) window.setTimeout(() => openers.current[was]?.focus(), 0);
   };
   /** A finished choice: the form closes, and focus goes to the class's
@@ -266,6 +272,7 @@ export default function EditStructure({
     setOpen(null);
     setReuse(null);
     setExisting(null);
+    setStdRefusal(null);
     window.setTimeout(() => lists.current[which]?.focus(), 0);
   };
   /** The reuse plan in place of the name form's choices, or nothing. */
@@ -293,16 +300,51 @@ export default function EditStructure({
    *  turns into the offer to use it (5.1) rather than a sentence. */
   const createProperty = async (which: "attribute" | "relationship", command: string, args: Record<string, unknown>) => {
     setExisting(null);
+    setStdRefusal(null);
     setNote(null);
     const result = await run(which, command, args, undefined, (_message, e) => {
       const found = alreadyDefined(e);
-      if (found && found.property.kind === which) setExisting(found);
+      if (found && found.property.kind === which) {
+        setExisting(found);
+        return;
+      }
+      // A name copying a standard axiom (standard-terms 5.5): keep the name,
+      // show the refusal, and offer the standard way when it carries one;
+      // otherwise the how sentence says where to do it.
+      const std = standardTerm(e);
+      if (std) {
+        const text = std.term.offer ? std.message : `${std.message} ${std.term.how}`;
+        setStdRefusal({ message: text, offer: std.term.offer });
+        clear(which);
+      }
     });
     if (result) {
       close();
       follow(result.created);
     }
   };
+
+  /** Run the standard way an offer named (5.5): one command, then the form
+   *  closes and focus goes back to the list, as a finished choice does. */
+  const runStandardWay = async (which: "attribute" | "relationship", offer: { command: string; args: Record<string, string> }) => {
+    const result = await run(which, offer.command, offer.args);
+    if (result) reused(which);
+  };
+
+  /** The refusal prop a form takes (5.5): its sentence, and the offer turned
+   *  into a labelled button, or none. */
+  const refusalFor = (which: "attribute" | "relationship") =>
+    stdRefusal
+      ? {
+          message: stdRefusal.message,
+          offer: stdRefusal.offer
+            ? {
+                label: standardWayButton(stdRefusal.offer.command),
+                onOffer: () => void runStandardWay(which, stdRefusal.offer!),
+              }
+            : null,
+        }
+      : null;
   const suggest = (which: "attribute" | "relationship") => ({
     ontologyId,
     kind: which === "attribute" ? ("datatypeProperty" as const) : ("objectProperty" as const),
@@ -420,8 +462,10 @@ export default function EditStructure({
               primaryLanguage={primaryLanguage}
               datatypes
               busy={busy}
-              error={existing ? null : errors.attribute}
+              error={existing || stdRefusal ? null : errors.attribute}
               existing={reuse ? null : existingChoice}
+              refusal={reuse || existing ? null : refusalFor("attribute")}
+              onClearRefusal={() => setStdRefusal(null)}
               suggest={reuse ? undefined : suggest("attribute")}
               onCancel={close}
               onSubmit={({ name: label, iri: chosen, datatype }) =>
@@ -446,8 +490,10 @@ export default function EditStructure({
             title={`New relationship from ${name}`}
             primaryLanguage={primaryLanguage}
             busy={busy}
-            error={existing ? null : errors.relationship}
+            error={existing || stdRefusal ? null : errors.relationship}
             existing={reuse ? null : existingChoice}
+            refusal={reuse || existing ? null : refusalFor("relationship")}
+            onClearRefusal={() => setStdRefusal(null)}
             suggest={reuse ? undefined : suggest("relationship")}
             missing={range ? null : "Choose the class it points to."}
             onCancel={close}

@@ -69,6 +69,8 @@ from ..editing import (
     NoSuchRule,
     NotOpen,
     ReasoningRefused,
+    StandardTerm,
+    StandardTermInText,
     TurtleSyntaxError,
     editing_service,
     project_store,
@@ -174,6 +176,22 @@ def _errors():
         raise HTTPException(
             status_code=409,
             detail={"code": "already_defined", "property": exc.property, "message": str(exc)},
+        ) from exc
+    except StandardTerm as exc:
+        # A name copying a standard axiom (standard-terms 5.3): refused with no
+        # way past; the standard term and its offer go with the sentence so a
+        # door can offer the standard way. Caught before CommandError, which it
+        # subclasses.
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "standard_term", "message": str(exc), "term": exc.term},
+        ) from exc
+    except StandardTermInText as exc:
+        # Turtle Apply introducing an own copy (standard-terms 5.6): refused
+        # before anything changes, each term with its line.
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "standard_term", "message": str(exc), "terms": exc.terms},
         ) from exc
     except NoSuchRule as exc:
         # A restriction named by its content that is not there (axioms 5.10).

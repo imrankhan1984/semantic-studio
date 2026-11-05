@@ -135,6 +135,9 @@ EXPECTED = {
         "Terms under http://www.semanticweb.org/learner/ontologies/x# use an editor's default address.",
     )],
     "DC-28": [("https://w3id.org/acme/data/test-v2/mission/m9", "Mission nine's address has a version in its path (test-v2).")],
+    # DC-29 (standard-terms 5.7): the general faults fixture has no home-made
+    # copy of a standard term, so it reports none; AC-7 below uses its own probe.
+    "DC-29": [],
 }
 
 
@@ -146,10 +149,18 @@ def faults() -> dict:
 HINTS = [f"H{n}" for n in range(1, 13)]
 
 
-def test_the_catalogue_has_the_28_checks_then_the_12_hints():
-    assert [e["id"] for e in checks.manifest()] == [f"DC-{n:02d}" for n in range(1, 29)] + HINTS
+def test_the_catalogue_has_the_29_checks_then_the_12_hints():
+    assert [e["id"] for e in checks.manifest()] == [f"DC-{n:02d}" for n in range(1, 30)] + HINTS
     assert set(EXPECTED) == {e["id"] for e in checks.manifest() if e["id"].startswith("DC-")}
     assert {e["level"] for e in checks.manifest() if e["id"] in HINTS} == {"Hint"}
+
+
+def test_no_fix_line_holds_an_unfilled_placeholder():
+    # The Checks page shows a group's fix line verbatim, so a "{...}" token in
+    # it would reach the person unfilled (unlike a sentences.row, which is
+    # filled per finding). Every check's and hint's fix must be plain words.
+    offenders = [e["id"] for e in checks.manifest() if "{" in e["fix"] or "}" in e["fix"]]
+    assert offenders == []
 
 
 @pytest.mark.parametrize("cid", sorted(EXPECTED))
@@ -162,7 +173,7 @@ def test_ac3_each_check_reports_exactly_its_planted_finding(faults, cid):
 
 def test_ac3_the_clean_fixture_trips_nothing():
     report = run(parse(FIXTURES / "design-clean.ttl"), namespace="acme")
-    assert len(report["groups"]) == 40
+    assert len(report["groups"]) == 41
     # No hint either: the clean fixture asks no question.
     assert {g["id"]: g["total"] for g in report["groups"] if g["total"]} == {}
     assert report["measures"]["level"]["step"] == 6
@@ -381,6 +392,62 @@ def test_a_pattern_project_owns_its_data_and_shapes_bases_too():
     assert by_id(with_data)["DC-19"]["total"] == 1
 
 
+# --- AC-7: DC-29 (home-made copies) and DC-18's warn reading (standard-terms) -------
+
+
+def _found(report: dict, cid: str) -> list[str]:
+    """The local names a check reports, from the finding IRIs."""
+    import re as _re
+    return sorted(_re.split(r"[#/]", f["iri"].rstrip("#/"))[-1] for f in by_id(report)[cid]["findings"])
+
+
+def test_ac7_dc29_lists_every_refuse_copy_at_problem():
+    report = run(parse(FIXTURES / "standard-copies.ttl"))
+    dc29 = by_id(report)["DC-29"]
+    assert dc29["level"] == "Problem"
+    assert _found(report, "DC-29") == ["broader", "disjointWith", "sameAs", "subClassOf"]
+    # Each sentence names the standard term it copies.
+    sentences = {f["iri"].rsplit("#", 1)[-1]: f["sentence"] for f in dc29["findings"]}
+    assert sentences["disjointWith"] == "disjoint with copies owl:disjointWith."
+    assert sentences["broader"] == "broader copies skos:broader."
+    # It leads to the term's label in Edit.
+    assert all(f.get("block") == "label" for f in dc29["findings"])
+
+
+def test_ac7_dc18_lists_the_warn_copies():
+    report = run(parse(FIXTURES / "standard-copies.ttl"))
+    names = _found(report, "DC-18")
+    assert "creator" in names and "prefLabel" in names
+    sentences = {f["iri"].rsplit("#", 1)[-1]: f["sentence"] for f in by_id(report)["DC-18"]["findings"]}
+    assert sentences["creator"] == "creator matches dcterms:creator in Dublin Core."
+    assert sentences["prefLabel"] == "preferred label matches skos:prefLabel in SKOS."
+    # The warn copies are not reported as Problems (DC-29 holds those).
+    assert _found(report, "DC-29") == ["broader", "disjointWith", "sameAs", "subClassOf"]
+
+
+def test_ac7_a_library_copy_of_foaf_lists_no_home_made_copy():
+    report = run(parse(APP / "vocab" / "foaf.rdf"))
+    assert by_id(report)["DC-29"]["findings"] == []
+
+
+def test_ac7_dc29_file_is_pinned_and_a_moved_hash_is_refused(monkeypatch):
+    listed = [e for e in checks.manifest() if e["id"] == "DC-29"][0]
+    assert hashlib.sha256((APP / "checks" / "DC-29.rq").read_bytes()).hexdigest() == listed["sha256"]
+    real = json.loads(checks.MANIFEST_PATH.read_text(encoding="utf-8"))
+    for e in real["checks"]:
+        if e["id"] == "DC-29":
+            e["sha256"] = "0" * 64
+    tampered = checks.MANIFEST_PATH.parent / "_tampered29.json"
+    monkeypatch.setattr(checks, "MANIFEST_PATH", tampered)
+    monkeypatch.setattr(checks, "_catalogue", None)
+    tampered.write_text(json.dumps(real), encoding="utf-8")
+    try:
+        with pytest.raises(checks.CheckFileChanged):
+            checks.manifest()
+    finally:
+        tampered.unlink()
+
+
 def test_the_standard_list_lives_in_checks_py_alone():
     scanned = [p for p in APP.rglob("*.py") if "__pycache__" not in p.parts]
     assert len(scanned) > 40  # the scan found the source tree
@@ -391,7 +458,7 @@ def test_the_standard_list_lives_in_checks_py_alone():
     ]
     assert copies == []
     queries = list((APP / "checks").glob("*.rq"))
-    assert len(queries) == 40
+    assert len(queries) == 41
     for path in queries:
         text = path.read_text(encoding="utf-8")
         assert not any(ns in text for ns in rare if ns not in ("http://purl.org/dc/terms/", "http://purl.org/dc/elements/1.1/")), path.name
@@ -450,7 +517,7 @@ def test_ac6_open_as_a_query_is_exactly_the_file():
     response = client.get("/api/checks")
     assert response.status_code == 200
     listed = response.json()
-    assert len(listed) == 40
+    assert len(listed) == 41
     for item in listed:
         assert item["query"] == (APP / "checks" / f"{item['id']}.rq").read_text(encoding="utf-8")
         assert set(item) == {"id", "level", "heading", "fix", "query"}
@@ -674,8 +741,8 @@ def test_ac8_the_revision_moves_with_an_edit(project):
 def test_a_shapes_document_runs_three_checks(project):
     body = client.get(f"/api/ontologies/{project}-shapes/checks").json()
     assert [g["id"] for g in body["groups"]] == ["DC-01", "DC-03", "DC-08"]
-    # The other 25 checks and every hint (5.11).
-    assert len(body["skipped"]) == 37
+    # The other 26 checks and every hint (5.11).
+    assert len(body["skipped"]) == 38
     assert checks.SHAPES_NOTE in body["notes"]
 
 
@@ -925,7 +992,7 @@ def test_ac12a_a_document_under_the_cap_runs_every_check():
     report = run(parse(FIXTURES / "design-clean.ttl"), namespace="acme")
     assert "overCap" not in report
     assert report["measures"] is not None
-    assert len(report["groups"]) == 40
+    assert len(report["groups"]) == 41
 
 
 def test_ac12a_the_route_answers_over_the_cap():

@@ -765,6 +765,12 @@ def get_node(
             )
             if separate is not None:
                 details["warnings"].append(separate)
+            # A name that looks like a standard term (standard-terms 5.4): the
+            # warning stands under its block, for the project's own property.
+            if axioms.property_kind(ontology.graph, URIRef(iri)) is not None:
+                copy = modeling_checks.standard_term_warning(ontology.graph, URIRef(iri), "property", name)
+                if copy is not None:
+                    details["warnings"].append(copy)
             # Its domain as every view reads it (attribute-reuse 5.3): the
             # form lists a union's members, never the blank node.
             # The document's own statement when it defines the property, so
@@ -799,6 +805,12 @@ def get_node(
                 if examples.is_class(ontology.graph, cls) and class_type == "owl" else None,
                 "classType": class_type,
             }
+            # A class named like a standard term (standard-terms 5.4): the warn
+            # sentence under its block, for the document's own class.
+            if axioms.defined(ontology.graph, cls):
+                copy = modeling_checks.standard_term_warning(ontology.graph, cls, "class", name)
+                if copy is not None:
+                    details["rules"]["warnings"].append(copy)
             # What the class has and how: its own, shared, both (two domain
             # lines) and through a parent (attribute-reuse 5.3).
             details["properties"] = axioms.class_properties(graph, cls, name)

@@ -58,7 +58,7 @@ EXPECTED OUTPUT
 */
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { TurtleError, getDocumentSource } from "../api";
+import { StandardTermError, TurtleError, getDocumentSource } from "../api";
 import { unknownTermLines } from "../referenceWords";
 import { projectStore, useProjectSelector } from "../state/projectStore";
 import type { ProjectDocName } from "../types";
@@ -81,6 +81,8 @@ interface ParseProblem {
   line: number | null;
   column: number | null;
   detail: string;
+  /** Each own term a standard-term Apply refused, with its line (5.6). */
+  terms?: { name: string; curie: string; line: number }[];
 }
 
 /** Where line N, column C sits in the text, for putting the caret there. */
@@ -162,7 +164,18 @@ export default function TurtleEditor({ projectId, doc, revision, onSelectEntity 
       // flash back to the old text while the refetch is in flight.
       setBase(applied);
     } catch (e: unknown) {
-      if (e instanceof TurtleError) {
+      if (e instanceof StandardTermError) {
+        // A name copying a standard axiom (standard-terms 5.6): each term with
+        // its line, in the message area, and the caret at the first.
+        const first = e.terms[0]?.line ?? null;
+        setProblem({ message: e.message, line: first, column: null, detail: "", terms: e.terms });
+        const area = textRef.current;
+        if (area && first !== null) {
+          const at = offsetOf(area.value, first, 1);
+          area.focus();
+          area.setSelectionRange(at, at);
+        }
+      } else if (e instanceof TurtleError) {
         setProblem({ message: e.message, line: e.line, column: e.column, detail: e.detail });
         // Put the caret where rdflib stopped, so the fix starts there.
         const area = textRef.current;
@@ -241,6 +254,15 @@ export default function TurtleEditor({ projectId, doc, revision, onSelectEntity 
       {problem && (
         <div className="turtle-error" role="alert">
           <p>{problem.message}</p>
+          {problem.terms && (
+            <ul className="turtle-term-list">
+              {problem.terms.map((t) => (
+                <li key={`${t.name}-${t.line}`}>
+                  {t.name} copies {t.curie} — line {t.line}
+                </li>
+              ))}
+            </ul>
+          )}
           {problem.detail && (
             <details>
               <summary>rdflib's message</summary>
