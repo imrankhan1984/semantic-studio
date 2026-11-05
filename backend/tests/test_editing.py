@@ -53,7 +53,7 @@ from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.compare import isomorphic
 from rdflib.namespace import DCTERMS, OWL, RDF, RDFS, SKOS, XSD
 
-from app import editing
+from app import editing, shapes_form
 from app.editing import editing_service, has_comments, project_store
 from app.main import app
 
@@ -1347,6 +1347,12 @@ def test_every_shape_command_is_one_undo_step_and_survives_save_and_reload(pid):
     # Check it in data too (axioms 5.8) checks a rule of the model.
     ok(pid, "AddRestriction", **{"class": "shop:Person"}, property="shop:memberOf", kind="atMost", n=1)
     sid = shapes_ok(pid, "CreateShape", target="shop:Person")["created"]
+    # A concept-valued relationship (skos-and-owl 5.3), on its own class so its
+    # branch rule lives in a shape apart from sid: SetBranch and ClearBranch then
+    # each move one undo step on it.
+    ok(pid, "CreateClass", label="Gadget")
+    ok(pid, "CreateConcept", prefLabel="Kind")
+    ok(pid, "CreateBranchRelationship", label="classified as", domain="shop:Gadget", branch="shop:Kind")
     steps = [
         ("AddRule", {"shape": sid, "rule": {"path": [str(RDFS.label)], "uniqueLang": True,
                                             "languageIn": ["en"], "requiredLanguages": ["en"]}}),
@@ -1355,6 +1361,8 @@ def test_every_shape_command_is_one_undo_step_and_survives_save_and_reload(pid):
                          "rule": {"path": ["shop:memberOf"], "minCount": 1, "class": "shop:Organization"}}),
         ("CheckInData", {"class": "shop:Person", "restriction": {"form": "every", "property": "shop:memberOf",
                                                                   "kind": "atMost", "filler": None, "n": 1}}),
+        ("ClearBranch", {"property": "shop:classifiedAs"}),
+        ("SetBranch", {"property": "shop:classifiedAs", "branch": "shop:Kind"}),
         ("SetShapeTarget", {"shape": sid, "target": "shop:Organization"}),
         ("SetShapeName", {"shape": sid, "value": "People rules"}),
         ("SetShapeSeverity", {"shape": sid, "severity": "warning"}),
@@ -2005,3 +2013,152 @@ def test_ac6_a_document_that_already_holds_a_copy_can_still_be_edited(pid):
     )
     assert apply(pid, text).status_code == 200
     assert (U("Widget"), RDF.type, OWL.Class) in doc(pid).graph
+
+
+# --- skos-and-owl (E-15): branch relationships and the paired undo (5.3) ------------------
+
+
+def shapes_undo(pid: str) -> dict:
+    response = client.post(f"/api/projects/{pid}/documents/shapes/undo")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def shapes_redo(pid: str) -> dict:
+    response = client.post(f"/api/projects/{pid}/documents/shapes/redo")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _branch_setup(pid: str):
+    """A class Motor and a concept Motor types to link; returns their IRIs."""
+    ok(pid, "CreateClass", label="Motor")
+    ok(pid, "CreateConcept", prefLabel="Motor types")
+    return U("Motor"), U("MotorTypes")
+
+
+def _branch_value(pid: str, prop: URIRef):
+    """The concept a relationship's branch rule requires, read from shapes."""
+    g = shapes_graph(pid)
+    for _, pshape in g.subject_objects(SH.property):
+        if g.value(pshape, SH.path) == prop:
+            under = shapes_form.branch_under(g, pshape)
+            if under is not None:
+                return under
+    return None
+
+
+def test_create_branch_relationship_writes_both_halves_and_pairs_undo(pid):
+    motor, types = _branch_setup(pid)
+    result = ok(pid, "CreateBranchRelationship", label="motor type",
+                domain="shop:Motor", branch="shop:MotorTypes")
+    prop = U("motorType")
+    assert result["created"] == str(prop)
+    assert result["partner"]["doc"] == "shapes"
+    # The model's four statements (5.3).
+    g = graph_copy(pid)
+    assert (prop, RDF.type, OWL.ObjectProperty) in g
+    assert (prop, RDFS.label, Literal("motor type", lang="en")) in g
+    assert (prop, RDFS.domain, motor) in g
+    assert (prop, RDFS.range, SKOS.Concept) in g
+    # The shapes half: one branch rule, sh:class skos:Concept, under MotorTypes.
+    sg = shapes_graph(pid)
+    pshapes = [p for _, p in sg.subject_objects(SH.property) if sg.value(p, SH.path) == prop]
+    assert len(pshapes) == 1
+    assert (pshapes[0], SH["class"], SKOS.Concept) in sg
+    assert shapes_form.branch_under(sg, pshapes[0]) == types
+
+    # One undo from the model removes both halves; redo restores both.
+    undo(pid)
+    assert (prop, RDF.type, OWL.ObjectProperty) not in graph_copy(pid)
+    assert _branch_value(pid, prop) is None
+    redo(pid)
+    assert (prop, RDF.type, OWL.ObjectProperty) in graph_copy(pid)
+    assert _branch_value(pid, prop) == types
+    # One undo from the shapes removes both too.
+    shapes_undo(pid)
+    assert (prop, RDF.type, OWL.ObjectProperty) not in graph_copy(pid)
+    assert _branch_value(pid, prop) is None
+    # And a redo from the shapes brings both back.
+    shapes_redo(pid)
+    assert (prop, RDF.type, OWL.ObjectProperty) in graph_copy(pid)
+    assert _branch_value(pid, prop) == types
+
+
+def test_undo_of_a_pair_is_refused_when_the_partner_moved(pid):
+    _branch_setup(pid)
+    ok(pid, "CreateBranchRelationship", label="motor type",
+       domain="shop:Motor", branch="shop:MotorTypes")
+    # A later shapes change buries the branch's shapes half.
+    shapes_ok(pid, "CreateShape", target="shop:Person")
+    before_model, before_shapes = graph_copy(pid), shapes_graph(pid)
+    response = client.post(f"/api/projects/{pid}/documents/model/undo")
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "changed the shapes" in detail and "Undo the shapes first" in detail
+    # Nothing changed.
+    assert isomorphic(graph_copy(pid), before_model)
+    assert isomorphic(shapes_graph(pid), before_shapes)
+
+
+def test_recovery_drops_a_branch_half_without_its_partner(pid, monkeypatch):
+    monkeypatch.setattr(editing, "AUTOSAVE_DELAY", 0.05)
+    _branch_setup(pid)
+    ok(pid, "CreateBranchRelationship", label="motor type",
+       domain="shop:Motor", branch="shop:MotorTypes")
+    model_draft = project_store.folder(pid) / ".draft" / "model.ttl"
+    assert _wait_for(model_draft.exists)
+    _crash(pid)
+    # Only the model half is journaled: the shapes draft is gone.
+    for name in ("shapes.ttl", "shapes.json"):
+        (project_store.folder(pid) / ".draft" / name).unlink(missing_ok=True)
+    client.post(f"/api/projects/{pid}/open")
+    client.post(f"/api/projects/{pid}/recover", json={"action": "recover"})
+    # A pair or neither (5.3.3): the orphan model half is dropped.
+    assert (U("motorType"), RDF.type, OWL.ObjectProperty) not in doc(pid).graph
+
+
+def test_set_clear_and_delete_branch(pid):
+    _branch_setup(pid)
+    ok(pid, "CreateConcept", prefLabel="Electric", broader="shop:MotorTypes")
+    ok(pid, "CreateBranchRelationship", label="motor type",
+       domain="shop:Motor", branch="shop:MotorTypes")
+    prop = U("motorType")
+    assert _branch_value(pid, prop) == U("MotorTypes")
+    # SetBranch narrows the branch to a concept under it.
+    shapes_ok(pid, "SetBranch", property="shop:motorType", branch="shop:Electric")
+    assert _branch_value(pid, prop) == U("Electric")
+    # ClearBranch removes the rule only; the relationship stays.
+    shapes_ok(pid, "ClearBranch", property="shop:motorType")
+    assert _branch_value(pid, prop) is None
+    assert (prop, RDF.type, OWL.ObjectProperty) in graph_copy(pid)
+    assert shapes_run(pid, "ClearBranch", property="shop:motorType").status_code == 422
+    # Add it back, then delete the relationship: the branch rule goes too, and
+    # one undo brings both back (5.3.2).
+    shapes_ok(pid, "SetBranch", property="shop:motorType", branch="shop:MotorTypes")
+    ok(pid, "DeleteEntity", iri="shop:motorType")
+    assert (prop, RDF.type, OWL.ObjectProperty) not in graph_copy(pid)
+    assert _branch_value(pid, prop) is None
+    undo(pid)
+    assert (prop, RDF.type, OWL.ObjectProperty) in graph_copy(pid)
+    assert _branch_value(pid, prop) == U("MotorTypes")
+
+
+def test_set_branch_refuses_a_relationship_without_concept_values(pid):
+    _branch_setup(pid)
+    ok(pid, "CreateObjectProperty", label="made by", domain="shop:Motor", range="shop:Person")
+    response = shapes_run(pid, "SetBranch", property="shop:madeBy", branch="shop:MotorTypes")
+    assert response.status_code == 422 and "concept values" in response.json()["detail"]
+
+
+def test_branch_rule_reads_back_as_an_editable_rule(pid):
+    _branch_setup(pid)
+    ok(pid, "CreateBranchRelationship", label="motor type",
+       domain="shop:Motor", branch="shop:MotorTypes")
+    sg = shapes_graph(pid)
+    node = next(iter(sg.subjects(SH.targetClass, U("Motor"))))
+    shape = shapes_form.read_shape(sg, node, doc(pid).graph, lambda i: str(i), ["en"])
+    assert shape["editable"] is True
+    rule = next(r for r in shape["rules"] if r["path"] == [str(U("motorType"))])
+    assert rule["under"] == str(U("MotorTypes"))
+    assert rule["class"] == str(SKOS.Concept)

@@ -227,10 +227,13 @@ def test_snapshots_join_only_when_asked(shop):
     assert added == {f"Person {i} is a Person" for i in range(1, 4)} | {f"Person {i} is an Agent" for i in range(1, 4)}
 
 
-def test_reasoning_is_for_ontology_projects_and_needs_a_run_first():
+def test_reasoning_runs_in_every_project_and_needs_a_run_first():
+    """Reasoning runs in a taxonomy too (skos-and-owl 5.4, AC-8): it is no
+    longer refused for the kind; it answers 200 with the empty result."""
     taxonomy = create("taxonomy-small")
-    refused = client.post(f"/api/projects/{taxonomy}/reasoning", json={})
-    assert refused.status_code == 422 and refused.json()["detail"] == "Reasoning is for ontology projects."
+    result = reason(taxonomy)  # 200, not the old 422
+    assert result["problems"] == []
+    assert all(not group["items"] for group in result["groups"])
     ontology = create()
     missing = client.get(f"/api/projects/{ontology}/reasoning")
     assert missing.status_code == 404 and "Nothing has been reasoned" in missing.json()["detail"]

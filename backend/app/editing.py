@@ -166,6 +166,7 @@ import json
 import re
 import shutil
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
@@ -606,6 +607,17 @@ class Step:
     after: tuple = (None, True)
     # (old, new) for a RenameIri: undo and redo move the layout entry too.
     renamed: Optional[tuple] = None
+    # A branch relationship changes the model and the shapes document as one
+    # paired step (skos-and-owl 5.3.3): `partner` is the other document's step,
+    # held by identity, and `partner_doc` is the role it lives in. Undo or redo
+    # of either half applies both, under the shapes lock then the model lock,
+    # and refuses when the partner is no longer on top of its own history.
+    # `pair` is a token both halves share, written to each draft's sidecar so
+    # recovery restores a pair or neither (a half without its partner is
+    # dropped).
+    partner: Optional["Step"] = None
+    partner_doc: Optional[str] = None
+    pair: Optional[str] = None
 
 
 @dataclass
@@ -1024,12 +1036,25 @@ def cmd_create_concept(ctx: Context, a: dict) -> Change:
     else:
         # A new concept joins the scheme (relationships 5.8): its broader
         # concept's, or the document's own. A taxonomy has one; with several,
-        # written in Turtle, the first by IRI, and none adds none.
+        # written in Turtle, the first by IRI.
         candidates = sorted(_schemes(ctx.graph, broader)) if broader is not None else []
         candidates = candidates or sorted(
             s for s in ctx.graph.subjects(RDF.type, SKOS.ConceptScheme) if isinstance(s, URIRef)
         )
         scheme = candidates[0] if candidates else None
+    if scheme is None and not a.get("scheme"):
+        # The first concept in a document without a scheme brings one, in the
+        # same undo step (skos-and-owl 5.2): named "<project> concepts", its
+        # IRI minted as a concept's is, with the usual numbered suffix if taken.
+        scheme = URIRef(ctx.base + "Concepts")
+        n = 2
+        while ctx.mentioned(scheme):
+            scheme = URIRef(f"{ctx.base}Concepts{n}")
+            n += 1
+        adds += [
+            (scheme, RDF.type, SKOS.ConceptScheme),
+            (scheme, SKOS.prefLabel, Literal(f"{ctx.manifest['name']} concepts", lang=ctx.primary)),
+        ]
     if scheme is not None:
         adds.append((iri, SKOS.inScheme, scheme))
         # A top concept exactly when nothing above it is in the scheme (D-091).
@@ -2846,6 +2871,24 @@ def _rule_triples(ctx: Context, node, rule, severity) -> tuple[tuple, list]:
         if not ((cls, None, None) in ctx.model or str(cls).startswith(tuple(WELL_KNOWN.values()))):
             raise CommandError(f"There is no class {ctx.short(cls)} in the model or its imports.")
         body.append((prop, SH["class"], cls))
+    if rule.get("under"):
+        # A branch rule (skos-and-owl 5.3): the value is a concept, and it sits
+        # in the branch -- that concept or one under it -- which SHACL says by
+        # walking skos:broader zero or more times to the branch concept. Always
+        # sh:class skos:Concept, written once whether or not the caller sent it.
+        branch = ctx.iri(rule["under"], "concept")
+        if not _is_concept(ctx.model, branch):
+            raise CommandError(f"There is no concept {ctx.short(branch)} in the model or its imports.")
+        if (prop, SH["class"], SKOS.Concept) not in body:
+            body.append((prop, SH["class"], SKOS.Concept))
+        node_shape, inner, path_bnode = BNode(), BNode(), BNode()
+        body += [
+            (prop, SH.node, node_shape),
+            (node_shape, SH.property, inner),
+            (inner, SH.path, path_bnode),
+            (path_bnode, SH.zeroOrMorePath, SKOS.broader),
+            (inner, SH.hasValue, branch),
+        ]
     if rule.get("pattern"):
         pattern = rule["pattern"]
         if not isinstance(pattern, str):
@@ -3170,8 +3213,130 @@ def cmd_check_in_data(ctx: Context, a: dict) -> Change:
     return _change(ctx.graph, f"Added a check on {path_label} to {shape_name}", adds, removes)
 
 
+# --- a class takes concept values from a branch (skos-and-owl 5.3) ----------
+
+
+def _is_concept(model: Graph, iri) -> bool:
+    """A concept of the model view (its own or an imported one)."""
+    return isinstance(iri, URIRef) and (iri, RDF.type, SKOS.Concept) in model
+
+
+def _branch_rule(shapes: Graph, prop: URIRef):
+    """The (node shape, property shape) of a property's branch rule, or None."""
+    for node, pshape in shapes.subject_objects(SH.property):
+        if not isinstance(pshape, BNode):
+            continue
+        if shapes_form.path_of(shapes, shapes.value(pshape, SH.path)) == (prop,) and shapes_form.branch_under(
+            shapes, pshape
+        ) is not None:
+            return node, pshape
+    return None
+
+
+def branch_rule_removes(shapes: Graph, props) -> list:
+    """Every branch rule's triples for any of these properties: the property
+    shape with its whole description, and the statement pointing at it (5.3.2,
+    DeleteEntity). Read from the shapes graph alone."""
+    removes: set = set()
+    for node, pshape in shapes.subject_objects(SH.property):
+        if not isinstance(pshape, BNode):
+            continue
+        path = shapes_form.path_of(shapes, shapes.value(pshape, SH.path))
+        if path is not None and len(path) == 1 and path[0] in props and shapes_form.branch_under(
+            shapes, pshape
+        ) is not None:
+            removes.add((node, SH.property, pshape))
+            removes |= _closure(shapes, pshape)
+    return list(removes)
+
+
+def _branch_shapes_change(ctx: Context, prop: URIRef, domain, branch: URIRef, label: str) -> Change:
+    """Add or replace a property's branch rule in its class's shape (5.3): the
+    first shape that targets the domain, or a new one named as CreateShape
+    names it. Reuses _rule_triples, so the written shape is exactly 5.3's."""
+    _shapes_ctx(ctx)
+    adds: list = []
+    removes: list = []
+    existing = _branch_rule(ctx.graph, prop)
+    if existing is not None:
+        node, pshape = existing
+        removes = [(node, SH.property, pshape), *_closure(ctx.graph, pshape)]
+        severity = _severity_of(ctx, node)
+    else:
+        targeting = [s for s in shapes_form.listed_shapes(ctx.graph) if (s, SH.targetClass, domain) in ctx.graph]
+        if targeting:
+            node = targeting[0]
+            severity = _severity_of(ctx, node)
+        else:
+            made = cmd_create_shape(ctx, {"target": str(domain)})
+            node = made.created
+            adds = list(made.added)
+            severity = None
+    adds += _rule_triples(ctx, node, {"path": [str(prop)], "under": str(branch)}, severity)[1]
+    _bind_shapes(ctx)
+    return _change(ctx.graph, label, adds, removes)
+
+
+def branch_create_model_plan(ctx: Context, a: dict) -> tuple[Change, URIRef, URIRef, URIRef]:
+    """The model's four statements for a branch relationship (5.3): an object
+    property with its label, a domain that is a class of the model, and range
+    skos:Concept. Returns the change and the property, domain and branch."""
+    label = ctx.primary_label(a)
+    iri = ctx.minted(a, label, lower_first=True)
+    domain = ctx.iri(a.get("domain"), "class")
+    ctx.require(domain, "class")
+    if ctx.kind(domain) != "class":
+        raise CommandError(f"{ctx.name(domain)} is not a class; a relationship starts at a class.")
+    branch = ctx.iri(a.get("branch"), "concept")
+    # The branch may be the document's own concept or an imported one; the
+    # model context reads its graph and its imports apart.
+    if not (_is_concept(ctx.graph, branch) or (ctx.imported is not None and _is_concept(ctx.imported, branch))):
+        raise CommandError(f"There is no concept {ctx.short(branch)} in the model or its imports.")
+    _check_standard_term(ctx, iri, label, "property")
+    _new_property(ctx, iri, OWL.ObjectProperty)
+    adds = [
+        (iri, RDF.type, OWL.ObjectProperty),
+        (iri, RDFS.label, Literal(label, lang=ctx.primary)),
+        (iri, RDFS.domain, domain),
+        (iri, RDFS.range, SKOS.Concept),
+    ]
+    return _created(_change(ctx.graph, f"Created relationship {label}", adds), iri), iri, domain, branch
+
+
+def cmd_set_branch(ctx: Context, a: dict) -> Change:
+    """Set or change a relationship's branch (5.3.2): the concept its values are
+    taken from. Refuses a relationship whose range is not skos:Concept."""
+    _shapes_ctx(ctx)
+    prop = ctx.iri(a.get("property"), "relationship")
+    if (prop, RDFS.range, SKOS.Concept) not in ctx.model:
+        raise CommandError(f"{_model_name(ctx, prop)} does not take concept values.")
+    branch = ctx.iri(a.get("branch"), "concept")
+    if not _is_concept(ctx.model, branch):
+        raise CommandError(f"There is no concept {ctx.short(branch)} in the model or its imports.")
+    domain = ctx.model.value(prop, RDFS.domain)
+    if _branch_rule(ctx.graph, prop) is None and not isinstance(domain, URIRef):
+        raise CommandError(f"{_model_name(ctx, prop)} has no class to add a rule to.")
+    return _branch_shapes_change(
+        ctx, prop, domain, branch, f"Set the values of {_model_name(ctx, prop)} to {_model_name(ctx, branch)}"
+    )
+
+
+def cmd_clear_branch(ctx: Context, a: dict) -> Change:
+    """Remove a relationship's branch rule, the rule only (5.3.2)."""
+    _shapes_ctx(ctx)
+    prop = ctx.iri(a.get("property"), "relationship")
+    existing = _branch_rule(ctx.graph, prop)
+    if existing is None:
+        raise CommandError(f"{_model_name(ctx, prop)} has no values list to clear.")
+    node, pshape = existing
+    removes = [(node, SH.property, pshape), *_closure(ctx.graph, pshape)]
+    return _change(ctx.graph, f"Cleared the values list of {_model_name(ctx, prop)}", removes=removes)
+
+
 SHAPE_COMMANDS = {
     "CheckInData": cmd_check_in_data,
+    "SetBranch": cmd_set_branch,
+    "ClearBranch": cmd_clear_branch,
     "CreateShape": cmd_create_shape,
     "SetShapeTarget": cmd_set_shape_target,
     "SetShapeName": cmd_set_shape_name,
@@ -3576,11 +3741,20 @@ class EditingService:
         self._arm(document)
 
     def command(self, pid: str, doc: str, name: str, args: dict, dry_run: bool = False) -> dict:
+        if not isinstance(args, dict):
+            raise CommandError("A command's arguments are an object.")
+        if name == "CreateBranchRelationship":
+            # The model's four statements and the shapes rule as one paired undo
+            # step (skos-and-owl 5.3, 5.3.3): handled on its own, since it is the
+            # one command that writes two documents at once.
+            if doc != "model":
+                raise CommandError("A branch relationship is created on the model document.")
+            if dry_run:
+                raise CommandError("Only DeleteEntity, ShareDomain and SetClassType have a dry run.")
+            return self._create_branch_relationship(pid, args)
         handler = COMMANDS.get(name)
         if handler is None:
             raise CommandError(f"There is no command called {name}.")
-        if not isinstance(args, dict):
-            raise CommandError("A command's arguments are an object.")
         if doc == "shapes" and name in SHAPE_COMMANDS and pid in self._open and "shapes" not in self._open[pid]:
             self._first_shapes_command(pid, handler, args, dry_run)
         document = self.document(pid, doc)
@@ -3591,13 +3765,21 @@ class EditingService:
         # time, that parses its bundled file (QUDT: seconds), so it is built
         # here, before the locks every view of the document waits on.
         references.warm(self.declared(document))
+        # Deleting a branch relationship also removes its branch rule in the
+        # shapes document, as one paired step (5.3.2). The shapes lock is taken
+        # first, the documented order, whenever a model delete might pair.
+        shapes_doc = self._open[pid].get("shapes") if doc == "model" and name == "DeleteEntity" else None
+        shapes_lock = shapes_doc.lock if shapes_doc is not None else contextlib.nullcontext()
         model_lock = self._open[pid]["model"].lock if doc != "model" else contextlib.nullcontext()
-        with document.lock, model_lock:
+        with shapes_lock, document.lock, model_lock:
             ctx = self._context(document)
             if name == "DeleteEntity":
                 change, impact = delete_plan(ctx, args)
                 if dry_run:
                     return {"dryRun": True, "impact": impact, "revision": document.ontology.revision}
+                paired = self._delete_branch_rules(pid, shapes_doc, change)
+                if paired is not None:
+                    return paired
             elif name == "ShareDomain" and dry_run:
                 # The reuse plan (attribute-reuse 5.2): nothing changes.
                 return {"dryRun": True, "plan": share_plan(ctx, args), "revision": document.ontology.revision}
@@ -3663,6 +3845,13 @@ class EditingService:
         with model_doc.lock:
             probe = Context(Graph(), manifest, lambda: None, "shapes", lambda: self._model_view(model_doc))
             handler(probe, args)  # raises CommandError, the sentence, before anything is made
+        self._ensure_shapes(pid)
+
+    def _ensure_shapes(self, pid: str) -> None:
+        """Make shapes.ttl and open it if it is not open yet, under the service
+        lock so two callers make it once (shacl-authoring 8). The caller has
+        already checked the command against an empty shapes document, so a
+        refusal leaves no file behind."""
         with self._lock:
             if "shapes" in self._open.get(pid, {}):
                 return
@@ -3670,6 +3859,80 @@ class EditingService:
             document = self._load(pid, "shapes", self.projects.manifest(pid))
             self._open[pid]["shapes"] = document
         self.store.register_document(document.ontology)
+
+    def _create_branch_relationship(self, pid: str, args: dict) -> dict:
+        """CreateBranchRelationship (5.3): the model's four statements and the
+        branch rule in the class's shape, one paired undo step across the two
+        documents (5.3.3). The model half is validated first, so a refusal
+        leaves no shapes.ttl behind; the shapes half then reads the new
+        relationship from the model view and the two are pushed as a pair."""
+        model_doc = self.document(pid, "model")
+        references.warm(self.declared(model_doc))
+        with model_doc.lock:
+            branch_create_model_plan(self._context(model_doc), args)  # raises before any file is made
+        self._ensure_shapes(pid)
+        shapes_doc = self.document(pid, "shapes")
+        with shapes_doc.lock, model_doc.lock:
+            model_ctx = self._context(model_doc)
+            model_change, prop, domain, branch = branch_create_model_plan(model_ctx, args)
+            model_before = model_doc.editor_state()
+            shapes_before = shapes_doc.editor_state()
+            # Apply the model half first: the shapes half reads the new
+            # relationship from the model view (its label, its class shape).
+            self._apply(model_doc, model_change, origin="command")
+            shapes_change = _branch_shapes_change(
+                self._context(shapes_doc), prop, domain, branch, model_change.label
+            )
+            self._apply(shapes_doc, shapes_change, origin="command")
+            self._push_pair(model_doc, model_change, model_before, shapes_doc, shapes_change, shapes_before)
+            return {
+                "revision": model_doc.ontology.revision,
+                "label": model_change.label,
+                "delta": _delta_json(model_change),
+                "state": model_doc.state(),
+                "created": str(prop),
+                "partner": {
+                    "doc": "shapes",
+                    "revision": shapes_doc.ontology.revision,
+                    "delta": _delta_json(shapes_change),
+                    "state": shapes_doc.state(),
+                },
+            }
+
+    def _delete_branch_rules(self, pid: str, shapes_doc, change: Change):
+        """When a DeleteEntity removes object properties that have branch rules,
+        remove those rules in the shapes document as the same paired step
+        (5.3.2). Returns the paired result, or None when nothing pairs so the
+        caller deletes as an ordinary one-document step."""
+        if shapes_doc is None:
+            return None
+        deleted = {s for (s, p, o) in change.removed if p == RDF.type and o == OWL.ObjectProperty}
+        if not deleted:
+            return None
+        removes = branch_rule_removes(shapes_doc.graph, deleted)
+        if not removes:
+            return None
+        model_doc = self.document(pid, "model")
+        shapes_change = _change(shapes_doc.graph, change.label, removes=removes)
+        if not shapes_change.removed:
+            return None
+        model_before = model_doc.editor_state()
+        shapes_before = shapes_doc.editor_state()
+        self._apply(model_doc, change, origin="command")
+        self._apply(shapes_doc, shapes_change, origin="command")
+        self._push_pair(model_doc, change, model_before, shapes_doc, shapes_change, shapes_before)
+        return {
+            "revision": model_doc.ontology.revision,
+            "label": change.label,
+            "delta": _delta_json(change),
+            "state": model_doc.state(),
+            "partner": {
+                "doc": "shapes",
+                "revision": shapes_doc.ontology.revision,
+                "delta": _delta_json(shapes_change),
+                "state": shapes_doc.state(),
+            },
+        }
 
     def apply_text(self, pid: str, doc: str, text: str, timeout: Optional[float]) -> dict:
         document = self.document(pid, doc)
@@ -3713,11 +3976,19 @@ class EditingService:
         return result
 
     @staticmethod
-    def _push(document: OpenDocument, change: Change, before: tuple) -> None:
+    def _push(document: OpenDocument, change: Change, before: tuple) -> Step:
         """Record a new change as an undo step, dropping the redo branch."""
-        document.undo.append(
-            Step(change.label, change.added, change.removed, before, document.editor_state(), change.renamed)
-        )
+        step = Step(change.label, change.added, change.removed, before, document.editor_state(), change.renamed)
+        EditingService._push_step(document, step)
+        return step
+
+    @staticmethod
+    def _push_step(document: OpenDocument, step: Step) -> None:
+        """Put a built step on the undo stack, trim to the limit, move the save
+        point as steps drop off the bottom, and drop the redo branch. A paired
+        step's two halves are each pushed this way, so each document's history
+        is trimmed on its own, as any step is."""
+        document.undo.append(step)
         dropped = document.undo[:-UNDO_LIMIT]
         del document.undo[:-UNDO_LIMIT]
         point = document.save_point
@@ -3733,6 +4004,32 @@ class EditingService:
             document.save_point = None
         document.redo.clear()
 
+    @staticmethod
+    def _push_pair(
+        first: OpenDocument, first_change: Change, first_before: tuple,
+        second: OpenDocument, second_change: Change, second_before: tuple,
+    ) -> None:
+        """Two halves of a branch relationship, one paired undo step across two
+        documents (5.3.3). Each half is an ordinary step in its own document's
+        history; the two are linked by `partner` (identity) so undo or redo of
+        either applies both, and they share a `pair` token so recovery keeps
+        them together."""
+        token = uuid.uuid4().hex
+        first_step = Step(
+            first_change.label, first_change.added, first_change.removed,
+            first_before, first.editor_state(), first_change.renamed,
+            partner_doc=second.doc, pair=token,
+        )
+        second_step = Step(
+            second_change.label, second_change.added, second_change.removed,
+            second_before, second.editor_state(), second_change.renamed,
+            partner_doc=first.doc, pair=token,
+        )
+        first_step.partner = second_step
+        second_step.partner = first_step
+        EditingService._push_step(first, first_step)
+        EditingService._push_step(second, second_step)
+
     def _settle(self, document: OpenDocument) -> None:
         """After an undo or redo: back at the save point, the document is what
         its file holds, so it is clean and there is no draft to offer."""
@@ -3744,33 +4041,84 @@ class EditingService:
         self._cancel(document)
         self._remove_draft(document)
 
+    @contextlib.contextmanager
+    def _both_locks(self, pid: str):
+        """The shapes lock then the model lock, the documented order (5.3.3),
+        so an undo or a redo of a paired step applies its two halves under both.
+        Only the model when no shapes document is open; undo and redo are only
+        ever called on model or shapes."""
+        documents = self._open.get(pid, {})
+        with contextlib.ExitStack() as stack:
+            for role in ("shapes", "model"):
+                document = documents.get(role)
+                if document is not None:
+                    stack.enter_context(document.lock)
+            yield
+
+    def _partner_refused(self, step: Step) -> str:
+        other = "the shapes" if step.partner_doc == "shapes" else "the model"
+        return f"This also changed {other}, and they have changed since. Undo {other} first."
+
+    def _paired_result(self, document: OpenDocument, partner: OpenDocument, label: str) -> dict:
+        return {
+            "revision": document.ontology.revision,
+            "label": label,
+            "state": document.state(),
+            "partner": {"doc": partner.doc, "revision": partner.ontology.revision, "state": partner.state()},
+        }
+
     def undo(self, pid: str, doc: str) -> dict:
         document = self.document(pid, doc)
-        with document.lock:
+        with self._both_locks(pid):
             if not document.undo:
                 raise CommandError("There is nothing to undo.")
-            step = document.undo.pop()
-            self._apply(document, Change(step.label, step.removed, step.added), origin="undo")
-            document.restore_state(step.before)
-            if step.renamed:
-                self._move_layout(document, step.renamed[1], step.renamed[0])
-            document.redo.append(step)
-            self._settle(document)
+            step = document.undo[-1]
+            if step.partner is not None:
+                partner = self._open[pid][step.partner_doc]
+                if not partner.undo or partner.undo[-1] is not step.partner:
+                    raise CommandError(self._partner_refused(step))
+                for half in ((document, step), (partner, step.partner)):
+                    self._undo_step(*half)
+                return self._paired_result(document, partner, step.label)
+            self._undo_step(document, step)
             return {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
+
+    def _undo_step(self, document: OpenDocument, step: Step) -> None:
+        document.undo.pop()
+        self._apply(document, Change(step.label, step.removed, step.added), origin="undo")
+        document.restore_state(step.before)
+        if step.renamed:
+            self._move_layout(document, step.renamed[1], step.renamed[0])
+        document.redo.append(step)
+        self._settle(document)
 
     def redo(self, pid: str, doc: str) -> dict:
         document = self.document(pid, doc)
-        with document.lock:
+        with self._both_locks(pid):
             if not document.redo:
                 raise CommandError("There is nothing to redo.")
-            step = document.redo.pop()
-            self._apply(document, Change(step.label, step.added, step.removed), origin="redo")
-            document.restore_state(step.after)
-            if step.renamed:
-                self._move_layout(document, *step.renamed)
-            document.undo.append(step)
-            self._settle(document)
+            step = document.redo[-1]
+            if step.partner is not None:
+                partner = self._open[pid][step.partner_doc]
+                if not partner.redo or partner.redo[-1] is not step.partner:
+                    other = "the shapes" if step.partner_doc == "shapes" else "the model"
+                    raise CommandError(
+                        f"This also changed {other}, and they have changed since. Redo {other} first."
+                    )
+                for half in ((document, step), (partner, step.partner)):
+                    self._redo_step(*half)
+                return self._paired_result(document, partner, step.label)
+            self._redo_step(document, step)
             return {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
+
+    def _redo_step(self, document: OpenDocument, step: Step) -> None:
+        document.redo.pop()
+        self._apply(document, Change(step.label, step.added, step.removed), origin="redo")
+        document.restore_state(step.after)
+        if step.renamed:
+            self._move_layout(document, *step.renamed)
+        document.undo.append(step)
+        self._settle(document)
 
     def source(self, pid: str, doc: str) -> dict:
         document = self.document(pid, doc)
@@ -3853,11 +4201,16 @@ class EditingService:
                     snapshot.add(t)
                 text = None
             declared = document.declared()
+            top = document.undo[-1] if document.undo else None
             meta = {
                 "revision": document.ontology.revision,
                 "fromEditor": document.last_text is not None,
                 "visualSinceSave": document.visual_since_save,
                 "writtenAt": _now(),
+                # A branch relationship's pair token (5.3.3) when this
+                # document's latest change is a half of one: recovery then
+                # keeps the pair or neither.
+                "pair": top.pair if top is not None and top.partner is not None else None,
             }
         if text is None:
             # As clean() writes it: recovery reads its declarations from
@@ -3888,19 +4241,31 @@ class EditingService:
             raise NotOpen(pid)
         if action not in ("recover", "discard"):
             raise CommandError("Choose recover or discard.")
+        # Read every draft's sidecar first, so a branch relationship's pair
+        # token (5.3.3) can be matched across documents: a half whose partner
+        # is not journaled is dropped, and recovery restores a pair or neither.
+        drafts: dict = {}
         for document in documents.values():
             draft, sidecar = _draft_paths(document)
             if not draft.exists():
                 continue
+            try:
+                meta = json.loads(sidecar.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                meta = {}
+            drafts[document.doc] = (document, draft, meta)
+        present = [m.get("pair") for _, _, m in drafts.values() if m.get("pair") is not None]
+        for document, draft, meta in drafts.values():
             with document.lock:
                 if action == "discard":
                     self._remove_draft(document)
                     continue
+                token = meta.get("pair")
+                if token is not None and present.count(token) < 2:
+                    # An orphan half (5.3.3): dropped, with the existing notice.
+                    self._remove_draft(document)
+                    continue
                 text = draft.read_text(encoding="utf-8")
-                try:
-                    meta = json.loads(sidecar.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    meta = {}
                 parsed = parse_turtle(text, timeout, self.projects.manifest(pid)["baseIri"])
                 graph = document.graph
                 for t in list(graph):
@@ -4154,8 +4519,9 @@ class EditingService:
         revision, no dirty flag, no undo step (AC-6)."""
         documents = self._project_documents(pid)
         manifest = self.projects.manifest(pid)
-        if manifest.get("kind") == "taxonomy":
-            raise ReasoningRefused("Reasoning is for ontology projects.")
+        # Reasoning runs in every project (skos-and-owl 5.4): a taxonomy with no
+        # classes reasons and gets the existing empty result. ReasoningRefused
+        # stays for its other causes.
         languages = [manifest.get("primaryLanguage", "en"), *manifest.get("languages", [])]
         model_doc = documents["model"]
         handle = reasoning.service.begin(pid)

@@ -553,11 +553,25 @@ def test_deleting_a_top_concept_makes_its_children_top_concepts(fruit):
     assert isomorphic(graph(fruit), before)
 
 
-def test_a_concept_outside_every_scheme_is_left_alone(pid):
-    """An ontology's concepts with no scheme gain no scheme triples."""
-    assert run(pid, "CreateConcept", prefLabel="Draft").status_code == 200
-    assert run(pid, "CreateConcept", prefLabel="Final", broader="shop:Draft").status_code == 200
-    assert not any(p in (SKOS.inScheme, SKOS.hasTopConcept, SKOS.topConceptOf) for _, p, _ in graph(pid))
+def test_ac3_the_first_concept_brings_its_scheme(pid):
+    """A document with no scheme: the first concept creates one named
+    '<project> concepts' with it as a top concept, in one undo step (5.2);
+    with a scheme present, the delta is as today."""
+    scheme = U("Concepts")
+    exactly(pid, "CreateConcept",
+            {(U("Draft"), RDF.type, SKOS.Concept),
+             (U("Draft"), SKOS.prefLabel, Literal("Draft", lang="en")),
+             (U("Draft"), SKOS.inScheme, scheme),
+             (scheme, RDF.type, SKOS.ConceptScheme),
+             (scheme, SKOS.prefLabel, Literal("Shop concepts", lang="en")),
+             (scheme, SKOS.hasTopConcept, U("Draft"))},
+            prefLabel="Draft")
+    exactly(pid, "CreateConcept",
+            {(U("Final"), RDF.type, SKOS.Concept),
+             (U("Final"), SKOS.prefLabel, Literal("Final", lang="en")),
+             (U("Final"), SKOS.inScheme, scheme),
+             (scheme, SKOS.hasTopConcept, U("Final"))},
+            prefLabel="Final")
 
 
 # --- CF-8: a relative IRI is the project's -----------------------------------------------
