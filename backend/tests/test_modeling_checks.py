@@ -528,3 +528,33 @@ shop:badge a owl:DatatypeProperty ; rdfs:label "badge"@en ; rdfs:domain shop:Per
     warning = domain_warning(view, own, U("badge"), lambda iri: str(iri).split("#")[-1])
     assert warning["text"].startswith("badge lists Organization and Person separately.")
     assert "fix" not in warning
+
+
+# --- V-8 (standard-terms 5.4): a warn name is made and warned under its block ------
+
+
+def test_ac4_a_warn_property_name_warns_under_its_block(pid):
+    assert run(pid, "CreateDatatypeProperty", label="creator").status_code == 200
+    found = warnings(pid, EX + "creator")
+    text = "creator looks like dcterms:creator, a standard term other tools already read. To reuse it, add it as an annotation instead."
+    assert {"text": text} in found
+    assert blocks(pid, EX + "creator")[text] == "standard-term"
+
+
+def test_ac4_an_everyday_word_warns_with_the_action(pid):
+    assert run(pid, "CreateDatatypeProperty", label="range").status_code == 200
+    texts = [w["text"] for w in warnings(pid, EX + "range")]
+    assert any("rdfs:range" in t and "set its range instead" in t for t in texts)
+
+
+def test_ac4_a_warn_class_name_warns_under_its_rules(pid):
+    assert run(pid, "CreateClass", label="Restriction").status_code == 200
+    response = client.get(f"/api/ontologies/{pid}-model/node", params={"iri": EX + "Restriction"})
+    texts = [w["text"] for w in response.json()["rules"]["warnings"]]
+    assert any("owl:Restriction" in t for t in texts)
+
+
+def test_ac4_an_ordinary_name_raises_no_standard_term_warning(pid):
+    # A name that is no standard term is never warned of (5.4).
+    assert run(pid, "CreateDatatypeProperty", label="colour").status_code == 200
+    assert all("standard term" not in w["text"] for w in warnings(pid, EX + "colour"))

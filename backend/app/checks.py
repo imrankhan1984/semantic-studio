@@ -107,7 +107,7 @@ from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD
 from rdflib.plugins.sparql.operators import register_custom_function
 
-from . import axioms, naming, references, sparql_exec
+from . import axioms, naming, references, sparql_exec, standard_terms
 from .graph_builder import pick_label
 from .sentences import a as with_article, verb
 
@@ -674,6 +674,25 @@ def _reference_terms() -> dict:
         return _reference_names
 
 
+def _dc29(entry, run, rows):
+    """Home-made copies of a standard axiom (standard-terms 5.7, D-126): each
+    own class or property whose name matches a refuse entry of the catalogue,
+    at Problem. The rows are DC-29's (classes and every kind of property);
+    read against standard_terms, which is the only reader of the catalogue."""
+    t = entry["sentences"]["row"]
+    out, seen = [], set()
+    for r in rows:
+        iri = _cell(r["iri"])
+        if iri in seen:
+            continue
+        group = "class" if _cell(r["type"]) in (str(OWL.Class), str(RDFS.Class)) else "property"
+        hit = standard_terms.match([_cell(r.get("label")), local_name(iri)], group)
+        if hit is not None and hit["level"] == "refuse":
+            seen.add(iri)
+            out.append(_finding(iri, t.format(name=_named(run, r), curie=hit["curie"]), entry.get("block")))
+    return out
+
+
 def _dc18(entry, run, rows):
     t = entry["sentences"]["row"]
     terms = _reference_terms()
@@ -683,6 +702,7 @@ def _dc18(entry, run, rows):
         if iri in seen:
             continue
         kind = "class" if _cell(r["type"]) in (str(OWL.Class), str(RDFS.Class)) else "property"
+        matched = False
         for name in (_cell(r.get("label")), local_name(iri)):
             if not name:
                 continue
@@ -690,8 +710,20 @@ def _dc18(entry, run, rows):
             # The reference's own term is no copy of itself.
             if match and match[0] != iri:
                 seen.add(iri)
+                matched = True
                 out.append(_finding(iri, t.format(name=_named(run, r), match=match[1], reference=match[2])))
                 break
+        if matched:
+            continue
+        # A name like a standard term at level warn (standard-terms 5.7): read
+        # against the catalogue, in DC-18's own level and sentence. Its
+        # reference is the standard vocabulary, its match the curie.
+        std = standard_terms.match([_cell(r.get("label")), local_name(iri)], kind)
+        if std is not None and std["level"] == "warn":
+            seen.add(iri)
+            out.append(_finding(iri, t.format(
+                name=_named(run, r), match=std["curie"], reference=standard_terms.vocab_name(std["curie"]),
+            )))
     return out
 
 
@@ -1179,14 +1211,14 @@ SHAPERS: dict[str, Callable] = {
     "DC-07": _dc07, "DC-08": _dc08, "DC-09": _dc09, "DC-11": _variant("how"), "DC-12": _dc12,
     "DC-14": _dc14, "DC-15": _dc15, "DC-16": _variant("what"), "DC-17": _dc17, "DC-18": _dc18,
     "DC-19": _dc19_20, "DC-20": _dc19_20, "DC-21": _dc21, "DC-22": _default, "DC-24": _dc24,
-    "DC-25": _variant("what"), "DC-26": _dc26, "DC-27": _dc27, "DC-28": _dc28,
+    "DC-25": _variant("what"), "DC-26": _dc26, "DC-27": _dc27, "DC-28": _dc28, "DC-29": _dc29,
     "H1": _h1, "H2": _h2, "H4": _default, "H5": _h5, "H6": _h6, "H7": _h7, "H8": _h8, "H9": _h9,
     "H12": _default,
 }
 # The checks whose findings are not one per row: their total is the
 # findings', counted from the rows read (at most MAX_ROWS of them).
 _REREAD = {
-    "DC-05", "DC-08", "DC-12", "DC-15", "DC-17", "DC-18", "DC-26", "DC-27", "DC-28",
+    "DC-05", "DC-08", "DC-12", "DC-15", "DC-17", "DC-18", "DC-26", "DC-27", "DC-28", "DC-29",
     "H1", "H2", "H5", "H6", "H7", "H8", "H9",
 }
 

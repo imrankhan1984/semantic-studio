@@ -56,7 +56,7 @@ EXPECTED OUTPUT
 */
 
 import { moreRulesText } from "../modeling/ruleSentences";
-import { article, existingSentence, linkSentence, makeOwlEntry, shareEntry } from "../modeling/sentences";
+import { article, disjointEntry, equivalentEntry, existingSentence, linkSentence, makeOwlEntry, shareEntry } from "../modeling/sentences";
 import type { CanvasNode, CanvasView } from "../types";
 import { kindWord } from "./kindColours";
 
@@ -65,6 +65,11 @@ export type RelateChoice =
   | { kind: "broader"; label: string }
   | { kind: "related"; label: string }
   | { kind: "newRelationship"; label: string }
+  // The two standard class axioms (standard-terms 5.5), offered between two
+  // OWL classes so a learner never types a home-made copy. They run
+  // AddDisjointWith / AddEquivalentClass.
+  | { kind: "disjoint"; label: string }
+  | { kind: "equivalent"; label: string }
   // A rule (axioms 5.9): opens the from class's sentence builder with the
   // to class at the other end.
   | { kind: "rule"; label: string }
@@ -155,6 +160,14 @@ export function relateChoices(view: CanvasView, fromIri: string, toIri: string):
   // A class is never a kind of itself; a relationship to itself is fine.
   if (!self && !has("subClassOf")) {
     choices.push({ kind: "subClassOf", label: linkSentence("subClassOf", from.label, to.label) });
+  }
+  // The standard axioms between two OWL classes (standard-terms 5.5), after
+  // *is a kind of*. Not offered when either is an RDFS class (the makeOwl
+  // entry stands in a rule's place below), nor for a class to itself. The
+  // commands' own refusals (pair_refusal, never_members) still apply.
+  if (!self && from.classType !== "rdfs" && to.classType !== "rdfs") {
+    choices.push({ kind: "disjoint", label: disjointEntry(from.label, to.label) });
+    choices.push({ kind: "equivalent", label: equivalentEntry(from.label, to.label) });
   }
   choices.push({ kind: "newRelationship", label: "new relationship…" });
   // An RDFS class has no words for a rule (5.8, D-117): the one-line offer

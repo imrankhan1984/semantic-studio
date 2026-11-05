@@ -32,6 +32,7 @@ EXPECTED OUTPUT
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../api";
 import { projectStore } from "../state/projectStore";
 import type { CanvasLayout, CanvasView } from "../types";
 
@@ -480,6 +481,9 @@ describe("relating (AC-12)", () => {
     const menu = screen.getByRole("menu");
     expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
       "Document is a kind of Agent",
+      // The standard axioms, after *is a kind of* (standard-terms 5.5).
+      "Nothing is both a Document and an Agent (never both)",
+      "A Document is the same as an Agent (equivalent)",
       "new relationship…",
       "Every Document has at least one… (a rule)",
       // billed to ends at Agent already, from Invoice (attribute-reuse 5.1).
@@ -490,6 +494,71 @@ describe("relating (AC-12)", () => {
     });
     expect(lastCommand()).toEqual(["AddSubClassOf", { child: EX + "Document", parent: "http://xmlns.com/foaf/0.1/Agent" }]);
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("a refused relationship name shows the sentence and offers the standard way (AC-5, AC-9)", async () => {
+    await renderCanvas();
+    await draw(EX + "Document", EX + "Invoice");
+    fireEvent.click(screen.getByRole("menuitem", { name: "new relationship…" }));
+    const field = screen.getByRole("textbox", { name: "Name of the new relationship" });
+    fireEvent.change(field, { target: { value: "disjoint with" } });
+    runCommand.mockRejectedValueOnce(
+      new ApiError("refused", 409, {
+        code: "standard_term",
+        message: "disjoint with would copy owl:disjointWith, the standard way to say nothing is both a Document and an Invoice. A reasoner understands only the standard term.",
+        term: {
+          iri: "http://www.w3.org/2002/07/owl#disjointWith",
+          curie: "owl:disjointWith",
+          means: "the standard way to say nothing can be both of two classes",
+          how: "In the class's Rules, choose Never both.",
+          offer: { command: "AddDisjointWith", args: { a: EX + "Document", b: EX + "Invoice" } },
+        },
+      }),
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    });
+    // The refusal is read once (role=alert), names the standard term, and the
+    // typed name is kept (AC-9).
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("owl:disjointWith");
+    expect((field as HTMLInputElement).value).toBe("disjoint with");
+    // The offer button names the standard way and takes focus (AC-9).
+    const offer = screen.getByRole("button", { name: "Make them never both" });
+    expect(document.activeElement).toBe(offer);
+    // Running it sends AddDisjointWith with both ends, in one step (AC-5).
+    runCommand.mockResolvedValueOnce({ revision: 4, label: "disjoint", state: STATE });
+    await act(async () => {
+      fireEvent.click(offer);
+    });
+    expect(lastCommand()).toEqual(["AddDisjointWith", { a: EX + "Document", b: EX + "Invoice" }]);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("an edit after a refusal re-enables Create (AC-9)", async () => {
+    await renderCanvas();
+    await draw(EX + "Document", EX + "Invoice");
+    fireEvent.click(screen.getByRole("menuitem", { name: "new relationship…" }));
+    const field = screen.getByRole("textbox", { name: "Name of the new relationship" });
+    fireEvent.change(field, { target: { value: "sub class of" } });
+    runCommand.mockRejectedValueOnce(
+      new ApiError("refused", 409, {
+        code: "standard_term",
+        message: "sub class of would copy rdfs:subClassOf.",
+        term: { iri: "x", curie: "rdfs:subClassOf", means: "m", how: "On the class, add it under 'Is a kind of' instead.", offer: null },
+      }),
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    });
+    // No offer (no runnable command without a class axiom): the how sentence
+    // is shown and Create stays unavailable while the name matches.
+    expect(screen.getByRole("alert").textContent).toContain("rdfs:subClassOf");
+    expect(screen.getByRole("button", { name: "Create" }).getAttribute("aria-disabled")).toBe("true");
+    // Any edit clears the refusal.
+    fireEvent.change(field, { target: { value: "sub class ofx" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Create" }).getAttribute("aria-disabled")).toBe("false");
   });
 
   it("a new relationship asks its name, then one CreateObjectProperty", async () => {
@@ -1178,6 +1247,10 @@ describe("relationships Stage A: seeing and drawing relationships", () => {
     // Invoice is already a kind of Document, so that is not offered again;
     // what the swapped line would complete is.
     expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      // The standard axioms stand even when a subclass link already does
+      // (standard-terms 5.5); both are OWL classes.
+      "Nothing is both an Invoice (en) and a Document (never both)",
+      "An Invoice (en) is the same as a Document (equivalent)",
       "new relationship…",
       "Every Invoice (en) has at least one… (a rule)",
       "Invoice (en) mentions Document (existing relationship)",

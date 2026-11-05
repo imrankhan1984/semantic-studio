@@ -194,7 +194,7 @@ from .projects import (
     split_document_id,
     valid_lang,
 )
-from . import axioms, checks, examples, lexical, modeling_checks, naming, reasoning, references, sentences, settings, shacl, shapes_form
+from . import axioms, checks, examples, lexical, modeling_checks, naming, reasoning, references, sentences, settings, shacl, shapes_form, standard_terms
 from .canvas import build_canvas, restrict, with_inferred
 from .imports import imports_service, load_state
 from .snapshots import SnapshotService
@@ -237,6 +237,27 @@ class AlreadyDefined(CommandError):
     def __init__(self, message: str, prop: dict):
         super().__init__(message)
         self.property = prop
+
+
+class StandardTerm(CommandError):
+    """A create, relabel or rename whose name copies a standard axiom
+    (standard-terms 5.3, D-126): refused with no way past, the router answers
+    409 standard_term. The standard term goes with the sentence so a door can
+    offer the standard way (the offer) and say where it lives (how)."""
+
+    def __init__(self, message: str, term: dict):
+        super().__init__(message)
+        self.term = term
+
+
+class StandardTermInText(ValueError):
+    """Turtle Apply that introduces an own property or class copying a
+    standard axiom (standard-terms 5.6): refused 422 standard_term before
+    anything changes, naming each term and the first line it is on."""
+
+    def __init__(self, message: str, terms: list[dict]):
+        super().__init__(message)
+        self.terms = terms
 
 
 class TurtleSyntaxError(ValueError):
@@ -823,6 +844,7 @@ def cmd_create_class(ctx: Context, a: dict) -> Change:
     label = ctx.primary_label(a)
     iri = ctx.minted(a, label, lower_first=False)
     kind = _class_type_arg(ctx, a)
+    _check_standard_term(ctx, iri, label, "class")
     ctx.require_new(iri)
     adds = [(iri, RDF.type, CLASS_TYPES[kind]), (iri, RDFS.label, Literal(label, lang=ctx.primary))]
     if a.get("parent"):
@@ -876,9 +898,82 @@ def _new_property(ctx: Context, iri: URIRef, kind: URIRef) -> None:
     ctx.require_new(iri)
 
 
+# --- standard terms, never home-made copies (standard-terms 5.3, D-126) ------
+
+# Which catalogue kind an own entity is compared with (5.2): a class with
+# class entries, any property -- object, datatype, annotation, or a plain
+# rdf:Property -- with property entries. A concept, a scheme or an example is
+# never compared, so it is None.
+def _kind_group(entity_kind: str) -> Optional[str]:
+    if entity_kind == "class":
+        return "class"
+    if entity_kind == "property" or entity_kind.endswith("property"):
+        return "property"
+    return None
+
+
+def _own_under_bases(ctx: Context, iri: URIRef) -> bool:
+    """The IRI is the project's own (5.2): under its model base, or its shapes
+    or data base where the address pattern sets them (checks.is_own's bases).
+    A term outside the bases -- a standard term's own IRI among them -- is
+    never a copy, so it is never checked."""
+    bases = tuple(b for b in (ctx.base, ctx.shapes_base, ctx.data_base) if b)
+    return bool(bases) and str(iri).startswith(bases)
+
+
+def _standard_term_ends(ctx: Context, a: dict) -> Optional[tuple[URIRef, URIRef]]:
+    """The two class ends a door knows, for an axiom offer (5.5): a new
+    relationship's domain and range, both classes of this document and not the
+    same one. None otherwise, so no offer is built."""
+    d, r = a.get("domain"), a.get("range")
+    if not (isinstance(d, str) and isinstance(r, str)):
+        return None
+    try:
+        first, second = ctx.iri(d), ctx.iri(r)
+    except CommandError:
+        return None
+    if first != second and ctx.kind(first) == "class" and ctx.kind(second) == "class":
+        return (first, second)
+    return None
+
+
+def _check_standard_term(
+    ctx: Context, iri: URIRef, shown: str, kind: str, ends: Optional[tuple[URIRef, URIRef]] = None
+) -> None:
+    """Refuse a new own name that copies a standard axiom (5.3), with no way
+    past. `shown` is the name the person typed; `kind` is "property" or
+    "class"; `ends` are the two classes an offer needs, or None. A warn match
+    is left to the form (the term is still made, the warning stands under it);
+    only a refuse match stops here."""
+    if not _own_under_bases(ctx, iri):
+        return
+    local = checks.local_name(str(iri))
+    entry = standard_terms.match([shown, local], kind)
+    if entry is None or entry["level"] != "refuse":
+        return
+    offer = None
+    if entry.get("offer") and ends is not None:
+        # The args a door runs the offer with (5.5): AddDisjointWith and
+        # AddEquivalentClass both take the pair as `a` and `b`, so the offer
+        # is runnable as it stands.
+        offer = {"command": entry["offer"], "args": {"a": str(ends[0]), "b": str(ends[1])}}
+    # Built through sentences.py's one a/an rule (5.3): the two ends by name
+    # when a door knows them, else the term's plain meaning.
+    if ends is not None and entry.get("means_ends"):
+        means = entry["means_ends"].format(a=sentences.a(ctx.name(ends[0])), b=sentences.a(ctx.name(ends[1])))
+    else:
+        means = entry["means"]
+    message = f"{shown} would copy {entry['curie']}, {means}. A reasoner understands only the standard term."
+    raise StandardTerm(message, {
+        "iri": entry["iri"], "curie": entry["curie"],
+        "means": entry["means"], "how": entry["how"], "offer": offer,
+    })
+
+
 def cmd_create_object_property(ctx: Context, a: dict) -> Change:
     label = ctx.primary_label(a)
     iri = ctx.minted(a, label, lower_first=True)
+    _check_standard_term(ctx, iri, label, "property", _standard_term_ends(ctx, a))
     _new_property(ctx, iri, OWL.ObjectProperty)
     adds = [(iri, RDF.type, OWL.ObjectProperty), (iri, RDFS.label, Literal(label, lang=ctx.primary))]
     for key, predicate in (("domain", RDFS.domain), ("range", RDFS.range)):
@@ -892,6 +987,7 @@ def cmd_create_object_property(ctx: Context, a: dict) -> Change:
 def cmd_create_datatype_property(ctx: Context, a: dict) -> Change:
     label = ctx.primary_label(a)
     iri = ctx.minted(a, label, lower_first=True)
+    _check_standard_term(ctx, iri, label, "property")
     _new_property(ctx, iri, OWL.DatatypeProperty)
     adds = [(iri, RDF.type, OWL.DatatypeProperty), (iri, RDFS.label, Literal(label, lang=ctx.primary))]
     if a.get("domain"):
@@ -960,9 +1056,75 @@ def _set_text(ctx: Context, a: dict, predicate_for: Callable[[URIRef], URIRef], 
     return change
 
 
+# Which types make a term a property or a class, for the Turtle door (5.6).
+_STD_PROP_TYPES = {OWL.ObjectProperty, OWL.DatatypeProperty, OWL.AnnotationProperty, RDF.Property}
+_STD_CLASS_TYPES = {OWL.Class, RDFS.Class}
+
+
+def _typed_own(graph: Graph, bases: tuple) -> dict:
+    """Own terms typed as a property or a class in a graph (5.6): IRI -> the
+    kind group it is compared with. A class wins when a term is typed both, so
+    a class named after a standard axiom is still caught."""
+    out: dict = {}
+    for s in set(graph.subjects(RDF.type, None)):
+        if not isinstance(s, URIRef) or not str(s).startswith(bases):
+            continue
+        types = set(graph.objects(s, RDF.type))
+        if types & _STD_CLASS_TYPES:
+            out[s] = "class"
+        elif types & _STD_PROP_TYPES:
+            out[s] = "property"
+    return out
+
+
+def _introduced_standard_terms(text: str, old: Graph, parsed: Graph, bases: tuple, primary: str) -> list[dict]:
+    """Every own property or class the Turtle introduces whose name copies a
+    standard axiom at level refuse (5.6): a term typed as one in the parsed
+    text that was not one in the document before, so a document that already
+    holds a copy can still be edited. Each carries its name, the standard
+    term's curie and the first line it is on (indexOf, never a RegExp built
+    from the text)."""
+    if not bases:
+        return []
+    before = _typed_own(old, bases)
+    terms: list[dict] = []
+    for iri, group in _typed_own(parsed, bases).items():
+        if iri in before:
+            continue
+        local = checks.local_name(str(iri))
+        names = [local]
+        for o in parsed.objects(iri, RDFS.label):
+            if isinstance(o, Literal) and (o.language is None or lang_matches(o.language, primary)):
+                names.append(str(o))
+        entry = standard_terms.match(names, group)
+        if entry is None or entry["level"] != "refuse":
+            continue
+        terms.append({"name": local, "curie": entry["curie"], "line": _first_line(text, iri, parsed)})
+    return terms
+
+
+def _first_line(text: str, iri: URIRef, parsed: Graph) -> int:
+    """The first line of the text holding the term's prefixed or full name
+    (5.6), found with indexOf. 1 when neither form is on any line."""
+    candidates = [f"<{iri}>", prefixed(parsed, iri)]
+    for number, line in enumerate(text.split("\n"), start=1):
+        if any(c and c in line for c in candidates):
+            return number
+    return 1
+
+
 def cmd_set_label(ctx: Context, a: dict) -> Change:
     # A concept's name is its skos:prefLabel; anything else is named by
     # rdfs:label. One prefLabel per language holds because this replaces.
+    # The primary-language label of a property or class is checked for a
+    # standard-term copy (standard-terms 5.3); a concept's is never compared.
+    iri = ctx.iri(a.get("iri"))
+    group = _kind_group(ctx.kind(iri)) if ctx.mentioned(iri) else None
+    value = a.get("value")
+    lang = a.get("lang") or ctx.primary
+    primary = lang_matches(lang, ctx.primary) or lang_matches(ctx.primary, lang)
+    if group and primary and isinstance(value, str) and value.strip():
+        _check_standard_term(ctx, iri, value.strip(), group)
     return _set_text(
         ctx,
         a,
@@ -1057,6 +1219,10 @@ def cmd_create_annotation_property(ctx: Context, a: dict) -> Change:
     if not a.get("iri") and not (isinstance(label, str) and label.strip()):
         raise CommandError("A new annotation property needs a name or an IRI.")
     iri = ctx.minted(a, (label or "").strip(), lower_first=True)
+    if isinstance(label, str) and label.strip():
+        _check_standard_term(ctx, iri, label.strip(), "property")
+    else:
+        _check_standard_term(ctx, iri, checks.local_name(str(iri)), "property")
     ctx.require_new(iri)
     adds = [(iri, RDF.type, OWL.AnnotationProperty)]
     if isinstance(label, str) and label.strip():
@@ -1677,6 +1843,11 @@ def cmd_rename_iri(ctx: Context, a: dict) -> Change:
         raise CommandError(f"There is no {ctx.short(old)} in this document to rename.")
     if old == new:
         raise CommandError("The new IRI is the same as the old one.")
+    # A rename to an own name copying a standard axiom is refused (5.3): the
+    # kind is the renamed entity's, the name the new IRI's local name.
+    group = _kind_group(ctx.kind(old))
+    if group:
+        _check_standard_term(ctx, new, checks.local_name(str(new)), group)
     ctx.require_new(new)
     swap = lambda term: new if term == old else term  # noqa: E731
     touched = set(ctx.graph.triples((old, None, None)))
@@ -3504,8 +3675,22 @@ class EditingService:
         document = self.document(pid, doc)
         base = self.projects.manifest(pid)["baseIri"]
         parsed = parse_turtle(text, timeout, base)  # raises before anything changes
+        manifest = self.projects.manifest(pid)
+        bases = tuple(b for b in (manifest.get(k) for k in ("baseIri", "shapesBaseIri", "dataBaseIri")) if b)
+        primary = manifest.get("primaryLanguage", "en")
         with document.lock:
             graph = document.graph
+            # A text introducing an own copy of a standard axiom is refused
+            # before anything changes (standard-terms 5.6): the comparison is
+            # before against after, so an existing copy can still be edited.
+            copies = _introduced_standard_terms(text, graph, parsed, bases, primary)
+            if copies:
+                shown = ", ".join(f"{c['name']} ({c['curie']})" for c in copies)
+                raise StandardTermInText(
+                    f"This Turtle would copy standard terms a reasoner understands: {shown}. "
+                    "Use the standard term itself.",
+                    copies,
+                )
             old, new = set(graph), set(parsed)
             change = Change("Applied Turtle edits", list(new - old), list(old - new))
             for prefix, namespace in parsed.namespaces():

@@ -242,6 +242,8 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   setDisplayLanguage: async () => api.setDisplayLanguage(null),
   // Not a request either: reads a refusal's body (attribute-reuse 5.1).
   alreadyDefined: async () => api.alreadyDefined(null),
+  // Nor this: reads a standard-term refusal's body (standard-terms 5.3).
+  standardTerm: async () => api.standardTerm(null),
 };
 
 describe("api client header (S-6)", () => {

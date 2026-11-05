@@ -44,7 +44,7 @@ vi.mock("../api", async (importOriginal) => ({
   openProject,
 }));
 
-import { TurtleError } from "../api";
+import { StandardTermError, TurtleError } from "../api";
 import { projectStore } from "../state/projectStore";
 import TurtleEditor from "./TurtleEditor";
 
@@ -176,6 +176,25 @@ describe("TurtleEditor", () => {
     const lineStart = EDITED.split("\n").slice(0, 3).join("\n").length + 1;
     expect(editor().selectionStart).toBe(lineStart + 2);
     expect(document.querySelector(".turtle-gutter-error")!.textContent).toBe("4");
+  });
+
+  it("a standard_term Apply shows each term with its line, keeping the text (AC-6)", async () => {
+    applyDocumentSource.mockRejectedValue(
+      new StandardTermError(
+        "This Turtle would copy standard terms a reasoner understands: sameAs (owl:sameAs). Use the standard term itself.",
+        [{ name: "sameAs", curie: "owl:sameAs", line: 5 }],
+      ),
+    );
+    await renderEditor();
+    fireEvent.change(editor(), { target: { value: EDITED } });
+    await act(async () => {
+      fireEvent.click(applyButton());
+    });
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("sameAs copies owl:sameAs — line 5");
+    expect(editor().value).toBe(EDITED);
+    expect(editor().getAttribute("aria-invalid")).toBe("true");
+    expect(projectStore.getSnapshot().editorDraft).toBe(EDITED);
   });
 
   it("Discard edits returns the text to the document", async () => {

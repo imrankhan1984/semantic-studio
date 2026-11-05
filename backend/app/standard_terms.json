@@ -1,0 +1,1984 @@
+{
+  "_comment": "Generated for V-8 (standard-terms). Do not edit by hand; see scratchpad gen_standard_terms.py. Covers every term of rdflib's closed RDF/RDFS/OWL/SKOS namespaces plus listed Dublin Core terms.",
+  "terms": [
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#Alt",
+      "curie": "rdf:Alt",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Alt"
+      ],
+      "means": "a built-in RDF type (rdf:Alt)",
+      "how": "If you mean the standard RDF type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#Bag",
+      "curie": "rdf:Bag",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Bag"
+      ],
+      "means": "a built-in RDF type (rdf:Bag)",
+      "how": "If you mean the standard RDF type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#CompoundLiteral",
+      "curie": "rdf:CompoundLiteral",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "CompoundLiteral"
+      ],
+      "means": "a built-in RDF term (rdf:CompoundLiteral)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#direction",
+      "curie": "rdf:direction",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "direction"
+      ],
+      "means": "a built-in RDF term (rdf:direction)",
+      "how": "If you mean the standard RDF term, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#first",
+      "curie": "rdf:first",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "first"
+      ],
+      "means": "a built-in RDF term (rdf:first)",
+      "how": "If you mean the standard RDF term, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#HTML",
+      "curie": "rdf:HTML",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "HTML"
+      ],
+      "means": "a built-in RDF type (rdf:HTML)",
+      "how": "If you mean the standard RDF type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#JSON",
+      "curie": "rdf:JSON",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "JSON"
+      ],
+      "means": "a built-in RDF type (rdf:JSON)",
+      "how": "If you mean the standard RDF type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString",
+      "curie": "rdf:langString",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "langString"
+      ],
+      "means": "a built-in RDF term (rdf:langString)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#language",
+      "curie": "rdf:language",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "language"
+      ],
+      "means": "a built-in RDF term (rdf:language)",
+      "how": "If you mean the standard RDF term, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#List",
+      "curie": "rdf:List",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "List"
+      ],
+      "means": "a built-in RDF type (rdf:List)",
+      "how": "If you mean the standard RDF type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil",
+      "curie": "rdf:nil",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "nil"
+      ],
+      "means": "a built-in RDF term (rdf:nil)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#object",
+      "curie": "rdf:object",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "object"
+      ],
+      "means": "a built-in RDF term (rdf:object)",
+      "how": "If you mean the standard RDF term, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral",
+      "curie": "rdf:PlainLiteral",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "PlainLiteral"
+      ],
+      "means": "a built-in RDF term (rdf:PlainLiteral)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#predicate",
+      "curie": "rdf:predicate",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "predicate"
+      ],
+      "means": "a built-in RDF term (rdf:predicate)",
+      "how": "If you mean the standard RDF term, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#Property",
+      "curie": "rdf:Property",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Property"
+      ],
+      "means": "a built-in RDF type (rdf:Property)",
+      "how": "If you mean the standard RDF type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest",
+      "curie": "rdf:rest",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "rest"
+      ],
+      "means": "a built-in RDF term (rdf:rest)",
+      "how": "If you mean the standard RDF term, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#Seq",
+      "curie": "rdf:Seq",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Seq"
+      ],
+      "means": "a built-in RDF type (rdf:Seq)",
+      "how": "If you mean the standard RDF type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#Statement",
+      "curie": "rdf:Statement",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Statement"
+      ],
+      "means": "a built-in RDF type (rdf:Statement)",
+      "how": "If you mean the standard RDF type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#subject",
+      "curie": "rdf:subject",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "subject"
+      ],
+      "means": "a built-in RDF term (rdf:subject)",
+      "how": "If you mean the standard RDF term, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+      "curie": "rdf:type",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "rdfType",
+        "instanceOf",
+        "isInstanceOf",
+        "isOfType"
+      ],
+      "means": "the standard way to say an individual is of a class",
+      "how": "Type the individual with its class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+      "curie": "rdf:type",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "type"
+      ],
+      "means": "the standard way to say what an individual is",
+      "how": "To say an individual is of a class, type it with that class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#value",
+      "curie": "rdf:value",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "value"
+      ],
+      "means": "a built-in RDF term (rdf:value)",
+      "how": "If you mean the standard RDF term, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral",
+      "curie": "rdf:XMLLiteral",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "XMLLiteral"
+      ],
+      "means": "a built-in RDF term (rdf:XMLLiteral)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2000/01/rdf-schema#Class",
+      "curie": "rdfs:Class",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Class"
+      ],
+      "means": "a built-in RDFS type (rdfs:Class)",
+      "how": "If you mean the standard RDFS type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2000/01/rdf-schema#comment",
+      "curie": "rdfs:comment",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "comment",
+        "rdfsComment"
+      ],
+      "means": "the standard note on a term",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2000/01/rdf-schema#Container",
+      "curie": "rdfs:Container",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Container"
+      ],
+      "means": "a built-in RDFS type (rdfs:Container)",
+      "how": "If you mean the standard RDFS type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2000/01/rdf-schema#ContainerMembershipProperty",
+      "curie": "rdfs:ContainerMembershipProperty",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "ContainerMembershipProperty"
+      ],
+      "means": "a built-in RDFS type",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2000/01/rdf-schema#Datatype",
+      "curie": "rdfs:Datatype",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Datatype"
+      ],
+      "means": "a built-in RDFS type (rdfs:Datatype)",
+      "how": "If you mean the standard RDFS type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2000/01/rdf-schema#domain",
+      "curie": "rdfs:domain",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "domain",
+        "hasDomain"
+      ],
+      "means": "the standard way to say which class a property belongs to",
+      "how": "If you mean which class a property belongs to, set its domain instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2000/01/rdf-schema#isDefinedBy",
+      "curie": "rdfs:isDefinedBy",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "isDefinedBy"
+      ],
+      "means": "a built-in RDFS term",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2000/01/rdf-schema#label",
+      "curie": "rdfs:label",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "label",
+        "rdfsLabel"
+      ],
+      "means": "the standard name of a term",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2000/01/rdf-schema#Literal",
+      "curie": "rdfs:Literal",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Literal"
+      ],
+      "means": "a built-in RDFS type (rdfs:Literal)",
+      "how": "If you mean the standard RDFS type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2000/01/rdf-schema#member",
+      "curie": "rdfs:member",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "member"
+      ],
+      "means": "a built-in RDFS term",
+      "how": "To group things, use a collection instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2000/01/rdf-schema#range",
+      "curie": "rdfs:range",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "range",
+        "hasRange"
+      ],
+      "means": "the standard way to say what a property points to",
+      "how": "If you mean what a relationship points to, set its range instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2000/01/rdf-schema#Resource",
+      "curie": "rdfs:Resource",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Resource"
+      ],
+      "means": "a built-in RDFS type (rdfs:Resource)",
+      "how": "If you mean the standard RDFS type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2000/01/rdf-schema#seeAlso",
+      "curie": "rdfs:seeAlso",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "seeAlso"
+      ],
+      "means": "a built-in RDFS term",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2000/01/rdf-schema#subClassOf",
+      "curie": "rdfs:subClassOf",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "subClassOf",
+        "isSubClassOf",
+        "isA",
+        "kindOf",
+        "isKindOf",
+        "subtypeOf",
+        "isSubtypeOf"
+      ],
+      "means": "the standard way to say one class is a kind of another",
+      "how": "On the class, add it under 'Is a kind of' instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2000/01/rdf-schema#subPropertyOf",
+      "curie": "rdfs:subPropertyOf",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "subPropertyOf",
+        "isSubPropertyOf"
+      ],
+      "means": "the standard way to say one property is a kind of another",
+      "how": "On the property, add it under 'Is a kind of' instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#AllDifferent",
+      "curie": "owl:AllDifferent",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "AllDifferent"
+      ],
+      "means": "a built-in OWL type (owl:AllDifferent)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#AllDisjointClasses",
+      "curie": "owl:AllDisjointClasses",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "AllDisjointClasses"
+      ],
+      "means": "a built-in OWL type (owl:AllDisjointClasses)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#AllDisjointProperties",
+      "curie": "owl:AllDisjointProperties",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "AllDisjointProperties"
+      ],
+      "means": "a built-in OWL type (owl:AllDisjointProperties)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#allValuesFrom",
+      "curie": "owl:allValuesFrom",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "allValuesFrom"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:allValuesFrom)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#annotatedProperty",
+      "curie": "owl:annotatedProperty",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "annotatedProperty"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:annotatedProperty)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#annotatedSource",
+      "curie": "owl:annotatedSource",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "annotatedSource"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:annotatedSource)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#annotatedTarget",
+      "curie": "owl:annotatedTarget",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "annotatedTarget"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:annotatedTarget)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#Annotation",
+      "curie": "owl:Annotation",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Annotation"
+      ],
+      "means": "a built-in OWL type (owl:Annotation)",
+      "how": "If you mean the standard OWL type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#AnnotationProperty",
+      "curie": "owl:AnnotationProperty",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "AnnotationProperty"
+      ],
+      "means": "a built-in OWL type (owl:AnnotationProperty)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#assertionProperty",
+      "curie": "owl:assertionProperty",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "assertionProperty"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:assertionProperty)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#AsymmetricProperty",
+      "curie": "owl:AsymmetricProperty",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "AsymmetricProperty"
+      ],
+      "means": "a built-in OWL type (owl:AsymmetricProperty)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#Axiom",
+      "curie": "owl:Axiom",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Axiom"
+      ],
+      "means": "a built-in OWL type (owl:Axiom)",
+      "how": "If you mean the standard OWL type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#backwardCompatibleWith",
+      "curie": "owl:backwardCompatibleWith",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "backwardCompatibleWith"
+      ],
+      "means": "a built-in OWL version term (owl:backwardCompatibleWith)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#bottomDataProperty",
+      "curie": "owl:bottomDataProperty",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "bottomDataProperty"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:bottomDataProperty)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#bottomObjectProperty",
+      "curie": "owl:bottomObjectProperty",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "bottomObjectProperty"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:bottomObjectProperty)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#cardinality",
+      "curie": "owl:cardinality",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "cardinality"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:cardinality)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#Class",
+      "curie": "owl:Class",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Class"
+      ],
+      "means": "a built-in OWL type (owl:Class)",
+      "how": "If you mean the standard OWL type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#complementOf",
+      "curie": "owl:complementOf",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "complementOf",
+        "isComplementOf"
+      ],
+      "means": "the standard way to say a class is everything that is not another",
+      "how": "Write it in Turtle using the standard term instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#DataRange",
+      "curie": "owl:DataRange",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "DataRange"
+      ],
+      "means": "a built-in OWL type (owl:DataRange)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#datatypeComplementOf",
+      "curie": "owl:datatypeComplementOf",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "datatypeComplementOf"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:datatypeComplementOf)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#DatatypeProperty",
+      "curie": "owl:DatatypeProperty",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "DatatypeProperty"
+      ],
+      "means": "a built-in OWL type (owl:DatatypeProperty)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#deprecated",
+      "curie": "owl:deprecated",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "deprecated",
+        "isDeprecated"
+      ],
+      "means": "the standard way to mark a term deprecated",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#DeprecatedClass",
+      "curie": "owl:DeprecatedClass",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "DeprecatedClass"
+      ],
+      "means": "a built-in OWL type (owl:DeprecatedClass)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#DeprecatedProperty",
+      "curie": "owl:DeprecatedProperty",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "DeprecatedProperty"
+      ],
+      "means": "a built-in OWL type (owl:DeprecatedProperty)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#differentFrom",
+      "curie": "owl:differentFrom",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "differentFrom",
+        "isDifferentFrom"
+      ],
+      "means": "the standard way to say two individuals are different",
+      "how": "State owl:differentFrom in Turtle instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#disjointUnionOf",
+      "curie": "owl:disjointUnionOf",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "disjointUnionOf"
+      ],
+      "means": "a built-in OWL class expression (owl:disjointUnionOf)",
+      "how": "Write it in Turtle using the standard term instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#disjointWith",
+      "curie": "owl:disjointWith",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "disjointWith",
+        "isDisjointWith",
+        "disjointFrom",
+        "isDisjointFrom",
+        "disjoint",
+        "disjointClass",
+        "neverBoth"
+      ],
+      "means": "the standard way to say nothing can be both of two classes",
+      "how": "In the class's Rules, choose Never both.",
+      "offer": "AddDisjointWith",
+      "means_ends": "the standard way to say nothing is both {a} and {b}"
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#distinctMembers",
+      "curie": "owl:distinctMembers",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "distinctMembers"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:distinctMembers)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#equivalentClass",
+      "curie": "owl:equivalentClass",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "equivalentClass",
+        "equivalentTo",
+        "isEquivalentTo",
+        "sameClassAs"
+      ],
+      "means": "the standard way to say two classes are the same thing",
+      "how": "In the class's Rules, choose The same as.",
+      "offer": "AddEquivalentClass",
+      "means_ends": "the standard way to say {a} and {b} are the same thing"
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#equivalentProperty",
+      "curie": "owl:equivalentProperty",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "equivalentProperty",
+        "samePropertyAs"
+      ],
+      "means": "the standard way to say two properties are the same",
+      "how": "State owl:equivalentProperty in Turtle instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#FunctionalProperty",
+      "curie": "owl:FunctionalProperty",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "FunctionalProperty"
+      ],
+      "means": "a built-in OWL type (owl:FunctionalProperty)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#hasKey",
+      "curie": "owl:hasKey",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "hasKey"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:hasKey)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#hasSelf",
+      "curie": "owl:hasSelf",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "hasSelf"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:hasSelf)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#hasValue",
+      "curie": "owl:hasValue",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "hasValue"
+      ],
+      "means": "part of how OWL writes a rule (owl:hasValue)",
+      "how": "In the class's Rules, choose has value instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#imports",
+      "curie": "owl:imports",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "imports"
+      ],
+      "means": "the standard way to import an ontology",
+      "how": "To reuse another ontology, import it from the Library instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#incompatibleWith",
+      "curie": "owl:incompatibleWith",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "incompatibleWith"
+      ],
+      "means": "a built-in OWL version term (owl:incompatibleWith)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#intersectionOf",
+      "curie": "owl:intersectionOf",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "intersectionOf"
+      ],
+      "means": "a built-in OWL class expression (owl:intersectionOf)",
+      "how": "Write it in Turtle using the standard term instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#InverseFunctionalProperty",
+      "curie": "owl:InverseFunctionalProperty",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "InverseFunctionalProperty"
+      ],
+      "means": "a built-in OWL type (owl:InverseFunctionalProperty)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#inverseOf",
+      "curie": "owl:inverseOf",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "inverseOf",
+        "isInverseOf",
+        "inverseProperty"
+      ],
+      "means": "the standard way to say one relationship is the inverse of another",
+      "how": "On the relationship, set its inverse instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#IrreflexiveProperty",
+      "curie": "owl:IrreflexiveProperty",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "IrreflexiveProperty"
+      ],
+      "means": "a built-in OWL type (owl:IrreflexiveProperty)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#maxCardinality",
+      "curie": "owl:maxCardinality",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "maxCardinality"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:maxCardinality)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#maxQualifiedCardinality",
+      "curie": "owl:maxQualifiedCardinality",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "maxQualifiedCardinality"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:maxQualifiedCardinality)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#members",
+      "curie": "owl:members",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "members"
+      ],
+      "means": "a built-in OWL term",
+      "how": "To group things, use a collection instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#minCardinality",
+      "curie": "owl:minCardinality",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "minCardinality"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:minCardinality)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#minQualifiedCardinality",
+      "curie": "owl:minQualifiedCardinality",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "minQualifiedCardinality"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:minQualifiedCardinality)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#NamedIndividual",
+      "curie": "owl:NamedIndividual",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "NamedIndividual"
+      ],
+      "means": "a built-in OWL type (owl:NamedIndividual)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#NegativePropertyAssertion",
+      "curie": "owl:NegativePropertyAssertion",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "NegativePropertyAssertion"
+      ],
+      "means": "a built-in OWL type (owl:NegativePropertyAssertion)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#Nothing",
+      "curie": "owl:Nothing",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "Nothing"
+      ],
+      "means": "the built-in class with no members",
+      "how": "Use owl:Nothing directly; it needs no copy.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#ObjectProperty",
+      "curie": "owl:ObjectProperty",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "ObjectProperty"
+      ],
+      "means": "a built-in OWL type (owl:ObjectProperty)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#onClass",
+      "curie": "owl:onClass",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "onClass"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:onClass)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#onDataRange",
+      "curie": "owl:onDataRange",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "onDataRange"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:onDataRange)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#onDatatype",
+      "curie": "owl:onDatatype",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "onDatatype"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:onDatatype)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#oneOf",
+      "curie": "owl:oneOf",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "oneOf"
+      ],
+      "means": "a built-in OWL class expression (owl:oneOf)",
+      "how": "Write it in Turtle using the standard term instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#onProperties",
+      "curie": "owl:onProperties",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "onProperties"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:onProperties)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#onProperty",
+      "curie": "owl:onProperty",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "onProperty"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:onProperty)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#Ontology",
+      "curie": "owl:Ontology",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Ontology"
+      ],
+      "means": "a built-in OWL type (owl:Ontology)",
+      "how": "If you mean the standard OWL type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#OntologyProperty",
+      "curie": "owl:OntologyProperty",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "OntologyProperty"
+      ],
+      "means": "a built-in OWL type (owl:OntologyProperty)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#priorVersion",
+      "curie": "owl:priorVersion",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "priorVersion"
+      ],
+      "means": "a built-in OWL version term (owl:priorVersion)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#propertyChainAxiom",
+      "curie": "owl:propertyChainAxiom",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "propertyChainAxiom"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:propertyChainAxiom)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#propertyDisjointWith",
+      "curie": "owl:propertyDisjointWith",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "propertyDisjointWith"
+      ],
+      "means": "the standard way to say two properties never share a pair",
+      "how": "State owl:propertyDisjointWith in Turtle instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#qualifiedCardinality",
+      "curie": "owl:qualifiedCardinality",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "qualifiedCardinality"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:qualifiedCardinality)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#rational",
+      "curie": "owl:rational",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "rational"
+      ],
+      "means": "a built-in OWL type (owl:rational)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#real",
+      "curie": "owl:real",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "real"
+      ],
+      "means": "a built-in OWL type (owl:real)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#ReflexiveProperty",
+      "curie": "owl:ReflexiveProperty",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "ReflexiveProperty"
+      ],
+      "means": "a built-in OWL type (owl:ReflexiveProperty)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#Restriction",
+      "curie": "owl:Restriction",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Restriction"
+      ],
+      "means": "a built-in OWL type (owl:Restriction)",
+      "how": "If you mean the standard OWL type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#sameAs",
+      "curie": "owl:sameAs",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "sameAs",
+        "isSameAs",
+        "sameIndividualAs",
+        "identicalTo",
+        "isIdenticalTo"
+      ],
+      "means": "the standard way to say two individuals are the same thing",
+      "how": "State owl:sameAs in Turtle instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#someValuesFrom",
+      "curie": "owl:someValuesFrom",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "someValuesFrom"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:someValuesFrom)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#sourceIndividual",
+      "curie": "owl:sourceIndividual",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "sourceIndividual"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:sourceIndividual)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#SymmetricProperty",
+      "curie": "owl:SymmetricProperty",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "SymmetricProperty"
+      ],
+      "means": "a built-in OWL type (owl:SymmetricProperty)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#targetIndividual",
+      "curie": "owl:targetIndividual",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "targetIndividual"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:targetIndividual)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#targetValue",
+      "curie": "owl:targetValue",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "targetValue"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:targetValue)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#Thing",
+      "curie": "owl:Thing",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "Thing",
+        "owlThing"
+      ],
+      "means": "the built-in class every individual belongs to",
+      "how": "Use owl:Thing directly; it needs no copy.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#topDataProperty",
+      "curie": "owl:topDataProperty",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "topDataProperty"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:topDataProperty)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#topObjectProperty",
+      "curie": "owl:topObjectProperty",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "topObjectProperty"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:topObjectProperty)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#TransitiveProperty",
+      "curie": "owl:TransitiveProperty",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "TransitiveProperty"
+      ],
+      "means": "a built-in OWL type (owl:TransitiveProperty)",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#unionOf",
+      "curie": "owl:unionOf",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "unionOf"
+      ],
+      "means": "a built-in OWL class expression (owl:unionOf)",
+      "how": "Write it in Turtle using the standard term instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#versionInfo",
+      "curie": "owl:versionInfo",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "versionInfo"
+      ],
+      "means": "the standard way to note a version",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#versionIRI",
+      "curie": "owl:versionIRI",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "versionIRI"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:versionIRI)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2002/07/owl#withRestrictions",
+      "curie": "owl:withRestrictions",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "withRestrictions"
+      ],
+      "means": "part of how OWL writes rules and axioms (owl:withRestrictions)",
+      "how": "In the class's Rules, build the rule the standard way instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#altLabel",
+      "curie": "skos:altLabel",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "altLabel",
+        "alternativeLabel",
+        "synonym",
+        "alternative label"
+      ],
+      "means": "the standard alternative name of a concept",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#broader",
+      "curie": "skos:broader",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "broader",
+        "hasBroader",
+        "broaderConcept",
+        "has broader"
+      ],
+      "means": "the standard way to say one concept is broader than another",
+      "how": "On the concept, add it under 'Broader' instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#broaderTransitive",
+      "curie": "skos:broaderTransitive",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "broaderTransitive",
+        "has broader transitive"
+      ],
+      "means": "a built-in SKOS term (skos:broaderTransitive)",
+      "how": "Use the standard SKOS term directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#broadMatch",
+      "curie": "skos:broadMatch",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "broadMatch",
+        "has broader match"
+      ],
+      "means": "the standard way to map a concept to another scheme's (skos:broadMatch)",
+      "how": "Add the mapping in the concept's mappings instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#changeNote",
+      "curie": "skos:changeNote",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "changeNote",
+        "change note"
+      ],
+      "means": "a built-in SKOS note (skos:changeNote)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#closeMatch",
+      "curie": "skos:closeMatch",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "closeMatch",
+        "has close match"
+      ],
+      "means": "the standard way to map a concept to another scheme's (skos:closeMatch)",
+      "how": "Add the mapping in the concept's mappings instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#Collection",
+      "curie": "skos:Collection",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Collection"
+      ],
+      "means": "a built-in SKOS type (skos:Collection)",
+      "how": "If you mean the standard SKOS type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#Concept",
+      "curie": "skos:Concept",
+      "kind": "class",
+      "level": "warn",
+      "names": [
+        "Concept"
+      ],
+      "means": "a built-in SKOS type (skos:Concept)",
+      "how": "If you mean the standard SKOS type, use it directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#ConceptScheme",
+      "curie": "skos:ConceptScheme",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "ConceptScheme",
+        "Concept Scheme"
+      ],
+      "means": "the built-in type for a scheme of concepts",
+      "how": "A scheme is made for you; use skos:ConceptScheme directly.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#definition",
+      "curie": "skos:definition",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "definition",
+        "hasDefinition"
+      ],
+      "means": "the standard definition of a concept",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#editorialNote",
+      "curie": "skos:editorialNote",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "editorialNote",
+        "editorial note"
+      ],
+      "means": "a built-in SKOS note",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#exactMatch",
+      "curie": "skos:exactMatch",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "exactMatch",
+        "has exact match"
+      ],
+      "means": "the standard way to map a concept to another scheme's (skos:exactMatch)",
+      "how": "Add the mapping in the concept's mappings instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#example",
+      "curie": "skos:example",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "example"
+      ],
+      "means": "a built-in SKOS note (skos:example)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#hasTopConcept",
+      "curie": "skos:hasTopConcept",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "hasTopConcept",
+        "has top concept"
+      ],
+      "means": "the standard way to name a scheme's top concept",
+      "how": "A top concept is kept automatically.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#hiddenLabel",
+      "curie": "skos:hiddenLabel",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "hiddenLabel",
+        "hidden label"
+      ],
+      "means": "a built-in SKOS label",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#historyNote",
+      "curie": "skos:historyNote",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "historyNote",
+        "history note"
+      ],
+      "means": "a built-in SKOS note (skos:historyNote)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#inScheme",
+      "curie": "skos:inScheme",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "inScheme",
+        "is in scheme"
+      ],
+      "means": "the standard way to say a concept is in a scheme",
+      "how": "A concept joins its scheme automatically.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#mappingRelation",
+      "curie": "skos:mappingRelation",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "mappingRelation",
+        "is in mapping relation with"
+      ],
+      "means": "a built-in SKOS term (skos:mappingRelation)",
+      "how": "Use the standard SKOS term directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#member",
+      "curie": "skos:member",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "member",
+        "has member"
+      ],
+      "means": "a built-in SKOS term",
+      "how": "To group concepts, use a collection instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#memberList",
+      "curie": "skos:memberList",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "memberList",
+        "has member list"
+      ],
+      "means": "a built-in SKOS term (skos:memberList)",
+      "how": "Use the standard SKOS term directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#narrower",
+      "curie": "skos:narrower",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "narrower",
+        "hasNarrower",
+        "narrowerConcept",
+        "has narrower"
+      ],
+      "means": "the standard way to say one concept is narrower than another",
+      "how": "On the concept, use 'Broader' the other way round instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#narrowerTransitive",
+      "curie": "skos:narrowerTransitive",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "narrowerTransitive",
+        "has narrower transitive"
+      ],
+      "means": "a built-in SKOS term (skos:narrowerTransitive)",
+      "how": "Use the standard SKOS term directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#narrowMatch",
+      "curie": "skos:narrowMatch",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "narrowMatch",
+        "has narrower match"
+      ],
+      "means": "the standard way to map a concept to another scheme's (skos:narrowMatch)",
+      "how": "Add the mapping in the concept's mappings instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#notation",
+      "curie": "skos:notation",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "notation"
+      ],
+      "means": "a built-in SKOS term",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#note",
+      "curie": "skos:note",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "note"
+      ],
+      "means": "a built-in SKOS note (skos:note)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#OrderedCollection",
+      "curie": "skos:OrderedCollection",
+      "kind": "class",
+      "level": "refuse",
+      "names": [
+        "OrderedCollection",
+        "Ordered Collection"
+      ],
+      "means": "a built-in SKOS type",
+      "how": "Choose the matching built-in type on the property or class instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#prefLabel",
+      "curie": "skos:prefLabel",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "prefLabel",
+        "preferredLabel",
+        "preferred label"
+      ],
+      "means": "the standard preferred name of a concept",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#related",
+      "curie": "skos:related",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "related",
+        "relatedTo",
+        "has related"
+      ],
+      "means": "the standard way to relate two concepts",
+      "how": "To relate two concepts, use Related instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#relatedMatch",
+      "curie": "skos:relatedMatch",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "relatedMatch",
+        "has related match"
+      ],
+      "means": "the standard way to map a concept to another scheme's (skos:relatedMatch)",
+      "how": "Add the mapping in the concept's mappings instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#scopeNote",
+      "curie": "skos:scopeNote",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "scopeNote",
+        "scope note"
+      ],
+      "means": "a built-in SKOS note",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#semanticRelation",
+      "curie": "skos:semanticRelation",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "semanticRelation",
+        "is in semantic relation with"
+      ],
+      "means": "a built-in SKOS term (skos:semanticRelation)",
+      "how": "Use the standard SKOS term directly instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://www.w3.org/2004/02/skos/core#topConceptOf",
+      "curie": "skos:topConceptOf",
+      "kind": "property",
+      "level": "refuse",
+      "names": [
+        "topConceptOf",
+        "is top concept in scheme"
+      ],
+      "means": "the standard way to say a concept tops its scheme",
+      "how": "A top concept is kept automatically.",
+      "offer": null
+    },
+    {
+      "iri": "http://purl.org/dc/terms/contributor",
+      "curie": "dcterms:contributor",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "contributor"
+      ],
+      "means": "a standard Dublin Core term (dcterms:contributor)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://purl.org/dc/terms/created",
+      "curie": "dcterms:created",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "created"
+      ],
+      "means": "a standard Dublin Core term (dcterms:created)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://purl.org/dc/terms/creator",
+      "curie": "dcterms:creator",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "creator"
+      ],
+      "means": "a standard Dublin Core term (dcterms:creator)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://purl.org/dc/terms/description",
+      "curie": "dcterms:description",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "description"
+      ],
+      "means": "a standard Dublin Core term (dcterms:description)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://purl.org/dc/terms/issued",
+      "curie": "dcterms:issued",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "issued"
+      ],
+      "means": "a standard Dublin Core term (dcterms:issued)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://purl.org/dc/terms/license",
+      "curie": "dcterms:license",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "license"
+      ],
+      "means": "a standard Dublin Core term (dcterms:license)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://purl.org/dc/terms/modified",
+      "curie": "dcterms:modified",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "modified"
+      ],
+      "means": "a standard Dublin Core term (dcterms:modified)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://purl.org/dc/terms/publisher",
+      "curie": "dcterms:publisher",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "publisher"
+      ],
+      "means": "a standard Dublin Core term (dcterms:publisher)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://purl.org/dc/terms/rights",
+      "curie": "dcterms:rights",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "rights"
+      ],
+      "means": "a standard Dublin Core term (dcterms:rights)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    },
+    {
+      "iri": "http://purl.org/dc/terms/title",
+      "curie": "dcterms:title",
+      "kind": "property",
+      "level": "warn",
+      "names": [
+        "title"
+      ],
+      "means": "a standard Dublin Core term (dcterms:title)",
+      "how": "To reuse it, add it as an annotation instead.",
+      "offer": null
+    }
+  ]
+}

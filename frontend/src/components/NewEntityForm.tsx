@@ -95,6 +95,12 @@ export interface NewEntityFormProps {
   /** A create refused because the name is a property already (5.1's 409):
    *  its sentence, and the same choice the suggestions give. */
   existing?: { sentence: string; className: string; onUse: () => void; onAnother: () => void } | null;
+  /** A create refused because the name copies a standard axiom (standard-terms
+   *  5.5's 409): the sentence, kept under the field, and the standard way to
+   *  offer when a door knows both ends. Create is unavailable while it stands;
+   *  any edit clears it (onClearRefusal). */
+  refusal?: { message: string; offer: { label: string; onOffer: () => void } | null } | null;
+  onClearRefusal?: () => void;
   /** A new class: OWL or RDFS (attribute-reuse 5.6). */
   classKind?: ClassKind;
 }
@@ -117,6 +123,8 @@ export default function NewEntityForm({
   onMoreChange,
   suggest,
   existing = null,
+  refusal = null,
+  onClearRefusal,
   classKind,
 }: NewEntityFormProps) {
   const id = useId();
@@ -128,6 +136,11 @@ export default function NewEntityForm({
   const [iri, setIri] = useState("");
   const [datatype, setDatatype] = useState("xsd:string");
   const nameRef = useRef<HTMLInputElement>(null);
+  const offerRef = useRef<HTMLButtonElement>(null);
+  // The offer button takes focus when it appears (standard-terms 5.5, 5.8).
+  useEffect(() => {
+    if (refusal?.offer) offerRef.current?.focus();
+  }, [refusal]);
   // Suggestions (5.1): what the project already has of this kind.
   const { suggestions, said } = useSuggestions(suggest?.ontologyId ?? null, suggest?.kind ?? "datatypeProperty", name);
 
@@ -136,7 +149,7 @@ export default function NewEntityForm({
     // Once, as the form opens.
   }, []);
 
-  const blocked = busy || !name.trim() || missing !== null;
+  const blocked = busy || !name.trim() || missing !== null || refusal !== null;
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (blocked) return;
@@ -172,12 +185,21 @@ export default function NewEntityForm({
         ref={nameRef}
         value={name}
         readOnly={busy}
-        aria-invalid={error || existing ? true : undefined}
-        aria-describedby={error || existing ? `${id}-error` : undefined}
-        onChange={(e) => setName(e.target.value)}
+        aria-invalid={error || existing || refusal ? true : undefined}
+        aria-describedby={error || existing || refusal ? `${id}-error` : undefined}
+        onChange={(e) => {
+          // Any edit clears a standard-term refusal, so Create is available
+          // again as soon as the name changes (5.5).
+          if (refusal) onClearRefusal?.();
+          setName(e.target.value);
+        }}
         onBlur={onNameBlur ? (e) => onNameBlur(e.relatedTarget) : undefined}
       />
-      {existing ? (
+      {refusal ? (
+        <p id={`${id}-error`} className="edit-error relate-refusal" role="alert">
+          {refusal.message}
+        </p>
+      ) : existing ? (
         <div className="reuse-existing">
           <p id={`${id}-error`}>{existing.sentence}</p>
           <div className="edit-actions">
@@ -280,9 +302,21 @@ export default function NewEntityForm({
       </div>
       {missing && <p className="detail-note">{missing}</p>}
       <div className="edit-actions">
-        <button type="submit" className="primary" aria-disabled={blocked}>
-          {busy ? "Saving change…" : submitLabel}
-        </button>
+        {refusal?.offer ? (
+          <button
+            ref={offerRef}
+            type="button"
+            className="primary"
+            aria-disabled={busy}
+            onClick={() => !busy && refusal.offer!.onOffer()}
+          >
+            {refusal.offer.label}
+          </button>
+        ) : (
+          <button type="submit" className="primary" aria-disabled={blocked}>
+            {busy ? "Saving change…" : submitLabel}
+          </button>
+        )}
         <button type="button" className="ghost" onClick={onCancel}>
           Cancel
         </button>

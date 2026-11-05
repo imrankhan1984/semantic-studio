@@ -341,3 +341,42 @@ describe("found in code review", () => {
     expect(within(plan).getByText(/^Share hasName between Engineer and Employee\./)).toBeTruthy();
   });
 });
+
+
+describe("V-8: the standard way when a relationship name is refused (standard-terms 5.5)", () => {
+  it("shows the sentence, keeps the name, focuses the offer, and runs AddDisjointWith (AC-5, AC-9)", async () => {
+    searchNodes.mockResolvedValue([{ id: HR + "Team", label: "Team", kind: "class", degree: 1 }]);
+    await show(classDetails("Employee", []));
+    await act(async () => screen.getByRole("button", { name: "Add relationship" }).click());
+    fireEvent.change(screen.getByLabelText("Name (en)"), { target: { value: "disjoint with" } });
+    fireEvent.click(screen.getByRole("button", { name: "Choose a class" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "It points to (a class)" }), { target: { value: "Tea" } });
+    fireEvent.mouseDown(await screen.findByRole("option", { name: "Team" }));
+    runCommand.mockRejectedValueOnce(
+      new ApiError("refused", 409, {
+        code: "standard_term",
+        message: "disjoint with would copy owl:disjointWith, the standard way to say nothing is both an Employee and a Team. A reasoner understands only the standard term.",
+        term: {
+          iri: "http://www.w3.org/2002/07/owl#disjointWith",
+          curie: "owl:disjointWith",
+          means: "the standard way to say nothing can be both of two classes",
+          how: "In the class's Rules, choose Never both.",
+          offer: { command: "AddDisjointWith", args: { a: HR + "Employee", b: HR + "Team" } },
+        },
+      }),
+    );
+    await act(async () => {
+      fireEvent.submit(screen.getByLabelText("Name (en)").closest("form")!);
+    });
+    expect(screen.getByRole("alert").textContent).toContain("owl:disjointWith");
+    expect((screen.getByLabelText("Name (en)") as HTMLInputElement).value).toBe("disjoint with");
+    const offer = screen.getByRole("button", { name: "Make them never both" });
+    expect(document.activeElement).toBe(offer);
+    runCommand.mockResolvedValueOnce({ revision: 3, label: "disjoint", state: STATE });
+    await act(async () => {
+      fireEvent.click(offer);
+    });
+    const calls = runCommand.mock.calls;
+    expect(calls[calls.length - 1].slice(2)).toEqual(["AddDisjointWith", { a: HR + "Employee", b: HR + "Team" }]);
+  });
+})

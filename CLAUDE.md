@@ -226,8 +226,11 @@ backend/app/
                      standard-vocabulary list, ss:own and ss:term, the runner,
                      the sentences, the measures and the level; the hints,
                      the review aids (read aloud, definitions, questions)
-  checks/            The 28 pinned SELECT files, the 12 hints' (H1 to H12)
+  checks/            The 29 pinned SELECT files, the 12 hints' (H1 to H12)
                      and manifest.json
+  standard_terms.py  The standard-term catalogue's one reader (D-126): a
+                     home-made copy of a standard axiom matched by name and
+                     refused; standard_terms.json is the data it owns
   routers/           HTTP layer only; the real work lives in the modules above
 
 frontend/src/
@@ -513,6 +516,9 @@ leaves one behind.
 - A read-aloud tick writes the manifest only, through `projects.edit_manifest`: no revision, no dirty flag, no undo step (AC-14); the route matches the project before it reads its 16 KB body. [Design checks, Stage B]
 - A saved query run as a competency question never holds SERVICE (`sparql_exec.asks_a_service`): the report runs on this computer. [Design checks, Stage B]
 - A check's *open* scrolls the nearest scrolling ancestor, never `scrollIntoView`, which took the whole app off its header. [Design checks, Stage B]
+
+**Standard terms**
+- A home-made copy of a standard axiom is refused by every door, with no way past; `standard_terms.py` is the only reader of the catalogue (D-126). [standard terms]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

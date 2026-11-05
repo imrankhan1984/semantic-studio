@@ -1874,3 +1874,134 @@ def test_ac16_without_the_pattern_both_mint_at_the_model_base_as_before(pid):
     made = ok(pid, "CreateExample", **{"class": EX + "Person", "label": "Bob"})
     assert made["created"] == EX + "bob"
     assert shapes_ok(pid, "CreateShape", target="shop:Organization", name="Invoice shape")["created"] == EX + "InvoiceShape"
+
+
+# --- V-8: standard terms, never home-made copies (standard-terms, D-126) ----------
+
+REFUSE_CASES = [
+    ("CreateObjectProperty", {"label": "disjoint with"}, "owl:disjointWith"),
+    ("CreateDatatypeProperty", {"label": "same as"}, "owl:sameAs"),
+    ("CreateAnnotationProperty", {"label": "inverse of"}, "owl:inverseOf"),
+    ("CreateClass", {"label": "Thing"}, "owl:Thing"),
+    ("SetLabel", {"iri": "shop:Person", "value": "Nothing"}, "owl:Nothing"),
+    ("RenameIri", {"old": "shop:Person", "new": EX + "Thing"}, "owl:Thing"),
+]
+
+
+@pytest.mark.parametrize("command,args,curie", REFUSE_CASES, ids=[c[0] for c in REFUSE_CASES])
+def test_ac3_each_door_refuses_a_refuse_name(pid, command, args, curie):
+    before = revision(pid)
+    undo_before = len(doc(pid).undo)
+    response = run(pid, command, **args)
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "standard_term"
+    assert detail["term"]["curie"] == curie
+    assert curie in detail["message"]
+    # Nothing changed: no revision, no undo step (5.3).
+    assert revision(pid) == before
+    assert len(doc(pid).undo) == undo_before
+
+
+def test_ac3_a_refuse_name_is_caught_by_iri_as_well(pid):
+    response = run(pid, "CreateObjectProperty", label="harmless", iri=EX + "disjointWith")
+    assert response.status_code == 409
+    assert response.json()["detail"]["term"]["curie"] == "owl:disjointWith"
+
+
+def test_ac3_a_warn_name_is_created(pid):
+    # 5.4: a warn name is not refused; the property is made (the warning is
+    # test_modeling_checks.py's).
+    made = ok(pid, "CreateDatatypeProperty", label="creator")
+    assert made["created"] == EX + "creator"
+    assert (U("creator"), RDF.type, OWL.DatatypeProperty) in doc(pid).graph
+
+
+def test_ac3_the_standard_term_itself_is_not_an_own_copy(pid):
+    # Renaming to a standard term's own IRI is not a copy: it is outside the
+    # project's bases, so it is never refused for being a standard term (5.2).
+    # (It is refused for another reason, if any, not standard_term.)
+    response = run(pid, "RenameIri", old="shop:Person", new="http://www.w3.org/2002/07/owl#Thing")
+    if response.status_code != 200:
+        assert response.json()["detail"] != {} and "standard_term" not in str(response.json()["detail"])
+
+
+def test_ac5_refusal_between_two_owl_classes_offers_disjoint(pid):
+    response = run(pid, "CreateObjectProperty", label="disjoint with", domain="shop:Person", range="shop:Organization")
+    assert response.status_code == 409
+    term = response.json()["detail"]["term"]
+    assert term["curie"] == "owl:disjointWith"
+    assert term["offer"]["command"] == "AddDisjointWith"
+    assert set(term["offer"]["args"].values()) == {EX + "Person", EX + "Organization"}
+    # The sentence names both ends through the one a/an rule (5.3).
+    assert "a Person" in response.json()["detail"]["message"]
+    before = revision(pid)
+    ok(pid, term["offer"]["command"], **term["offer"]["args"])
+    assert revision(pid) == before + 1
+    graph = doc(pid).graph
+    assert (U("Person"), OWL.disjointWith, U("Organization")) in graph or (
+        U("Organization"), OWL.disjointWith, U("Person")) in graph
+
+
+def test_ac5_equivalent_is_offered_too(pid):
+    response = run(pid, "CreateObjectProperty", label="equivalent to", domain="shop:Person", range="shop:Organization")
+    assert response.status_code == 409
+    assert response.json()["detail"]["term"]["offer"]["command"] == "AddEquivalentClass"
+
+
+def test_ac5_no_offer_when_the_ends_are_not_both_classes(pid):
+    # A plain create with no two class ends carries no offer; the how sentence
+    # says where to do it instead (5.5).
+    response = run(pid, "CreateObjectProperty", label="disjoint with")
+    assert response.status_code == 409
+    term = response.json()["detail"]["term"]
+    assert term["offer"] is None
+    assert term["how"]
+
+
+PREFIXES = (
+    "@prefix shop: <http://example.org/shop#> .\n"
+    "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+    "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
+)
+
+
+def test_ac6_turtle_introducing_a_copy_is_refused_with_the_line(pid):
+    before = revision(pid)
+    text = (
+        PREFIXES
+        + "shop:Person a owl:Class .\n"
+        + 'shop:sameAs a owl:ObjectProperty ;\n    rdfs:label "same as"@en .\n'
+    )
+    response = apply(pid, text)
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "standard_term"
+    assert detail["terms"] == [{"name": "sameAs", "curie": "owl:sameAs", "line": 5}]
+    # Nothing changed (5.6): no revision, the copy not in the document.
+    assert revision(pid) == before
+    assert (U("sameAs"), RDF.type, OWL.ObjectProperty) not in doc(pid).graph
+
+
+def test_ac6_using_the_standard_term_in_turtle_is_never_refused(pid):
+    text = (
+        PREFIXES
+        + "shop:Person a owl:Class ;\n    owl:disjointWith shop:Organization .\n"
+        + "shop:Organization a owl:Class .\n"
+    )
+    assert apply(pid, text).status_code == 200
+
+
+def test_ac6_a_document_that_already_holds_a_copy_can_still_be_edited(pid):
+    # A copy already in the document (a library copy, an older project): the
+    # before/after comparison lets other edits through (5.6).
+    d = doc(pid)
+    d.graph.add((U("sameAs"), RDF.type, OWL.ObjectProperty))
+    d.graph.add((U("sameAs"), RDFS.label, Literal("same as", lang="en")))
+    text = (
+        PREFIXES
+        + "shop:Widget a owl:Class .\n"
+        + 'shop:sameAs a owl:ObjectProperty ;\n    rdfs:label "same as"@en .\n'
+    )
+    assert apply(pid, text).status_code == 200
+    assert (U("Widget"), RDF.type, OWL.Class) in doc(pid).graph

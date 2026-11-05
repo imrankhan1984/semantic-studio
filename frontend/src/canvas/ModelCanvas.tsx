@@ -132,7 +132,7 @@ import {
 import "@xyflow/react/dist/base.css";
 import ConfirmDialog from "../components/ConfirmDialog";
 import DeleteDialog from "../components/DeleteDialog";
-import { alreadyDefined, getNodeDetails } from "../api";
+import { alreadyDefined, getNodeDetails, standardTerm } from "../api";
 import { useRunner } from "../components/EditParts";
 import { restrictionSentence, shortLabel } from "../modeling/ruleSentences";
 import { createdAnnouncement, linkSentence, memberDeleteQuestion, otherKindNote, removedAnnouncement } from "../modeling/sentences";
@@ -326,6 +326,13 @@ function Canvas(props: ModelCanvasProps) {
     refusal?: string;
   } | null>(null);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
+  // A new relationship name the server refused as a copy of a standard axiom
+  // (standard-terms 5.5): the sentence, and the offer when a door knows both
+  // ends. Cleared on an edit, a swap, a new choice or a close.
+  const [stdRefusal, setStdRefusal] = useState<{
+    message: string;
+    offer: { command: string; args: Record<string, string> } | null;
+  } | null>(null);
   const [deleting, setDeleting] = useState<{ iri: string; label: string } | null>(null);
   // Delete on one line of a shared relationship: remove the class, or delete it?
   const [unsharing, setUnsharing] = useState<{ property: string; label: string; member: string; memberLabel: string } | null>(null);
@@ -475,12 +482,35 @@ function Canvas(props: ModelCanvasProps) {
     if (choice.kind === "subClassOf") ok = !!(await run("relate", "AddSubClassOf", { child: from, parent: to }));
     else if (choice.kind === "broader") ok = !!(await run("relate", "AddBroader", { concept: from, broader: to }));
     else if (choice.kind === "related") ok = !!(await run("relate", "AddRelated", { concept: from, related: to }));
-    else if (choice.kind === "newRelationship") {
+    else if (choice.kind === "disjoint" || choice.kind === "equivalent") {
+      // The standard axioms offered on the menu (standard-terms 5.5): one
+      // command, so one undo step. A class axiom selects no relationship.
+      const command = choice.kind === "disjoint" ? "AddDisjointWith" : "AddEquivalentClass";
+      ok = !!(await run("relate", command, { a: from, b: to }, () =>
+        choice.kind === "disjoint"
+          ? `${fromName} and ${toName} can now never both be true of one thing.`
+          : `${fromName} and ${toName} now mean the same thing.`,
+      ));
+    } else if (choice.kind === "newRelationship") {
+      setStdRefusal(null);
       const result = await run(
         "relate",
         "CreateObjectProperty",
         { label: name, domain: from, range: to },
         () => createdAnnouncement(name ?? "", fromName, toName),
+        // A name copying a standard axiom (5.5): keep the name, show the
+        // refusal, and offer the standard way when both ends are known.
+        (_message, e) => {
+          const detail = standardTerm(e);
+          if (!detail) return;
+          // With an offer the button says where to go; without one, the how
+          // sentence does (standard-terms 5.5).
+          const text = detail.term.offer ? detail.message : `${detail.message} ${detail.term.how}`;
+          setStdRefusal({ message: text, offer: detail.term.offer });
+          // The refusal shows in the form, so the generic error line never
+          // doubles it, and no stale error is left when the name changes.
+          clear("relate");
+        },
       );
       ok = !!result;
       relationship = result?.created ?? null;
@@ -513,10 +543,29 @@ function Canvas(props: ModelCanvasProps) {
     }
   };
 
+  /** The standard way the refusal offered (standard-terms 5.5): one command,
+   *  one undo step, the menu closed, focus back to the start box. */
+  const runOffer = async (offer: { command: string; args: Record<string, string> }) => {
+    if (!relate) return;
+    const { from } = relate;
+    const fromName = label(view!, relate.from);
+    const toName = label(view!, relate.to);
+    const ok = !!(await run("relate", offer.command, offer.args, () =>
+      offer.command === "AddEquivalentClass"
+        ? `${fromName} and ${toName} now mean the same thing.`
+        : `${fromName} and ${toName} can now never both be true of one thing.`,
+    ));
+    if (!ok) return;
+    setStdRefusal(null);
+    setRelate(null);
+    focusBox(from);
+  };
+
   /** The relate menu's Swap: the same two boxes, asked the other way round. */
   const swap = () => {
     if (!relate || !view) return;
     clear("relate");
+    setStdRefusal(null);
     const result = relateChoices(view, relate.to, relate.from);
     setRelate(
       "refusal" in result
@@ -1200,9 +1249,16 @@ function Canvas(props: ModelCanvasProps) {
             onSwap={swap}
             anchor={anchor}
             busy={busy}
-            error={errors.relate || null}
-            onChoose={(choice, name) => void choose(choice, name)}
+            error={stdRefusal ? null : errors.relate || null}
+            nameRefusal={stdRefusal}
+            onOffer={(offer) => void runOffer(offer)}
+            onClearRefusal={() => setStdRefusal(null)}
+            onChoose={(choice, name) => {
+              setStdRefusal(null);
+              void choose(choice, name);
+            }}
             onClose={() => {
+              setStdRefusal(null);
               setRelate(null);
               focusBox(relate.from);
             }}

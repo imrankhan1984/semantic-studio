@@ -63,15 +63,19 @@ describe("relateChoices", () => {
     if ("refusal" in result) throw new Error(result.refusal);
     expect(result.choices.map((c) => c.label)).toEqual([
       "Order is a kind of Invoice",
+      "Nothing is both an Order and an Invoice (never both)",
+      "An Order is the same as an Invoice (equivalent)",
       "new relationship…",
       "Every Order has at least one… (a rule)",
       "Order is related to Invoice (existing relationship)",
       "Order is placed by Invoice (existing relationship)",
       "Share belongs to: an Order belongs to an Invoice too.",
     ]);
-    expect(result.choices[2]).toMatchObject({ kind: "rule" });
-    expect(result.choices[3]).toMatchObject({ kind: "existing", setDomain: true, setRange: true });
-    expect(result.choices[4]).toMatchObject({ kind: "existing", setDomain: false, setRange: true });
+    expect(result.choices[1]).toMatchObject({ kind: "disjoint" });
+    expect(result.choices[2]).toMatchObject({ kind: "equivalent" });
+    expect(result.choices[4]).toMatchObject({ kind: "rule" });
+    expect(result.choices[5]).toMatchObject({ kind: "existing", setDomain: true, setRange: true });
+    expect(result.choices[6]).toMatchObject({ kind: "existing", setDomain: false, setRange: true });
   });
 
   it("from an RDFS class, offers to make it an OWL class in place of a rule (attribute-reuse 5.8)", () => {
@@ -142,7 +146,54 @@ describe("relateChoices", () => {
   it("does not offer a subclass link that already exists", () => {
     const result = relateChoices(view, "Inv", "Doc");
     if ("refusal" in result) throw new Error(result.refusal);
-    expect(result.choices[0].kind).toBe("newRelationship");
+    expect(result.choices.some((c) => c.kind === "subClassOf")).toBe(false);
+  });
+
+  // --- V-8 (standard-terms 5.5): the standard axioms on the line menu ----------------
+
+  it("offers never both and equivalent between two OWL classes (AC-8)", () => {
+    const owl = {
+      ...view,
+      nodes: view.nodes.map((n) => (n.kind === "class" ? { ...n, classType: "owl" as const } : n)),
+    };
+    const result = relateChoices(owl, "Order", "Doc");
+    if ("refusal" in result) throw new Error(result.refusal);
+    const disjoint = result.choices.find((c) => c.kind === "disjoint");
+    const equivalent = result.choices.find((c) => c.kind === "equivalent");
+    expect(disjoint?.label).toBe("Nothing is both an Order and a Document (never both)");
+    expect(equivalent?.label).toBe("An Order is the same as a Document (equivalent)");
+    // After *is a kind of*, before *new relationship…* (5.5).
+    const kinds = result.choices.map((c) => c.kind);
+    expect(kinds.indexOf("disjoint")).toBe(kinds.indexOf("subClassOf") + 1);
+    expect(kinds.indexOf("disjoint")).toBeLessThan(kinds.indexOf("newRelationship"));
+  });
+
+  it("offers neither between an RDFS class and another (AC-8)", () => {
+    const mixed = {
+      ...view,
+      nodes: view.nodes.map((n) =>
+        n.iri === "Order" ? { ...n, classType: "rdfs" as const } : n.kind === "class" ? { ...n, classType: "owl" as const } : n,
+      ),
+    };
+    const fromRdfs = relateChoices(mixed, "Order", "Doc");
+    if ("refusal" in fromRdfs) throw new Error(fromRdfs.refusal);
+    expect(fromRdfs.choices.some((c) => c.kind === "disjoint" || c.kind === "equivalent")).toBe(false);
+    // The makeOwl entry still stands in the rule's place (5.5).
+    expect(fromRdfs.choices.some((c) => c.kind === "makeOwl")).toBe(true);
+    // Also not when the target is the RDFS class.
+    const toRdfs = relateChoices(mixed, "Doc", "Order");
+    if ("refusal" in toRdfs) throw new Error(toRdfs.refusal);
+    expect(toRdfs.choices.some((c) => c.kind === "disjoint" || c.kind === "equivalent")).toBe(false);
+  });
+
+  it("offers neither on a class to itself (AC-8)", () => {
+    const owl = {
+      ...view,
+      nodes: view.nodes.map((n) => (n.kind === "class" ? { ...n, classType: "owl" as const } : n)),
+    };
+    const result = relateChoices(owl, "Order", "Order");
+    if ("refusal" in result) throw new Error(result.refusal);
+    expect(result.choices.some((c) => c.kind === "disjoint" || c.kind === "equivalent")).toBe(false);
   });
 
   // Concepts: Late is narrower than Paid, which is narrower than Status.

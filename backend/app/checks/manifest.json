@@ -342,6 +342,18 @@
       }
     },
     {
+      "id": "DC-29",
+      "file": "DC-29.rq",
+      "sha256": "6358af6bc26cba9e74c58d18995fe13f231ac13eee4dcf22152431c9fc43700c",
+      "level": "Problem",
+      "heading": "Home-made copies of standard terms",
+      "fix": "Use {curie} instead; Edit shows how.",
+      "sentences": {
+        "row": "{name} copies {curie}."
+      },
+      "block": "label"
+    },
+    {
       "id": "H1",
       "file": "H1.rq",
       "sha256": "e2b37791ce972275d5fd20917a49c376716c5e845deac6d348d4e325621f1841",

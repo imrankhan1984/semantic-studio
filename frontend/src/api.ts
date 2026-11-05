@@ -59,6 +59,8 @@ EXPECTED OUTPUT
 import type { QueryState } from "./sparql/types";
 import type {
   AlreadyDefined,
+  StandardTermDetail,
+  StandardTermInText,
   AnnotationPropertyOption,
   CanvasLayout,
   CanvasView,
@@ -1014,6 +1016,27 @@ export class TurtleError extends ApiError {
   }
 }
 
+/** The 422 a Turtle Apply answers when it introduces an own copy of a
+ *  standard axiom (standard-terms 5.6): the terms and their lines. */
+export class StandardTermError extends ApiError {
+  readonly terms: StandardTermInText["terms"];
+
+  constructor(message: string, terms: StandardTermInText["terms"]) {
+    super(message, 422);
+    this.name = "StandardTermError";
+    this.terms = terms;
+  }
+}
+
+/** The 409 standard_term a command answers when a name copies a standard
+ *  axiom (standard-terms 5.3): the detail, with the standard term and its
+ *  offer, or null. */
+export function standardTerm(e: unknown): StandardTermDetail | null {
+  if (!(e instanceof ApiError) || e.status !== 409) return null;
+  const detail = e.detail as StandardTermDetail | undefined;
+  return detail?.code === "standard_term" ? detail : null;
+}
+
 function projectUrl(pid: string, rest = ""): string {
   return `/api/projects/${encodeURIComponent(pid)}${rest}`;
 }
@@ -1243,6 +1266,10 @@ export async function applyDocumentSource(
       body = await response.clone().json();
     } catch {
       /* not JSON: the generic path below says what it can */
+    }
+    const stdterm = body.detail as StandardTermInText | undefined;
+    if (stdterm && stdterm.code === "standard_term" && Array.isArray(stdterm.terms)) {
+      throw new StandardTermError(stdterm.message, stdterm.terms);
     }
     const detail = body.detail as
       | { line?: number | null; column?: number | null; message?: string; detail?: string }
