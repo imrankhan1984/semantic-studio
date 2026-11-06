@@ -4055,9 +4055,29 @@ class EditingService:
                     stack.enter_context(document.lock)
             yield
 
-    def _partner_refused(self, step: Step) -> str:
+    @staticmethod
+    def _partner_present(partner: OpenDocument, step: Step) -> bool:
+        """The partner half is still somewhere in the other document's history
+        (buried), rather than gone for good (trimmed past UNDO_LIMIT, or dropped
+        with a redo branch). Compared by identity (5.3.3)."""
+        return any(s is step for s in partner.undo) or any(s is step for s in partner.redo)
+
+    def _drop_orphan(self, document: OpenDocument, step: Step, stack: list, verb: str) -> dict:
+        """A paired step whose partner is gone cannot be applied on its own
+        (5.3.3): drop this half from its history and say why, rather than give
+        the impossible instruction to undo or redo the vanished partner. The
+        graph does not change; the document's state refreshes so the undo and
+        redo labels follow."""
+        stack.pop()  # the orphan is the top of its own stack
+        if document.save_point is step:
+            document.save_point = None
         other = "the shapes" if step.partner_doc == "shapes" else "the model"
-        return f"This also changed {other}, and they have changed since. Undo {other} first."
+        return {
+            "revision": document.ontology.revision,
+            "label": step.label,
+            "state": document.state(),
+            "dropped": f"This step also changed {other}, which has changed since, so it can no longer be {verb}.",
+        }
 
     def _paired_result(self, document: OpenDocument, partner: OpenDocument, label: str) -> dict:
         return {
@@ -4075,11 +4095,15 @@ class EditingService:
             step = document.undo[-1]
             if step.partner is not None:
                 partner = self._open[pid][step.partner_doc]
-                if not partner.undo or partner.undo[-1] is not step.partner:
-                    raise CommandError(self._partner_refused(step))
-                for half in ((document, step), (partner, step.partner)):
-                    self._undo_step(*half)
-                return self._paired_result(document, partner, step.label)
+                if partner.undo and partner.undo[-1] is step.partner:
+                    for half in ((document, step), (partner, step.partner)):
+                        self._undo_step(*half)
+                    return self._paired_result(document, partner, step.label)
+                other = "the shapes" if step.partner_doc == "shapes" else "the model"
+                if self._partner_present(partner, step.partner):
+                    # Still there, only not on top: undo the other document first.
+                    raise CommandError(f"This also changed {other}, and they have changed since. Undo {other} first.")
+                return self._drop_orphan(document, step, document.undo, "undone")
             self._undo_step(document, step)
             return {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
 
@@ -4100,14 +4124,14 @@ class EditingService:
             step = document.redo[-1]
             if step.partner is not None:
                 partner = self._open[pid][step.partner_doc]
-                if not partner.redo or partner.redo[-1] is not step.partner:
-                    other = "the shapes" if step.partner_doc == "shapes" else "the model"
-                    raise CommandError(
-                        f"This also changed {other}, and they have changed since. Redo {other} first."
-                    )
-                for half in ((document, step), (partner, step.partner)):
-                    self._redo_step(*half)
-                return self._paired_result(document, partner, step.label)
+                if partner.redo and partner.redo[-1] is step.partner:
+                    for half in ((document, step), (partner, step.partner)):
+                        self._redo_step(*half)
+                    return self._paired_result(document, partner, step.label)
+                other = "the shapes" if step.partner_doc == "shapes" else "the model"
+                if self._partner_present(partner, step.partner):
+                    raise CommandError(f"This also changed {other}, and they have changed since. Redo {other} first.")
+                return self._drop_orphan(document, step, document.redo, "redone")
             self._redo_step(document, step)
             return {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
 

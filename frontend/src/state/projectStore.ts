@@ -211,6 +211,10 @@ export interface CreatingExtra {
   definition?: string;
   domain?: string;
   range?: string;
+  /** A new relationship whose values are a branch of concepts (skos-and-owl
+   *  5.3.1, *a concept from…*): the branch concept, which makes the draft a
+   *  CreateBranchRelationship rather than a CreateObjectProperty. */
+  branch?: string;
   datatype?: string;
   cls?: string;
   /** A class's kind, OWL or RDFS (attribute-reuse 5.6); the project's
@@ -293,6 +297,14 @@ function draftCommand(draft: Creating, extra: CreatingExtra): [string, Record<st
     case "concept":
       return ["CreateConcept", { prefLabel: name, ...(draft.parent ? { broader: draft.parent.iri } : {}), ...extras }];
     case "objectProperty":
+      // *a concept from…* makes a branch relationship, one paired undo step
+      // across the model and the shapes (skos-and-owl 5.3.1).
+      if (extra.branch) {
+        return [
+          "CreateBranchRelationship",
+          { label: name, ...(extra.domain ? { domain: extra.domain } : {}), branch: extra.branch, ...(extra.iri ? { iri: extra.iri } : {}) },
+        ];
+      }
       return [
         "CreateObjectProperty",
         { label: name, ...(extra.domain ? { domain: extra.domain } : {}), ...(extra.range ? { range: extra.range } : {}), ...(extra.iri ? { iri: extra.iri } : {}) },
@@ -409,6 +421,18 @@ function afterChange(result: ChangeResult, verb: string): void {
   announce(`${verb}${result.label}. ${status}.`);
 }
 
+/** An undo or redo: a paired half whose partner is gone is dropped and its
+ *  sentence announced, rather than announced as an ordinary step (5.3.3). The
+ *  document state still refreshes, so the undo and redo labels follow. */
+function applyUndoRedo(result: ChangeResult, verb: string): void {
+  if (result.dropped) {
+    set({ documents: changedDocuments(result) });
+    announce(result.dropped);
+  } else {
+    afterChange(result, verb);
+  }
+}
+
 function requireProject(): ProjectSummary {
   if (!snapshot.project) throw new Error("No project is open.");
   return snapshot.project;
@@ -511,13 +535,13 @@ export const projectStore = {
     // The editor's unapplied text is not touched here: the header asks
     // "Apply, discard, or stay?" before an undo, as every other exit does.
     const result = await undoChange(project.id, snapshot.activeDoc);
-    afterChange(result, "Undid: ");
+    applyUndoRedo(result, "Undid: ");
   },
 
   async redo(): Promise<void> {
     const project = requireProject();
     const result = await redoChange(project.id, snapshot.activeDoc);
-    afterChange(result, "Redid: ");
+    applyUndoRedo(result, "Redid: ");
   },
 
   /** Record a change made elsewhere (a command) so the views refetch. */

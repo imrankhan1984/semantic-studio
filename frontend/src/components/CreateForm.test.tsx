@@ -121,20 +121,56 @@ describe("CreateForm", () => {
     form();
     expect(screen.getByText("New relationship")).toBeTruthy();
     fireEvent.change(nameField(), { target: { value: "works for" } });
+    // To defaults to "a class"; its Choose is the second (From is the first).
     fireEvent.click(screen.getAllByRole("button", { name: "Choose" })[1]);
-    const picker = screen.getByRole("combobox", { name: "To" });
+    const picker = screen.getByRole("combobox", { name: "a class" });
     fireEvent.change(picker, { target: { value: "Pe" } });
     const option = await screen.findByRole("option", { name: /Person/ });
     // The picker's own pointer event: mousedown, which keeps the field focused.
     await act(async () => {
       fireEvent.mouseDown(option);
     });
-    expect(screen.getByText(/To: Person/)).toBeTruthy();
+    expect(screen.getByText(/a class: Person/)).toBeTruthy();
     await create();
     expect(runCommand).toHaveBeenCalledTimes(1);
     expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateObjectProperty", { label: "works for", range: X + "Person" });
     expect(projectStore.getSnapshot().creating).toBeNull();
     expect(projectStore.getSnapshot().created).toMatchObject({ iri: X + "New", kind: "objectProperty" });
+  });
+
+  it("a relationship whose values are a concept branch makes a CreateBranchRelationship, from the keyboard (5.3.1)", async () => {
+    searchNodes.mockImplementation(async (_oid: string, _q: string, _imports: boolean, kind?: string) =>
+      kind === "concept"
+        ? [{ id: X + "Status", label: "Status", kind: "concept" }]
+        : [{ id: X + "Gadget", label: "Gadget", kind: "class" }],
+    );
+    act(() => {
+      projectStore.startCreating("objectProperty");
+    });
+    form();
+    fireEvent.change(nameField(), { target: { value: "has status" } });
+    // From: a class.
+    fireEvent.click(screen.getAllByRole("button", { name: "Choose" })[0]);
+    fireEvent.change(screen.getByRole("combobox", { name: "From" }), { target: { value: "Ga" } });
+    const gadget = await screen.findByRole("option", { name: /Gadget/ });
+    await act(async () => {
+      fireEvent.mouseDown(gadget);
+    });
+    // Switch the range to "a concept from…" — a keyboard-operable radio.
+    fireEvent.click(screen.getByRole("radio", { name: "a concept from…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "a concept from" }), { target: { value: "St" } });
+    const status = await screen.findByRole("option", { name: /Status/ });
+    await act(async () => {
+      fireEvent.mouseDown(status);
+    });
+    // Create from the keyboard: Enter submits the form.
+    await act(async () => {
+      fireEvent.submit(screen.getByRole("form", { name: "New relationship" }));
+    });
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateBranchRelationship", {
+      label: "has status", domain: X + "Gadget", branch: X + "Status",
+    });
   });
 
   it("what the form holds is the store's: Enter in the canvas's box makes it with the definition and identifier (code review)", async () => {

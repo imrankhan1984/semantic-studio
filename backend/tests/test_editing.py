@@ -2162,3 +2162,45 @@ def test_branch_rule_reads_back_as_an_editable_rule(pid):
     rule = next(r for r in shape["rules"] if r["path"] == [str(U("motorType"))])
     assert rule["under"] == str(U("MotorTypes"))
     assert rule["class"] == str(SKOS.Concept)
+
+
+def test_redo_of_a_pair_drops_the_orphan_when_the_partner_is_gone(pid):
+    # The model's redo branch is dropped by a new command; redoing the shapes
+    # half then has no partner to redo, so the orphan is dropped, not refused
+    # with an impossible instruction (5.3.3, review).
+    _branch_setup(pid)
+    ok(pid, "CreateBranchRelationship", label="motor type", domain="shop:Motor", branch="shop:MotorTypes")
+    prop = U("motorType")
+    undo(pid)  # from the model: both halves to their redo stacks
+    assert (prop, RDF.type, OWL.ObjectProperty) not in graph_copy(pid)
+    ok(pid, "CreateClass", label="Widget")  # clears the model's redo branch
+    response = client.post(f"/api/projects/{pid}/documents/shapes/redo")
+    assert response.status_code == 200, response.text
+    assert response.json()["dropped"] == (
+        "This step also changed the model, which has changed since, so it can no longer be redone."
+    )
+    # Nothing was re-added, and the orphan is gone: a second redo finds none.
+    assert (prop, RDF.type, OWL.ObjectProperty) not in graph_copy(pid)
+    assert _branch_value(pid, prop) is None
+    assert client.post(f"/api/projects/{pid}/documents/shapes/redo").status_code == 422
+
+
+def test_undo_of_a_pair_drops_the_orphan_when_the_partner_was_trimmed(pid, monkeypatch):
+    # The model half is trimmed past UNDO_LIMIT while the shapes half remains;
+    # undoing the shapes half then drops the orphan (5.3.3, review).
+    monkeypatch.setattr(editing, "UNDO_LIMIT", 2)
+    _branch_setup(pid)
+    ok(pid, "CreateBranchRelationship", label="motor type", domain="shop:Motor", branch="shop:MotorTypes")
+    for i in range(3):
+        ok(pid, "CreateClass", label=f"Extra {i}")
+    response = client.post(f"/api/projects/{pid}/documents/shapes/undo")
+    assert response.status_code == 200, response.text
+    assert response.json()["dropped"] == (
+        "This step also changed the model, which has changed since, so it can no longer be undone."
+    )
+    # A partner that is only buried, not gone, still gets the refusal.
+    ok(pid, "CreateClass", label="Gizmo")
+    ok(pid, "CreateBranchRelationship", label="power type", domain="shop:Gizmo", branch="shop:MotorTypes")
+    ok(pid, "CreateClass", label="Gadget")  # buries the branch's model half
+    buried = client.post(f"/api/projects/{pid}/documents/shapes/undo")
+    assert buried.status_code == 422 and "Undo the model first" in buried.json()["detail"]

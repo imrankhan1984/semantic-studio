@@ -106,7 +106,21 @@ function DraftForm({ ontologyId, primaryLanguage, focusName = true, creating }: 
     setClsShown(p);
     projectStore.setCreatingExtra({ cls: p?.iri });
   };
-  const [picking, setPicking] = useState<null | "parent" | "domain" | "range" | "cls">(null);
+  // A new relationship points to a class, or takes its values from a branch of
+  // concepts (skos-and-owl 5.3.1, *a concept from…*). The two are exclusive.
+  const [branch, setBranchShown] = useState<Pick | null>(null);
+  const [rangeKind, setRangeKind] = useState<"class" | "branch">("class");
+  const setBranch = (p: Pick | null) => {
+    setBranchShown(p);
+    projectStore.setCreatingExtra({ branch: p?.iri });
+  };
+  const chooseRangeKind = (next: "class" | "branch") => {
+    setRangeKind(next);
+    // Only one end is set at a time: switching clears the other.
+    if (next === "class") setBranch(null);
+    else setRange(null);
+  };
+  const [picking, setPicking] = useState<null | "parent" | "domain" | "range" | "cls" | "branch">(null);
   const { kind, parent } = creating;
   const box = kind === "class" || kind === "concept";
   // A class's kind lives in the draft, so Enter in the canvas's box makes
@@ -122,10 +136,10 @@ function DraftForm({ ontologyId, primaryLanguage, focusName = true, creating }: 
         }
       : undefined;
 
-  const picker = (label: string, onPick: (p: Pick) => void) => (
+  const picker = (label: string, onPick: (p: Pick) => void, pickKind: "class" | "concept" = kind === "concept" ? "concept" : "class") => (
     <EntityPicker
       ontologyId={ontologyId}
-      kind={kind === "concept" ? "concept" : "class"}
+      kind={pickKind}
       label={label}
       onCancel={() => setPicking(null)}
       onPick={(iri, name) => {
@@ -135,9 +149,9 @@ function DraftForm({ ontologyId, primaryLanguage, focusName = true, creating }: 
     />
   );
   /** One optional or required choice: what it is now, and Choose or Change. */
-  const choice = (which: NonNullable<typeof picking>, words: string, value: Pick | null, set: (p: Pick | null) => void, required = false) =>
+  const choice = (which: NonNullable<typeof picking>, words: string, value: Pick | null, set: (p: Pick | null) => void, required = false, pickKind?: "class" | "concept") =>
     picking === which ? (
-      picker(words, set)
+      picker(words, set, pickKind)
     ) : (
       <p className="detail-note create-choice">
         {words}: {value ? value.label : required ? "not chosen yet (required)" : "none"}{" "}
@@ -157,9 +171,15 @@ function DraftForm({ ontologyId, primaryLanguage, focusName = true, creating }: 
   const missing =
     kind === "example" && !cls
       ? "Choose the class it is an example of."
-      : kind === "objectProperty" && !range
-        ? "Choose the class it points to."
-        : null;
+      : kind === "objectProperty" && rangeKind === "branch"
+        ? !domain
+          ? "Choose the class it starts from."
+          : !branch
+            ? "Choose the concept its values are taken from."
+            : null
+        : kind === "objectProperty" && !range
+          ? "Choose the class it points to."
+          : null;
 
   return (
     <div className="create-form">
@@ -211,7 +231,34 @@ function DraftForm({ ontologyId, primaryLanguage, focusName = true, creating }: 
         )}
         {(kind === "objectProperty" || kind === "datatypeProperty") &&
           choice("domain", kind === "objectProperty" ? "From" : "Belongs to", domain, setDomain)}
-        {kind === "objectProperty" && choice("range", "To", range, setRange, true)}
+        {kind === "objectProperty" && (
+          <fieldset className="create-range-kind">
+            <legend className="edit-field-label">To</legend>
+            <label>
+              <input
+                type="radio"
+                name="create-range-kind"
+                checked={rangeKind === "class"}
+                aria-disabled={busy}
+                onChange={() => !busy && chooseRangeKind("class")}
+              />{" "}
+              a class
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="create-range-kind"
+                checked={rangeKind === "branch"}
+                aria-disabled={busy}
+                onChange={() => !busy && chooseRangeKind("branch")}
+              />{" "}
+              a concept from…
+            </label>
+          </fieldset>
+        )}
+        {kind === "objectProperty" && rangeKind === "class" && choice("range", "a class", range, setRange, true)}
+        {kind === "objectProperty" && rangeKind === "branch" &&
+          choice("branch", "a concept from", branch, setBranch, true, "concept")}
         {kind === "example" && choice("cls", "Example of", cls, setCls, true)}
       </NewEntityForm>
     </div>

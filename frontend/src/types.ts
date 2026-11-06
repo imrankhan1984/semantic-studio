@@ -1084,6 +1084,10 @@ export interface ChangeResult {
   // (skos-and-owl 5.3.3): the other document's state, so both documents'
   // revision, dirty flag and undo labels refresh together.
   partner?: { doc: ProjectDocName; revision: number; state: ProjectDocumentState };
+  // An undo or redo of a paired half whose partner is gone (trimmed, or a
+  // dropped redo branch): the orphan is dropped and this sentence says why,
+  // rather than applying half a change (5.3.3).
+  dropped?: string;
 }
 
 /** The Turtle editor's check on Apply: at most five named, the rest counted. */
