@@ -125,7 +125,7 @@ import type { CanvasSet, DataSource, Hierarchy, HierarchyForest, HierarchyNode, 
 import { dataLabel } from "../modeling/dataSentences";
 import { kindLabel } from "../types";
 import type { CreatingKind, ProjectKind } from "../types";
-import { otherKindNote, otherKindReason, rowEnds } from "../modeling/sentences";
+import { rowEnds } from "../modeling/sentences";
 import DeleteDialog from "./DeleteDialog";
 import { useRunner } from "./EditParts";
 import { RowMenu, rowActions, type RowAction } from "./HierarchyActions";
@@ -447,29 +447,30 @@ function sectionsOf(
   }
   const kind = editing.kind ?? null;
   const taxonomy = kind === "taxonomy";
-  // A project from before kinds keeps both New buttons, as it always did.
-  const classes: OutlineSection = { id: "classes", title: "Classes", forest: data.classes, add: kind === "taxonomy" ? null : "class" };
-  const concepts: OutlineSection = { id: "concepts", title: "Concepts", forest: data.concepts, add: kind === "ontology" ? null : "concept" };
+  // Every section keeps its New button whatever the kind (skos-and-owl 5.1,
+  // D-127): the tree is a full door for classes and concepts alike.
+  const classes: OutlineSection = { id: "classes", title: "Classes", forest: data.classes, add: "class" };
+  const concepts: OutlineSection = { id: "concepts", title: "Concepts", forest: data.concepts, add: "concept" };
   const relationships: OutlineSection = {
-    id: "relationships", title: "Relationships", forest: data.objectProperties ?? EMPTY_FOREST, add: taxonomy ? null : "objectProperty",
+    id: "relationships", title: "Relationships", forest: data.objectProperties ?? EMPTY_FOREST, add: "objectProperty",
   };
   const attributes: OutlineSection = {
-    id: "attributes", title: "Attributes", forest: data.datatypeProperties ?? EMPTY_FOREST, add: taxonomy ? null : "datatypeProperty",
+    id: "attributes", title: "Attributes", forest: data.datatypeProperties ?? EMPTY_FOREST, add: "datatypeProperty",
   };
   const examples: OutlineSection = {
-    id: "examples", title: "Examples", forest: data.examples ?? EMPTY_FOREST, add: taxonomy || !keepExamples ? null : "examples",
+    id: "examples", title: "Examples", forest: data.examples ?? EMPTY_FOREST, add: keepExamples ? "examples" : null,
   };
   const annotations: OutlineSection = {
     id: "annotations", title: "Annotation properties", forest: data.annotationProperties ?? EMPTY_FOREST, add: null,
   };
-  const out: OutlineSection[] = taxonomy
-    ? [concepts, ...[relationships, attributes].filter((x) => has(x.forest))]
-    : [classes, relationships, attributes];
-  if (has(examples.forest) || (keepExamples && !taxonomy)) out.push(examples);
+  // Both kinds are always present, the project's own first; the other kind's
+  // sections are collapsed while empty, so a new learner sees the familiar
+  // list first (5.1). A taxonomy leads with Concepts, every other project with
+  // the Classes/Relationships/Attributes group.
+  const classGroup: OutlineSection[] = [classes, relationships, attributes];
+  if (has(examples.forest) || keepExamples) classGroup.push(examples);
+  const out: OutlineSection[] = taxonomy ? [concepts, ...classGroup] : [...classGroup, concepts];
   if (has(annotations.forest)) out.push(annotations);
-  // The other kind's content: listed, never hidden (D-089).
-  if (taxonomy && has(data.classes)) out.push(classes);
-  if (!taxonomy && has(data.concepts)) out.push(concepts);
   return out;
 }
 
@@ -477,7 +478,10 @@ function sectionsOf(
  *  Relationships. Kept per ontology for the session, in module state. */
 function defaultOpen(sections: OutlineSection[], kind: ProjectKind | null | undefined): Set<SectionId> {
   const ids = new Set(sections.map((x) => x.id));
-  const own: SectionId = kind === "taxonomy" || (!ids.has("classes") && ids.has("concepts")) ? "concepts" : "classes";
+  // A taxonomy opens Concepts, its own; every other project the Classes list
+  // and Relationships. The other kind's sections start collapsed (5.1).
+  if (kind === "taxonomy") return new Set<SectionId>(["concepts"]);
+  const own: SectionId = !ids.has("classes") && ids.has("concepts") ? "concepts" : "classes";
   return new Set<SectionId>([own, "relationships"]);
 }
 const openSections = new Map<string, Set<SectionId>>();
@@ -659,15 +663,9 @@ export default function HierarchyView({
     [openNow, ontologyId],
   );
 
-  // The other kind's content, counted for its one line (5.1).
-  const otherNote = useMemo(() => {
-    if (!data || !kind) return null;
-    const forest = kind === "ontology" ? data.concepts : data.classes;
-    const other = kind === "ontology" ? "concept" : "class";
-    return otherKindNote(kind, Object.values(forest.nodes).filter((n) => n.kind === other && !n.importedFrom).length);
-  }, [data, kind]);
-  /** A row of the other kind: shown, never changed here (D-089). */
-  const fixedRow = useCallback((row: Row) => otherKindReason(kind, row.kind) !== null, [kind]);
+  // Nothing is read-only by the project's kind any more (D-127): only an
+  // inferred row stays fixed, which rowActions handles on its own.
+  const fixedRow = useCallback((_row: Row) => false, []);
 
   // The Examples section (5.8) names classes the class tree names too, so it
   // keeps its own expansion: opening Person here must not open it there.
@@ -862,7 +860,6 @@ export default function HierarchyView({
           {busy ? "Saving change…" : ""}
         </p>
       )}
-      {otherNote && <p className="detail-note hierarchy-other-kind">{otherNote}</p>}
       {renaming && actionError && (
         <p className="edit-error" role="alert">
           {actionError}

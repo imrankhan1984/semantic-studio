@@ -3392,15 +3392,15 @@ describe("App project kinds (relationships Stage A)", () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: "More actions for Invoices" }));
     fireEvent.click(screen.getByRole("button", { name: "Change to taxonomy…" }));
-    const dialog = screen.getByRole("dialog", { name: "Change Invoices to a taxonomy?" });
-    expect(dialog.textContent).toContain("Nothing in the model is rewritten");
+    const dialog = screen.getByRole("dialog", { name: "Show concepts first?" });
+    expect(dialog.textContent).toContain("Nothing in the model changes");
     expect(updateProject).not.toHaveBeenCalled();
     listProjects.mockResolvedValue([{ ...PROJECT, kind: "taxonomy" }]);
     await act(async () => {
       fireEvent.click(within(dialog).getByRole("button", { name: "Change" }));
     });
     expect(updateProject).toHaveBeenCalledWith(PROJECT.id, { kind: "taxonomy" });
-    expect(screen.getByText("Invoices is now a taxonomy. Nothing in the model was changed.")).toBeTruthy();
+    expect(screen.getByText("Invoices now shows concepts first. Nothing in the model was changed.")).toBeTruthy();
     expect(document.querySelector(".project-kind")!.textContent).toBe("Taxonomy");
   });
 

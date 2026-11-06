@@ -635,19 +635,15 @@ describe("DetailPanel: a class's rules (explore-rules 5.3, AC-3, AC-4)", () => {
     expect(screen.getByText("Showing 2 of 600 statements; 2 more are the rules above.")).toBeTruthy();
   });
 
-  it("keeps the rule rows where the Edit section does not say them: an example, a class of the other kind", async () => {
+  it("keeps the rule rows where the Edit section does not say them: an example (D-127)", async () => {
     // The Edit section's class form alone carries the rules (`saysRules`);
-    // hiding the rows behind another form lost them (code review).
+    // hiding the rows behind another form lost them (code review). A class of
+    // the project's other kind is editable now, so its Edit section says them.
     getNodeDetails.mockResolvedValue({
       ...crewed(), kind: "class", names: [{ lang: "en", value: "Crewed mission" }],
       example: { classes: [], fields: [] },
     });
     await renderEditing();
-    expect(document.querySelectorAll(".term-bnode")).toHaveLength(2);
-    cleanup();
-    getNodeDetails.mockResolvedValue({ ...crewed(), kind: "class", names: [{ lang: "en", value: "Crewed mission" }] });
-    await renderEditing("taxonomy");
-    expect(screen.getByText(/A class, read-only in a taxonomy/)).toBeTruthy();
     expect(document.querySelectorAll(".term-bnode")).toHaveLength(2);
   });
 

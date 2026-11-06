@@ -499,11 +499,12 @@ describe("HierarchyView in a project (visual-modeling 5.2, AC-5)", () => {
     expect(document.querySelector(".hierarchy-menu-btn")).toBeNull();
   });
 
-  it("shows New class even on an empty model, and New concept beside the concepts", async () => {
+  it("shows New class and New concept even on an empty model (D-127)", async () => {
     renderProject(hierarchyOf(EMPTY, EMPTY));
     expect(await screen.findByRole("button", { name: "New class" })).toBeTruthy();
     expect(screen.getByText("No classes yet. Drag Class onto the canvas, or press +.")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "New concept" })).toBeNull();
+    // Both New buttons are present: the Concepts section is there though empty.
+    expect(screen.getByRole("button", { name: "New concept" })).toBeTruthy();
     document.body.innerHTML = "";
 
     renderProject(mixed());
@@ -896,46 +897,45 @@ describe("HierarchyView, relationships Stage A (AC-2, AC-6)", () => {
     expect(itemByLabel("works for")!.querySelector(".hierarchy-menu-btn")).toBeTruthy();
   });
 
-  it("an ontology offers New class only, and its concepts are listed without actions under one line", async () => {
+  it("an ontology offers both New buttons and its concepts are editable (D-127)", async () => {
     renderKind("ontology");
     expect(await screen.findByRole("button", { name: "New class" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "New concept" })).toBeNull();
-    expect(
-      screen.getByText("This ontology also contains 1 SKOS concept. Edit it in Turtle, or change the project to a taxonomy."),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New concept" })).toBeTruthy();
+    expect(screen.queryByText(/also contains/)).toBeNull();
     await unfold("Concepts");
     fireEvent.click(itemByLabel("Scheme")!.querySelector(".hierarchy-twistie")!);
     expect(itemByLabel("Water")).toBeTruthy();
-    expect(itemByLabel("Water")!.querySelector(".hierarchy-menu-btn")).toBeNull();
-    expect(itemByLabel("Water")!.getAttribute("aria-keyshortcuts")).toBeNull();
+    // A concept is editable: it carries the row menu, as a class does.
+    expect(itemByLabel("Water")!.querySelector(".hierarchy-menu-btn")).toBeTruthy();
   });
 
-  it("a taxonomy leads with its scheme, offers New concept only, and its classes have no actions", async () => {
+  it("a taxonomy leads with its concepts and keeps both New buttons (D-127)", async () => {
     renderKind("taxonomy", mixed());
     expect(await screen.findByRole("button", { name: "New concept" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "New class" })).toBeNull();
-    expect(headings()).toEqual(["Concepts", "Classes"]);
+    expect(screen.getByRole("button", { name: "New class" })).toBeTruthy();
+    // Concepts first, then the class sections, all present (collapsed while empty).
+    expect(headings()).toEqual(["Concepts", "Classes", "Relationships", "Attributes"]);
     await unfold("Classes");
-    expect(itemByLabel("Alpha")!.querySelector(".hierarchy-menu-btn")).toBeNull();
-    expect(screen.getByText(/This taxonomy also contains 2 classes\./)).toBeTruthy();
+    expect(itemByLabel("Alpha")!.querySelector(".hierarchy-menu-btn")).toBeTruthy();
+    expect(screen.queryByText(/also contains/)).toBeNull();
   });
 
-  it("a taxonomy lists its relationships and attributes without actions (5.10 item 2)", async () => {
+  it("a taxonomy lists its relationships and attributes with actions (D-127)", async () => {
     renderKind("taxonomy");
-    await screen.findByText("likes");
-    // No + where the taxonomy cannot change anything (5.10 item 2).
-    expect(screen.queryByRole("button", { name: "New relationship" })).toBeNull();
+    // The class sections start collapsed in a taxonomy (5.1); their New
+    // buttons are in the headers, their rows under them once unfolded.
+    expect(await screen.findByRole("button", { name: "New relationship" })).toBeTruthy();
+    await unfold("Relationships");
     await unfold("Attributes");
     for (const label of ["member of", "likes", "name"]) {
-      expect(itemByLabel(label)!.querySelector(".hierarchy-menu-btn")).toBeNull();
-      expect(itemByLabel(label)!.getAttribute("aria-keyshortcuts")).toBeNull();
+      expect(itemByLabel(label)!.querySelector(".hierarchy-menu-btn")).toBeTruthy();
     }
   });
 
-  it("an empty taxonomy keeps its concept section, where New concept lives", async () => {
+  it("an empty taxonomy leads with Concepts, where New concept lives (D-127)", async () => {
     renderKind("taxonomy", hierarchyOf(EMPTY, EMPTY));
     expect(await screen.findByRole("button", { name: "New concept" })).toBeTruthy();
-    expect(headings()).toEqual(["Concepts"]);
+    expect(headings()).toEqual(["Concepts", "Classes", "Relationships", "Attributes"]);
     expect(screen.getByText("No concepts yet. Drag Concept onto the canvas, or press +.")).toBeTruthy();
     expect(document.querySelector(".hierarchy-other-kind")).toBeNull();
   });

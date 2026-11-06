@@ -1199,7 +1199,11 @@ export interface CanvasEdge {
   // because it reads the same both ways (relationships 5.8).
   // "rule": a restriction to a named class (axioms-and-reasoning 5.9),
   // dashed, labelled from `rule` by ruleSentences.shortLabel.
-  kind: "subClassOf" | "broader" | "relationship" | "related" | "rule";
+  // "branch": a relationship whose values are a branch of concepts
+  // (skos-and-owl 5.3), drawn dotted from the class to the branch concept
+  // with a small list marker at the concept's end; `property` is the
+  // relationship, `label` its name.
+  kind: "subClassOf" | "broader" | "relationship" | "related" | "rule" | "branch";
   source: string;
   target: string;
   property?: string;

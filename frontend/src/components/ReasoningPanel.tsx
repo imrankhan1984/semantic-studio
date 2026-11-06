@@ -61,7 +61,6 @@ import {
   NOTHING,
   NOT_SAVED,
   STALE,
-  TAXONOMY,
   VALUES_FOOTER,
   finishedLine,
   groupHeading,
@@ -92,7 +91,6 @@ function useRunning() {
 /** Reason / Stop and Show inferred, for the canvas toolbar or the
  *  Reasoning tab. */
 export function ReasonControls({
-  kind,
   now,
   hasData,
   onPress,
@@ -103,7 +101,6 @@ export function ReasonControls({
   const includeData = useProjectSelector((s) => s.reasoningData);
   const stopping = useProjectSelector((s) => s.reasoningStopping);
   const importsNow = useImportsNow(now.imports);
-  if (kind === "taxonomy") return null;
   const running = since !== null;
   const current = result !== null && result.status === "done" && !isStale(result, now);
   return (
@@ -175,7 +172,7 @@ function useElapsed(since: number | null): number {
   return since === null ? 0 : Math.max(0, (now - since) / 1000);
 }
 
-export default function ReasoningPanel({ projectId, kind, hasData, now, onSelect }: Props) {
+export default function ReasoningPanel({ projectId, hasData, now, onSelect }: Props) {
   const since = useRunning();
   const result = useProjectSelector((s) => s.reasoning);
   const token = useProjectSelector((s) => s.reasoningToken);
@@ -195,9 +192,6 @@ export default function ReasoningPanel({ projectId, kind, hasData, now, onSelect
     headingRef.current?.focus();
   });
 
-  if (kind === "taxonomy") {
-    return <p className="detail-note reasoning-intro">{TAXONOMY}</p>;
-  }
   const running = since !== null;
   const stale = result !== null && isStale(result, now);
 

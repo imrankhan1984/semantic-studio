@@ -599,11 +599,11 @@ describe("relating (AC-12)", () => {
     expect(lastCommand()).toEqual(["AddBroader", { concept: EX + "Status", broader: EX + "Paid" }]);
   });
 
-  it("a class and a concept are refused with a sentence, and no menu opens", async () => {
+  it("a class and a concept offer a branch relationship, class first (5.3.1)", async () => {
     await renderCanvas();
     await draw(EX + "Document", EX + "Paid");
-    expect(screen.queryByRole("menu")).toBeNull();
-    expect(screen.getByText("A class and a concept cannot be linked here. Use the form for other annotations.")).toBeTruthy();
+    expect(screen.getByRole("menu")).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Each Document has a … from Paid" })).toBeTruthy();
   });
 
   it("a refusal from the server stays in the menu as a sentence", async () => {
@@ -1303,54 +1303,41 @@ describe("relationships Stage A: seeing and drawing relationships", () => {
   });
 });
 
-describe("relationships Stage A: the project's kind (AC-2)", () => {
-  it("an ontology offers Class only and marks its concepts read-only, with the note", async () => {
+describe("the project's kind decides which tools show first, never what can change (D-127)", () => {
+  const paletteItems = () =>
+    Array.from(document.querySelectorAll(".canvas-palette-item")).map((b) => b.textContent?.replace(/[^A-Za-z]/g, ""));
+
+  it("an ontology offers Class then Concept and keeps its concepts editable", async () => {
     await renderCanvas(viewOf({ kind: "ontology" }));
-    const palette = screen.getByRole("toolbar", { name: "Canvas" });
-    expect(within(palette).queryByRole("button", { name: "Class" })).toBeTruthy();
-    expect(within(palette).queryByRole("button", { name: "Concept" })).toBeNull();
-    expect(
-      screen.getByText("This ontology also contains 2 SKOS concepts. Edit them in Turtle, or change the project to a taxonomy."),
-    ).toBeTruthy();
-    expect(box("Paid").querySelector(".canvas-box")!.classList.contains("other-kind")).toBe(true);
-    expect(box("Paid").textContent).toContain("read-only in an ontology");
-    // Not renamed or deleted here: the keys say where instead.
+    expect(paletteItems()).toEqual(["Class", "Concept"]);
+    // No read-only note, no other-kind box.
+    expect(screen.queryByText(/also contains/)).toBeNull();
+    expect(box("Paid").querySelector(".canvas-box")!.classList.contains("other-kind")).toBe(false);
+    expect(box("Paid").textContent).not.toContain("read-only");
+    // A concept box renames here like any own box.
     fireEvent.keyDown(box("Paid"), { key: "Enter" });
-    fireEvent.keyDown(box("Paid"), { key: "Delete" });
-    expect(screen.queryByRole("textbox")).toBeNull();
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByRole("status").textContent).toContain("read-only in an ontology");
+    expect(screen.getByRole("textbox")).toBeTruthy();
   });
 
-  it("an ontology refuses a line between its concepts, with where to change them", async () => {
+  it("a line between concepts is not refused for the project's kind", async () => {
     await renderCanvas(viewOf({ kind: "ontology" }));
     await draw(EX + "Status", EX + "Paid");
-    expect(screen.queryByRole("menu")).toBeNull();
-    expect(screen.getByRole("status").textContent).toBe(
-      "Status is a SKOS concept, read-only in an ontology. Edit it in Turtle, or change the project to a taxonomy.",
-    );
+    expect(screen.getByRole("status").textContent).not.toMatch(/read-only/);
   });
 
-  it("a taxonomy offers Concept only, and its classes lose + attribute", async () => {
+  it("a taxonomy offers Concept then Class and keeps its classes editable", async () => {
     await renderCanvas(viewOf({ kind: "taxonomy" }));
-    const palette = screen.getByRole("toolbar", { name: "Canvas" });
-    expect(within(palette).queryByRole("button", { name: "Class" })).toBeNull();
-    expect(within(palette).queryByRole("button", { name: "Concept" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Add an attribute to Document" })).toBeNull();
-    expect(screen.getByText(/This taxonomy also contains 2 classes\./)).toBeTruthy();
+    expect(paletteItems()).toEqual(["Concept", "Class"]);
+    expect(screen.getByRole("button", { name: "Add an attribute to Document" })).toBeTruthy();
+    expect(screen.queryByText(/also contains/)).toBeNull();
   });
 
-  it("a link between boxes of the other kind is not removed here, by Delete or the panel (review)", async () => {
+  it("a link between the other kind's boxes is editable now (D-127)", async () => {
     await renderCanvas(viewOf({ kind: "ontology" }));
     const broader = (flow.props.edges as any[]).find((e) => e.id.startsWith("broader"));
     await act(async () => flow.props.onEdgeClick({}, broader));
-    const reason = "Paid is a SKOS concept, read-only in an ontology. Edit it in Turtle, or change the project to a taxonomy.";
-    expect(onSelectLink).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "broader", readOnly: reason }));
-    await act(async () => {
-      fireEvent.keyDown(document.querySelector(".react-flow")!, { key: "Delete" });
-    });
-    expect(runCommand).not.toHaveBeenCalled();
-    expect(screen.getByRole("status").textContent).toBe(reason);
+    expect(onSelectLink).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "broader" }));
+    expect(onSelectLink.mock.calls.at(-1)![0].readOnly).toBeUndefined();
   });
 
   it("with no other kind present, there is no note", async () => {
@@ -1461,17 +1448,14 @@ describe("relationships Stage B: related lines and the Stage A follow-ups (5.8, 
     expect(edge("relationship").selected).toBe(false);
   });
 
-  it("item 2: in a taxonomy a relationship's line is read-only, by Delete and the form's note", async () => {
+  it("item 2: a relationship's line is editable in every kind now (D-127)", async () => {
     await renderCanvas(viewOf({ kind: "taxonomy" }));
     await act(async () => flow.props.onEdgeClick({}, edge("relationship")));
     expect(onSelect).toHaveBeenLastCalledWith(EX + "billedTo");
-    const reason = "billed to is a relationship, read-only in a taxonomy. Edit it in Turtle, or change the project to an ontology.";
-    expect(screen.getByRole("status").textContent).toBe(reason);
-    await act(async () => {
-      fireEvent.keyDown(document.querySelector(".react-flow")!, { key: "Delete" });
-    });
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(runCommand).not.toHaveBeenCalled();
+    // No read-only sentence by the project's kind; the line selects its
+    // relationship and Delete removes it, as in an ontology.
+    expect(screen.getByRole("status").textContent).not.toMatch(/read-only/);
+    expect(screen.getByRole("status").textContent).toContain("Delete removes it");
   });
 
   it("item 3: a box added by clicking the palette lands clear of every box", async () => {

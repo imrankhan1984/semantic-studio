@@ -66,6 +66,7 @@
   --line-broader: #b9a0e6;
   --line-related: #cfa0db;
   --line-rule: #e08fa3;
+  --line-branch: #b9a0e6;
   --canvas-bg: #0f1219;
   color-scheme: dark;
 }
@@ -128,6 +129,7 @@
   --line-broader: #7e5fb0;
   --line-related: #94649f;
   --line-rule: #a8566b;
+  --line-branch: #7e5fb0;
   /* White under the lines: on the page's grey the relationship line
      measured 3.4:1, under 5.8's 3.7. */
   --canvas-bg: #ffffff;
@@ -5570,6 +5572,13 @@ kbd {
   stroke-dasharray: 1 4;
   stroke-linecap: round;
 }
+/* A branch relationship (skos-and-owl 5.3.1): dotted, a list marker at the
+   concept's end, and its label; the meaning never rests on colour alone. */
+.canvas-edge.line-branch {
+  stroke: var(--line-branch);
+  stroke-dasharray: 2 3;
+  stroke-linecap: round;
+}
 
 .canvas-edge {
   fill: none;
@@ -5591,6 +5600,7 @@ kbd {
 .canvas-arrow.line-relationship { fill: var(--line-relationship); }
 .canvas-arrow.line-rule { fill: var(--line-rule); }
 .canvas-dot.line-related { fill: var(--line-related); }
+.canvas-list.line-branch { stroke: var(--line-branch); stroke-width: 1.4; fill: none; }
 
 .canvas-edge-label.line-relationship {
   background: var(--line-relationship-tint);
@@ -6761,6 +6771,13 @@ kbd {
    from an inferred line's dash, and labelled. */
 .canvas-surface .canvas-edge.line-rule {
   stroke-dasharray: 1 4;
+  stroke-linecap: round;
+}
+
+/* A branch relationship's line: dotted, apart from a rule's and an inferred
+   line's dashes (skos-and-owl 5.3.1). */
+.canvas-surface .canvas-edge.line-branch {
+  stroke-dasharray: 2 3;
   stroke-linecap: round;
 }
 

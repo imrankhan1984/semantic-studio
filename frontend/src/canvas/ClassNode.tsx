@@ -56,8 +56,6 @@ import { boxKind, kindWord } from "./kindColours";
 
 export interface BoxData extends Record<string, unknown> {
   node: CanvasNode;
-  // A box of the project's other kind (D-089): drawn, never changed here.
-  otherKind: boolean;
   // The drop target while a palette item is dragged over it.
   dropTarget: boolean;
   renaming: boolean;
@@ -126,7 +124,6 @@ export function boxClasses(data: BoxData, selected: boolean): string {
     `canvas-box canvas-${node.kind} kind-${boxKind(node)}` +
     (node.imported ? " imported" : "") +
     (node.neverMembers ? " never-members" : "") +
-    (data.otherKind ? " other-kind" : "") +
     (selected ? " selected" : "") +
     (data.dropTarget ? " drop-target" : "")
   );
@@ -164,7 +161,7 @@ function RenameField({ data }: { data: BoxData }) {
 }
 
 function ClassNode({ data, selected }: NodeProps<BoxNode>) {
-  const { node, busy, onAddAttribute, otherKind } = data;
+  const { node, busy, onAddAttribute } = data;
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [datatype, setDatatype] = useState("xsd:string");
@@ -182,7 +179,6 @@ function ClassNode({ data, selected }: NodeProps<BoxNode>) {
       <Sides />
       <BoxHead data={data} />
       <div className="canvas-box-body">
-        {otherKind && <span className="canvas-box-from">read-only in a taxonomy</span>}
         {/* A reasoning result found it can never have members (5.5, 5.7):
             said in text, and outlined dashed, never by colour alone. */}
         {node.neverMembers && <span className="canvas-box-never">can never have members</span>}
@@ -221,7 +217,6 @@ function ClassNode({ data, selected }: NodeProps<BoxNode>) {
           </ul>
         )}
         {!imported &&
-          !otherKind &&
           (adding ? (
             <div className="canvas-attr-form nodrag" onKeyDown={keep}>
               <input

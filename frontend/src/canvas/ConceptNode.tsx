@@ -32,11 +32,6 @@ function ConceptNode({ data, selected }: NodeProps<BoxNode>) {
     <div className={boxClasses(data, Boolean(selected))}>
       <Sides />
       <BoxHead data={data} />
-      {data.otherKind && (
-        <div className="canvas-box-body">
-          <span className="canvas-box-from">read-only in an ontology</span>
-        </div>
-      )}
     </div>
   );
 }

@@ -135,10 +135,10 @@ import DeleteDialog from "../components/DeleteDialog";
 import { alreadyDefined, getNodeDetails, standardTerm } from "../api";
 import { useRunner } from "../components/EditParts";
 import { restrictionSentence, shortLabel } from "../modeling/ruleSentences";
-import { createdAnnouncement, linkSentence, memberDeleteQuestion, otherKindNote, removedAnnouncement } from "../modeling/sentences";
+import { createdAnnouncement, linkSentence, memberDeleteQuestion, removedAnnouncement } from "../modeling/sentences";
 import { projectStore, useProjectSelector } from "../state/projectStore";
 import { intoDraft } from "../components/CreateForm";
-import type { CanvasLink, CanvasNode, CanvasSet, CanvasView, ProjectDocName } from "../types";
+import type { CanvasLink, CanvasSet, CanvasView, ProjectDocName } from "../types";
 import ClassNode, { type BoxData, type BoxNode } from "./ClassNode";
 import ConceptNode from "./ConceptNode";
 import { loopCurve, pairCurve } from "./curves";
@@ -146,7 +146,7 @@ import { Legend, TipCard, type LegendLine } from "./CanvasAids";
 import type { LineKind } from "./kindColours";
 import { BOX_HEIGHT, freeSpot } from "./layered";
 import RelateMenu from "./RelateMenu";
-import { boxName, otherKindRefusal, relateChoices, type RelateChoice } from "./relate";
+import { boxName, relateChoices, type RelateChoice } from "./relate";
 import { useCanvasData } from "./useCanvasData";
 
 export interface ModelCanvasProps {
@@ -194,6 +194,7 @@ const LINE_OF: Record<CanvasView["edges"][number]["kind"], LineKind> = {
   broader: "broader",
   related: "related",
   rule: "rule",
+  branch: "branch",
 };
 /** Each kind's ends, our own markers: React Flow's draw neither a hollow
  *  triangle nor a dot, and take no colour from CSS. */
@@ -203,6 +204,8 @@ const ENDS: Record<LineKind, { start?: string; end: string }> = {
   relationship: { end: "canvas-arrow-relationship" },
   rule: { end: "canvas-arrow-rule" },
   related: { start: "canvas-dot-related", end: "canvas-dot-related" },
+  // A small list marker at the concept's end (skos-and-owl 5.3.1).
+  branch: { end: "canvas-list-branch" },
 };
 
 /** A line, always labelled (edit-page-rework 5.8: every line carries its
@@ -514,6 +517,29 @@ function Canvas(props: ModelCanvasProps) {
       );
       ok = !!result;
       relationship = result?.created ?? null;
+    } else if (choice.kind === "branch") {
+      // A relationship from the class whose values are a branch of concepts
+      // (skos-and-owl 5.3.1): the model's four statements and the branch rule
+      // as one paired undo step, from the one command. V-8's refusal and offer
+      // apply to the typed name, as they do for a new relationship.
+      setStdRefusal(null);
+      const clsName = label(view!, choice.domain);
+      const conceptName = label(view!, choice.branch);
+      const result = await run(
+        "relate",
+        "CreateBranchRelationship",
+        { label: name, domain: choice.domain, branch: choice.branch },
+        () => createdAnnouncement(name ?? "", clsName, conceptName),
+        (_message, e) => {
+          const detail = standardTerm(e);
+          if (!detail) return;
+          const text = detail.term.offer ? detail.message : `${detail.message} ${detail.term.how}`;
+          setStdRefusal({ message: text, offer: detail.term.offer });
+          clear("relate");
+        },
+      );
+      ok = !!result;
+      relationship = result?.created ?? null;
     } else if (choice.kind === "existing") {
       // Both ends in one command, so one undo step (relationships R6; the
       // E-7 note: SetDomain then SetRange took two).
@@ -574,28 +600,16 @@ function Canvas(props: ModelCanvasProps) {
     );
   };
 
-  /** Why a line is not changed here: an end of the project's other kind
-   *  (D-089; found in review, where Delete and the link panel still removed
-   *  a link between two read-only concepts); a relationship in a taxonomy,
-   *  which is the other kind too (5.10 item 2); or a narrower end that is
-   *  imported, whose statement is the import's (item 6). */
+  /** Why a line is not changed here: a conclusion inferred by reasoning, or a
+   *  narrower end that is imported, whose statement is the import's (item 6).
+   *  Nothing is read-only by the project's kind any more (D-127). */
   const fixedLink = (edge: CanvasView["edges"][number]): string | null => {
     if (!view) return null;
     if (edge.inferred) {
       return `${label(view, edge.source)} is a kind of ${label(view, edge.target)}, inferred by reasoning: a conclusion, not part of your model, so it is not removed here.`;
     }
-    if (edge.kind === "relationship") {
-      return view.kind === "taxonomy"
-        ? `${edge.label ?? "This relationship"} is a relationship, read-only in a taxonomy. Edit it in Turtle, or change the project to an ontology.`
-        : null;
-    }
-    for (const iri of [edge.source, edge.target]) {
-      const box = view.nodes.find((n) => n.iri === iri);
-      const reason = box && !box.imported ? otherKindRefusal(view, box) : null;
-      if (reason) return reason;
-    }
     const child = view.nodes.find((n) => n.iri === edge.source);
-    if (child?.imported && edge.kind !== "related") {
+    if (child?.imported && edge.kind !== "related" && edge.kind !== "relationship" && edge.kind !== "branch") {
       return `${child.label} comes from ${child.imported === "outside" ? "outside this model" : child.imported} and is read-only; this link is changed where it is defined.`;
     }
     return null;
@@ -636,7 +650,7 @@ function Canvas(props: ModelCanvasProps) {
     if (!line) return;
     const fixed = fixedLink(line);
     const words =
-      line.kind === "relationship"
+      line.kind === "relationship" || line.kind === "branch"
         ? `${label(view, line.source)} ${line.label} ${label(view, line.target)}`
         : line.kind === "rule"
           ? ruleWords(view, line)
@@ -644,7 +658,9 @@ function Canvas(props: ModelCanvasProps) {
     setSelectedEdge(id);
     setHint(fixed ?? `${words} selected. Delete removes it.`);
     wrapper.current?.focus();
-    if (line.kind === "relationship" && line.property) {
+    if ((line.kind === "relationship" || line.kind === "branch") && line.property) {
+      // A branch line is its relationship's (skos-and-owl 5.3.1): selecting it
+      // selects the relationship, and Delete removes it and its branch rule.
       edgeSelection.current = line.property;
       selectHere(line.property);
     } else if (line.kind === "rule") {
@@ -652,7 +668,7 @@ function Canvas(props: ModelCanvasProps) {
       // the rule is listed, and the line stays lit while it is selected.
       edgeSelection.current = line.source;
       selectHere(line.source);
-    } else if (line.kind !== "relationship" && !line.inferred) {
+    } else if (line.kind !== "relationship" && line.kind !== "branch" && !line.inferred) {
       edgeSelection.current = null;
       onSelectLink?.({
         kind: line.kind,
@@ -690,7 +706,6 @@ function Canvas(props: ModelCanvasProps) {
         .map<BoxNode>((n) => {
           const data: BoxData = {
             node: n,
-            otherKind: !n.imported && otherKindRefusal(view, n) !== null,
             dropTarget: dropTarget === n.iri,
             renaming: renaming === n.iri,
             busy,
@@ -723,7 +738,9 @@ function Canvas(props: ModelCanvasProps) {
     if (!view) return [];
     return view.edges.map((e) => {
       const id = edgeId(e);
-      const relationship = e.kind === "relationship";
+      // A branch line is its relationship's too (skos-and-owl 5.3.1): lit while
+      // the relationship is the selection, labelled with its name.
+      const relationship = e.kind === "relationship" || e.kind === "branch";
       const loop = e.source === e.target;
       const [out, into] = loop ? (["r", "t"] as const) : sides(positions[e.source], positions[e.target]);
       return {
@@ -740,7 +757,7 @@ function Canvas(props: ModelCanvasProps) {
           e.kind === "relationship" && e.member
             ? // One of a shared relationship's lines names its member (5.5).
               `${e.label}, from ${label(view, e.source)} to ${label(view, e.target)}`
-            : e.kind === "relationship"
+            : e.kind === "relationship" || e.kind === "branch"
             ? `${label(view, e.source)} ${e.label} ${label(view, e.target)}`
             : e.kind === "rule"
               ? `${ruleWords(view, e)}, a rule`
@@ -753,7 +770,7 @@ function Canvas(props: ModelCanvasProps) {
         data: {
           // An inferred line always says so, in words: never by its dash alone.
           text:
-            e.kind === "relationship"
+            e.kind === "relationship" || e.kind === "branch"
               ? `${e.label ?? ""}${e.both ? " (both, see warning)" : e.shared ? " (shared)" : ""}`
               : e.kind === "rule"
                 ? e.rule
@@ -875,7 +892,7 @@ function Canvas(props: ModelCanvasProps) {
     const el = document.elementFromPoint?.(e.clientX, e.clientY)?.closest<HTMLElement>(".react-flow__node");
     const id = el?.dataset.id;
     const node = id ? view?.nodes.find((n) => n.iri === id) : undefined;
-    return node && node.kind === kind && !otherKindRefusal(view!, node) ? node : null;
+    return node && node.kind === kind ? node : null;
   };
 
   const onDragOver = (e: React.DragEvent) => {
@@ -952,12 +969,10 @@ function Canvas(props: ModelCanvasProps) {
     const box = target.closest<HTMLElement>(".react-flow__node");
     const id = box?.dataset.id;
     const node = id ? view?.nodes.find((n) => n.iri === id) : undefined;
-    const fixed = node && (node.imported || otherKindRefusal(view!, node) !== null);
-    if (node && fixed && (e.key === "Enter" || e.key === "Delete" || e.key === "Backspace")) {
-      // Read-only here: say where it is changed, rather than doing nothing.
+    if (node && node.imported && (e.key === "Enter" || e.key === "Delete" || e.key === "Backspace")) {
+      // An imported box is read-only here: it is changed where it is defined.
       e.preventDefault();
       e.stopPropagation();
-      if (!node.imported) setHint(otherKindRefusal(view!, node)!);
     } else if (node && e.key === "Enter") {
       // Enter renames (5.4); React Flow's own Enter would only select.
       e.preventDefault();
@@ -1003,10 +1018,10 @@ function Canvas(props: ModelCanvasProps) {
 
   const undrawn = view.undrawn.filter((u) => u.kind === "objectProperty");
   const empty = view.total === 0;
-  // The kind's own palette item; both for a project not opened since kinds.
+  // Both kinds, the project's own first (skos-and-owl 5.1, D-127): a taxonomy
+  // offers Concept then Class, every other project Class then Concept.
   const palette: ("class" | "concept")[] =
-    view.kind === "ontology" ? ["class"] : view.kind === "taxonomy" ? ["concept"] : ["class", "concept"];
-  const otherNote = otherKindLine(view);
+    view.kind === "taxonomy" ? ["concept", "class"] : ["class", "concept"];
   const drawnPlace = draft && place?.token === draft.token ? place.at : null;
   const draftNode = drawnPlace ? flow.flowToScreenPosition({ x: drawnPlace[0], y: drawnPlace[1] }) : null;
   const origin = wrapper.current?.getBoundingClientRect();
@@ -1031,6 +1046,12 @@ function Canvas(props: ModelCanvasProps) {
           ))}
           <marker id="canvas-dot-related" viewBox="0 0 10 10" refX="5" refY="5" markerUnits="userSpaceOnUse" markerWidth="7" markerHeight="7">
             <circle cx="5" cy="5" r="4" className="canvas-dot line-related" />
+          </marker>
+          {/* A branch line's small list marker at the concept's end
+              (skos-and-owl 5.3.1): three short bars, so the meaning is not
+              carried by colour alone. */}
+          <marker id="canvas-list-branch" viewBox="0 0 12 12" refX="10" refY="6" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12">
+            <path d="M3,3 H10 M3,6 H10 M3,9 H10" className="canvas-list line-branch" />
           </marker>
         </defs>
       </svg>
@@ -1108,7 +1129,6 @@ function Canvas(props: ModelCanvasProps) {
       <p className="canvas-hint" role="status">
         {busy ? "Saving change…" : hint || refused}
       </p>
-      {otherNote && <p className="detail-note canvas-other-kind">{otherNote}</p>}
       {view.limited && (
         <p className="detail-note canvas-limited">
           This model has {view.total.toLocaleString()} classes and concepts; the canvas shows the ones you choose.
@@ -1135,7 +1155,7 @@ function Canvas(props: ModelCanvasProps) {
         onDoubleClick={(e) => {
           const id = (e.target as HTMLElement).closest<HTMLElement>(".react-flow__node")?.dataset.id;
           const node = id ? view.nodes.find((n) => n.iri === id) : undefined;
-          if (node && !node.imported && !otherKindRefusal(view, node) && (e.target as HTMLElement).closest(".canvas-box-name")) {
+          if (node && !node.imported && (e.target as HTMLElement).closest(".canvas-box-name")) {
             setRenaming(node.iri);
           }
         }}
@@ -1357,11 +1377,14 @@ function legendLines(view: CanvasView): LegendLine[] {
   add("related", view.kind !== "ontology");
   if (view.edges.some((e) => e.inferred)) lines.push("inferred");
   add("rule", !taxonomy);
+  // *takes its values from* appears only once a branch line is drawn
+  // (skos-and-owl 5.3.1).
+  add("branch", false);
   return lines;
 }
 
 /** What a hierarchy or related line says beside it. */
-const LINE_WORDS: Record<Exclude<CanvasView["edges"][number]["kind"], "relationship" | "rule">, string> = {
+const LINE_WORDS: Record<Exclude<CanvasView["edges"][number]["kind"], "relationship" | "rule" | "branch">, string> = {
   subClassOf: "is a kind of",
   broader: "narrower than",
   related: "related to",
@@ -1391,13 +1414,6 @@ function ruleWords(view: CanvasView, e: CanvasView["edges"][number]): string {
     n: e.rule.n,
     with: e.rule.withLabel,
   });
-}
-
-/** One line when the document holds the other kind (5.1). Imported boxes
- *  are not counted: they are an import's, whatever the kind. */
-function otherKindLine(view: CanvasView): string | null {
-  const other: CanvasNode["kind"] = view.kind === "ontology" ? "concept" : "class";
-  return otherKindNote(view.kind, view.nodes.filter((n) => n.kind === other && !n.imported).length);
 }
 
 function label(view: CanvasView, iri: string): string {

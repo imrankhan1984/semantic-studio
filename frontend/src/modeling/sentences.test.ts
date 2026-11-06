@@ -179,11 +179,18 @@ describe("Stage B sentences (relationships 5.6 to 5.8)", () => {
     expect(S.MAPPINGS.every((m) => m.means.endsWith("."))).toBe(true);
   });
 
-  it("keeps relationships and attributes read-only in a taxonomy, and only there (5.10 item 2)", () => {
-    expect(S.otherKindReason("taxonomy", "objectProperty")).toMatch(/^A relationship, read-only in a taxonomy/);
-    expect(S.otherKindReason("taxonomy", "datatypeProperty")).toMatch(/^An attribute, read-only in a taxonomy/);
-    expect(S.otherKindReason("ontology", "objectProperty")).toBeNull();
-    expect(S.otherKindReason(null, "objectProperty")).toBeNull();
+  it("words the kind change by which tools show first, never read-only (5.5, D-127)", () => {
+    expect(S.showToolsTitle("taxonomy")).toBe("Show concepts first?");
+    expect(S.showToolsTitle("ontology")).toBe("Show classes first?");
+    expect(S.showToolsBody("taxonomy")).toBe("Nothing in the model changes. The palette and the tree list concepts first.");
+    expect(S.kindShownNotice("Shop", "taxonomy")).toBe("Shop now shows concepts first. Nothing in the model was changed.");
+    expect(S.kindShownNotice("Shop", "ontology")).toBe("Shop now shows classes first. Nothing in the model was changed.");
+  });
+
+  it("words a class-to-concept branch line and the Values from row (5.3.1)", () => {
+    expect(S.branchEntry("Motor", "Motor types")).toBe("Each Motor has a … from Motor types");
+    expect(S.branchValuesText("Motor types")).toBe("Motor types or a concept under it");
+    expect(S.branchValuesText(null)).toBe("Any concept");
   });
 });
 

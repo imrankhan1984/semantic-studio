@@ -196,6 +196,7 @@ import {
 import AboutPanel from "./components/AboutPanel";
 import DetailPanel from "./components/DetailPanel";
 import ReasoningPanel, { ReasonControls } from "./components/ReasoningPanel";
+import { kindShownNotice, showToolsBody, showToolsTitle } from "./modeling/sentences";
 import { marksShown } from "./reasoning/reasonSentences";
 import ExploreStart from "./components/ExploreStart";
 import GraphNotice from "./components/GraphNotice";
@@ -1772,7 +1773,7 @@ export default function App() {
     setProjectBusyId(project.id);
     try {
       await updateProject(project.id, { kind });
-      setNotice(`${project.name} is now ${kind === "ontology" ? "an ontology" : "a taxonomy"}. Nothing in the model was changed.`);
+      setNotice(kindShownNotice(project.name, kind));
       await refreshProjects();
       if (projectStore.getSnapshot().project?.id === project.id) await projectStore.reload();
     } catch (e: unknown) {
@@ -2715,7 +2716,7 @@ export default function App() {
 
       {changingKind && (
         <ConfirmDialog
-          title={`Change ${changingKind.name} to ${changingKind.kind === "ontology" ? "a taxonomy" : "an ontology"}?`}
+          title={showToolsTitle(changingKind.kind === "ontology" ? "taxonomy" : "ontology")}
           escape="cancel"
           actions={[
             { id: "cancel", label: "Cancel" },
@@ -2727,11 +2728,7 @@ export default function App() {
             if (answer === "change") void onChangeKind(project);
           }}
         >
-          <p>
-            {changingKind.kind === "ontology"
-              ? "The canvas and the tree will offer concepts instead of classes. Nothing in the model is rewritten: its classes stay, shown read-only and editable in Turtle."
-              : "The canvas and the tree will offer classes instead of concepts. Nothing in the model is rewritten: its concepts stay, shown read-only and editable in Turtle."}
-          </p>
+          <p>{showToolsBody(changingKind.kind === "ontology" ? "taxonomy" : "ontology")}</p>
         </ConfirmDialog>
       )}
 
