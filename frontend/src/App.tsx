@@ -612,7 +612,11 @@ export default function App() {
   // blocks from the languages array, and a new array per render would
   // redo that on every keystroke anywhere in App.
   const openDocName = projectDocuments.find((d) => d.ontologyId === activeId)?.doc ?? null;
-  const viewRevision = openDocName === "model" ? revision + dataGeneration : revision;
+  // A branch relationship's rule lives in the shapes document (skos-and-owl
+  // 5.3), so the model's views -- the canvas branch line, the Values from row
+  // -- refetch when the shapes revision moves as well as the model's.
+  const shapesRevision = projectDocuments.find((d) => d.doc === "shapes")?.revision ?? 0;
+  const viewRevision = openDocName === "model" ? revision + dataGeneration + shapesRevision : revision;
   // Where the model's data came from, for the Explore and Query source lines.
   const dataSources = useMemo(
     () => (openDocName === "model" ? (projectData?.snapshots ?? []).filter((d) => d.enabled) : []),

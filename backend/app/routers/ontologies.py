@@ -96,6 +96,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Respon
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError  # declares/validates JSON request bodies
 from rdflib import URIRef
+from rdflib.namespace import RDFS, SKOS
 from starlette.concurrency import run_in_threadpool
 
 # Delegate the real work to the domain modules.
@@ -788,6 +789,17 @@ def get_node(
             for member in details["domain"]["classes"]:
                 member["type"] = axioms.kind_of(graph, ontology.graph, URIRef(member["iri"]))
                 member["own"] = axioms.defined(ontology.graph, URIRef(member["iri"]))
+            # A relationship whose values are a branch of concepts (skos-and-owl
+            # 5.3): its branch concept, read from the shapes document, for the
+            # Values from row. None when it has no branch rule yet.
+            if details["kind"] == "objectProperty" and (URIRef(iri), RDFS.range, SKOS.Concept) in graph:
+                split = split_document_id(ontology.id)
+                branch = editing_service.branch_map(split[0]).get(URIRef(iri)) if split else None
+                details["branchRange"] = True
+                details["branch"] = (
+                    {"iri": str(branch), "label": labeler(graph, ontology.label_langs(lang))(branch)}
+                    if branch is not None else None
+                )
         # A project's class carries its rules (axioms-and-reasoning 5.9):
         # the sentences of 5.8 read from the view, so an import's rule shows
         # read-only, the warnings of 5.10, and the builder's choices when

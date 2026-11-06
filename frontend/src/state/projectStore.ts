@@ -395,8 +395,16 @@ function withDocument(next: ProjectDocumentState): ProjectDocumentState[] {
   return snapshot.documents.map((d) => (d.doc === next.doc ? next : d));
 }
 
+/** A command's new document states: the changed document, and for a branch
+ *  relationship's paired step (skos-and-owl 5.3.3) its partner too, so both
+ *  documents' revision, dirty flag and undo labels refresh together. */
+function changedDocuments(result: ChangeResult): ProjectDocumentState[] {
+  const states = result.partner ? [result.state, result.partner.state] : [result.state];
+  return snapshot.documents.map((d) => states.find((s) => s.doc === d.doc) ?? d);
+}
+
 function afterChange(result: ChangeResult, verb: string): void {
-  set({ documents: withDocument(result.state) });
+  set({ documents: changedDocuments(result) });
   const status = STATUS_WORDS[saveStatus(snapshot)];
   announce(`${verb}${result.label}. ${status}.`);
 }
@@ -543,7 +551,7 @@ export const projectStore = {
       set({ project: opened.project, documents: opened.documents });
     }
     if (announcement) {
-      set({ documents: withDocument(result.state) });
+      set({ documents: changedDocuments(result) });
       announce(announcement(result));
     } else {
       afterChange(result, "");

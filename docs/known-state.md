@@ -2930,3 +2930,57 @@ EXPECTED OUTPUT
   nearest ancestor whose `overflow-y` scrolls to the Names, Definition or
   Annotations block; `scrollIntoView` moved every ancestor, and in the
   browser took the whole app up off its header.
+
+### SKOS and OWL together (E-15, D-127)
+
+  **A project's kind decides which tools show first, never what can be
+  changed.** D-127 supersedes D-089: a class and a concept, a relationship and
+  an attribute, are all editable in every door whatever the project's kind.
+  The canvas palette and the Edit tree show both kinds, the project's own first
+  and the other kind's sections present but collapsed while empty (`sectionsFor`,
+  `defaultOpen` in `HierarchyView.tsx`); the palette lists both (`ModelCanvas`'s
+  `palette`). The read-only-by-kind refusals, notes and flags are gone
+  (`otherKindRefusal`, `otherKindNote`, `otherKindReason`, the `otherKind` box
+  and row flags), and `rg "read-only in an ontology|read-only in a taxonomy"`
+  over `frontend/src` finds nothing. Changing the kind still writes only the
+  manifest (no revision, no dirty flag, no undo step); the dialog and notice
+  now say which tools show first (`showToolsTitle`, `showToolsBody`,
+  `kindShownNotice`).
+
+  **The first concept in a document without a scheme brings one.**
+  `cmd_create_concept` mints `<base>Concepts` (the usual numbered suffix if
+  taken), names it "<project> concepts", and makes the concept its top concept,
+  all in the one undo step; a document that already has a scheme is unchanged.
+
+  **A class takes concept values from a branch, in two documents as one paired
+  step.** `CreateBranchRelationship` writes the model's four statements (an
+  object property with range `skos:Concept`) and, in the class's shape, a branch
+  rule: `sh:class skos:Concept` and an `sh:node` whose property walks
+  `sh:zeroOrMorePath skos:broader` to an `sh:hasValue` concept. The two halves
+  are a pair: each `Step` gains `partner` (the other document's step, by
+  identity) and a shared `pair` token. Undo or redo of either half takes the
+  shapes lock then the model lock and applies both; if the partner is no longer
+  on top of its own history the undo is refused with one sentence, and nothing
+  changes. `SetBranch` and `ClearBranch` change only the shapes document.
+  `DeleteEntity` on a branch relationship removes its branch rule in the shapes
+  document as the same paired step. Recovery restores a pair or neither: a
+  draft whose `pair` token has no partner draft is dropped, with the existing
+  recovery notice.
+
+  **A branch rule is read only in its exact shape.** `shapes_form.branch_under`
+  is the one reader of the shape (the form, the commands and the canvas all ask
+  it); any other `sh:node` leaves the shape read-only, as before. The shapes
+  form reads a branch rule as an editable rule with `class: skos:Concept` and a
+  new `under` field; `AddRule` and `ReplaceRule` accept `under` and write the
+  exact shape, and the rule editor preserves `under`/`underLabel` as fields it
+  does not show, so a branch rule survives an edit. The canvas reads branch
+  rules from the shapes document (its view cache keyed on the shapes revision
+  too) and draws a dotted `branch` line from the class to the branch concept,
+  with a list marker and the legend's *takes its values from*, never told by
+  colour alone. The example value picker offers the branch concept and every
+  concept under it, from the model view.
+
+  **Reasoning runs in every project.** The kind refusal is gone from
+  `editing.py` `reason` and `ReasoningPanel.tsx`; a taxonomy with no classes
+  reasons and gets the existing empty result. `ReasoningRefused` stays for its
+  other causes.

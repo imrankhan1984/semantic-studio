@@ -578,3 +578,16 @@ def test_ac7_branch_relationship_offers_only_the_branch_and_concepts_under_it(pi
     assert run(pid, "SetExampleValue", iri="shop:alice", property="shop:hasStatus",
                value={"kind": "link", "value": "shop:Active"}).status_code == 200
     assert (U("alice"), U("hasStatus"), U("Active")) in graph(pid)
+
+
+def test_branch_relationship_node_carries_its_branch(pid):
+    # The node details feed the Edit form's Values from row (skos-and-owl 5.3.1).
+    ok(pid, "CreateConcept", prefLabel="Status")
+    ok(pid, "CreateBranchRelationship", label="has status", domain="shop:Person", branch="shop:Status")
+    details = node(pid, EX + "hasStatus")
+    assert details["branchRange"] is True
+    assert details["branch"] == {"iri": EX + "Status", "label": "Status"}
+    # ClearBranch leaves a concept-valued relationship with no branch.
+    assert run(pid, "ClearBranch", doc="shapes", property="shop:hasStatus").status_code == 200
+    details = node(pid, EX + "hasStatus")
+    assert details["branchRange"] is True and details["branch"] is None

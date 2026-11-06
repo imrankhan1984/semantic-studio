@@ -1337,7 +1337,8 @@ describe("the project's kind decides which tools show first, never what can chan
     const broader = (flow.props.edges as any[]).find((e) => e.id.startsWith("broader"));
     await act(async () => flow.props.onEdgeClick({}, broader));
     expect(onSelectLink).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "broader" }));
-    expect(onSelectLink.mock.calls.at(-1)![0].readOnly).toBeUndefined();
+    const lastLink = onSelectLink.mock.calls[onSelectLink.mock.calls.length - 1][0];
+    expect(lastLink.readOnly).toBeUndefined();
   });
 
   it("with no other kind present, there is no note", async () => {
