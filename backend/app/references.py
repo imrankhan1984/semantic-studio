@@ -4,15 +4,19 @@ FILE: backend/app/references.py
 ================================================================================
 
 SUMMARY
-    Reference ontologies reused by prefix (reference-ontologies 5.4 to 5.7,
-    D-121): FOAF and QUDT as New project offers them, which of them a
-    document has in use, the index of their terms the Edit pickers search,
-    and the Turtle editor's check of a prefixed name none of them defines.
+    Vocabularies reused by prefix (reference-ontologies 5.4 to 5.7, D-121;
+    generalised by vocabularies-and-ontologies 5.5, D-128): FOAF and QUDT
+    as New project offers them, which vocabularies a document has in use,
+    the index of their terms the Edit pickers search, and the Turtle
+    editor's check of a prefixed name none of them defines.
 
 BASIC IDEA
     A reference ontology is an entry of examples/manifest.json with
     `group: "reference"` and a `reuse` block (title, ontology IRI, prefixes,
-    purpose, sentence). Nothing else lists them, so a third is an entry.
+    purpose, sentence): what New project offers. What a term can be reused
+    from is wider (sources()): every bundled vocabulary, and every copy Add
+    a vocabulary kept, from vocabularies.py, each in the same entry shape,
+    so FOAF and QUDT are two cases of it rather than a list of their own.
 
     **In use** means the document declares a prefix bound to one of its
     namespaces, however the line got there. `dcterms:requires` is never read:
@@ -27,9 +31,9 @@ BASIC IDEA
     It keeps the project's own prefix the same way, as nothing may use it
     yet either.
 
-    **The index** is built from the bundled file alone, the first time a
-    project needs it: every class, property and concept defined in the
-    entry's namespaces, with its kind (term_kind, the graph's rule) and its
+    **The index** is built from the bundled file or the kept copy alone,
+    the first time a project needs it: every class, property and concept
+    defined in the entry's namespaces, with its kind (term_kind, the graph's rule) and its
     names, plus every IRI the file types there, which is what "defines"
     means to Context.exists and the editor's check. It is held in memory for
     the process and written to <data dir>/references/<sha256>.json, keyed by
@@ -44,7 +48,9 @@ INPUTS / INPUT SOURCES
     - The data folder, from the ontology store, read at call time.
 
 EXPECTED OUTPUT
-    - entries(), public(), keys(): the references and the route's view of them.
+    - entries(), public(), keys(): the references and the route's view of
+      them, each with the Add sentence the rule gives it (D-128).
+    - sources(): every vocabulary a term can be reused from.
     - declared_prefixes(text), in_use(declared), keep_prefixes(text, declared, own).
     - index(key), index_of(entry): the cached index; search(...), defines(...), unknown_terms(...).
 ================================================================================
@@ -64,7 +70,7 @@ from typing import Iterable, Optional
 from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import RDF
 
-from .graph_builder import SEARCH_KINDS, all_names, pick_label, search_nodes, term_kind
+from .graph_builder import KIND_PROPERTY, SEARCH_KINDS, all_names, pick_label, search_nodes, term_kind
 
 log = logging.getLogger(__name__)
 
@@ -73,7 +79,14 @@ MANIFEST_PATH = APP_DIR / "examples" / "manifest.json"
 CACHE_DIR = "references"
 # Written into every cache file; a file of another version is rebuilt, so a
 # change to what the index holds never reads an old file as the new shape.
-INDEX_VERSION = 1
+# 2: plain rdf:Property terms are kept too, a term list's whole content
+# (Dublin Core Elements, D-128).
+INDEX_VERSION = 2
+# What the index offers: the pickers' kinds, and a plain rdf:Property, which
+# is all a term list such as Dublin Core Elements has.
+INDEXED_KINDS = (*SEARCH_KINDS, KIND_PROPERTY)
+# The kinds the annotation adder offers from an added vocabulary (5.5).
+PROPERTY_KINDS = ("annotationProperty", KIND_PROPERTY)
 
 # A prefix declaration, either form, at the start of a line or after the
 # full stop, the space or the > that ends what came before: PREFIX (the
@@ -110,7 +123,11 @@ def by_key(key: str) -> Optional[dict]:
 
 
 def public() -> list[dict]:
-    """GET /api/references: what the New project form shows and writes."""
+    """GET /api/references: what the New project form shows and writes.
+    `addSentence` is the Add dialog's for the same file (D-128, AC-19): the
+    form says under the choice what choosing it writes."""
+    from . import vocabularies
+
     return [
         {
             "key": e["key"],
@@ -118,6 +135,7 @@ def public() -> list[dict]:
             "prefixes": dict(e["reuse"]["prefixes"]),
             "purpose": e["reuse"]["purpose"],
             "sentence": e["reuse"]["sentence"],
+            "addSentence": vocabularies.bundled_sentence(vocabularies.bundled_of(e)),
         }
         for e in entries()
     ]
@@ -138,10 +156,31 @@ def namespaces_of(entry: dict) -> set[str]:
     return set(entry["reuse"]["prefixes"].values())
 
 
+def sources() -> list[dict]:
+    """Every vocabulary a reused term can come from (vocabularies-and-
+    ontologies 5.5, D-128), in the entry shape the index reads: the twelve
+    bundled files and every copy Add a vocabulary kept. FOAF and QUDT, the
+    two references, are two of the bundled ones."""
+    from . import vocabularies
+
+    found = []
+    for source in vocabularies.known_sources():
+        if source.path is None or source.sha256 is None:
+            continue
+        found.append({
+            "key": source.ref.get("id") or source.ref.get("key") or source.iri,
+            "file": str(source.path),
+            "format": source.format,
+            "sha256": source.sha256,
+            "reuse": {"title": source.title, "prefixes": dict(source.prefixes)},
+        })
+    return found
+
+
 def in_use(declared: dict[str, str]) -> list[dict]:
-    """The references whose namespace one of the declarations binds."""
+    """The vocabularies whose namespace one of the declarations binds."""
     bound = set(declared.values())
-    return [e for e in entries() if namespaces_of(e) & bound]
+    return [e for e in sources() if namespaces_of(e) & bound]
 
 
 def keep_prefixes(text: str, declared: dict[str, str], own: Optional[tuple] = None) -> str:
@@ -154,15 +193,19 @@ def keep_prefixes(text: str, declared: dict[str, str], own: Optional[tuple] = No
     fails as unbound (PR #72 review). A prefix whose name the text now binds
     to something else is left out rather than written twice.
     """
-    reference = set().union(*(namespaces_of(e) for e in entries()))
+    from . import vocabularies
+
+    reference = set(vocabularies.namespaces_known())
     present = declared_prefixes(text)
     wanted = {prefix: namespace for prefix, namespace in declared.items() if namespace in reference}
     if own and own[0] and own[1]:
         wanted.setdefault(own[0], own[1])
+    # Written between < and > below: a namespace Turtle cannot hold there is
+    # never written, whatever put it in the declarations (security review).
     missing = [
         (prefix, namespace)
         for prefix, namespace in sorted(wanted.items())
-        if namespace not in present.values() and prefix not in present
+        if namespace not in present.values() and prefix not in present and vocabularies.iri_ok(namespace)
     ]
     if not missing:
         return text
@@ -188,6 +231,9 @@ class Index:
             for t in terms
         ]
         self.defined = frozenset(defined)
+        # IRI -> term, for a placed box's name (5.8): one lookup, not a scan
+        # of QUDT's terms per box on every canvas fetch (code review).
+        self.by_iri = {t["iri"]: t for t in terms}
         # Local name -> IRI per namespace, for the closest match (5.7).
         self.locals: dict[str, dict[str, str]] = {}
         for iri in self.defined:
@@ -245,7 +291,7 @@ def build(entry: dict) -> Index:
     for subject in set(graph.subjects(RDF.type, None)):
         defined.add(str(subject))
         kind = term_kind(graph, subject)
-        if kind not in SEARCH_KINDS:
+        if kind not in INDEXED_KINDS:
             continue
         terms.append(
             {"iri": str(subject), "kind": kind, "label": pick_label(graph, subject), "names": all_names(graph, subject)}
@@ -327,19 +373,54 @@ def search(
     if not query.strip() or limit <= 0:
         return []
     bound = set(declared.values())
-    candidates = [
-        node
-        for entry in in_use(declared)
-        for node in index(entry["key"]).nodes
-        if node["id"].startswith(tuple(namespaces_of(entry) & bound)) and node["id"] not in skip
-    ]
+    candidates = []
+    seen: set[str] = set(skip)
+    for entry in in_use(declared):
+        title = entry["reuse"]["title"]
+        spaces = tuple(namespaces_of(entry) & bound)
+        for node in index_of(entry).nodes:
+            # A term offered once (5.5): two vocabularies naming one IRI
+            # give it the first one's title.
+            if node["id"].startswith(spaces) and node["id"] not in seen:
+                seen.add(node["id"])
+                candidates.append({**node, "fromReference": title})
     return [dict(n) for n in search_nodes({"nodes": candidates}, query, limit, kind)]
 
 
 def warm(declared: dict[str, str]) -> None:
     """Build the indexes of the references in use, if they are not yet."""
     for entry in in_use(declared):
-        index(entry["key"])
+        index_of(entry)
+
+
+def term(declared: dict[str, str], iri: str) -> Optional[tuple[dict, str]]:
+    """(the term as the index holds it, its vocabulary's title) for a term
+    of a vocabulary in use, or None: a placed box's name and kind (5.8)."""
+    iri = str(iri)
+    bound = set(declared.values())
+    for entry in in_use(declared):
+        if not iri.startswith(tuple(namespaces_of(entry) & bound)):
+            continue
+        found = index_of(entry).by_iri.get(iri)
+        if found is not None:
+            return found, entry["reuse"]["title"]
+    return None
+
+
+def properties(declared: dict[str, str]) -> list[tuple[dict, str]]:
+    """Every annotation or plain property of the vocabularies in use, each
+    once, with its vocabulary's title: what the annotation adder offers
+    beside its own suggestions (vocabularies-and-ontologies 5.5, AC-14)."""
+    bound = set(declared.values())
+    found: list[tuple[dict, str]] = []
+    seen: set[str] = set()
+    for entry in in_use(declared):
+        spaces = tuple(namespaces_of(entry) & bound)
+        for item in index_of(entry).terms:
+            if item["kind"] in PROPERTY_KINDS and item["iri"].startswith(spaces) and item["iri"] not in seen:
+                seen.add(item["iri"])
+                found.append((item, entry["reuse"]["title"]))
+    return found
 
 
 def defines(declared: dict[str, str], iri: str) -> bool:
@@ -348,7 +429,7 @@ def defines(declared: dict[str, str], iri: str) -> bool:
     bound = set(declared.values())
     for entry in in_use(declared):
         spaces = tuple(namespaces_of(entry) & bound)
-        if iri.startswith(spaces) and iri in index(entry["key"]).defined:
+        if iri.startswith(spaces) and iri in index_of(entry).defined:
             return True
     return False
 
@@ -379,7 +460,7 @@ def unknown_terms(graph: Graph, declared: dict[str, str]) -> dict:
         for namespace, (entry, prefix) in by_namespace.items():
             if not iri.startswith(namespace):
                 continue
-            ref = index(entry["key"])
+            ref = index_of(entry)
             if iri in ref.defined:
                 break
             local = iri[len(namespace):]
@@ -388,7 +469,7 @@ def unknown_terms(graph: Graph, declared: dict[str, str]) -> dict:
             found.append(
                 {
                     "term": f"{prefix}:{local}" if prefix else f":{local}",
-                    "reference": ref.title,
+                    "reference": entry["reuse"]["title"],
                     "suggestion": (f"{prefix}:{close[0]}" if prefix else f":{close[0]}") if close else None,
                 }
             )

@@ -197,6 +197,11 @@ async def refuse_oversized_bodies(request: Request, call_next):
     elif _IMPORT_FILES_PATH.match(path):
         limit = ontologies.imports_mod.MAX_TOTAL_BYTES
         detail = ontologies.IMPORT_FILES_TOO_LARGE
+    elif _VOCABULARY_INSPECT_PATH.match(path):
+        # Add a vocabulary's file (vocabularies-and-ontologies 5.3): Load's
+        # cap, read again in chunks by the route.
+        limit = settings.upload_bytes()
+        detail = settings.too_large_detail(limit)
     if limit is not None:
         declared = request.headers.get("content-length")
         # Content-Length covers the whole multipart envelope, not just the
@@ -217,6 +222,7 @@ _READ_ALOUD_PATH = re.compile(r"^/api/projects/[^/]+/read-aloud$")
 _DATA_FILE_PATH = re.compile(r"^/api/projects/[^/]+/data(/inspect|/preview|/[^/]+/refresh)?$")
 _DATA_PATCH_PATH = re.compile(r"^/api/projects/[^/]+/data/[^/]+$")
 _NODES_PATH = re.compile(r"^/api/ontologies/[^/]+/nodes$")
+_VOCABULARY_INSPECT_PATH = re.compile(r"^/api/projects/[^/]+/vocabularies/inspect$")
 
 
 def _declared(request: Request) -> int:

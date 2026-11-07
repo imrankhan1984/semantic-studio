@@ -1103,7 +1103,74 @@ export interface ReferenceOntology {
   prefixes: Record<string, string>;
   purpose: string;
   sentence: string;
+  /** What choosing it writes, the Add dialog's own sentence for the same
+   *  file (vocabularies-and-ontologies 5.4, D-128, AC-19). */
+  addSentence?: string;
 }
+
+// A vocabulary a project document uses (vocabularies-and-ontologies 5.1):
+// one row of the Edit page's Vocabularies section.
+export type VocabularyStatus = "added" | "used" | "notFound";
+export type VocabularyHow = "imported" | "reused";
+export type VocabularySourceKind = "bundled" | "library" | "file" | "web";
+
+export interface VocabularySource {
+  kind: VocabularySourceKind;
+  // The server's words: "Bundled", "Your library: Pumps", "File: team.ttl",
+  // "Web: example.org"; the date beside a web one is fetchedAt.
+  name: string;
+  fetchedAt: string | null;
+}
+
+export interface VocabularyRow {
+  iri: string;
+  title: string;
+  prefix: string | null;
+  namespaces: string[];
+  status: VocabularyStatus;
+  how: VocabularyHow | null;
+  // An imported vocabulary's copy is in the merged view.
+  loaded: boolean;
+  // Its own imports still to load (a host not yet allowed).
+  pending: number;
+  source: VocabularySource | null;
+  // How many of the document's statements use its terms.
+  uses: number;
+}
+
+export interface VocabularyList {
+  sentence: string;
+  rows: VocabularyRow[];
+  // The dialog's Bundled tab: the twelve, each with one line on its use.
+  bundled: BundledVocabulary[];
+}
+
+export interface BundledVocabulary {
+  id: string;
+  iri: string;
+  title: string;
+  prefix: string;
+  description: string;
+}
+
+// What Add a vocabulary's inspect answers (5.3): nothing is written yet.
+export interface VocabularyInspection {
+  iri: string;
+  title: string;
+  prefix: string;
+  namespace: string;
+  statements: number;
+  rules: number;
+  how: VocabularyHow;
+  large: boolean;
+  hosts: string[];
+  source: VocabularySource;
+  sentence: string;
+  alreadyAdded: boolean;
+}
+
+// Where inspect reads from: a bundled id, a library ontology, an address, a file.
+export type VocabularyChoice = { bundled: string } | { ontologyId: string } | { url: string } | { file: File };
 
 // The kinds search can be narrowed to (the editing form's pickers).
 export type SearchKind =
@@ -1133,7 +1200,9 @@ export interface AnnotationPropertyOption {
   iri: string;
   prefixed: string;
   defaultType: ValueType;
-  source: "suggested" | "document" | "import";
+  source: "suggested" | "document" | "import" | "vocabulary";
+  // The added vocabulary's title, for one from it (vocabularies 5.5).
+  vocabulary?: string;
 }
 
 // What DeleteEntity's dry run says it would do (authoring-foundations 5.5).
@@ -1175,6 +1244,9 @@ export interface CanvasLayout {
   // The chosen boxes past 300 (5.6); null draws everything.
   shown: string[] | null;
   viewport: { x: number; y: number; zoom: number } | null;
+  // Outside terms put on the canvas with no line yet (vocabularies-and-
+  // ontologies 5.8): the layout, never the model. Absent from an old file.
+  placed?: string[];
 }
 
 export interface CanvasNode {
@@ -1185,6 +1257,10 @@ export interface CanvasNode {
   fallback: boolean;
   // Outside this document: the import it comes from, or "outside". Read-only.
   imported?: string;
+  // Put on the canvas by Add a term from… with no line yet (5.8), and from
+  // a vocabulary reused by prefix rather than imported.
+  placed?: boolean;
+  reused?: boolean;
   // A shared attribute (attribute-reuse 5.3) is in every member's box,
   // `shared` for a union and `both` for two domain lines, `with` the others.
   attributes: {

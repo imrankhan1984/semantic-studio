@@ -63,6 +63,16 @@ BASIC IDEA
     Person*. The legend, the **?** help and the first-use tip card are
     CanvasAids.tsx's.
 
+    After the palette, *Add a term from…* (vocabularies-and-ontologies 5.8)
+    searches the added vocabularies' classes, or concepts in a taxonomy,
+    and places the one chosen as an outside box: the layout's `placed`
+    list, never the model, so no revision moves (D-087). Focus goes back
+    to the button and the status line says where the term went; a line
+    drawn to it runs the existing relate commands, and Delete (or the
+    box's *Remove from canvas*) takes it off the layout. Its footer opens
+    Add a vocabulary… through the project store. The Edit form's pickers
+    are the same door from the keyboard (D-078).
+
     Rules (axioms-and-reasoning 5.9) are dotted lines from a class to the
     class at the other end, always labelled with their short form (*at least
     1 · has line*, *only · has line*, *defines*) and read aloud as their
@@ -138,6 +148,7 @@ import { restrictionSentence, shortLabel } from "../modeling/ruleSentences";
 import { createdAnnouncement, linkSentence, memberDeleteQuestion, removedAnnouncement } from "../modeling/sentences";
 import { projectStore, useProjectSelector } from "../state/projectStore";
 import { intoDraft } from "../components/CreateForm";
+import EntityPicker from "../components/EntityPicker";
 import type { CanvasLink, CanvasSet, CanvasView, ProjectDocName } from "../types";
 import ClassNode, { type BoxData, type BoxNode } from "./ClassNode";
 import ConceptNode from "./ConceptNode";
@@ -276,6 +287,7 @@ function Canvas(props: ModelCanvasProps) {
   const { projectId, doc, revision, language, primaryLanguage, selected, onSelect, onSelectLink, onDeleted, onCanvasSet } =
     props;
   const data = useCanvasData(projectId, doc, revision, language, props.inferred ?? null);
+  const { unplace } = data;
   // A reasoning result's lines and marks leave at once when it goes stale or
   // Show inferred is turned off, not when the refetch lands (5.3, R5).
   const marks = Boolean(props.inferred);
@@ -337,6 +349,10 @@ function Canvas(props: ModelCanvasProps) {
     offer: { command: string; args: Record<string, string> } | null;
   } | null>(null);
   const [deleting, setDeleting] = useState<{ iri: string; label: string } | null>(null);
+  // Add a term from… (vocabularies-and-ontologies 5.8): the search is open,
+  // and for a taxonomy which kind it looks for.
+  const [termSearch, setTermSearch] = useState<"class" | "concept" | null>(null);
+  const termButton = useRef<HTMLButtonElement>(null);
   // Delete on one line of a shared relationship: remove the class, or delete it?
   const [unsharing, setUnsharing] = useState<{ property: string; label: string; member: string; memberLabel: string } | null>(null);
   const [tidying, setTidying] = useState(false);
@@ -714,6 +730,7 @@ function Canvas(props: ModelCanvasProps) {
             onSelectAttribute: selectHere,
             ontologyId: `${projectId}-${doc}`,
             onReuse,
+            onUnplace: unplace,
           };
           return {
             id: n.iri,
@@ -732,7 +749,7 @@ function Canvas(props: ModelCanvasProps) {
       boxes.sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x);
       return boxes;
     });
-  }, [view, positions, selected, renaming, dropTarget, busy, onRenameDone, onAddAttribute, selectHere, onReuse, projectId, doc]);
+  }, [view, positions, selected, renaming, dropTarget, busy, onRenameDone, onAddAttribute, selectHere, onReuse, projectId, doc, unplace]);
 
   const edges = useMemo<Edge[]>(() => {
     if (!view) return [];
@@ -969,7 +986,13 @@ function Canvas(props: ModelCanvasProps) {
     const box = target.closest<HTMLElement>(".react-flow__node");
     const id = box?.dataset.id;
     const node = id ? view?.nodes.find((n) => n.iri === id) : undefined;
-    if (node && node.imported && (e.key === "Enter" || e.key === "Delete" || e.key === "Backspace")) {
+    if (node && node.placed && (e.key === "Delete" || e.key === "Backspace")) {
+      // Remove from canvas (5.8): a placed term leaves the layout; the
+      // model never had it, so nothing is asked and no step is made.
+      e.preventDefault();
+      e.stopPropagation();
+      void data.unplace(node.iri);
+    } else if (node && node.imported && (e.key === "Enter" || e.key === "Delete" || e.key === "Backspace")) {
       // An imported box is read-only here: it is changed where it is defined.
       e.preventDefault();
       e.stopPropagation();
@@ -1087,6 +1110,18 @@ function Canvas(props: ModelCanvasProps) {
         <span className="canvas-palette-hint" id="canvas-palette-hint">
           drag onto the canvas, or press
         </span>
+        {/* After the existing items (5.8): an added vocabulary's class, or
+            concept, placed as a read-only box ready to relate. */}
+        <button
+          ref={termButton}
+          type="button"
+          className="ghost canvas-add-term"
+          aria-expanded={termSearch !== null}
+          aria-controls={termSearch !== null ? "canvas-term-search" : undefined}
+          onClick={() => setTermSearch(termSearch !== null ? null : view.kind === "taxonomy" ? "concept" : "class")}
+        >
+          Add a term from…
+        </button>
         <span className="canvas-toolbar-gap" />
         {props.reason}
         <button type="button" className="ghost" onClick={() => void flow.zoomIn({ duration: reduced ? 0 : 150 })} aria-label="Zoom in">
@@ -1114,6 +1149,71 @@ function Canvas(props: ModelCanvasProps) {
           </button>
         )}
       </div>
+      {termSearch !== null && (
+        <div
+          className="canvas-term-search"
+          id="canvas-term-search"
+          role="group"
+          aria-label="Add a term from an added vocabulary"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              e.stopPropagation();
+              setTermSearch(null);
+              termButton.current?.focus();
+            }
+          }}
+        >
+          {view.kind === "taxonomy" && (
+            <div className="mode-switch small" role="group" aria-label="Look for">
+              {(["concept", "class"] as const).map((k) => (
+                <button key={k} type="button" className={termSearch === k ? "mode-tab active" : "mode-tab"} aria-pressed={termSearch === k} onClick={() => setTermSearch(k)}>
+                  {k === "concept" ? "Concepts" : "Classes"}
+                </button>
+              ))}
+            </div>
+          )}
+          <EntityPicker
+            key={termSearch}
+            ontologyId={`${projectId}-${doc}`}
+            kind={termSearch}
+            label={termSearch === "concept" ? "A concept from an added vocabulary" : "A class from an added vocabulary"}
+            fromVocabularies
+            exclude={view.nodes.map((n) => n.iri)}
+            onPick={(iri, name) => {
+              setTermSearch(null);
+              const box = wrapper.current?.getBoundingClientRect();
+              const at = flow.screenToFlowPosition({ x: (box?.left ?? 0) + (box?.width ?? 0) / 2, y: (box?.top ?? 0) + (box?.height ?? 0) / 2 });
+              const taken = nodes.map((n) => ({ at: [n.position.x, n.position.y] as [number, number], width: n.measured?.width, height: n.measured?.height }));
+              // Focus back on the button, not the new box: focusing a box
+              // selects it, and an import's term read with the imports
+              // switch off has no details to show (found in the browser
+              // pass). The status line says where it went.
+              termButton.current?.focus();
+              void data.placeTerm(iri, freeSpot([at.x, at.y], taken)).then((placed) => {
+                if (placed) setHint(`${name} is on the canvas. Draw a line to it to relate it.`);
+              });
+            }}
+            onCancel={() => {
+              setTermSearch(null);
+              termButton.current?.focus();
+            }}
+          />
+          <p className="detail-note">
+            Not there?{" "}
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => {
+                setTermSearch(null);
+                projectStore.askAddVocabulary();
+              }}
+            >
+              Add a vocabulary…
+            </button>
+          </p>
+        </div>
+      )}
       {undrawnOpen && (
         <ul className="canvas-undrawn" aria-label="Relationships not drawn">
           {undrawn.map((u) => (

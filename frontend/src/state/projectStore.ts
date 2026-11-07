@@ -177,6 +177,10 @@ export interface ProjectSnapshot {
    *  menu's *a rule* entry opens the class's sentence builder with both
    *  classes filled. The form takes it once, by its token. */
   ruleDraft: { cls: string; filler: string; property?: string; token: number } | null;
+  /** Add a vocabulary… asked for from outside the outline (vocabularies-
+   *  and-ontologies 5.8): the canvas's *Add a term from…* footer. The
+   *  outline's Vocabularies section opens its dialog once, by its token. */
+  vocabularyDraft: { token: number } | null;
   /** A reuse begun on the canvas (attribute-reuse 5.1): the relate menu's
    *  *Share* entry, or a box's attribute suggestion, opens the class's
    *  reuse plan for that property. The form takes it once, by its token. */
@@ -245,6 +249,7 @@ const EMPTY: ProjectSnapshot = {
   reasoningData: false,
   reasoningToken: 0,
   ruleDraft: null,
+  vocabularyDraft: null,
   reuseDraft: null,
   creating: null,
   creatingBusy: false,
@@ -800,6 +805,16 @@ export const projectStore = {
   /** The form has opened the builder for the draft: it is spent. */
   ruleDraftTaken(): void {
     if (snapshot.ruleDraft !== null) set({ ruleDraft: null });
+  },
+
+  /** Ask the outline's Vocabularies section to open Add a vocabulary… (5.8). */
+  askAddVocabulary(): void {
+    set({ vocabularyDraft: { token: (snapshot.vocabularyDraft?.token ?? 0) + 1 } });
+  },
+
+  /** The section has opened its dialog: the request is spent. */
+  vocabularyDraftTaken(): void {
+    if (snapshot.vocabularyDraft !== null) set({ vocabularyDraft: null });
   },
 
   /** The editor has moved to the target: it is spent, so a later visit to

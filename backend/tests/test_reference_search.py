@@ -75,11 +75,11 @@ def _project(refs: list[str], template: str = "empty", **body) -> str:
     return pid
 
 
-def _search(pid: str, q: str, kind: str = "class", refs: bool = True, imports: bool = True) -> list[dict]:
-    r = client.get(
-        f"/api/ontologies/{pid}-model/search",
-        params={"q": q, "kind": kind, "references": str(refs).lower(), "imports": str(imports).lower()},
-    )
+def _search(pid: str, q: str, kind: str | None = "class", refs: bool = True, imports: bool = True) -> list[dict]:
+    params = {"q": q, "references": str(refs).lower(), "imports": str(imports).lower()}
+    if kind is not None:
+        params["kind"] = kind
+    r = client.get(f"/api/ontologies/{pid}-model/search", params=params)
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -188,6 +188,10 @@ def test_the_index_is_never_sent_whole():
         "prefixes": {"foaf": FOAF},
         "purpose": "people, organizations and their links",
         "sentence": "It reuses FOAF for people and organizations.",
+        "addSentence": (
+            "FOAF holds rules: 171 statements about hierarchies, domains and ranges. "
+            "It will be imported, so the reasoner and the checks use them."
+        ),
     }
     assert listed[1]["prefixes"] == {"qudt": QUDT}
     pid = _project(["foaf"])
@@ -269,7 +273,8 @@ def test_apply_names_an_unknown_reference_term_with_the_closest_match_and_still_
     body = r.json()
     assert body["revision"] > before, "the text applied"
     assert body["references"] == {
-        "terms": [{"term": "qudt:hasQuantityKnd", "reference": "QUDT", "suggestion": "qudt:hasQuantityKind"}],
+        # Named by the bundled vocabulary's title (D-128: one list of sources).
+        "terms": [{"term": "qudt:hasQuantityKnd", "reference": "QUDT 3.5.2", "suggestion": "qudt:hasQuantityKind"}],
         "more": 0,
     }
 
@@ -603,3 +608,67 @@ def test_a_cache_of_another_version_is_rebuilt():
     path.write_text(json.dumps(stale), encoding="utf-8")
     assert FOAF + "Organization" in references.index("foaf").defined
     assert json.loads(path.read_text(encoding="utf-8"))["version"] == references.INDEX_VERSION
+
+
+# --- vocabularies-and-ontologies 5.5 (D-128): every added vocabulary -----------
+
+DC = "http://purl.org/dc/elements/1.1/"
+PROV = "http://www.w3.org/ns/prov#"
+
+
+def _add(pid: str, vocab_id: str, iri: str, prefix: str) -> None:
+    assert client.post(f"/api/projects/{pid}/vocabularies/inspect", json={"bundled": vocab_id}).status_code == 200
+    r = _command(pid, "AddVocabulary", {"iri": iri, "prefix": prefix})
+    assert r.status_code == 200, r.text
+
+
+def test_a_reused_vocabularys_terms_are_offered_marked_by_its_title():
+    """AC-14: Dublin Core Elements, a term list, is reused; dc:creator is
+    offered marked by its title, by the search and by the annotation
+    adder, and no term is offered twice."""
+    pid = _project([])
+    _add(pid, "dcelements", DC, "dc")
+    found = _search(pid, "creator", kind=None)
+    assert [(n["id"], n["fromReference"]) for n in found] == [(DC + "creator", "Dublin Core Elements 1.1")]
+    options = client.get(f"/api/projects/{pid}/documents/model/annotation-properties").json()
+    creator = [o for o in options if o["iri"] == DC + "creator"]
+    assert creator == [{
+        "iri": DC + "creator", "prefixed": "dc:creator", "defaultType": {"kind": "text"},
+        "source": "vocabulary", "vocabulary": "Dublin Core Elements 1.1",
+    }]
+    assert len({o["iri"] for o in options}) == len(options)
+
+
+def test_an_imported_vocabularys_terms_come_from_the_merged_view_once():
+    """AC-14: PROV-O imported: its terms are marked by the import with the
+    imports switch on, and offered by its prefix with it off, never twice."""
+    pid = _project([])
+    _add(pid, "prov-o", "http://www.w3.org/ns/prov-o", "prov")
+    with_imports = [n for n in _search(pid, "agent") if n["id"] == PROV + "Agent"]
+    assert len(with_imports) == 1
+    assert with_imports[0].get("importedFrom") == "PROV-O" and "fromReference" not in with_imports[0]
+    without = [n for n in _search(pid, "agent", imports=False) if n["id"] == PROV + "Agent"]
+    assert len(without) == 1 and without[0]["fromReference"] == "PROV-O"
+
+
+@pytest.mark.perf
+def test_budget_picker_search_with_five_reused_vocabularies():
+    """Section 10: five reused vocabularies indexed, a search at most
+    100 ms after the first build."""
+    pid = _project([])
+    text = _source(pid) + "".join(
+        f"\n@prefix {p}: <{ns}> ." for p, ns in (
+            ("dc", DC), ("foaf", FOAF), ("prov", PROV), ("org", "http://www.w3.org/ns/org#"),
+            ("vcard", "http://www.w3.org/2006/vcard/ns#"),
+        )
+    )
+    assert _apply(pid, text).status_code == 200
+    rows = client.get(f"/api/projects/{pid}/documents/model/vocabularies").json()["rows"]
+    assert sorted((r["how"], r["status"]) for r in rows) == [("reused", "added")] * 5
+    _search(pid, "name", kind=None)  # the first build of all five
+
+    def run():
+        _search(pid, "name", kind=None)
+
+    took = _median(run)
+    assert took <= limit_ms(100), f"a search over five reused vocabularies took {took:.1f} ms (median of 5)"

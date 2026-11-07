@@ -437,6 +437,18 @@ of them open as fast as none.
   concepts draws the ones you choose (*Show on canvas*). The *Canvas* switch
   above the tree hides it; everything it does can be done from the tree and
   the form.
+- **See and add the vocabularies your model uses.** The Edit outline's last
+  section, *Vocabularies*, lists every vocabulary the model uses, whether it
+  is added (*imported* or *terms reused*), *used, not added* or *not found*,
+  where it comes from and how many statements use it. *Add a vocabulary…*
+  takes one of the twelve bundled vocabularies, an ontology from your library,
+  a file or a web address (asked for first, as every connection is) and says
+  in one sentence what it will write: a vocabulary with rules (hierarchies,
+  domains, ranges) is imported so the reasoner and the checks see them, and a
+  plain list of terms is reused by its prefix. On the canvas, *Add a term
+  from…* puts one of its classes on the canvas, dashed and read-only, to draw
+  a line to; the form's pickers offer the same terms from the keyboard.
+  Anything typed in Turtle shows in the list as it was typed.
 - **Say what a relationship means.** A relationship's form reads it back as a
   sentence and edits its two ends (swap, change, clear), its other way round
   (*An Organization employs a Person*, made from a name or picked), seven
@@ -616,7 +628,9 @@ The image stores ontologies in the `/data` volume:
 | `GET  /api/ontologies/{id}/query-node`   | `?iri=` — class/type of a clicked node |
 | `POST /api/ontologies/{id}/sparql`  | `{query}` — run a SELECT             |
 | `GET  /api/projects/{pid}/documents/{doc}/canvas` | The modeling canvas: boxes, lines, the layout |
-| `GET/PUT /api/projects/{pid}/documents/{doc}/layout` | Box positions and the shown set (not the model) |
+| `GET/PUT /api/projects/{pid}/documents/{doc}/layout` | Box positions, the shown set and placed outside terms (not the model) |
+| `GET /api/projects/{pid}/documents/{doc}/vocabularies` | The vocabularies a document uses, with status, source and use |
+| `POST /api/projects/{pid}/vocabularies/inspect` | Read a bundled, library, file or web vocabulary for *Add a vocabulary…*; writes nothing |
 | `GET/POST /api/queries`             | List / save visual queries           |
 | `DELETE /api/queries/{id}`          | Delete a saved query                 |
 

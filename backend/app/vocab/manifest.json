@@ -1,5 +1,5 @@
 {
-  "description": "Vocabularies shipped with Semantic Studio so that importing them needs no network. Each file is byte-for-byte what its source URL served on the retrieval date; sha256 is checked before a file is parsed (test_imports.py fails on a mismatch or a missing license). Regenerate a hash only together with a fresh download from the same source. 'retrieved' at the top is the date of the first eleven; an entry added later carries its own.",
+  "description": "Vocabularies shipped with Semantic Studio so that importing them needs no network. Each file is byte-for-byte what its source URL served on the retrieval date; sha256 is checked before a file is parsed (test_imports.py fails on a mismatch or a missing license). Regenerate a hash only together with a fresh download from the same source. 'retrieved' at the top is the date of the first eleven; an entry added later carries its own. 'prefixes' (the first the preferred one), 'description', 'statements' and 'rules' describe each file for Add a vocabulary (vocabularies-and-ontologies 5.3, 5.4, D-128); test_vocabularies.py recounts the last two from the file.",
   "retrieved": "2026-09-27",
   "vocabularies": [
     {
@@ -17,7 +17,13 @@
       "iris": [
         "http://www.w3.org/2004/02/skos/core",
         "http://www.w3.org/2004/02/skos/core#"
-      ]
+      ],
+      "prefixes": {
+        "skos": "http://www.w3.org/2004/02/skos/core#"
+      },
+      "description": "Concepts, schemes and broader and narrower links, for taxonomies and thesauri.",
+      "statements": 252,
+      "rules": 56
     },
     {
       "id": "dcterms",
@@ -33,7 +39,13 @@
       "sha256": "13df401072dd7015bf9d75162f3e41c8138075304b7b9cc1aa1e9c16db976797",
       "iris": [
         "http://purl.org/dc/terms/"
-      ]
+      ],
+      "prefixes": {
+        "dcterms": "http://purl.org/dc/terms/"
+      },
+      "description": "Descriptive metadata: titles, creators, dates, licences and subjects.",
+      "statements": 700,
+      "rules": 107
     },
     {
       "id": "dcelements",
@@ -49,7 +61,13 @@
       "sha256": "ffb46b7a21e40344b93bc4ad2e6808b24dd53e261995ec3a926df6bcd87bbfa5",
       "iris": [
         "http://purl.org/dc/elements/1.1/"
-      ]
+      ],
+      "prefixes": {
+        "dc": "http://purl.org/dc/elements/1.1/"
+      },
+      "description": "The fifteen classic Dublin Core elements, such as title, creator and date.",
+      "statements": 107,
+      "rules": 0
     },
     {
       "id": "foaf",
@@ -65,7 +83,13 @@
       "sha256": "3d859b5d92a2c3d041545d014fa826f682ca06d056af8c7b31e32d930abf2bc5",
       "iris": [
         "http://xmlns.com/foaf/0.1/"
-      ]
+      ],
+      "prefixes": {
+        "foaf": "http://xmlns.com/foaf/0.1/"
+      },
+      "description": "People, organizations and the links between them.",
+      "statements": 631,
+      "rules": 171
     },
     {
       "id": "dcat3",
@@ -83,7 +107,13 @@
         "http://www.w3.org/ns/dcat",
         "http://www.w3.org/ns/dcat#",
         "http://www.w3.org/ns/dcat3"
-      ]
+      ],
+      "prefixes": {
+        "dcat": "http://www.w3.org/ns/dcat#"
+      },
+      "description": "Data catalogues, datasets and the ways they are distributed.",
+      "statements": 1695,
+      "rules": 89
     },
     {
       "id": "prov-o",
@@ -103,7 +133,13 @@
         "http://www.w3.org/ns/prov",
         "http://www.w3.org/ns/prov#",
         "http://www.w3.org/ns/prov-o-20130430"
-      ]
+      ],
+      "prefixes": {
+        "prov": "http://www.w3.org/ns/prov#"
+      },
+      "description": "Provenance: activities, the agents behind them and the things they produce.",
+      "statements": 1146,
+      "rules": 198
     },
     {
       "id": "org",
@@ -120,7 +156,13 @@
       "iris": [
         "http://www.w3.org/ns/org",
         "http://www.w3.org/ns/org#"
-      ]
+      ],
+      "prefixes": {
+        "org": "http://www.w3.org/ns/org#"
+      },
+      "description": "Organizations, their units, posts and memberships.",
+      "statements": 748,
+      "rules": 120
     },
     {
       "id": "time",
@@ -138,7 +180,13 @@
         "http://www.w3.org/2006/time",
         "http://www.w3.org/2006/time#",
         "http://www.w3.org/2006/time#2016"
-      ]
+      ],
+      "prefixes": {
+        "time": "http://www.w3.org/2006/time#"
+      },
+      "description": "Instants, intervals, durations and how they relate in time.",
+      "statements": 1296,
+      "rules": 267
     },
     {
       "id": "shacl",
@@ -155,7 +203,13 @@
       "iris": [
         "http://www.w3.org/ns/shacl",
         "http://www.w3.org/ns/shacl#"
-      ]
+      ],
+      "prefixes": {
+        "sh": "http://www.w3.org/ns/shacl#"
+      },
+      "description": "Shapes that data is checked against.",
+      "statements": 1128,
+      "rules": 186
     },
     {
       "id": "vcard",
@@ -172,7 +226,13 @@
       "iris": [
         "http://www.w3.org/2006/vcard/ns",
         "http://www.w3.org/2006/vcard/ns#"
-      ]
+      ],
+      "prefixes": {
+        "vcard": "http://www.w3.org/2006/vcard/ns#"
+      },
+      "description": "Contact details: names, addresses, telephone numbers and email.",
+      "statements": 882,
+      "rules": 150
     },
     {
       "id": "bfo-2020",
@@ -190,7 +250,13 @@
         "http://purl.obolibrary.org/obo/bfo.owl",
         "http://purl.obolibrary.org/obo/bfo/2020/bfo-core.ttl",
         "http://purl.obolibrary.org/obo/bfo/2020/bfo.owl"
-      ]
+      ],
+      "prefixes": {
+        "obo": "http://purl.obolibrary.org/obo/"
+      },
+      "description": "A top-level ontology of continuants and occurrents, the base of many scientific ontologies.",
+      "statements": 1014,
+      "rules": 258
     },
     {
       "id": "qudt",
@@ -207,7 +273,19 @@
       "sha256": "aa11e3a4b6f0cd60327981f992099538a00fbf23281ef679fef8ddca96e65940",
       "iris": [
         "http://qudt.org/3.5.2/qudt-all"
-      ]
+      ],
+      "prefixes": {
+        "qudt": "http://qudt.org/schema/qudt/",
+        "unit": "http://qudt.org/vocab/unit/",
+        "quantitykind": "http://qudt.org/vocab/quantitykind/",
+        "constant": "http://qudt.org/vocab/constant/",
+        "qkdv": "http://qudt.org/vocab/dimensionvector/",
+        "qudtdt": "http://qudt.org/vocab/datatype/",
+        "qudtprefix": "http://qudt.org/vocab/prefix/"
+      },
+      "description": "Quantities, units and dimensions, for measurements of every kind.",
+      "statements": 132166,
+      "rules": 1407
     }
   ]
 }

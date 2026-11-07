@@ -57,6 +57,9 @@ interface Props {
   /** Offer only what an import defines: a mapping points to another
    *  vocabulary, never to the project's own concepts (relationships 5.8). */
   importedOnly?: boolean;
+  /** Offer only an added vocabulary's terms, imported or reused by prefix:
+   *  the canvas's *Add a term from…* (vocabularies-and-ontologies 5.8). */
+  fromVocabularies?: boolean;
 }
 
 /** How long typing rests before a search is sent. */
@@ -72,6 +75,7 @@ export default function EntityPicker({
   onPick,
   onCancel,
   importedOnly = false,
+  fromVocabularies = false,
 }: Props) {
   const id = useId();
   const listId = `${id}-list`;
@@ -99,7 +103,12 @@ export default function EntityPicker({
       searchNodes(ontologyId, q, true, kind, undefined, undefined, true)
         .then((found) => {
           if (cancelled) return;
-          const shown = found.filter((n) => !exclude.includes(n.id) && (!importedOnly || n.importedFrom));
+          const shown = found.filter(
+            (n) =>
+              !exclude.includes(n.id) &&
+              (!importedOnly || n.importedFrom) &&
+              (!fromVocabularies || n.importedFrom || n.fromReference),
+          );
           setResults(shown);
           setAnswered(q);
           setActive(shown.length ? 0 : -1);
@@ -113,7 +122,7 @@ export default function EntityPicker({
     };
     // exclude is a fresh array on every render of the caller; its content is
     // what matters and it only changes with the entity, which remounts this.
-  }, [query, ontologyId, kind, importedOnly]);
+  }, [query, ontologyId, kind, importedOnly, fromVocabularies]);
 
   const open = results.length > 0;
   const pick = (node: VizNode) => {

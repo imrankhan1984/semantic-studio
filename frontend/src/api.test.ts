@@ -215,6 +215,12 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   getAnnotationProperties: () => api.getAnnotationProperties("prj-1", "model"),
   getCanvas: () => api.getCanvas("prj-1", "model"),
   getLayout: () => api.getLayout("prj-1", "model"),
+  getVocabularies: () => api.getVocabularies("prj-1", "model"),
+  // Both shapes of inspect (vocabularies-and-ontologies 5.3): JSON and a file.
+  inspectVocabulary: () =>
+    api
+      .inspectVocabulary("prj-1", { bundled: "prov-o" })
+      .then(() => api.inspectVocabulary("prj-1", { file: new File(["x"], "v.ttl") })),
   putLayout: () =>
     api.putLayout("prj-1", "model", { version: 1, generation: 0, positions: {}, shown: null, viewport: null }),
   // design-checks 5.8: a read-aloud tick, the manifest only.
@@ -275,12 +281,13 @@ describe("api client header (S-6)", () => {
     // settings two PUTs (the proxy, the certificate file), a DELETE (the
     // file's Remove) and a POST (Test connection, external-access 5.5);
     // Settings → Naming one PUT (design-checks 5.1); a read-aloud tick one
-    // PUT (design-checks 5.8).
+    // PUT (design-checks 5.8); Add a vocabulary's inspect two POSTs, JSON
+    // and a file (vocabularies-and-ontologies 5.3).
     const expected = [
       ...Array(7).fill("DELETE"),
       "PATCH",
       "PATCH",
-      ...Array(33).fill("POST"),
+      ...Array(35).fill("POST"),
       ...Array(8).fill("PUT"),
     ];
     expect(mutating.map((r) => r.method).sort()).toEqual(expected);

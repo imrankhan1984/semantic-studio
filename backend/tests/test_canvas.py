@@ -37,7 +37,8 @@ import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
-from rdflib import Graph
+from rdflib import Graph, URIRef
+from rdflib.namespace import RDFS
 
 from app import canvas as canvas_mod
 from app.editing import editing_service, project_store
@@ -226,7 +227,7 @@ def test_a_layout_round_trips_and_never_changes_the_model(pid):
     assert after == before, "no revision, no dirty flag, no undo step"
     got = client.get(f"/api/projects/{pid}/documents/model/layout").json()
     assert got == {"version": 1, "generation": 1, "positions": {EX + "Invoice": [12.5, -40.0]}, "shown": None,
-                   "viewport": {"x": 1.0, "y": 2.0, "zoom": 0.8}}
+                   "viewport": {"x": 1.0, "y": 2.0, "zoom": 0.8}, "placed": []}
     assert canvas(pid)["layout"] == got
     # On disk, beside the document, under a fixed name.
     assert (project_store.folder(pid) / "model.layout.json").is_file()
@@ -651,3 +652,61 @@ def test_ac4_a_branch_relationship_draws_a_branch_line_to_its_concept(pid):
     assert state(pid)["revision"] == model_rev, "SetBranch writes only the shapes document"
     moved = [e for e in canvas(pid)["edges"] if e["kind"] == "branch"]
     assert moved[0]["target"] == EX + "Paid"
+
+
+# --- vocabularies-and-ontologies 5.8: Add a term from… (AC-15) ------------------
+
+FOAF = "http://xmlns.com/foaf/0.1/"
+
+
+def _fresh() -> str:
+    response = client.post("/api/projects", json={"name": "Plant", "template": "small", "baseIri": EX, "prefix": "shop"})
+    pid = response.json()["id"]
+    assert client.post(f"/api/projects/{pid}/open").status_code == 200
+    return pid
+
+
+def test_a_placed_term_is_an_outside_box_and_writes_the_layout_only():
+    """AC-15: FOAF imported, foaf:Person placed: a read-only box named by
+    FOAF, and no revision, no dirty flag, no undo step (D-087). A line from
+    Operator to it is the existing subclass command, one step."""
+    pid = _fresh()
+    run(pid, "AddVocabulary", iri=FOAF, prefix="foaf")
+    operator = run(pid, "CreateClass", label="Operator")["created"]
+    client.post(f"/api/projects/{pid}/documents/model/save")
+    before = state(pid)
+    layout = client.get(f"/api/projects/{pid}/documents/model/layout").json()
+    assert put_layout(pid, {**layout, "placed": [FOAF + "Person"], "positions": {FOAF + "Person": [300, 40]}}).status_code == 200
+    assert state(pid) == before, "no revision, no dirty flag, no undo step"
+    [box] = [n for n in canvas(pid, imports="true")["nodes"] if n["iri"] == FOAF + "Person"]
+    assert box == {
+        "iri": FOAF + "Person", "kind": "class", "label": "Person", "fallback": False,
+        "imported": "FOAF", "attributes": [], "placed": True,
+    }
+    run(pid, "AddSubClassOf", child=operator, parent=FOAF + "Person")
+    graph = editing_service.document(pid, "model").graph
+    assert (URIRef(operator), RDFS.subClassOf, URIRef(FOAF + "Person")) in graph
+    assert client.post(f"/api/projects/{pid}/documents/model/undo").status_code == 200
+    assert (URIRef(operator), RDFS.subClassOf, URIRef(FOAF + "Person")) not in graph
+    # The box stays where it was put, across a close and an open.
+    client.post(f"/api/projects/{pid}/close", json={"discard": True})
+    assert client.post(f"/api/projects/{pid}/open").status_code == 200
+    reopened = client.get(f"/api/projects/{pid}/documents/model/layout").json()
+    assert reopened["placed"] == [FOAF + "Person"] and reopened["positions"][FOAF + "Person"] == [300.0, 40.0]
+
+
+def test_a_placed_term_of_a_reused_vocabulary_is_named_from_its_index(pid):
+    """MODEL declares foaf: by hand, so FOAF is reused, not imported: the
+    box is named from the index, marked reused."""
+    layout = client.get(f"/api/projects/{pid}/documents/model/layout").json()
+    assert put_layout(pid, {**layout, "placed": [FOAF + "Person", "http://example.org/nowhere#X"]}).status_code == 200
+    nodes = {n["iri"]: n for n in canvas(pid)["nodes"]}
+    assert nodes[FOAF + "Person"]["reused"] is True and nodes[FOAF + "Person"]["imported"] == "FOAF"
+    # A term no added vocabulary defines is not drawn.
+    assert "http://example.org/nowhere#X" not in nodes
+
+
+def test_placed_is_a_list_of_iris_under_the_entry_cap(pid):
+    assert put_layout(pid, {"positions": {}, "placed": "foaf:Person"}).status_code == 422
+    assert put_layout(pid, {"positions": {}, "placed": [""]}).status_code == 422
+    assert put_layout(pid, {"positions": {}, "placed": [FOAF + "Person"] * 2}).json()["placed"] == [FOAF + "Person"]

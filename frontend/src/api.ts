@@ -80,6 +80,9 @@ import type {
   ProjectKind,
   ProjectTemplate,
   ReferenceOntology,
+  VocabularyChoice,
+  VocabularyInspection,
+  VocabularyList,
   SaveResult,
   ImportFilesResult,
   ImportsListing,
@@ -1228,6 +1231,31 @@ export function getCanvas(
 
 export function getLayout(pid: string, doc: ProjectDocName): Promise<CanvasLayout> {
   return send(documentUrl(pid, doc, "/layout")).then((r) => handle<CanvasLayout>(r));
+}
+
+// The Edit page's Vocabularies section (vocabularies-and-ontologies 5.2):
+// what the document uses, read from it as applied. Never writes.
+export function getVocabularies(pid: string, doc: ProjectDocName): Promise<VocabularyList> {
+  return send(documentUrl(pid, doc, "/vocabularies")).then((r) => handle<VocabularyList>(r));
+}
+
+// Add a vocabulary's reading (5.3): a bundled id, a library ontology or an
+// address as JSON, a file as multipart. Nothing is written to the document;
+// an address on a host not yet allowed meets the approval dialog in `send`.
+export function inspectVocabulary(
+  pid: string,
+  choice: VocabularyChoice,
+  signal?: AbortSignal,
+): Promise<VocabularyInspection> {
+  let init: RequestInit;
+  if ("file" in choice) {
+    const form = new FormData();
+    form.append("file", choice.file);
+    init = { method: "POST", headers: { ...CLIENT_HEADER }, body: form, signal };
+  } else {
+    init = { method: "POST", headers: JSON_WRITE, body: JSON.stringify(choice), signal };
+  }
+  return send(projectUrl(pid, "/vocabularies/inspect"), init).then((r) => handle<VocabularyInspection>(r));
 }
 
 // Box positions and the shown set. Not a change to the model (D-087).

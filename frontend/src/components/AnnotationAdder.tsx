@@ -263,6 +263,9 @@ export default function AnnotationAdder({ iri, primaryLanguage, languages, runne
     ["Common", "suggested"],
     ["In this model", "document"],
     ["From imports", "import"],
+    // An added vocabulary's properties, each with its title (vocabularies-
+    // and-ontologies 5.5): Dublin Core Elements' dc:creator.
+    ["From added vocabularies", "vocabulary"],
   ];
   const errorId = `${id}-error`;
   return (
@@ -300,7 +303,7 @@ export default function AnnotationAdder({ iri, primaryLanguage, languages, runne
             <optgroup key={source} label={title}>
               {inGroup.map((o) => (
                 <option key={o.iri} value={o.iri}>
-                  {o.prefixed}
+                  {o.vocabulary ? `${o.prefixed} (${o.vocabulary})` : o.prefixed}
                 </option>
               ))}
             </optgroup>
