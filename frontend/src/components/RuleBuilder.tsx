@@ -26,6 +26,11 @@ BASIC IDEA
     the caller gives focus back to what opened it. The server's refusal
     stands under the builder; the caller also says it in the live region.
 
+    A rule the reasoner will not use (owl-rl-warnings 5.2) gets its note
+    under the sentence, in a status region, as soon as the kind and count
+    make one; Add and Save stay as they were. Which rules is the server's
+    answer for each shape, sent with the choices, never decided here.
+
     A select offers at most the first 1,000 choices of each kind, and says
     so with the true total when there are more (CLAUDE.md rule 6).
 
@@ -53,11 +58,14 @@ import {
   RULE_TYPES,
   VALUE_TYPES,
   builderCommand,
+  builderParts,
   builderProblem,
   builderSentence,
+  builderUnused,
   isCount,
   kindsFor,
   propertyKind,
+  unusedNote,
   type BuilderState,
   type RuleType,
 } from "../modeling/ruleSentences";
@@ -118,6 +126,10 @@ export default function RuleBuilder({
   const set = (part: Partial<BuilderState>) => setState((s) => ({ ...s, ...part }));
   const sentence = useMemo(() => builderSentence(name, state, choices), [name, state, choices]);
   const problem = builderProblem(state, choices);
+  // A rule reasoning will not use (owl-rl-warnings 5.2): said before Save,
+  // never stopping it. Which rules is the server's table, in `choices`.
+  const unused = builderUnused(state, choices);
+  const unusedText = unused ? unusedNote(name, unused, builderParts(state, choices)) : null;
   const command = builderCommand(cls, state, choices, replacing);
   const pkind = propertyKind(state, choices);
   const kinds = kindsFor(pkind);
@@ -303,6 +315,11 @@ export default function RuleBuilder({
       <p className="rule-preview" aria-hidden="true">
         Reads: {sentence}.
       </p>
+      {/* Always in the page, so the note is read when it appears or
+          changes, once; it never takes focus (5.7). */}
+      <div role="status" className="rule-unused">
+        {unusedText && <p className="detail-note">{unusedText}</p>}
+      </div>
       {problem && (
         <p id={`${id}-problem`} className="detail-note">
           {problem}

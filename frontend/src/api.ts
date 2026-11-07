@@ -114,6 +114,7 @@ import type {
   ReasoningAbout,
   ReasoningGroupKind,
   ReasoningPage,
+  UnusedSource,
   ReasoningResult,
   DataChoices,
   DataInspection,
@@ -1412,6 +1413,18 @@ export function getReasoningPage(
 ): Promise<ReasoningPage> {
   const query = `?group=${group}&offset=${offset}${imports ? "&imports=true" : ""}`;
   return send(projectUrl(pid, `/reasoning${query}`)).then((r) => handle<ReasoningPage>(r));
+}
+
+/** One page of a source's rules the reasoner did not use (owl-rl-warnings
+ *  5.6): the same route, the group `unused:<source>`, 50 at a time. */
+export function getUnusedPage(
+  pid: string,
+  kind: string,
+  offset: number,
+  imports: boolean,
+): Promise<UnusedSource & { stale: boolean }> {
+  const query = `?group=${encodeURIComponent(kind)}&offset=${offset}${imports ? "&imports=true" : ""}`;
+  return send(projectUrl(pid, `/reasoning${query}`)).then((r) => handle<UnusedSource & { stale: boolean }>(r));
 }
 
 /** The last result's facts about one entity, for the detail panel. */

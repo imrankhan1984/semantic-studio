@@ -17,6 +17,10 @@ BASIC IDEA
     the browser is the frame around them, and that is here so every state
     of Section 6 can be tested without rendering a panel.
 
+    Which rules the reasoner did not use comes counted per source from the
+    server (owl-rl-warnings 5.6); the line and the headings around them are
+    said here.
+
     A result is stale once the open model's revision, the snapshots'
     generation or the imports switch is not what it was computed on (5.3),
     or when the server already said so -- a change made while it ran. The
@@ -31,7 +35,7 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import type { ReasoningGroupKind, ReasoningResult } from "../types";
+import type { ReasoningGroupKind, ReasoningResult, ReasoningUnused, UnusedSource } from "../types";
 
 export const INTRO =
   "Reasoning (OWL 2 RL) draws conclusions about the classes and things you have. It does not invent new things, and it changes nothing in your file.";
@@ -115,6 +119,32 @@ export function panelHeading(result: ReasoningResult | null): string {
 }
 
 /** How a premise is marked, in text (Section 6, never colour alone). */
+// --- rules the reasoner did not use (owl-rl-warnings 5.6) ---------------------------
+
+export const SHOW_THEM = "Show them";
+
+/** Where a source's rules are: *your model*, or the vocabulary's name. */
+export function sourcePlace(source: UnusedSource): string {
+  return source.source === "model" ? "your model" : source.name;
+}
+
+/** *Reasoning did not use 3 rules in your model and 97 in QUDT.* The noun
+ *  comes once, with the first count; null when every rule was used. */
+export function unusedLine(unused: ReasoningUnused | undefined): string | null {
+  const sources = (unused?.sources ?? []).filter((s) => s.count > 0);
+  if (!unused || unused.total === 0 || sources.length === 0) return null;
+  const parts = sources.map((s, i) =>
+    i === 0 ? `${plural(s.count, "rule", "rules")} in ${sourcePlace(s)}` : `${count(s.count)} in ${sourcePlace(s)}`,
+  );
+  const said = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+  return `Reasoning did not use ${said}.`;
+}
+
+/** A source's heading in the list: *In your model (3)*, *In QUDT (97)*. */
+export function unusedHeading(source: UnusedSource): string {
+  return `In ${sourcePlace(source)} (${count(source.count)})`;
+}
+
 export function premiseMark(inferred: boolean): string {
   return inferred ? "inferred" : "stated";
 }

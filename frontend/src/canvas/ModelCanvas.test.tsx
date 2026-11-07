@@ -10,7 +10,8 @@ SUMMARY
     palette, a drop onto a class, the relate menu and its refusals, rename,
     delete, moving a box, the shared selection, and that React Flow is only
     ever loaded lazily. attribute-reuse 5.8: from an RDFS class, the relate
-    menu's offer makes it an OWL class, then begins the rule.
+    menu's offer makes it an OWL class, then begins the rule. A rule the
+    reasoner does not use carries ⊘ and *not used by reasoning* (owl-rl-warnings 5.3).
 
 BASIC IDEA
     React Flow is stubbed, as GraphView's tests stub Sigma: the stub renders
@@ -118,7 +119,7 @@ vi.mock("@xyflow/react", async (importOriginal) => {
   };
 });
 
-import ModelCanvas from "./ModelCanvas";
+import ModelCanvas, { EdgeLabelText } from "./ModelCanvas";
 import { ReasonControls } from "../components/ReasoningPanel";
 import { TIP_KEY } from "./CanvasAids";
 import CSS from "../index.css?raw";
@@ -1638,6 +1639,28 @@ describe("rule lines and boxes (axioms-and-reasoning 5.9, AC-11)", () => {
     expect(every.id).not.toBe(defines.id);
   });
 
+  it("marks a rule the reasoner does not use with ⊘ first and says it in the line's name (owl-rl-warnings 5.3)", async () => {
+    const view = ruled();
+    const edges = view.edges.map((e) =>
+      e.kind === "rule" && e.rule?.form === "every" ? { ...e, rule: { ...e.rule, reasoner: "unused" as const, reason: "some" as const } } : e,
+    );
+    await renderCanvas({ ...view, edges });
+    const [every, defines] = rules();
+    expect(every.data.unused).toBe(true);
+    expect(every.ariaLabel).toBe("Every Invoice (en) has at least one line that is a Document, a rule, not used by reasoning");
+    // A rule the reasoner uses carries neither.
+    expect(defines.data.unused).toBe(false);
+    expect(defines.ariaLabel).not.toMatch(/not used by reasoning/);
+    const marked = render(<EdgeLabelText unused={every.data.unused} text={every.data.text} />);
+    expect(marked.container.textContent).toBe("⊘ at least 1 · has line");
+    const mark = marked.container.querySelector(".rule-unused-mark")!;
+    expect(mark.getAttribute("aria-hidden")).toBe("true");
+    expect(marked.container.firstChild).toBe(mark);
+    const plain = render(<EdgeLabelText unused={defines.data.unused} text={defines.data.text} />);
+    expect(plain.container.textContent).toBe("defines");
+    expect(plain.container.querySelector(".rule-unused-mark")).toBeNull();
+  });
+
   it("writes disjointness in the box and counts the rules it does not draw", async () => {
     await renderCanvas(ruled());
     expect(within(box("Invoice (en)")).getByText("never a Document")).toBeTruthy();
@@ -1813,6 +1836,8 @@ describe("the legend and its help (edit-page-rework 5.7)", () => {
       "relationship",
       "broader",
       "rule",
+      // owl-rl-warnings 5.3: what the ⊘ on a rule's label means.
+      "⊘ marks a rule the reasoner does not use.",
     ]);
     const help = screen.getByRole("button", { name: "Keyboard help" });
     act(() => help.focus());

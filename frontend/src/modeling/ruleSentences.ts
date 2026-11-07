@@ -8,8 +8,10 @@ SUMMARY
     both ways: a rule as its sentence (*Every Order has at least one has
     line that is an Order line*, *A Manager is exactly a Person that manages
     at least one Employee*, *No Person is an Organization*), its canvas
-    label (*at least 1 · has line*, *only · has line*, *defines*) and its
-    open-world note; and the sentence builder's state as the sentence so
+    label (*at least 1 · has line*, *only · has line*, *defines*), its
+    open-world note and, for a rule the reasoner does not use, its note
+    (owl-rl-warnings 5.2: which rules is the server's key, read here and
+    never decided); and the sentence builder's state as the sentence so
     far, the problem that stops Add, and the one command Add sends.
 
 BASIC IDEA
@@ -41,7 +43,17 @@ EXPECTED OUTPUT
 ================================================================================
 */
 
-import type { AnnotationValue, RuleChoices, RuleForm, RuleItem, RuleKey, RuleKind, RuleRef, RuleRestriction } from "../types";
+import type {
+  AnnotationValue,
+  RuleChoices,
+  RuleForm,
+  RuleItem,
+  RuleKey,
+  RuleKind,
+  RuleRef,
+  RuleRestriction,
+  UnusedReason,
+} from "../types";
 import { a, verb } from "./sentences";
 import { plural } from "./shapeSentences";
 
@@ -229,6 +241,71 @@ export function openWorldNote(cls: string, parts: RuleParts): string {
 }
 
 // ---------------------------------------------------------------------------
+// Rules the reasoner does not use (owl-rl-warnings 5.2)
+// ---------------------------------------------------------------------------
+
+const NOT_USED = "Reasoning won't use this rule: the reasoner here follows OWL 2 RL, which draws no conclusion from";
+
+/** The note under a rule the reasoner does not use, before Save and once
+ *  saved, filled as openWorldNote is. Which rules is the server's key
+ *  (axioms.unused_by_reasoner), never decided here. `parts` is null for a
+ *  rule shown as its Turtle, which has no sentence to fill. */
+export function unusedNote(cls: string, reason: UnusedReason, parts: RuleParts | null): string {
+  if (reason === "definedByCount") {
+    return "Reasoning won't use this definition: the reasoner here follows OWL 2 RL, which draws no conclusion from a count in a definition.";
+  }
+  if (reason === "exactlyOneOf") return `${NOT_USED} "exactly one of".`;
+  if (!parts || !["some", "atLeast", "exactly", "atMostMany"].includes(reason)) return `${NOT_USED} it.`;
+  const t = parts.property ? thing(parts.property) : BLANK;
+  const n = parts.n ?? 0;
+  const check = "use Check it in data too.";
+  switch (reason) {
+    case "some":
+      return `${NOT_USED} "at least one". To find ${a(cls)} with no ${t}, ${check}`;
+    case "atLeast":
+      return `${NOT_USED} "at least ${countWord(n)}". To find ${a(cls)} with fewer than ${n} ${n === 1 ? t : plural(t)}, ${check}`;
+    case "exactly": {
+      const head = `${NOT_USED} "exactly ${countWord(n)}", not even its "at most" part. To find ${a(cls)} with another number of ${plural(t)}, ${check}`;
+      return n === 1 ? `${head} For reasoning to use "at most one", add it as a rule of its own.` : head;
+    }
+    default:
+      return `${NOT_USED} "at most ${n}". It uses "at most" only for 0 or 1.`;
+  }
+}
+
+/** Whether reasoning would use the rule being built: the server's answer
+ *  for this form, kind and count (choices.reasoner), or null. A count not
+ *  yet a number has no answer. */
+export function builderUnused(state: BuilderState, choices: RuleChoices | null): UnusedReason | null {
+  if ((state.type !== "every" && state.type !== "defines") || !state.kind) return null;
+  const answers = choices?.reasoner?.[state.type]?.[state.kind];
+  if (!answers) return null;
+  if (!isCount(state.kind)) return answers[1] ?? null;
+  const n = parsedN(state);
+  return n === null ? null : (answers[Math.min(n, 2)] ?? null);
+}
+
+/** The builder's state as the parts its sentence and its note are built from. */
+export function builderParts(state: BuilderState, choices: RuleChoices | null): RuleParts {
+  const label = (list: RuleRef[] | undefined, iri: string | null) => find(list, iri)?.label ?? null;
+  const attribute = propertyKind(state, choices) === "attribute";
+  let filler: string | null = null;
+  if (state.kind === "value") {
+    filler = attribute ? state.value.trim() || null : label(choices?.things.items, state.filler);
+  } else if (state.filler) {
+    filler = attribute ? (find(VALUE_TYPES, state.filler)?.label ?? state.filler) : label(choices?.classes.items, state.filler);
+  }
+  return {
+    form: state.type === "defines" ? "defines" : "every",
+    kind: state.kind,
+    property: label(choices?.properties.items, state.property),
+    filler,
+    n: isCount(state.kind) ? parsedN(state) : null,
+    with: state.type === "defines" ? label(choices?.classes.items, state.with) : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // The sentence builder
 // ---------------------------------------------------------------------------
 
@@ -325,21 +402,7 @@ export function builderSentence(cls: string, state: BuilderState, choices: RuleC
     const other = label(choices?.classes.items, state.other);
     return equivalentSentence(cls, other ?? BLANK);
   }
-  const attribute = propertyKind(state, choices) === "attribute";
-  let filler: string | null = null;
-  if (state.kind === "value") {
-    filler = attribute ? state.value.trim() || null : label(choices?.things.items, state.filler);
-  } else if (state.filler) {
-    filler = attribute ? (find(VALUE_TYPES, state.filler)?.label ?? state.filler) : label(choices?.classes.items, state.filler);
-  }
-  return restrictionSentence(cls, {
-    form: state.type,
-    kind: state.kind,
-    property: label(choices?.properties.items, state.property),
-    filler,
-    n: isCount(state.kind) ? parsedN(state) : null,
-    with: state.type === "defines" ? label(choices?.classes.items, state.with) : null,
-  });
+  return restrictionSentence(cls, builderParts(state, choices));
 }
 
 /** What stops Add, in words, or null when the rule can be written. The

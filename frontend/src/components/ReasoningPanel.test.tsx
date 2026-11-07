@@ -12,7 +12,8 @@ SUMMARY
     paged with Show more, facts about imported terms collapsed, and a run
     that outlives its project ignored. X-12: a failed Stop and a refused
     Reason said once, in the app's words; Show more paging by the result's
-    own imports switch.
+    own imports switch. The rules a run did not use: one line per source
+    and Show them, grouped and paged (owl-rl-warnings 5.6).
 
 BASIC IDEA
     The run lives in the project store, so the store is opened for real over
@@ -31,14 +32,15 @@ EXPECTED OUTPUT
 
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProjectKind, ReasoningGroup, ReasoningResult } from "../types";
+import type { ProjectKind, ReasoningGroup, ReasoningResult, UnusedSource } from "../types";
 
-const { openProject, listData, reasonProject, stopReasoning, getReasoningPage, getWhy } = vi.hoisted(() => ({
+const { openProject, listData, reasonProject, stopReasoning, getReasoningPage, getUnusedPage, getWhy } = vi.hoisted(() => ({
   openProject: vi.fn(),
   listData: vi.fn(),
   reasonProject: vi.fn(),
   stopReasoning: vi.fn(),
   getReasoningPage: vi.fn(),
+  getUnusedPage: vi.fn(),
   getWhy: vi.fn(),
 }));
 
@@ -49,6 +51,7 @@ vi.mock("../api", async (importOriginal) => ({
   reasonProject,
   stopReasoning,
   getReasoningPage,
+  getUnusedPage,
   getWhy,
 }));
 
@@ -543,5 +546,70 @@ describe("Focus and endings (PR #55 review)", () => {
     rerender(view("ontology", { ...NOW, imports: true }));
     await run.answer(result());
     expect(said()).toBe("Reasoned in 4 s, but the model changed meanwhile: Reason again.");
+  });
+});
+
+describe("rules the reasoner did not use (owl-rl-warnings 5.6, AC-6, AC-8)", () => {
+  function source(id: string, name: string, count: number, editable: boolean, shown = count): UnusedSource {
+    return {
+      source: id,
+      name,
+      kind: `unused:${id}`,
+      count,
+      total: count,
+      offset: 0,
+      items: Array.from({ length: shown }, (_, i) => ({
+        iri: X + `C${id}${i}`,
+        reason: "atLeast" as const,
+        editable,
+        label: `C${id}${i} · at least 1 · p`,
+      })),
+    };
+  }
+  const unused = (sources: UnusedSource[]) => ({ total: sources.reduce((n, s) => n + s.count, 0), sources });
+
+  async function ran(r: ReasoningResult) {
+    await setup();
+    const run = pending();
+    await press("Reason");
+    await run.answer(r);
+  }
+
+  it("says how many per source under the result, and Show them lists them by source", async () => {
+    await ran(result({ unused: unused([source("model", "Shop", 3, true), source("qudt", "QUDT 3.5.2", 97, false, 50)]) }));
+    expect(screen.getByText(/^Reasoning did not use 3 rules in your model and 97 in QUDT 3.5.2./)).toBeTruthy();
+    const show = screen.getByRole("button", { name: "Show them" });
+    expect(show.getAttribute("aria-expanded")).toBe("false");
+    await press("Show them");
+    expect(show.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("heading", { name: "In your model (3)" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "In QUDT 3.5.2 (97)" })).toBeTruthy();
+    // The model's rule opens its form; a vocabulary's is text, read-only.
+    await press("Cmodel0 · at least 1 · p");
+    expect(onSelect).toHaveBeenCalledWith(X + "Cmodel0");
+    expect(screen.queryByRole("button", { name: "Cqudt0 · at least 1 · p" })).toBeNull();
+    expect(screen.getByText("Cqudt0 · at least 1 · p")).toBeTruthy();
+    // 50 at a time, through the same route.
+    expect(screen.getByText("50 of 97 shown")).toBeTruthy();
+    getUnusedPage.mockResolvedValue({ ...source("qudt", "QUDT 3.5.2", 97, false, 47), offset: 50, stale: false });
+    await press("Show more");
+    expect(getUnusedPage).toHaveBeenCalledWith(PID, "unused:qudt", 50, false);
+    expect(screen.queryByText("50 of 97 shown")).toBeNull();
+    await press("Show them");
+    expect(screen.queryByRole("heading", { name: "In your model (3)" })).toBeNull();
+  });
+
+  it("one source reads alone, and is said even when nothing else followed", async () => {
+    await ran(result({ problems: [], groups: [], unused: unused([source("model", "Shop", 1, true)]) }));
+    expect(screen.getByText(/^Reasoning did not use 1 rule in your model./)).toBeTruthy();
+    expect(screen.getByText("Nothing new follows, and nothing contradicts.")).toBeTruthy();
+  });
+
+  it("no line when every rule was used, or when the run did not finish", async () => {
+    await ran(result({ unused: { total: 0, sources: [] } }));
+    expect(screen.queryByRole("button", { name: "Show them" })).toBeNull();
+    cleanup();
+    await ran(result({ status: "timedOut", sentence: "Stopped after 30 seconds.", unused: undefined }));
+    expect(screen.queryByRole("button", { name: "Show them" })).toBeNull();
   });
 });

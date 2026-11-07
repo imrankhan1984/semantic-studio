@@ -5719,6 +5719,14 @@ kbd {
   font-style: italic;
 }
 
+/* A rule the reasoner does not use (owl-rl-warnings 5.3): the ⊘ on its
+   canvas label and in the legend, in the warning colour of both themes.
+   The symbol and the words say it; the colour only adds to them. */
+.rule-unused-mark {
+  color: var(--result-warnings);
+  font-weight: 600;
+}
+
 /* A 5.9 warning: marked by text and a border, not colour alone. */
 .form-warnings {
   list-style: none;

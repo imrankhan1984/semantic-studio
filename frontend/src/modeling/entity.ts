@@ -148,6 +148,9 @@ export interface EntityModel {
    *  its blank node; null when the server sent none. */
   domainReading: DomainReading | null;
   range: Ref | null;
+  /** A range that is a class list the reasoner does not use: the server's
+   *  key (owl-rl-warnings 5.4). */
+  rangeUnused: boolean;
   /** A relationship whose range is skos:Concept takes its values from a branch
    *  of concepts (skos-and-owl 5.3); `branch` is the branch concept, or null
    *  when there is no branch rule yet. */
@@ -310,6 +313,7 @@ export function entityModel(details: NodeDetails, primary: string, languages: st
       : (objects(P.domain)[0] ?? null),
     domainReading: details.domain ?? null,
     range: objects(P.range)[0] ?? null,
+    rangeUnused: details.rangeReasoner?.reasoner === "unused",
     branchRange: Boolean(details.branchRange),
     branch: details.branch ?? null,
     broader: uniq([...objects(P.broader), ...subjects(P.narrower)]),

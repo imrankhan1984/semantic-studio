@@ -92,7 +92,9 @@ export default function SharedDomain({ ontologyId, iri, name, model, runner, onS
               </li>
             ))}
           </ul>
-          {reading.form === "union" && <p className="detail-note">{REASONER_NOTE}</p>}
+          {/* The server's key says the reasoner does not use the list
+              (owl-rl-warnings 5.4, axioms.unused_by_reasoner). */}
+          {reading.reasoner === "unused" && <p className="detail-note">{REASONER_NOTE}</p>}
         </>
       )}
       {separate && (

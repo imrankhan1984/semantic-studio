@@ -116,7 +116,13 @@ async function show(domain: DomainReading, warnings: ModelWarning[] = []) {
 /** A form block is a section under its heading. */
 const belongsTo = () => screen.getByRole("heading", { name: "Belongs to" }).closest("section") as HTMLElement;
 
-const UNION: DomainReading = { form: "union", classes: [ref("Employee"), ref("Contractor"), ref("Intern")] };
+// The server marks a class list the reasoner does not use (owl-rl-warnings 5.4).
+const UNION: DomainReading = {
+  form: "union",
+  classes: [ref("Employee"), ref("Contractor"), ref("Intern")],
+  reasoner: "unused",
+  reason: "classList",
+};
 const TWO_LINES: DomainReading = { form: "separate", classes: [ref("Employee"), ref("Team")] };
 
 beforeEach(async () => {
@@ -159,6 +165,11 @@ describe("Belongs to, for a shared domain (attribute-reuse 5.3)", () => {
     expect(within(block).queryByRole("button", { name: /the class hasName belongs to/ })).toBeNull();
     // Section 7: the reasoner's limit, said where it matters.
     expect(within(block).getByText(/draws no conclusion from a shared class list/)).toBeTruthy();
+  });
+
+  it("says the reasoner's limit by the server's key, never by the form alone (owl-rl-warnings 5.4)", async () => {
+    await show({ form: "union", classes: UNION.classes });
+    expect(within(belongsTo()).queryByText(/draws no conclusion from a shared class list/)).toBeNull();
   });
 
   it("Remove is UnshareDomain for that class", async () => {
