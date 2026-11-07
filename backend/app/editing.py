@@ -4726,6 +4726,13 @@ class EditingService:
                 )
                 key = reasoning.Key(ontology.revision, self.snapshots.generation(pid), imports, include_data, view)
                 imported = set(view["importedFrom"]) if view is not None else set()
+                # What the reasoner will not use, per source of the same set
+                # (owl-rl-warnings 5.6): read here, never in the worker. The
+                # model's rules open their Edit form; a vocabulary's do not.
+                sources = [("model", manifest.get("name") or "your model", model_doc.graph, True)]
+                if view is not None:
+                    sources += [(s["id"], s["name"], s["graph"], False) for s in view.get("sources", [])]
+                unused = reasoning.unused_by_source(sources, languages)
             data = Graph()
             if include_data:
                 generation, snapshots = self.snapshots.active(pid)
@@ -4751,7 +4758,7 @@ class EditingService:
                 stated = list(model) + list(data)
                 outcome = reasoning.analyse(
                     stated, raw, key=key, languages=languages, probes=probes, imported=imported,
-                    statements=statements,
+                    statements=statements, unused=unused,
                 )
             return outcome.summary(self.reasoning_key(pid, imports, include_data))
         finally:

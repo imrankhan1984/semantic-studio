@@ -70,6 +70,11 @@ EXPECTED OUTPUT
       name a class; owl_about(view, own, cls, name)
       -> what an RDFS class cannot carry (attribute-reuse 5.7, D-117), as
       the Rules block's items and the statements holding them.
+    - unused_by_reasoner(graph, node) -> None, or why the reasoner does not
+      use that rule (owl-rl-warnings 5.1, D-129): the one decider, read by
+      the form, the canvas, H1 and the reasoning result; unused_rules(graph)
+      every such rule, unused_label / unused_words a few words for one, and
+      builder_reasons() its answers for each shape the Rules form writes.
 
     A property's domain is read here and nowhere else but editing.py, which
     writes it (test_axioms.py scans). Two rdfs:domain values mean *both*
@@ -83,6 +88,7 @@ EXPECTED OUTPUT
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -477,7 +483,7 @@ def class_rules(g: Graph, cls: URIRef, own: Graph, name: Name) -> list[dict]:
     readable = set()
     for predicate, node, content in contents(g, cls):
         readable.add(node)
-        items.append(restriction_json(g, content, name, mine((cls, predicate, node))))
+        items.append(_marked(restriction_json(g, content, name, mine((cls, predicate, node))), g, node))
     items.sort(key=lambda i: (i["form"] != "every", i["property"]["label"].casefold(), KINDS.index(i["kind"]), i["n"] or 0))
     for other in named_pairs(g, cls, OWL.equivalentClass):
         held = mine((cls, OWL.equivalentClass, other)) or mine((other, OWL.equivalentClass, cls))
@@ -494,7 +500,9 @@ def class_rules(g: Graph, cls: URIRef, own: Graph, name: Name) -> list[dict]:
             if node in readable or (isinstance(node, URIRef) and predicate != OWL.disjointUnionOf and not itself):
                 continue
             triples = [(cls, predicate, node), *closure(g, node)]
-            outside.append({"type": "turtle", "turtle": turtle_of(g, triples), "editable": False})
+            # A disjoint union is asked of its class, the node the rule names.
+            asked = cls if predicate == OWL.disjointUnionOf else node
+            outside.append(_marked({"type": "turtle", "turtle": turtle_of(g, triples), "editable": False}, g, asked))
     # Disjointness of a group is no sentence of 5.8 and names other classes
     # than this one: its Turtle, which no command rewrites (AC-9).
     for node, members in disjoint_groups(g):
@@ -502,6 +510,16 @@ def class_rules(g: Graph, cls: URIRef, own: Graph, name: Name) -> list[dict]:
             outside.append({"type": "turtle", "turtle": turtle_of(g, _statements(g, node)), "editable": False})
     outside.sort(key=lambda i: i["turtle"])
     return items + outside
+
+
+def _marked(item: dict, g: Graph, node) -> dict:
+    """An item the reasoner does not use carries `reasoner: "unused"` and
+    the reason (owl-rl-warnings 5.1); a used one carries neither."""
+    reason = unused_by_reasoner(g, node)
+    if reason is not None:
+        item["reasoner"] = "unused"
+        item["reason"] = reason
+    return item
 
 
 def read_only_rules(g: Graph, cls: URIRef, name: Name) -> list[dict]:
@@ -646,6 +664,9 @@ def choices(g: Graph, own: Graph, name: Name) -> dict:
         "properties": capped(properties),
         "classes": capped([{**_ref(c, name), "type": kind_of(g, own, c), "own": defined(own, c)} for c in classes]),
         "things": capped([_ref(t, name) for t in things]),
+        # Whether reasoning uses the rule being built, before Save
+        # (owl-rl-warnings 5.2): the one decider's answers, by shape.
+        "reasoner": builder_reasons(),
     }
 
 
@@ -1054,3 +1075,209 @@ def reuse_plan(view: Graph, own: Graph, prop, cls, name: Name, imported_from: Op
 
 def _is_class(g: Graph, cls) -> bool:
     return isinstance(cls, URIRef) and any((cls, RDF.type, t) in g for t in (OWL.Class, RDFS.Class))
+
+
+# --- rules the reasoner does not use (owl-rl-warnings 5.1, D-129) -------------------
+#
+# The table is what OWL-RL does, measured rule by rule (owl-rl-warnings
+# Section 1), never the W3C grammar of the profile: a definition by *at
+# least one* is outside that grammar, yet the engine places a thing that
+# fits. test_axioms.py runs each row through owlrl, so a new engine that
+# behaves otherwise turns the test red before a note says something untrue.
+
+UNUSED_REASONS = (
+    "some", "atLeast", "exactly", "atMostMany", "definedByCount", "classList", "exactlyOneOf", "reflexive",
+)
+_UNUSED_BY_KIND = {"atLeast": "atLeast", "exactly": "exactly", "atMost": "atMostMany"}
+# Read in this order, so a node carrying two counts gives the same key every run.
+_COUNT_ORDER = tuple(p for pair in _COUNTS.values() for p in pair)
+# A list walked up or down stops here, or on a revisit: it is attacker-shaped.
+_WALK_MAX = 1000
+
+
+def _list_head(g: Graph, member) -> list:
+    """The heads of the RDF lists `member` is in, each walked back from its
+    cell along rdf:rest."""
+    heads = []
+    for cell in g.subjects(RDF.first, member):
+        head, seen = cell, {cell}
+        while len(seen) < _WALK_MAX:
+            before = next((s for s in g.subjects(RDF.rest, head) if s not in seen), None)
+            if before is None:
+                break
+            seen.add(before)
+            head = before
+        heads.append(head)
+    return heads
+
+
+def _defining(g: Graph, node) -> bool:
+    """Whether `node` is a class's definition: the object of owl:equivalentClass,
+    or a member of an owl:intersectionOf that is."""
+    if (None, OWL.equivalentClass, node) in g or (node, OWL.equivalentClass, None) in g:
+        return True
+    for head in _list_head(g, node):
+        for holder in g.subjects(OWL.intersectionOf, head):
+            if (None, OWL.equivalentClass, holder) in g or (holder, OWL.equivalentClass, None) in g:
+                return True
+    return False
+
+
+def _restriction_reason(g: Graph, node, defining: bool) -> Optional[str]:
+    if (node, OWL.onProperty, None) not in g:
+        return None
+    for predicate in _COUNT_ORDER:
+        if (node, predicate, None) not in g:
+            continue
+        kind, _ = _COUNT_BY_PREDICATE[predicate]
+        n = _count(_one(g, node, predicate))
+        # *At most* 0 or 1 is the one count the engine acts on (rows 4, 9);
+        # a count it cannot read as a number is none it can act on.
+        if kind == "atMost" and n is not None and n <= 1:
+            return None
+        return "definedByCount" if defining else _UNUSED_BY_KIND[kind]
+    # *At least one* is used only as a definition (rows 1, 8); *only* and
+    # a value always (rows 6, 7).
+    if (node, OWL.someValuesFrom, None) in g and not defining:
+        return "some"
+    return None
+
+
+def unused_by_reasoner(g: Graph, node) -> Optional[str]:
+    """None when the reasoner uses the rule at `node`, else its reason key
+    (UNUSED_REASONS): the one decider, Section 1's table row for row. `node`
+    is a restriction under rdfs:subClassOf or owl:equivalentClass (or the
+    intersection a definition is), a domain's or range's blank node, a class
+    with owl:disjointUnionOf, or a property typed owl:ReflexiveProperty."""
+    if isinstance(node, URIRef):
+        if (node, OWL.disjointUnionOf, None) in g:
+            return "exactlyOneOf"
+        if (node, RDF.type, OWL.ReflexiveProperty) in g:
+            return "reflexive"
+        return None
+    if not isinstance(node, BNode):
+        return None
+    if (node, OWL.unionOf, None) in g and ((None, RDFS.domain, node) in g or (None, RDFS.range, node) in g):
+        return "classList"
+    defining = _defining(g, node)
+    if defining and (node, OWL.intersectionOf, None) in g:
+        head = _one(g, node, OWL.intersectionOf)
+        for member in (_list(g, head) or [])[:_WALK_MAX] if head is not None else []:
+            if isinstance(member, BNode):
+                reason = _restriction_reason(g, member, True)
+                if reason is not None:
+                    return reason
+        return None
+    if not defining and (None, RDFS.subClassOf, node) not in g:
+        return None  # nested elsewhere: none of Section 1's shapes
+    return _restriction_reason(g, node, defining)
+
+
+def unused_rules(g: Graph) -> list[tuple]:
+    """Every rule in `g` the reasoner does not use, as (subject, node,
+    reason): the class or property it is about, the node unused_by_reasoner
+    was asked of, and its answer. One scan of each predicate, each candidate
+    asked once; in IRI order, so a list reads the same every run."""
+    candidates: dict = {}
+    for predicate in (RDFS.subClassOf, OWL.equivalentClass, RDFS.domain, RDFS.range):
+        for s, o in g.subject_objects(predicate):
+            if isinstance(s, URIRef) and isinstance(o, BNode):
+                candidates.setdefault((s, o), None)
+    for s in g.subjects(OWL.disjointUnionOf, None):
+        if isinstance(s, URIRef):
+            candidates.setdefault((s, s), None)
+    for s in g.subjects(RDF.type, OWL.ReflexiveProperty):
+        if isinstance(s, URIRef):
+            candidates.setdefault((s, s), None)
+    found = []
+    for s, node in candidates:
+        reason = unused_by_reasoner(g, node)
+        if reason is not None:
+            found.append((s, node, reason))
+    found.sort(key=lambda t: (str(t[0]), t[2], str(t[1])))
+    return found
+
+
+def _members_text(g: Graph, head, name: Name) -> str:
+    members = [m for m in (_list(g, head) or [])[:UNION_MAX] if isinstance(m, URIRef)] if head is not None else []
+    if not members:
+        return "a class list"
+    names = [name(m) for m in members]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " or " + names[-1]
+
+
+def _count_words(g: Graph, node) -> Optional[tuple]:
+    """(words, property) of a restriction the reasoner does not use: *at
+    least 1*, *exactly 2*, as the canvas's short label says them."""
+    prop = _one(g, node, OWL.onProperty)
+    for predicate in _COUNT_ORDER:
+        if (node, predicate, None) in g:
+            kind, _ = _COUNT_BY_PREDICATE[predicate]
+            n = _count(_one(g, node, predicate))
+            words = {"atLeast": "at least", "exactly": "exactly", "atMost": "at most"}[kind]
+            return (f"{words} {n}" if n is not None else words), prop
+    if (node, OWL.someValuesFrom, None) in g:
+        return "at least 1", prop
+    return None
+
+
+def unused_words(g: Graph, subject, node, reason: str, name: Name) -> str:
+    """A rule the reasoner does not use, in a few words, without the class
+    or property it is about: *at least 1 · applicable unit*, *domain: Person
+    or Organization*, *exactly one of Car or Truck*, *reflexive*. For a rule
+    with no sentence of the Edit form's, and for the reasoning result's list."""
+    if reason == "reflexive":
+        return "reflexive"
+    if reason == "exactlyOneOf":
+        return f"exactly one of {_members_text(g, _one(g, subject, OWL.disjointUnionOf), name)}"
+    if reason == "classList":
+        which = "domain" if (subject, RDFS.domain, node) in g else "range"
+        return f"{which}: {_members_text(g, _one(g, node, OWL.unionOf), name)}"
+    inner = node
+    if (node, OWL.intersectionOf, None) in g:
+        head = _one(g, node, OWL.intersectionOf)
+        inner = next(
+            (m for m in (_list(g, head) or [])[:_WALK_MAX] if isinstance(m, BNode) and _restriction_reason(g, m, True)),
+            node,
+        ) if head is not None else node
+    counted = _count_words(g, inner)
+    if counted is None:
+        return "a rule"
+    words, prop = counted
+    head = "defined by " if reason == "definedByCount" else ""
+    return f"{head}{words} · {name(prop)}" if isinstance(prop, URIRef) else f"{head}{words}"
+
+
+def unused_label(g: Graph, subject, node, reason: str, name: Name) -> str:
+    """The short label the reasoning result lists (owl-rl-warnings 5.6):
+    *QuantityKind · at least 1 · applicable unit*."""
+    return f"{name(subject)} · {unused_words(g, subject, node, reason, name)}"
+
+
+@functools.cache
+def builder_reasons() -> dict:
+    """The Rules form's answer before Save (owl-rl-warnings 5.2): for each
+    form and kind, the reason key at a count of 0, 1 and 2 or more, each
+    asked of unused_by_reasoner on a rule of that shape, so the browser
+    reads the one decider's answers and never decides itself."""
+    out: dict = {}
+    for form in FORMS:
+        out[form] = {}
+        for kind in KINDS:
+            answers = []
+            for n in (0, 1, 2):
+                g = Graph()
+                cls, prop, filler = URIRef("urn:x:C"), URIRef("urn:x:p"), URIRef("urn:x:D")
+                node, triples = restriction_triples(
+                    prop, kind, Literal("v") if kind == "value" else filler, n if kind in COUNT_KINDS else None, False,
+                )
+                if form == "every":
+                    triples = [(cls, RDFS.subClassOf, node), *triples]
+                    asked = node
+                else:
+                    asked, triples = defining_triples(cls, (node, triples), URIRef("urn:x:W"))
+                for t in triples:
+                    g.add(t)
+                answers.append(unused_by_reasoner(g, asked))
+            out[form][kind] = answers
+    return out

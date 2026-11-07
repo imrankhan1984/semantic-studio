@@ -20,7 +20,10 @@ SUMMARY
     form and never rewritten by it (AC-12, row R13 as the server sees it).
     attribute-reuse Stage B (D-117): kind_of reads the document's own
     typing first, and lists_naming finds the OWL lists naming a class,
-    stopping on a cycle.
+    stopping on a cycle. owl-rl-warnings (D-129): unused_by_reasoner answers
+    each row of Section 1 (fixtures/owl-rl-rows.ttl), the same rows through
+    the worker's OWL-RL prove the table true of the engine, and the scan
+    over QUDT stays under 100 ms.
 
 BASIC IDEA
     Through the HTTP API, as the frontend drives it, with the graph read
@@ -648,8 +651,12 @@ def test_rule_lines_on_the_canvas_and_a_defining_one(pid):
     assert set(lines) == {(EX + "Order", EX + "OrderLine"), (EX + "Manager", EX + "Employee")}
     order = lines[(EX + "Order", EX + "OrderLine")]
     assert order["rule"] == {"form": "every", "kind": "atLeast", "n": 1, "property": EX + "hasLine",
-                             "propertyLabel": "has line", "fillerLabel": "Order line", "withLabel": None}
+                             "propertyLabel": "has line", "fillerLabel": "Order line", "withLabel": None,
+                             # owl-rl-warnings 5.3: *at least* is not used; a
+                             # definition by *some* is, and carries no mark.
+                             "reasoner": "unused", "reason": "atLeast"}
     assert order["key"]["kind"] == "atLeast"
+    assert "reasoner" not in lines[(EX + "Manager", EX + "Employee")]["rule"]
     assert lines[(EX + "Manager", EX + "Employee")]["rule"]["form"] == "defines"
     assert lines[(EX + "Manager", EX + "Employee")]["rule"]["withLabel"] == "Person"
     nodes = {n["iri"]: n for n in view["nodes"]}
@@ -1100,3 +1107,170 @@ ex:Pet owl:equivalentClass [ owl:unionOf ( ex:Cat ex:Dog ) ] .
     loop.add((a, RDF.rest, b))
     loop.add((b, RDF.rest, a))
     assert lists_naming(loop, URIRef(EX + "Cat")) == []
+
+
+# --- rules the reasoner does not use (owl-rl-warnings 5.1, AC-1, AC-7) --------------
+
+ROWS = "http://example.org/rows#"
+
+
+@pytest.fixture(scope="module")
+def rows() -> Graph:
+    return Graph().parse(Path(__file__).parent / "fixtures" / "owl-rl-rows.ttl", format="turtle")
+
+
+def _r(local: str) -> URIRef:
+    return URIRef(ROWS + local)
+
+
+def _rule_node(g: Graph, subject: str, predicate) -> object:
+    """The one rule node a row's class or property holds; rows 11 and 12 are
+    asked of the class or property itself."""
+    if predicate is None:
+        return _r(subject)
+    (node,) = list(g.objects(_r(subject), predicate))
+    return node
+
+
+# Section 1, row for row: (row, subject, how its rule hangs, the key).
+SECTION_1 = [
+    ("1", "R1", RDFS.subClassOf, "some"),
+    ("2", "R2", RDFS.subClassOf, "atLeast"),
+    ("2 qualified", "R2q", RDFS.subClassOf, "atLeast"),
+    ("3", "R3", RDFS.subClassOf, "exactly"),
+    ("3 qualified", "R3q", RDFS.subClassOf, "exactly"),
+    ("4 at most 1", "R4", RDFS.subClassOf, None),
+    ("4 at most 0", "R4z", RDFS.subClassOf, None),
+    ("5", "R5", RDFS.subClassOf, "atMostMany"),
+    ("6", "R6", RDFS.subClassOf, None),
+    ("7", "R7", RDFS.subClassOf, None),
+    ("8", "R8", OWL.equivalentClass, None),
+    ("9 at least", "R9", OWL.equivalentClass, "definedByCount"),
+    ("9 at most 1", "R9m", OWL.equivalentClass, None),
+    ("10 domain", "p10", RDFS.domain, "classList"),
+    ("10 range", "p10r", RDFS.range, "classList"),
+    ("11", "R11", None, "exactlyOneOf"),
+    ("12", "p12", None, "reflexive"),
+]
+
+
+@pytest.mark.parametrize("row,subject,how,key", SECTION_1, ids=[r[0] for r in SECTION_1])
+def test_unused_by_reasoner_answers_each_row_of_section_1(rows, row, subject, how, key):
+    assert axioms.unused_by_reasoner(rows, _rule_node(rows, subject, how)) == key
+
+
+@pytest.fixture(scope="module")
+def closed(rows) -> tuple:
+    """The fixture through OWL-RL exactly as the worker runs it."""
+    from app import reasoning_worker
+
+    g = Graph()
+    for t in rows:
+        g.add(t)
+    errors = reasoning_worker._closure(g)
+    return g, errors
+
+
+def _error_names(errors: list, *locals: str) -> bool:
+    """Whether a message names any of the row's terms: OWL-RL names the
+    value of a count, the thing of a disjointness."""
+    return any(f"{ROWS}{local}" in e for e in errors for local in locals)
+
+
+# What each row would conclude if the reasoner used it: True when it does.
+ENGINE = {
+    "1": lambda g, e: any(True for _ in g.objects(_r("r1"), _r("p1"))),
+    "2": lambda g, e: any(True for _ in g.objects(_r("r2"), _r("p2"))),
+    # Not even its *at most* half: the two values stay two.
+    "3": lambda g, e: (_r("a3"), OWL.sameAs, _r("b3")) in g,
+    "4 at most 1": lambda g, e: (_r("a4"), OWL.sameAs, _r("b4")) in g,
+    "4 at most 0": lambda g, e: _error_names(e, "r4z", "a4z"),
+    "5": lambda g, e: _error_names(e, "r5", "a5", "b5", "c5") or any(
+        (x, OWL.sameAs, y) in g for x in (_r("a5"), _r("b5")) for y in (_r("b5"), _r("c5")) if x != y
+    ),
+    "6": lambda g, e: (_r("a6"), RDF.type, _r("Y")) in g,
+    "7": lambda g, e: (_r("r7"), _r("p7"), _r("v7")) in g,
+    "8": lambda g, e: (_r("r8"), RDF.type, _r("R8")) in g,
+    "9 at least": lambda g, e: (_r("r9"), RDF.type, _r("R9")) in g,
+    "9 at most 1": lambda g, e: (_r("a9m"), OWL.sameAs, _r("b9m")) in g,
+    "10 domain": lambda g, e: _error_names(e, "r10", "x10"),
+    "10 range": lambda g, e: _error_names(e, "s10", "t10"),
+    "11": lambda g, e: _error_names(e, "r11"),
+    "12": lambda g, e: (_r("r12"), _r("p12"), _r("r12")) in g,
+}
+
+
+@pytest.mark.parametrize("row,subject,how,key", SECTION_1, ids=[r[0] for r in SECTION_1])
+def test_section_1_is_true_of_the_engine(closed, row, subject, how, key):
+    """Each row's *used* or *not used* is what OWL-RL does: a "No" row
+    concludes nothing the row would give, a "Yes" row does. If the engine
+    changes, this goes red before a note says something untrue (5.1)."""
+    engine = ENGINE.get(row) or ENGINE[row.split(" ")[0]]
+    assert engine(*closed) is (key is None), f"row {row}: the table says {'used' if key is None else 'not used'}"
+
+
+def test_unused_rules_lists_every_unused_row_once_with_its_subject(rows):
+    found = {(str(s)[len(ROWS):], reason) for s, _, reason in axioms.unused_rules(rows)}
+    assert found == {(subject, key) for _, subject, _, key in SECTION_1 if key is not None}
+
+
+def test_a_rule_nested_elsewhere_is_none_of_section_1s_shapes():
+    g = Graph().parse(data=f"""@prefix : <{ROWS}> . @prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+:A rdfs:subClassOf [ owl:unionOf ( :B [ a owl:Restriction ; owl:onProperty :p ; owl:someValuesFrom :C ] ) ] .
+""", format="turtle")
+    (inner,) = list(g.subjects(OWL.someValuesFrom, _r("C")))
+    assert axioms.unused_by_reasoner(g, inner) is None
+    assert axioms.unused_rules(g) == []
+
+
+def test_the_short_labels(rows):
+    name = lambda iri: str(iri)[len(ROWS):]  # noqa: E731
+    labels = {str(s)[len(ROWS):]: axioms.unused_label(rows, s, node, reason, name) for s, node, reason in axioms.unused_rules(rows)}
+    assert labels == {
+        "R1": "R1 · at least 1 · p1",
+        "R2": "R2 · at least 2 · p2",
+        "R2q": "R2q · at least 1 · p2",
+        "R3": "R3 · exactly 1 · p3",
+        "R3q": "R3q · exactly 1 · p3",
+        "R5": "R5 · at most 2 · p5",
+        "R9": "R9 · defined by at least 1 · p9",
+        "p10": "p10 · domain: A10 or B10",
+        "p10r": "p10r · range: A10 or B10",
+        "R11": "R11 · exactly one of B11 or C11",
+        "p12": "p12 · reflexive",
+    }
+
+
+def test_the_builder_reads_the_one_deciders_answers():
+    """5.2's rows 1, 2, 3, 5 and 9 as the form writes them; n of 0, 1, 2."""
+    table = axioms.builder_reasons()
+    assert table["every"] == {
+        "some": ["some"] * 3, "atLeast": ["atLeast"] * 3, "exactly": ["exactly"] * 3,
+        "atMost": [None, None, "atMostMany"], "only": [None] * 3, "value": [None] * 3,
+    }
+    assert table["defines"] == {
+        "some": [None] * 3, "atLeast": ["definedByCount"] * 3, "exactly": ["definedByCount"] * 3,
+        "atMost": [None, None, "definedByCount"], "only": [None] * 3, "value": [None] * 3,
+    }
+
+
+@pytest.mark.perf
+def test_the_unused_scan_over_qudt_budget():
+    """AC-7: the 5.1 scan over QUDT under 100 ms, median of five."""
+    from app.imports import load_bundled, load_manifest
+
+    (entry,) = [e for e in load_manifest()["vocabularies"] if e["id"] == "qudt"]
+    g = load_bundled(entry)
+    times = []
+    gc.disable()
+    try:
+        for _ in range(5):
+            start = time.perf_counter()
+            found = axioms.unused_rules(g)
+            times.append((time.perf_counter() - start) * 1000)
+    finally:
+        gc.enable()
+    assert len(found) >= 97
+    median = sorted(times)[2]
+    assert median <= limit_ms(100), f"the scan took {median:.1f} ms on QUDT (median of 5)"

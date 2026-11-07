@@ -988,7 +988,8 @@ class ImportsService:
     def merged(self, ontology: Ontology, parse_timeout: Optional[float] = None) -> dict:
         """The merged graph and what came from where, built once per closure.
 
-        Returns {"graph", "importedFrom", "documents"}. With nothing resolved
+        Returns {"graph", "importedFrom", "documents", "sources"}, the last
+        each resolved document as {id, name, graph}. With nothing resolved
         the graph is the file's own and nothing is marked, so turning the
         toggle on before resolving shows exactly the file.
         """
@@ -1000,12 +1001,23 @@ class ImportsService:
         own = ontology.ensure_loaded()
         state = load_state(ontology)
         docs: list[tuple[Graph, str]] = []
+        sources: list[dict] = []
         for row in (state or {}).get("rows", []):
             if row["status"] != RESOLVED or not row.get("ref"):
                 continue
             graph = self._graph_for(row["ref"], parse_timeout)
             if graph is not None:
                 docs.append((graph, row.get("sourceName") or row["iri"]))
+                # Each document by itself, for what is counted per source
+                # (owl-rl-warnings 5.6): a bundled vocabulary by its id
+                # however it resolved (a library copy of QUDT is still qudt),
+                # anything else by the IRI it was imported as.
+                bundled = bundled_for(row["iri"])
+                sources.append({
+                    "id": bundled["id"] if bundled is not None else row["iri"],
+                    "name": docs[-1][1],
+                    "graph": graph,
+                })
         view = MergedView([own] + [g for g, _ in docs])
         imported: dict[str, str] = {}
         with ontology.reading():
@@ -1015,7 +1027,7 @@ class ImportsService:
             for subject in held:
                 if isinstance(subject, URIRef) and subject not in own_subjects:
                     imported.setdefault(str(subject), name)
-        built = {"graph": view, "importedFrom": imported, "documents": len(docs)}
+        built = {"graph": view, "importedFrom": imported, "documents": len(docs), "sources": sources}
         ontology.merged_cache = {"view": built, "revision": ontology.revision}
         return built
 

@@ -7,6 +7,8 @@ SUMMARY
     Section 5.9 of relationships-and-project-kinds: every modeling check
     refuses or warns with its sentence (AC-10), and the checks for one
     command stay inside 20 ms on the 10,000-triple fixture (Section 10).
+    owl-rl-warnings 5.1 and 5.4: /node marks each rule, domain and range the
+    reasoner does not use, and carries the builder's table (AC-2).
 
 BASIC IDEA
     Refusals go through the command route, as the form sends them, and each
@@ -36,6 +38,7 @@ from __future__ import annotations
 
 import gc
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -558,3 +561,51 @@ def test_ac4_an_ordinary_name_raises_no_standard_term_warning(pid):
     # A name that is no standard term is never warned of (5.4).
     assert run(pid, "CreateDatatypeProperty", label="colour").status_code == 200
     assert all("standard term" not in w["text"] for w in warnings(pid, EX + "colour"))
+
+
+# --- owl-rl-warnings 5.1 and 5.4 on /node (AC-2) ------------------------------------
+
+ROWS = "http://example.org/rows#"
+ROWS_FILE = Path(__file__).parent / "fixtures" / "owl-rl-rows.ttl"
+
+
+def node(pid: str, iri: str) -> dict:
+    response = client.get(f"/api/ontologies/{pid}-model/node", params={"iri": iri})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+@pytest.mark.parametrize("cls,reason", [
+    ("R1", "some"), ("R2", "atLeast"), ("R2q", "atLeast"), ("R3", "exactly"), ("R3q", "exactly"),
+    ("R5", "atMostMany"), ("R9", "definedByCount"),
+    ("R4", None), ("R4z", None), ("R6", None), ("R7", None), ("R8", None), ("R9m", None),
+])
+def test_node_marks_each_rule_the_reasoner_does_not_use(pid, cls, reason):
+    assert apply(pid, ROWS_FILE.read_text(encoding="utf-8")).status_code == 200
+    (item,) = [i for i in node(pid, ROWS + cls)["rules"]["items"] if i["type"] == "restriction"]
+    if reason is None:
+        assert "reasoner" not in item and "reason" not in item
+    else:
+        assert (item["reasoner"], item["reason"]) == ("unused", reason)
+
+
+def test_node_marks_a_class_list_domain_and_range_and_a_disjoint_union(pid):
+    assert apply(pid, ROWS_FILE.read_text(encoding="utf-8")).status_code == 200
+    domain = node(pid, ROWS + "p10")["domain"]
+    assert domain["form"] == "union" and (domain["reasoner"], domain["reason"]) == ("unused", "classList")
+    assert "rangeReasoner" not in node(pid, ROWS + "p10")
+    ranged = node(pid, ROWS + "p10r")
+    assert ranged["rangeReasoner"] == {"reasoner": "unused", "reason": "classList"}
+    assert "reasoner" not in ranged["domain"]
+    # A rule outside the form's sentences is its Turtle, carrying the key.
+    (turtle,) = node(pid, ROWS + "R11")["rules"]["items"]
+    assert turtle["type"] == "turtle" and turtle["reason"] == "exactlyOneOf"
+    # One class, one domain: nothing to say.
+    assert "reasoner" not in node(pid, ROWS + "p1").get("domain", {})
+
+
+def test_the_builder_carries_the_one_deciders_table(pid):
+    assert apply(pid, ROWS_FILE.read_text(encoding="utf-8")).status_code == 200
+    from app import axioms
+
+    assert node(pid, ROWS + "R1")["rules"]["choices"]["reasoner"] == axioms.builder_reasons()

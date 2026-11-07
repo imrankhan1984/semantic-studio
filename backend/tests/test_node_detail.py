@@ -543,10 +543,11 @@ def test_a_class_has_nothing_it_is_not_under(hr):
 def test_a_property_carries_its_domain_as_the_reader_reads_it(hr):
     domain = _project_node(hr, HR + "hasName")["domain"]
     # Each with its kind (attribute-reuse 5.8), for the pointer to a rule.
+    # A class list the reasoner does not use, by its key (owl-rl-warnings 5.4).
     assert domain == {"form": "union", "classes": [
         {"iri": HR + "Manager", "label": "Manager", "type": "owl", "own": True},
         {"iri": HR + "Contractor", "label": "Contractor", "type": "owl", "own": True},
-    ]}
+    ], "reasoner": "unused", "reason": "classList"}
     assert _project_node(hr, HR + "badge")["domain"]["form"] == "separate"
 
 
