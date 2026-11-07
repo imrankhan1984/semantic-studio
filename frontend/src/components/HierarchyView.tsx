@@ -100,6 +100,9 @@ INPUTS / INPUT SOURCES (props)
       without the canvas, and for anything else, on its row here.
     - onCounts: the model's counts, for the side panel's summary (5.4).
     Each row's dot is in the Edit page's kind colours (5.8), by class.
+    In a project the outline ends with *Vocabularies* (vocabularies-and-
+    ontologies 5.2, VocabularyRow.tsx): what the model uses, read from the
+    server only there, so a library document makes no such request.
 
     The tree's rename and delete run through one command runner, so a
     command in flight shows the view busy (5.8 item 1); they, and a draft,
@@ -131,6 +134,7 @@ import { useRunner } from "./EditParts";
 import { RowMenu, rowActions, type RowAction } from "./HierarchyActions";
 import { projectStore, useProjectSelector } from "../state/projectStore";
 import type { ModelCounts } from "./NothingSelected";
+import { VocabulariesSection } from "./VocabularyRow";
 
 interface Props {
   ontologyId: string | null;
@@ -919,6 +923,9 @@ export default function HierarchyView({
               />
             );
           })}
+          {/* The last section, a project model's only (vocabularies-and-
+              ontologies 5.2): a library document has none. */}
+          {editing && projectOf(ontologyId) && <VocabulariesSection projectId={projectOf(ontologyId)!} revision={revision} />}
         </div>
       )}
       {menu && (
@@ -1520,6 +1527,12 @@ function TreeRow({
       )}
     </div>
   );
+}
+
+/** The project of a project model's ontology id (prj-<hex>-model), or null. */
+function projectOf(ontologyId: string | null): string | null {
+  const match = /^(prj-[0-9a-f]{12})-model$/.exec(ontologyId ?? "");
+  return match ? match[1] : null;
 }
 
 /** Escape an IRI for use inside a QUOTED CSS attribute selector,

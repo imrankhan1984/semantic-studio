@@ -69,6 +69,28 @@ export interface BoxData extends Record<string, unknown> {
   // form opens the reuse plan.
   ontologyId?: string;
   onReuse?: (cls: string, property: string, label: string) => void;
+  // A placed outside term leaves the canvas (vocabularies-and-ontologies
+  // 5.8); by keyboard, Delete on the box does the same.
+  onUnplace?: (iri: string) => void;
+}
+
+/** A placed term's *Remove from canvas*, for the pointer: not a tab stop, as
+ *  a box's other controls are not, since Delete on the box does it. */
+export function Unplace({ data }: { data: BoxData }) {
+  if (!data.node.placed || !data.onUnplace) return null;
+  return (
+    <button
+      type="button"
+      className="canvas-attr canvas-unplace nodrag"
+      tabIndex={-1}
+      onClick={(e) => {
+        e.stopPropagation();
+        data.onUnplace?.(data.node.iri);
+      }}
+    >
+      Remove from canvas
+    </button>
+  );
 }
 
 export type BoxNode = Node<BoxData, "class" | "concept">;
@@ -182,6 +204,7 @@ function ClassNode({ data, selected }: NodeProps<BoxNode>) {
         {/* A reasoning result found it can never have members (5.5, 5.7):
             said in text, and outlined dashed, never by colour alone. */}
         {node.neverMembers && <span className="canvas-box-never">can never have members</span>}
+        <Unplace data={data} />
         {/* Rules (axioms-and-reasoning 5.9): disjointness is a line in the
             box, never a line between boxes; a rule the canvas does not draw
             is counted, so the form is where to look. */}

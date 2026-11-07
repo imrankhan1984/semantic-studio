@@ -258,7 +258,12 @@ export function boxName(view: CanvasView, iri: string): string {
   // The kind in words, as the box's header says it (edit-page-rework 5.8):
   // *Person, OWL class*. An imported box's typing is its import's, so it is
   // a class or a concept, and the import is named below.
-  const parts = [n.label, n.imported ? n.kind : kindWord(n)];
+  // A placed term (vocabularies-and-ontologies 5.8) is named by its
+  // vocabulary first, *FOAF · Person*, as its box says it.
+  const parts = [
+    n.placed && n.imported ? `${n.imported} · ${n.label}` : n.label,
+    n.imported ? n.kind : kindWord(n),
+  ];
   const up = n.kind === "class" ? "subClassOf" : "broader";
   const parents = view.edges.filter((e) => e.kind === up && e.source === iri).map((e) => node(view, e.target)?.label);
   if (parents.length) parts.push(`${n.kind === "class" ? "kind of" : "narrower than"} ${parents.join(" and ")}`);

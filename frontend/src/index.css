@@ -7243,3 +7243,135 @@ kbd {
   flex: none;
   padding: 4px 12px;
 }
+
+/* --- vocabularies (vocabularies-and-ontologies 5.2, 5.3, 5.8) ------------ */
+
+/* The outline's last section: its head's sentence under the fold button,
+   then the rows. A row is one line of words, never a colour: the status,
+   the source and the use are all text (AC-2, AC-17). */
+.vocabularies-sentence {
+  margin: 0 12px 4px;
+}
+
+.vocabularies-body {
+  padding: 0 0 8px;
+}
+
+.vocabulary-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.vocabulary-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 4px 12px;
+  font-size: var(--fs-sm);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.vocabulary-row:hover {
+  background: var(--bg-raised);
+}
+
+.vocabulary-title {
+  font-weight: 600;
+}
+
+.vocabulary-status,
+.vocabulary-source,
+.vocabulary-uses {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+/* *Used, not added* and *Not found* also say so in words; the dashed edge
+   is the second cue, never the only one. */
+.vocabulary-row.status-used,
+.vocabulary-row.status-notFound {
+  border-left: 2px dashed var(--text-dim);
+}
+
+.vocabulary-row .hierarchy-menu-btn {
+  margin-left: auto;
+}
+
+.vocabularies-add {
+  margin: 6px 12px 0;
+}
+
+/* Add a vocabulary…: the tab's list or field, then the summary. */
+.add-vocabulary-panel {
+  max-height: 45vh;
+  overflow: auto;
+  padding: 8px 0;
+}
+
+.add-vocabulary-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.add-vocabulary-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.add-vocabulary-choice {
+  align-self: flex-start;
+}
+
+.add-vocabulary-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.add-vocabulary-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.add-vocabulary-sentence {
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
+.add-vocabulary-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.add-vocabulary-add input {
+  width: 10em;
+}
+
+/* The canvas's *Add a term from…*: a search under the toolbar. */
+.canvas-term-search {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-subhead);
+}
+
+.canvas-term-search .detail-note {
+  margin: 0;
+}
+
+.new-project-reference-choice .form-hint {
+  margin: 2px 0 6px 24px;
+}

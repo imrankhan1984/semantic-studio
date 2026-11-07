@@ -25,13 +25,18 @@ EXPECTED OUTPUT
 
 import { memo } from "react";
 import type { NodeProps } from "@xyflow/react";
-import { BoxHead, Sides, boxClasses, type BoxNode } from "./ClassNode";
+import { BoxHead, Sides, Unplace, boxClasses, type BoxNode } from "./ClassNode";
 
 function ConceptNode({ data, selected }: NodeProps<BoxNode>) {
   return (
     <div className={boxClasses(data, Boolean(selected))}>
       <Sides />
       <BoxHead data={data} />
+      {data.node.placed && (
+        <div className="canvas-box-body">
+          <Unplace data={data} />
+        </div>
+      )}
     </div>
   );
 }

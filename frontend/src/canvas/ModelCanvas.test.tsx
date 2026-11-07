@@ -36,7 +36,8 @@ import { ApiError } from "../api";
 import { projectStore } from "../state/projectStore";
 import type { CanvasLayout, CanvasView } from "../types";
 
-const { openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails, reasonProject } = vi.hoisted(() => ({
+const { openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails, reasonProject, searchNodes } = vi.hoisted(() => ({
+  searchNodes: vi.fn(),
   reasonProject: vi.fn(),
   openProject: vi.fn(),
   closeProject: vi.fn(),
@@ -48,7 +49,7 @@ const { openProject, closeProject, runCommand, getCanvas, putLayout, previewDele
 }));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails, reasonProject };
+  return { ...actual, openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails, reasonProject, searchNodes };
 });
 
 // The stub: nodes through the canvas's own node types, and every prop kept.
@@ -216,7 +217,7 @@ const lastCommand = () => runCommand.mock.calls[runCommand.mock.calls.length - 1
 
 beforeEach(async () => {
   projectStore._reset();
-  for (const mock of [openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails, onSelect, onSelectLink, onDeleted, onCanvasSet]) {
+  for (const mock of [openProject, closeProject, runCommand, getCanvas, putLayout, previewDelete, getNodeDetails, searchNodes, onSelect, onSelectLink, onDeleted, onCanvasSet]) {
     mock.mockReset();
   }
   flow.api.setCenter.mockReset();
@@ -2008,5 +2009,85 @@ describe("a shared domain (attribute-reuse 5.3)", () => {
       fireEvent.click(within(dialog).getByRole("button", { name: "Remove Invoice (en)" }));
     });
     expect(lastCommand()).toEqual(["UnshareDomain", { property: EX + "filedBy", class: EX + "Invoice" }]);
+  });
+});
+
+describe("Add a term from… (vocabularies-and-ontologies 5.8, AC-15)", () => {
+  const FOAF = "http://xmlns.com/foaf/0.1/";
+
+  it("places a term as a dashed, labelled box, the layout only, ready to relate", async () => {
+    searchNodes.mockResolvedValue([
+      { id: FOAF + "Person", label: "Person", kind: "class", degree: 0, importedFrom: "FOAF" },
+      // The document's own class is never offered here.
+      { id: EX + "Document", label: "Document", kind: "class", degree: 0 },
+    ]);
+    await renderCanvas();
+    const button = screen.getByRole("button", { name: "Add a term from…" });
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    const field = screen.getByRole("combobox", { name: "A class from an added vocabulary" });
+    fireEvent.change(field, { target: { value: "pers" } });
+    const option = await screen.findByRole("option", { name: /Person/ });
+    expect(screen.queryByRole("option", { name: /Document/ })).toBeNull();
+    expect(searchNodes).toHaveBeenCalledWith(`${PID}-model`, "pers", true, "class", undefined, undefined, true);
+
+    const placed = viewOf();
+    placed.nodes = [...placed.nodes, { iri: FOAF + "Person", kind: "class", label: "Person", fallback: false, imported: "FOAF", placed: true, attributes: [] }];
+    getCanvas.mockResolvedValue(placed);
+    expect(option.getAttribute("aria-selected")).toBe("true");
+    // From the keyboard: Enter takes the active option (D-078).
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+    // The layout gains the term and its place: no command, so no revision.
+    const sent = putLayout.mock.calls[putLayout.mock.calls.length - 1][2] as CanvasLayout;
+    expect(sent.placed).toEqual([FOAF + "Person"]);
+    expect(sent.positions[FOAF + "Person"]).toHaveLength(2);
+    expect(runCommand).not.toHaveBeenCalled();
+    // Focus is back on the button, and the status line says where it went.
+    expect(document.activeElement).toBe(button);
+    await waitFor(() => expect(screen.getByText("Person is on the canvas. Draw a line to it to relate it.")).toBeTruthy());
+
+    await waitFor(() => expect(document.querySelectorAll(".react-flow__node")).toHaveLength(placed.nodes.length));
+    const person = [...document.querySelectorAll<HTMLElement>(".react-flow__node")].find((n) => n.dataset.id === FOAF + "Person")!;
+    // Named FOAF · Person, dashed as an import is and saying so in words.
+    expect(person.getAttribute("aria-label")).toBe("FOAF · Person, class, from FOAF, read-only");
+    expect(person.querySelector(".canvas-box")!.className).toContain("imported");
+    expect(within(person).getByText("imported · FOAF")).toBeTruthy();
+    // No attribute control, no rename: read-only.
+    expect(within(person).queryByRole("button", { name: /Add an attribute/ })).toBeNull();
+
+    // A line from Document to it is the existing subclass command.
+    await act(async () => {
+      flow.props.onConnect({ source: EX + "Document", target: FOAF + "Person", sourceHandle: null, targetHandle: null });
+      flow.props.onConnectEnd({ clientX: 40, clientY: 50 });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Document is a kind of Person" }));
+    });
+    expect(lastCommand()).toEqual(["AddSubClassOf", { child: EX + "Document", parent: FOAF + "Person" }]);
+  });
+
+  it("takes a placed box off by Delete, the layout only, and offers Add a vocabulary… when it is not there", async () => {
+    const placed = viewOf();
+    placed.nodes = [...placed.nodes, { iri: FOAF + "Person", kind: "class", label: "Person", fallback: false, imported: "FOAF", reused: true, placed: true, attributes: [] }];
+    placed.layout = { ...placed.layout, placed: [FOAF + "Person"], positions: { ...placed.layout.positions, [FOAF + "Person"]: [300, 0] } };
+    await renderCanvas(placed);
+    const person = [...document.querySelectorAll<HTMLElement>(".react-flow__node")].find((n) => n.dataset.id === FOAF + "Person")!;
+    // Reused, not imported: said in words.
+    expect(within(person).getByText("reused · FOAF")).toBeTruthy();
+    getCanvas.mockResolvedValue(viewOf());
+    await act(async () => {
+      fireEvent.keyDown(person, { key: "Delete" });
+    });
+    const sent = putLayout.mock.calls[putLayout.mock.calls.length - 1][2] as CanvasLayout;
+    expect(sent.placed).toEqual([]);
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add a term from…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add a vocabulary…" }));
+    expect(projectStore.getSnapshot().vocabularyDraft).not.toBeNull();
   });
 });

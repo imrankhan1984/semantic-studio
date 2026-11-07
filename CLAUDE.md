@@ -174,10 +174,15 @@ backend/app/
                      examples.json in the data folder makes a removal stick;
                      restore; attaches each entry's group and ready-made
                      questions when listed
-  references.py      Reference ontologies reused by prefix (D-121): which a
+  references.py      Vocabularies reused by prefix (D-121, D-128): which a
                      document has in use (its declared prefixes, read from
                      its text), the term index built from the bundled files
-                     and cached by hash, search, and the Apply check
+                     or a kept copy and cached by hash, search, and the
+                     Apply check
+  vocabularies.py    The vocabularies a document uses and the one way one is
+                     added (D-128): the list, the imported-or-reused rule,
+                     inspect, the registry of what it read, and add_lines,
+                     the only writer of owl:imports
   store.py           In-memory ontology store, disk persistence, lazy parsing;
                      every derived view keyed on the revision (D-081)
   parse_errors.py    A failed load in one plain sentence (D-112): the line,
@@ -274,6 +279,8 @@ frontend/src/
                      words (words.ts) (D-124)
   checks/            Pure Checks report logic: the groups' order, the
                      measures' words, staleness, where a finding leads
+  vocabularies/      Pure Vocabularies words (words.ts, D-128): a row's
+                     status and source, its use, its menu, the dialog's tabs
   connectionWords.ts Settings → Network's Connection words: the system proxy,
                      the trust, the file, and what a Save sends (D-123)
   referenceWords.ts  The Turtle editor's line for a reference term it does
@@ -291,7 +298,7 @@ release/             The Windows release: the start file, README.txt,
 docs/known-state.md  Why each load-bearing rule below exists
 ```
 
-`sparql/`, `explore/`, `home/`, `projects/`, `modeling/`, `reasoning/`, `explain/`, `naming/` and `checks/` are the same idea nine times: logic a
+`sparql/`, `explore/`, `home/`, `projects/`, `modeling/`, `reasoning/`, `explain/`, `naming/`, `checks/` and `vocabularies/` are the same idea ten times: logic a
 component needs, kept out of the component so it can be tested without
 rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts`, `connectionWords.ts`, `statusWords.ts`, `limitWords.ts`, `referenceWords.ts`,
 `links.ts` and `catalogue.ts` are the same idea for one function and one constant. Prefer this
@@ -489,9 +496,19 @@ leaves one behind.
 - A union is never left with one member: UnshareDomain from two writes the plain domain, and replacing or clearing a domain takes the union's blank nodes. [one reader of a domain]
 
 **Reference ontologies**
-- The portal never writes `owl:imports` on its own: a reference is reused by its prefix and a `dcterms:requires`; `test_no_path_writes_owl_imports` scans `app/` (D-121). [Reference terms]
+- A term list is reused by its prefix and a `dcterms:requires`; a vocabulary with rules is imported (D-128, superseding D-121's *never*). [Reference terms, Vocabularies and ontologies]
 - A reference ontology is in use when the document declares a prefix bound to its namespace, read from the document's text, never from its graph (rdflib binds `foaf:` in every graph) and never because of `dcterms:requires`; `clean()` writes a declared reference prefix back, and the project's own at creation and in `clean()`. [Reference terms]
 - The reference index is built from the bundled files only, cached in memory and in the data folder by SHA-256, and never sent whole to the browser. [Reference terms]
+
+**Vocabularies**
+- `vocabularies.add_lines` is the only code that writes `owl:imports`, called by `AddVocabulary` and New project; `test_projects.py`'s AST scan allows nothing else and proves it catches a planted writer (D-128). [Vocabularies and ontologies]
+- The server decides imported or reused from the copy (5.4's rule, no size limit); the browser never sends it; `LARGE_STATEMENTS` (20,000) changes the sentence only. The manifest's `statements` and `rules` are recounted from each bundled file by a test. [Vocabularies and ontologies]
+- A command's prefix is `Change.declare`/`undeclare`, written into the document's declarations before `_push`: undo restores the text byte for byte. [Vocabularies and ontologies]
+- A step adding or removing an `owl:imports` resolves again with `allow_network=False`, outside the locks; never the network. [Vocabularies and ontologies]
+- The list never counts `owl:imports` or `dcterms:requires` statements as use, nor rdflib's default bindings as declared. [Vocabularies and ontologies]
+- A web address reaches the broker only as `ontology:import`, through `vocabularies.inspect_url`; a recording server sees zero requests before approval and while offline. [Vocabularies and ontologies]
+- A placed term is the layout's `placed`, drawn per request: no revision, no dirty flag, no undo step (D-087); the prune on open keeps its position. [Vocabularies and ontologies]
+- A test that inspects a file removes `vocabularies.json` afterwards: the run shares one data folder. [Vocabularies and ontologies]
 
 **OWL or RDFS for each class**
 - A class is typed `owl:Class` or `rdfs:Class`, never both: CreateClass and SetClassType write one. Its kind is `axioms.kind_of`, the document's own typing first, for the commands and `/node` alike (D-117). [OWL or RDFS for each class]

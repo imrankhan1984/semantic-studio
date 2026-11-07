@@ -306,3 +306,35 @@ describe("a new class's kind (attribute-reuse 5.6, AC-13)", () => {
     expect(screen.queryByRole("group", { name: "Kind of class" })).toBeNull();
   });
 });
+
+describe("an added vocabulary's class from the keyboard (vocabularies-and-ontologies 5.8, D-078, AC-14)", () => {
+  it("a class whose parent is a reused vocabulary's, chosen by arrow keys and Enter", async () => {
+    const FOAF = "http://xmlns.com/foaf/0.1/";
+    // The pickers ask with references on: a reused vocabulary's term comes
+    // marked by its title, as the server's search marks it.
+    searchNodes.mockResolvedValue([
+      { id: X + "Personnel", label: "Personnel", kind: "class", degree: 0 },
+      { id: FOAF + "Person", label: "Person", kind: "class", degree: 0, fromReference: "FOAF" },
+    ]);
+    act(() => {
+      projectStore.startCreating("class");
+    });
+    form();
+    fireEvent.change(nameField(), { target: { value: "Operator" } });
+    const choose = screen.getByRole("button", { name: "Choose" });
+    choose.focus();
+    fireEvent.click(choose);
+    const picker = screen.getByRole("combobox", { name: "Kind of" });
+    fireEvent.change(picker, { target: { value: "Pers" } });
+    await screen.findByRole("option", { name: /Person, from FOAF/ });
+    expect(searchNodes).toHaveBeenLastCalledWith(`${PID}-model`, "Pers", true, "class", undefined, undefined, true);
+    fireEvent.keyDown(picker, { key: "ArrowDown" });
+    expect(screen.getByRole("option", { name: /Person, from FOAF/ }).getAttribute("aria-selected")).toBe("true");
+    await act(async () => {
+      fireEvent.keyDown(picker, { key: "Enter" });
+    });
+    expect(screen.getByText(/Kind of: Person/)).toBeTruthy();
+    await create();
+    expect(runCommand).toHaveBeenCalledWith(PID, "model", "CreateClass", expect.objectContaining({ label: "Operator", parent: FOAF + "Person" }));
+  });
+});

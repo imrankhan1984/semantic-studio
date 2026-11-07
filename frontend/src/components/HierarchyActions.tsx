@@ -50,6 +50,10 @@ export type RowAction = "addChild" | "rename" | "delete" | "show" | "hide";
 export interface MenuItem<A extends string = RowAction> {
   action: A;
   label: string;
+  /** Shown and focusable, but it does nothing, with the reason read after
+   *  its name: aria-disabled, never disabled, so focus is never dropped
+   *  (a read-only document's Remove, vocabularies-and-ontologies 6). */
+  disabled?: string;
 }
 
 /** What a row offers, by its kind and whether it comes from an import. A
@@ -130,7 +134,14 @@ export function RowMenu<A extends string = RowAction>({ label, items, anchor, on
     >
       {items.map((item) => (
         <li key={item.action} role="none">
-          <button type="button" role="menuitem" tabIndex={-1} onClick={() => onChoose(item.action)}>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            aria-disabled={item.disabled ? true : undefined}
+            aria-description={item.disabled}
+            onClick={() => !item.disabled && onChoose(item.action)}
+          >
             {item.label}
           </button>
         </li>

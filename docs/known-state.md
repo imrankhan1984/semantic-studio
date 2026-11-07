@@ -2984,3 +2984,91 @@ EXPECTED OUTPUT
   `editing.py` `reason` and `ReasoningPanel.tsx`; a taxonomy with no classes
   reasons and gets the existing empty result. `ReasoningRefused` stays for its
   other causes.
+
+### Vocabularies and ontologies (E-14, D-128)
+
+  **One function writes owl:imports.** D-128 partly supersedes D-121: the
+  portal now adds `owl:imports` itself, but only through
+  `vocabularies.add_lines(header, iri, prefix, namespace, how)`, which both
+  doors call -- `editing.py`'s `AddVocabulary` and New project's *Reuse terms
+  from* (`projects._with_references`). `test_projects.py`'s
+  `test_no_path_but_add_lines_writes_owl_imports` reads every module under
+  `app/` as an AST: a mention of `OWL.imports`, `OWL["imports"]`, the full IRI
+  or Turtle naming it (`owl:imports <`, never `owl:imports</code>`) is a read
+  only as the pattern of a read call (`objects`, `subjects`, `triples` ...),
+  a comparison, or one of two named predicate sets (`query_schema`'s
+  `SCHEMA_PREDICATES`, `vocabularies`' `_ADDING`); anything else outside
+  `add_lines` fails. `test_the_scan_catches_a_planted_writer` proves the scan
+  fails on six planted writers, including a function called `add_lines` in
+  another module, so its empty answer is a finding. A docstring is prose and
+  not read.
+
+  **The server decides imported or reused, from the copy.** A vocabulary
+  holds rules when any statement in it is one of 5.4's predicates
+  (`RULE_PREDICATES`) or types a node one of `RULE_TYPES`; such a vocabulary
+  is imported, whatever its size, and one with none is reused by its prefix
+  and `dcterms:requires`. `AddVocabulary` takes `{iri, prefix}` and looks the
+  rule up from what inspect recorded; an extra `how` from the browser is
+  ignored (`test_the_server_decides_imported_or_reused`). For the twelve
+  bundled files the manifest carries `statements` and `rules`, so New project
+  and `/api/references`' `addSentence` decide without parsing QUDT;
+  `test_the_rule_gives_section_5_4s_table_for_the_twelve_bundled_files`
+  recounts both from each file and holds the manifest to them, and
+  `BUNDLED_IMPORTS` (the own imports a sentence names) to `declared_imports`.
+  `LARGE_STATEMENTS = 20_000` changes the sentence only, adding the reasoning
+  warning; it is a constant, never a setting.
+
+  **A prefix rides in the step's editor state, not the delta.** A prefix is
+  no statement, so `Change` gains `declare` and `undeclare`; `command()`
+  writes them into `document._declared` after `_apply` and before `_push`, and
+  binds the prefix on the graph for longturtle. The step's `before` and
+  `after` editor states already hold the declarations (PR #72), so undo takes
+  the prefix back with the line and the text returns byte for byte (AC-6). A
+  step with a prefix and no statement (Remove of a typed `dc:`) is still a
+  step: "That would change nothing" now also needs no declaration change.
+  `keep_prefixes` keeps a declared prefix whose namespace any known source
+  defines (`vocabularies.namespaces_known()`), not only FOAF's and QUDT's.
+
+  **A step that adds or removes an owl:imports resolves again, locally.**
+  `EditingService._settle_imports` runs `imports_service.resolve(...,
+  allow_network=False)` after the locks are released, for a command and for an
+  undo or redo whose triples name `owl:imports`. Without it, an undone Add left
+  PROV-O in the merged view (the state file, not the graph, lists what is
+  merged). Never the network: QUDT's own import of vaem stays unresolved and
+  its row says *1 file still to load*, and *Load its copy* runs the existing
+  Resolve, which asks. An Apply in Turtle is left as it was (5.7: the list
+  says *not loaded*, and Load loads it).
+
+  **What is known is the registry, the bundle and the library.**
+  `<data dir>/vocabularies.json` records what inspect read from a file, a
+  download or a library ontology (title, prefixes, counts, own imports, where
+  the copy is), read again only when its mtime moves; the copy itself is the
+  imports machinery's (catalogue and cache), so Add resolves it with no second
+  read. A library ontology never inspected is known by its ontology IRI only,
+  for *Used, not added*. Tests that inspect a file remove the registry
+  afterwards: the data folder is shared by the run, and a source left behind
+  is a known source in the next test.
+
+  **The list reads the document, never rdflib's bindings.** Rows come from
+  `declared_imports`, from the text's declared prefixes (`references.
+  declared_prefixes`) and from one pass over the statements; a predicate in
+  `_ADDING` is not use, or every reused vocabulary made DCMI Metadata Terms
+  *Used, not added* through `dcterms:requires`. The four built-in namespaces,
+  the project's own bases and its ontology IRIs are skipped. `RemoveVocabulary`
+  counts use with the same one pass (`test_remove_reads_the_document_in_one_scan`).
+
+  **Placing a term is a layout write.** The layout gains `placed`, a list of
+  IRIs counted under `LAYOUT_MAX_ENTRIES`; `canvas.with_placed` draws them per
+  request after the shown-set cut, named from the merged view when imported
+  and from the reused vocabulary's index otherwise, and `_prune_layout` keeps
+  a placed term's position with no line. No revision, no dirty flag, no undo
+  step (D-087). The non-canvas door is the Edit form's pickers (D-078), which
+  `fromReference` already marks; the annotation adder offers an added
+  vocabulary's plain and annotation properties under *From added
+  vocabularies*, so Dublin Core Elements, fifteen `rdf:Property` terms and no
+  rules, has a door: the reference index (version 2) keeps `rdf:Property`
+  terms too.
+
+  **Not a bare Load.** 5.2 names the row action *Load*; wording 5.1's scan
+  (`wording.test.ts`) keeps a control called *Load* out of the app, so the
+  action is *Load its copy*.

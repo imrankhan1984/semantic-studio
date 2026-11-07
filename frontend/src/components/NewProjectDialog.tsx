@@ -29,7 +29,9 @@ BASIC IDEA
 
     *Reuse terms from* is a fieldset of checkboxes, one per reference
     ontology GET /api/references lists, each labelled by its title and
-    purpose; nothing is ticked at first, and a library copy, which keeps
+    purpose, with the Add dialog's sentence for it under it -- it is added
+    by the same rule, so FOAF and QUDT are imported (D-128, AC-19);
+    nothing is ticked at first, and a library copy, which keeps
     its own file, is not offered it. The description is prefilled -- *An
     ontology for {name}.* and each ticked reference's sentence -- and follows
     the name and the boxes until the person types in it, as the base IRI
@@ -428,15 +430,29 @@ export default function NewProjectDialog({
             <fieldset className="form-field new-project-references">
               <legend>Reuse terms from</legend>
               {references.map((r) => (
-                <label key={r.key} className="new-project-reference">
-                  <input type="checkbox" checked={ticked.has(r.key)} onChange={() => toggle(r.key)} />
-                  <span>
-                    <strong>{r.title}</strong>: {r.purpose}
-                  </span>
-                </label>
+                <div key={r.key} className="new-project-reference-choice">
+                  <label className="new-project-reference">
+                    <input
+                      type="checkbox"
+                      checked={ticked.has(r.key)}
+                      onChange={() => toggle(r.key)}
+                      aria-describedby={r.addSentence ? `reference-${r.key}-adds` : undefined}
+                    />
+                    <span>
+                      <strong>{r.title}</strong>: {r.purpose}
+                    </span>
+                  </label>
+                  {/* What choosing it writes, the Add dialog's own sentence
+                      (vocabularies-and-ontologies 5.4, D-128, AC-19). */}
+                  {r.addSentence && (
+                    <p className="form-hint" id={`reference-${r.key}-adds`}>
+                      {r.addSentence}
+                    </p>
+                  )}
+                </div>
               ))}
               <p className="form-hint">
-                Adds their prefixes, so the Edit pickers offer their terms. Nothing is imported.
+                Each is added as Add a vocabulary adds it, so the Edit pickers offer its terms.
               </p>
             </fieldset>
           )}

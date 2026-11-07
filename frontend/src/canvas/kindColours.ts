@@ -105,7 +105,8 @@ const WORDS: Record<BoxKind, string> = {
 /** The kind in words, as a box's header shows it (in capitals, by CSS) and
  *  its accessible name says it: *Person, OWL class*. An imported box names
  *  its import instead: *imported · FOAF*. */
-export function kindWord(node: Pick<CanvasNode, "kind" | "classType" | "imported">): string {
+export function kindWord(node: Pick<CanvasNode, "kind" | "classType" | "imported" | "reused">): string {
+  if (node.imported && node.reused) return `reused · ${node.imported}`;
   if (node.imported) return node.imported === "outside" ? "outside this model" : `imported · ${node.imported}`;
   return WORDS[boxKind(node)];
 }

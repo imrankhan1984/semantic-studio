@@ -45,15 +45,16 @@ import type { Hierarchy, HierarchyForest } from "../types";
 // asserted as written, and proved in Chrome (rows E1 to E3).
 import CSS from "../index.css?raw";
 
-const { fetchHierarchy, openProject, runCommand, previewDelete } = vi.hoisted(() => ({
+const { fetchHierarchy, openProject, runCommand, previewDelete, getVocabularies } = vi.hoisted(() => ({
   fetchHierarchy: vi.fn(),
   openProject: vi.fn(),
   runCommand: vi.fn(),
   previewDelete: vi.fn(),
+  getVocabularies: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, fetchHierarchy, openProject, runCommand, previewDelete };
+  return { ...actual, fetchHierarchy, openProject, runCommand, previewDelete, getVocabularies };
 });
 
 const EX = "http://example.org/#";
@@ -1302,5 +1303,168 @@ describe("the side panel's counts (edit-page-rework 5.4)", () => {
     expect(onCounts).toHaveBeenLastCalledWith({ classes: 2, concepts: 1, relationships: 0, attributes: 0, examples: 1 });
     // The outline still lists them: the header counts what it shows.
     expect(screen.getByRole("button", { name: named("Classes") }).getAttribute("aria-label")).toBe("Classes, 3");
+  });
+});
+
+describe("The Vocabularies section (vocabularies-and-ontologies 5.2, AC-1, AC-17)", () => {
+  const PID = "prj-0123456789ab";
+  const STATE = {
+    doc: "model" as const, ontologyId: `${PID}-model`, revision: 2, dirty: false, canUndo: false,
+    undoLabel: null, canRedo: false, redoLabel: null, triples: 10,
+  };
+  const ROWS = {
+    sentence: "Uses 4 vocabularies; 1 is used but not added, 1 is not found.",
+    bundled: [],
+    rows: [
+      { iri: "http://www.w3.org/ns/prov-o", title: "PROV-O", prefix: "prov", namespaces: ["http://www.w3.org/ns/prov#"],
+        status: "added", how: "imported", loaded: true, pending: 0,
+        source: { kind: "bundled", name: "Bundled", fetchedAt: null }, uses: 12 },
+      { iri: "http://purl.org/dc/elements/1.1/", title: "Dublin Core Elements 1.1", prefix: "dc",
+        namespaces: ["http://purl.org/dc/elements/1.1/"], status: "added", how: "reused", loaded: true, pending: 0,
+        source: { kind: "bundled", name: "Bundled", fetchedAt: null }, uses: 3 },
+      { iri: "http://xmlns.com/foaf/0.1/", title: "FOAF", prefix: "foaf", namespaces: ["http://xmlns.com/foaf/0.1/"],
+        status: "used", how: null, loaded: false, pending: 0,
+        source: { kind: "bundled", name: "Bundled", fetchedAt: null }, uses: 1 },
+      { iri: "http://unknown.example/x#", title: "http://unknown.example/x#", prefix: null,
+        namespaces: ["http://unknown.example/x#"], status: "notFound", how: null, loaded: false, pending: 0,
+        source: null, uses: 1 },
+    ],
+  };
+
+  beforeEach(async () => {
+    projectStore._reset();
+    for (const mock of [openProject, runCommand, getVocabularies]) mock.mockReset();
+    openProject.mockResolvedValue({
+      project: {
+        id: PID, name: "Shop", createdAt: "", updatedAt: "", baseIri: EX, prefix: "ex",
+        primaryLanguage: "en", languages: [], documents: [{ file: "model.ttl", role: "model" }], counts: {},
+      },
+      documents: [STATE],
+      recovery: { available: false, draftTime: null },
+    });
+    await projectStore.open(PID);
+  });
+
+  afterEach(() => projectStore._reset());
+
+  const view = (revision: number) => (
+    <HierarchyView ontologyId={`${PID}-model`} selected={null} onSelect={vi.fn()} revision={revision} editing={{ primaryLanguage: "en" }} />
+  );
+
+  function renderModel(revision = 2) {
+    fetchHierarchy.mockResolvedValue(mixed());
+    return render(view(revision));
+  }
+
+  const vocabularyRows = () => screen.getAllByRole("treeitem").filter((r) => r.closest(".vocabulary-rows"));
+
+  it("makes no /vocabularies request for a library document [count]", async () => {
+    renderView(mixed());
+    await screen.findByText("Alpha");
+    render(<HierarchyView ontologyId="o2" selected={null} onSelect={vi.fn()} editing={{ primaryLanguage: "en" }} />);
+    await act(async () => {});
+    expect(getVocabularies).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /^Vocabularies/ })).toBeNull();
+  });
+
+  it("asks once when the side panel shows it, and again only on a new revision [count]", async () => {
+    getVocabularies.mockResolvedValue(ROWS);
+    const { rerender } = renderModel();
+    await screen.findByText(ROWS.sentence);
+    expect(getVocabularies).toHaveBeenCalledTimes(1);
+    expect(getVocabularies).toHaveBeenCalledWith(PID, "model");
+    rerender(view(2));
+    await act(async () => {});
+    expect(getVocabularies).toHaveBeenCalledTimes(1);
+    rerender(view(3));
+    await waitFor(() => expect(getVocabularies).toHaveBeenCalledTimes(2));
+  });
+
+  it("lists four rows, each status and source in words, and the head's sentence (AC-1, AC-2)", async () => {
+    getVocabularies.mockResolvedValue(ROWS);
+    renderModel();
+    await screen.findByText(ROWS.sentence);
+    const head = screen.getByRole("button", { name: "Vocabularies, 4" });
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+    const rows = vocabularyRows();
+    expect(rows.map((r) => r.getAttribute("aria-label"))).toEqual([
+      "PROV-O, prefix prov, Added · imported, Bundled, 12 statements use its terms",
+      "Dublin Core Elements 1.1, prefix dc, Added · terms reused, Bundled, 3 statements use its terms",
+      "FOAF, prefix foaf, Used, not added, Bundled, 1 statement uses its terms",
+      "http://unknown.example/x#, Not found, 1 statement uses its terms",
+    ]);
+    // Words on the row itself, not only in its name: never colour alone.
+    expect(within(rows[2]).getByText("Used, not added")).toBeTruthy();
+    // One tab stop, the dots for the pointer only.
+    expect(rows.filter((r) => r.tabIndex === 0)).toHaveLength(1);
+    const dots = rows[0].querySelector<HTMLElement>(".hierarchy-menu-btn")!;
+    expect(dots.getAttribute("aria-hidden")).toBe("true");
+    expect(dots.tabIndex).toBe(-1);
+  });
+
+  it("is collapsed while empty, its head saying so", async () => {
+    getVocabularies.mockResolvedValue({ sentence: "Uses no other vocabulary.", rows: [], bundled: [] });
+    renderModel();
+    await screen.findByText("Uses no other vocabulary.");
+    const head = screen.getByRole("button", { name: "Vocabularies, 0" });
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(head);
+    expect(screen.getByRole("button", { name: "Add a vocabulary…" })).toBeTruthy();
+  });
+
+  it("opens a row's menu by Shift+F10, and arrow keys move between rows", async () => {
+    getVocabularies.mockResolvedValue(ROWS);
+    runCommand.mockResolvedValue({ revision: 3, label: "Removed PROV-O", state: STATE });
+    renderModel();
+    await screen.findByText(ROWS.sentence);
+    const rows = vocabularyRows();
+    rows[0].focus();
+    fireEvent.keyDown(rows[0], { key: "ArrowDown" });
+    await waitFor(() => expect(document.activeElement).toBe(vocabularyRows()[1]));
+    fireEvent.keyDown(vocabularyRows()[1], { key: "ArrowUp" });
+    await waitFor(() => expect(document.activeElement).toBe(vocabularyRows()[0]));
+    fireEvent.keyDown(vocabularyRows()[0], { key: "F10", shiftKey: true });
+    const menu = screen.getByRole("menu", { name: "More actions for PROV-O" });
+    expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Remove", "Show in Turtle"]);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Remove" }));
+    await waitFor(() =>
+      expect(runCommand).toHaveBeenCalledWith(PID, "model", "RemoveVocabulary", { iri: "http://www.w3.org/ns/prov-o" }),
+    );
+  });
+
+  it("names the statements a refused Remove is waiting on", async () => {
+    getVocabularies.mockResolvedValue(ROWS);
+    const { ApiError } = await import("../api");
+    runCommand.mockRejectedValue(
+      new ApiError("12 statements use PROV-O terms, such as Operator is a kind of Agent. Change them first.", 422),
+    );
+    renderModel();
+    await screen.findByText(ROWS.sentence);
+    const row = vocabularyRows()[0];
+    row.focus();
+    fireEvent.keyDown(row, { key: "F10", shiftKey: true });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Remove" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("such as Operator is a kind of Agent");
+  });
+
+  it("keeps the last rows while reading again and says so; a failure offers Try again", async () => {
+    getVocabularies.mockResolvedValueOnce(ROWS);
+    const { rerender } = renderModel();
+    await screen.findByText(ROWS.sentence);
+    let finish: (v: unknown) => void = () => {};
+    getVocabularies.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    rerender(view(3));
+    await screen.findByText("Reading vocabularies…");
+    expect(screen.getByText(ROWS.sentence)).toBeTruthy();
+    expect(vocabularyRows()).toHaveLength(4);
+    await act(async () => finish(ROWS));
+    getVocabularies.mockRejectedValueOnce(new Error("no"));
+    rerender(view(4));
+    expect((await screen.findByRole("alert")).textContent).toContain("The vocabularies could not be read. Try again.");
+    getVocabularies.mockResolvedValueOnce(ROWS);
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    // The rest of the panel was never touched.
+    expect(screen.getByText("Alpha")).toBeTruthy();
   });
 });

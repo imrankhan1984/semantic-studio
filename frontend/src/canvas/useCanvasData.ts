@@ -278,6 +278,47 @@ export function useCanvasData(
     [setShown],
   );
 
+  /** Add a term from… (vocabularies-and-ontologies 5.8): an outside term
+   *  on the canvas with no line yet, at `at`. The layout only (D-087), so no
+   *  revision moves: written at once and refetched, as the shown set is,
+   *  since the server names the box. A failure leaves the canvas as it was
+   *  and says so; it never rejects. */
+  const setPlaced = useCallback(
+    async (next: string[], at?: { iri: string; point: [number, number] }) => {
+      const current = layout.current;
+      if (!current) return false;
+      const before = current.placed ?? [];
+      const positions = at ? { ...current.positions, [at.iri]: at.point } : { ...current.positions };
+      try {
+        await flush();
+        settle((await putLayout(projectId, doc, { ...current, positions, placed: next }))?.generation);
+      } catch (e) {
+        current.placed = before;
+        setSaveError(`The canvas could not change its outside terms: ${message(e)}`);
+        return false;
+      }
+      current.placed = next;
+      current.positions = positions;
+      setPositions({ ...positions });
+      setSaveError(null);
+      setAttempt((a) => a + 1);
+      return true;
+    },
+    [projectId, doc, flush],
+  );
+  const placeTerm = useCallback(
+    (iri: string, point: [number, number]) => {
+      const list = layout.current?.placed ?? [];
+      return setPlaced(list.includes(iri) ? list : [...list, iri], { iri, point });
+    },
+    [setPlaced],
+  );
+  /** Remove from canvas: the layout forgets the term; the model never had it. */
+  const unplace = useCallback(
+    (iri: string) => setPlaced((layout.current?.placed ?? []).filter((i) => i !== iri)),
+    [setPlaced],
+  );
+
   /** Tidy up: every box through the layered layout again, and saved. */
   const tidy = useCallback(() => {
     if (!view || !layout.current) return;
@@ -311,6 +352,8 @@ export function useCanvasData(
     place,
     show,
     hide,
+    placeTerm,
+    unplace,
     tidy,
     setViewport,
     flush,
