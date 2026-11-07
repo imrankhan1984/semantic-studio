@@ -453,21 +453,44 @@ def _declared(text: str) -> dict:
 
 
 @pytest.mark.parametrize("template", ["empty", "small", "taxonomy-empty", "taxonomy-small"])
-def test_references_write_prefixes_and_requires_and_never_imports(template):
+def test_references_follow_the_rule_and_are_imported_through_add_lines(template, monkeypatch):
+    """AC-19 (D-128, superseding D-121's never an import): FOAF and QUDT
+    hold rules, so New project imports both, through add_lines, with their
+    prefixes declared; nothing is merely required."""
+    from app import vocabularies
+
+    written = []
+    real = vocabularies.add_lines
+    monkeypatch.setattr(vocabularies, "add_lines", lambda *a: written.append(a[1:]) or real(*a))
     project = _create(name="Plant", template=template, references=["foaf", "qudt"])
     text = _model_text(project["id"])
     declared = _declared(text)
     assert declared["foaf"] == FOAF_NS and declared["qudt"] == QUDT_NS
     graph = _model(project["id"])
     header = URIRef("http://example.org/plant")
-    assert set(graph.objects(header, DCTERMS_REQUIRES)) == {
+    assert set(graph.objects(header, OWL.imports)) == {
         URIRef("http://xmlns.com/foaf/0.1/"), URIRef("http://qudt.org/3.5.2/qudt-all"),
     }
-    # D-121: a prefix is not an import.
-    assert not list(graph.triples((None, OWL.imports, None)))
-    assert "imports" not in text
+    assert not list(graph.objects(header, DCTERMS_REQUIRES))
+    assert written == [
+        ("http://xmlns.com/foaf/0.1/", "foaf", FOAF_NS, "imported"),
+        ("http://qudt.org/3.5.2/qudt-all", "qudt", QUDT_NS, "imported"),
+    ]
     assert project["references"] == ["foaf", "qudt"]
     assert project_store.manifest(project["id"])["references"] == ["foaf", "qudt"]
+
+
+def test_the_choice_shows_the_add_dialogs_sentence():
+    """AC-19: what the New project form shows under each choice is the
+    sentence the Add dialog gives the same file."""
+    from app import vocabularies
+
+    listed = {r["key"]: r for r in client.get("/api/references").json()}
+    for key, vocab_id in (("foaf", "foaf"), ("qudt", "qudt")):
+        assert listed[key]["addSentence"] == vocabularies.bundled_sentence(vocabularies.bundled(vocab_id))
+    assert "It will be imported" in listed["foaf"]["addSentence"]
+    assert "30-second limit" in listed["qudt"]["addSentence"]
+    assert "www.linkedmodel.org" in listed["qudt"]["addSentence"]
 
 
 def test_no_reference_and_no_description_writes_the_template_byte_for_byte():
@@ -482,19 +505,152 @@ def test_no_reference_and_no_description_writes_the_template_byte_for_byte():
     assert project["references"] == []
 
 
-def test_no_path_writes_owl_imports():
-    """D-121, read from the source: every mention of owl:imports in the
-    application reads it, and no template declares one."""
+# --- the one writer of owl:imports (D-128, AC-13) --------------------------------
+
+# A mention of owl:imports is a read when it is handed to one of these, as
+# the pattern or inside it, or compared with something.
+_READ_CALLS = {
+    "objects", "subjects", "subject_objects", "subject_predicates", "predicate_objects",
+    "value", "triples", "triples_choices",
+}
+# The one function that may write it, and the module constants that name it
+# among predicates read: query_schema's predicates that are no hop, and the
+# lines vocabularies.py never counts as use and Remove reads to take away.
+_WRITER = ("vocabularies.py", "add_lines")
+_PREDICATE_SETS = {("query_schema.py", "SCHEMA_PREDICATES"), ("vocabularies.py", "_ADDING")}
+
+
+def _mentions_imports(node) -> bool:
+    """OWL.imports, OWL["imports"], the full IRI, or Turtle naming it."""
+    import ast
+
+    if isinstance(node, ast.Attribute):
+        return node.attr == "imports" and isinstance(node.value, ast.Name) and node.value.id == "OWL"
+    if isinstance(node, ast.Subscript):
+        key = node.slice
+        return (isinstance(node.value, ast.Name) and node.value.id == "OWL"
+                and isinstance(key, ast.Constant) and key.value == "imports")
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        # Turtle naming it, never prose or markup: `owl:imports</code>` is a
+        # sentence about imports (docs_export.py), `owl:imports <x>` a line.
+        return "owl#imports" in node.value or re.search(r"owl:imports\s*<(?!/)", node.value) is not None
+    return False
+
+
+def owl_imports_writers(source: str, module: str) -> list[str]:
+    """Every mention of owl:imports in `source` that is not a read, as
+    "module:line function". A docstring is prose; anything else that names
+    it -- a triple built, an f-string of Turtle -- is a writer unless it is
+    the pattern of a read call, compared, or one of _PREDICATE_SETS."""
+    import ast
+
+    tree = ast.parse(source)
+    parents: dict = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+    docstrings = {
+        id(body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and (body := node.body) and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
+    }
+    found = []
+    for node in ast.walk(tree):
+        if not _mentions_imports(node) or id(node) in docstrings:
+            continue
+        function = next(
+            (p.name for p in _ancestors(node, parents) if isinstance(p, (ast.FunctionDef, ast.AsyncFunctionDef))),
+            None,
+        )
+        if (module, function) == _WRITER:
+            continue
+        if _is_read(node, parents) or _in_predicate_set(node, parents, module):
+            continue
+        found.append(f"{module}:{node.lineno} {function or '<module>'}")
+    return found
+
+
+def _ancestors(node, parents):
+    while node in parents:
+        node = parents[node]
+        yield node
+
+
+def _is_read(node, parents) -> bool:
+    import ast
+
+    here, up = node, parents.get(node)
+    # Inside the pattern tuple of a read: graph.triples((None, OWL.imports, x)).
+    while isinstance(up, ast.Tuple):
+        here, up = up, parents.get(up)
+    if isinstance(up, ast.Call) and here in up.args:
+        func = up.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        return name in _READ_CALLS
+    return isinstance(up, ast.Compare)
+
+
+def _in_predicate_set(node, parents, module: str) -> bool:
+    import ast
+
+    up = parents.get(node)
+    if not isinstance(up, (ast.Set, ast.Tuple, ast.List)):
+        return False
+    assign = parents.get(up)
+    if isinstance(assign, ast.Call):  # frozenset({...})
+        assign = parents.get(assign)
+    targets = assign.targets if isinstance(assign, ast.Assign) else [assign.target] if isinstance(assign, ast.AnnAssign) else []
+    return any(isinstance(t, ast.Name) and (module, t.id) in _PREDICATE_SETS for t in targets)
+
+
+def test_no_path_but_add_lines_writes_owl_imports():
+    """D-128, read from the source (superseding D-121's no writer at all):
+    vocabularies.add_lines is the one code that writes owl:imports, called
+    by AddVocabulary and by New project; every other mention reads it, and
+    no template declares one."""
     app_dir = pathlib.Path(__file__).resolve().parents[1] / "app"
-    reads = ("objects(", "subjects(", "subject_objects(", "value(", "triples(")
-    for path in app_dir.rglob("*.py"):
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if "OWL.imports" in line or "owl#imports" in line:
-                ok = any(r in line for r in reads) or path.name == "query_schema.py"
-                assert ok, f"{path.name}:{number} may write owl:imports: {line.strip()}"
-    assert len(list(app_dir.rglob("*.py"))) > 40, "the scan read the application"
+    files = list(app_dir.rglob("*.py"))
+    assert len(files) > 40, "the scan read the application"
+    writers = [w for path in files for w in owl_imports_writers(path.read_text(encoding="utf-8"), path.name)]
+    assert writers == [], f"only vocabularies.add_lines may write owl:imports: {writers}"
+    # The one writer is really there, and the two doors really call it.
+    assert "def add_lines" in (app_dir / "vocabularies.py").read_text(encoding="utf-8")
+    for door in ("editing.py", "projects.py"):
+        assert "vocabularies.add_lines(" in (app_dir / door).read_text(encoding="utf-8"), door
     for template in (app_dir / "templates").glob("*.ttl"):
         assert "imports" not in template.read_text(encoding="utf-8"), template.name
+
+
+@pytest.mark.parametrize("planted", [
+    # A triple built and added: the plain way.
+    "def sneak(g, h, x):\n    g.add((h, OWL.imports, x))\n",
+    # Built into a list first, then added elsewhere.
+    "def sneak(h, x):\n    return [(h, OWL.imports, x)]\n",
+    # The subscript spelling and the full IRI.
+    "def sneak(g, h, x):\n    g.add((h, OWL['imports'], x))\n",
+    "def sneak(g, h, x):\n    g.add((h, URIRef('http://www.w3.org/2002/07/owl#imports'), x))\n",
+    # Turtle text written by hand.
+    "def sneak(iri):\n    return f'<> owl:imports <{iri}> .'\n",
+    # A function called add_lines, but in another module.
+    "def add_lines(g, h, x):\n    g.add((h, OWL.imports, x))\n",
+])
+def test_the_scan_catches_a_planted_writer(planted):
+    """AC-13: the scan fails on a planted writer, so its empty answer above
+    is a finding, not a scan that reads nothing."""
+    assert owl_imports_writers(planted, "planted.py") != []
+    # And the same lines in the one allowed place are not a finding.
+    assert owl_imports_writers("def add_lines(g, h, x):\n    return [(h, OWL.imports, x)]\n", "vocabularies.py") == []
+
+
+def test_the_scan_reads_reads_as_reads():
+    reads = (
+        "def r(g):\n    return list(g.objects(None, OWL.imports))\n"
+        "def s(g):\n    return [t for t in g.triples((None, OWL.imports, None))]\n"
+        "def t(p):\n    return p == OWL.imports\n"
+        'def u():\n    """Writes owl:imports <x> in its docstring only."""\n'
+    )
+    assert owl_imports_writers(reads, "reader.py") == []
 
 
 def test_description_is_the_headers_comment_in_the_primary_language():

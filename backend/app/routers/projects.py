@@ -13,8 +13,10 @@ SUMMARY
     run commands, apply Turtle, undo, redo, save and recover a document; and
     the modeling canvas's view and layout (visual-modeling Stage 2); the
     SHACL shapes in the form's structure, their suggestions, and validation
-    on demand (shacl-authoring 5.1 to 5.7); and reasoning on demand, its
-    Stop, its pages and its reasons (axioms-and-reasoning Stage A).
+    on demand (shacl-authoring 5.1 to 5.7); reasoning on demand, its
+    Stop, its pages and its reasons (axioms-and-reasoning Stage A); and a
+    document's vocabularies and Add a vocabulary's inspect
+    (vocabularies-and-ontologies 5.2, 5.3, D-128).
 
 BASIC IDEA
     Thin, like the other routers: shape the request, call projects.py or
@@ -34,6 +36,10 @@ BASIC IDEA
     positions, not Turtle, and has no reason to be large. So is a read-aloud
     tick (design-checks 5.8), under 16 KB, after its project is matched:
     a manifest write, like the layout no revision, no dirty flag, no undo.
+    Inspect matches its open project before it reads a body: a file is
+    multipart under the upload cap, as Load's, and a choice is JSON under
+    16 KB; a web address reaches the broker only through vocabularies.py,
+    so an unapproved host is main.py's 409 before any request leaves.
 
 INPUTS / INPUT SOURCES
     - HTTP requests from the frontend, every mutating one carrying the client
@@ -61,7 +67,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from starlette.concurrency import run_in_threadpool
 
-from .. import reasoning, references, settings
+from .. import reasoning, references, settings, vocabularies
 from ..editing import (
     AlreadyDefined,
     CommandError,
@@ -76,7 +82,7 @@ from ..editing import (
     project_store,
 )
 from ..projects import DESCRIPTION_MAX, LAYOUT_MAX_BYTES, ProjectError, UnknownDocument, UnknownProject
-from ..store import ParseError, ParseTimeout, store
+from ..store import ParseError, ParseTimeout, detect_format, store
 from . import ontologies
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -387,6 +393,110 @@ async def put_layout(pid: str, doc: str, request: Request) -> dict:
     payload = await ontologies.read_json_capped(request, LAYOUT_MAX_BYTES, LAYOUT_TOO_LARGE)
     with _errors():
         return editing_service.put_layout(pid, doc, payload)
+
+
+@router.get("/{pid}/documents/{doc}/vocabularies")
+def get_vocabularies(pid: str, doc: str) -> dict:
+    """The Edit page's Vocabularies section (vocabularies-and-ontologies
+    5.2): every vocabulary the document uses, with its status, source and
+    use, and the head's sentence. Reads; never connects, never parses."""
+    with _errors():
+        return editing_service.vocabularies(pid, doc)
+
+
+# A choice of bundled vocabulary, library ontology or address: a few names.
+INSPECT_JSON_MAX_BYTES = 16 * 1024
+INSPECT_JSON_TOO_LARGE = "A vocabulary to inspect is named in at most 16 KB."
+
+
+class InspectChoice(BaseModel):
+    bundled: Optional[str] = Field(default=None, max_length=64)
+    ontologyId: Optional[str] = Field(default=None, max_length=128)
+    url: Optional[str] = Field(default=None, max_length=4096)
+
+
+def _with_added(pid: str, found: dict) -> dict:
+    """`alreadyAdded`, from the list as it stands (5.9)."""
+    rows = editing_service.vocabularies(pid, "model")["rows"]
+    source = vocabularies.source_for(found["iri"])
+    found["alreadyAdded"] = any(
+        r["status"] == "added" and (source.answers_to(r["iri"]) if source else r["iri"] == found["iri"])
+        for r in rows
+    )
+    return found
+
+
+@router.post("/{pid}/vocabularies/inspect")
+async def inspect_vocabulary(pid: str, request: Request) -> dict:
+    """Add a vocabulary's reading (5.3): a bundled vocabulary, a library
+    ontology, a web address (JSON) or a file (multipart `file`), answered
+    with its summary and the one sentence; nothing is written to the
+    document. The project is matched, and must be open, before the body is
+    read. A file is read in chunks under the upload cap and parsed under
+    the parse timeout, as Load does; an address goes through the broker as
+    `ontology:import`, so an unapproved host is 409 before any request."""
+    with _errors():
+        model = editing_service.model_graph(pid)
+    kind = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if kind == "multipart/form-data":
+        form = await request.form()
+        upload = form.get("file")
+        if upload is None or isinstance(upload, str):
+            raise HTTPException(status_code=422, detail="Choose a file to add.")
+        data = await ontologies._read_capped(upload, settings.upload_bytes())
+        if not data:
+            raise HTTPException(status_code=400, detail="The chosen file is empty.")
+        name = upload.filename or "chosen file"
+
+        def read_file() -> dict:
+            with _vocabulary_errors(data, name):
+                return _with_added(pid, vocabularies.inspect_file(
+                    model, name, data, detect_format(name), settings.parse_timeout()
+                ))
+
+        return await run_in_threadpool(read_file)
+    payload = await ontologies.read_json_capped(request, INSPECT_JSON_MAX_BYTES, INSPECT_JSON_TOO_LARGE)
+    try:
+        choice = InspectChoice.model_validate(payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="Choose a bundled vocabulary, a library ontology or an address.") from exc
+
+    def read_choice() -> dict:
+        with _vocabulary_errors(None, None):
+            if choice.bundled:
+                found = vocabularies.inspect_bundled(model, choice.bundled)
+            elif choice.ontologyId:
+                other = store.get(choice.ontologyId)
+                if other is None:
+                    raise HTTPException(status_code=404, detail="There is no such ontology in the library.")
+                if other.editable:
+                    raise vocabularies.Refused("This is the model itself." if other.id.startswith(pid) else
+                                               "Choose an ontology from your library.")
+                found = vocabularies.inspect_library(model, other)
+            elif choice.url:
+                found = vocabularies.inspect_url(model, choice.url, settings.parse_timeout(), settings.fetch_bytes())
+            else:
+                raise vocabularies.Refused("Choose a bundled vocabulary, a library ontology or an address.")
+            return _with_added(pid, found)
+
+    return await run_in_threadpool(read_choice)
+
+
+@contextmanager
+def _vocabulary_errors(data: Optional[bytes], name: Optional[str]):
+    """A refusal is 422 with its sentence; a file that does not parse, the
+    sentence Load gives (parse_errors.py, D-112), the raw text apart."""
+    try:
+        yield
+    except vocabularies.Refused as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ParseTimeout as exc:
+        raise HTTPException(status_code=504, detail=settings.too_slow_detail(str(exc))) from exc
+    except ParseError as exc:
+        body = data if data is not None else getattr(exc, "body", b"")
+        raise HTTPException(
+            status_code=422, detail=ontologies._load_failure(exc, body, name or getattr(exc, "name", None))
+        ) from exc
 
 
 class ReadAloudTick(BaseModel):

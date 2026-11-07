@@ -34,8 +34,10 @@ BASIC IDEA
     already shows red and green (shacl-authoring 5.8, row S23).
 
     A template project may reuse reference ontologies (reference-ontologies
-    5.4, D-121): each one chosen adds its prefixes and a dcterms:requires
-    naming it to the rendered graph, and never an owl:imports. The
+    5.4): each one chosen is added as Add a vocabulary adds one, through
+    vocabularies.add_lines and its rule (D-128, superseding D-121's
+    *never an owl:imports*), so FOAF and QUDT, which hold rules, are
+    imported, their prefixes declared. The
     description is the header's rdfs:comment in the primary language,
     added the same way, as an rdflib Literal and never assembled as text.
     A template with nothing added is written as rendered, byte for byte;
@@ -115,7 +117,7 @@ from typing import Callable, Optional
 from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import DCTERMS, OWL, RDF, RDFS, SKOS
 
-from . import naming, references, settings
+from . import naming, references, settings, vocabularies
 from .queries_store import SavedQueryStore
 
 # What create() mints. fullmatch, never match: `$` also matches before a
@@ -190,7 +192,7 @@ def _replace(tmp: Path, path: Path, attempts: int = 5) -> None:
 
 
 def empty_layout() -> dict:
-    return {"version": LAYOUT_VERSION, "generation": 0, "positions": {}, "shown": None, "viewport": None}
+    return {"version": LAYOUT_VERSION, "generation": 0, "positions": {}, "shown": None, "viewport": None, "placed": []}
 
 
 def _finite(value) -> bool:
@@ -206,7 +208,10 @@ def validate_layout(data) -> dict:
     """A layout from the browser, checked and normalised, or ProjectError.
 
     {version: 1, positions: {iri: [x, y]}, shown: [iri, ...] | null,
-    viewport: {x, y, zoom} | null}. Nothing else is kept. A `generation`
+    viewport: {x, y, zoom} | null, placed: [iri, ...]}. `placed` is the
+    outside terms put on the canvas with no line yet (vocabularies-and-
+    ontologies 5.8): a layout entry, never the model, counted under the
+    same entry cap. Nothing else is kept. A `generation`
     is kept when it is a whole number, which is how the file's own counter
     is read back; one sent by the browser is replaced by write_layout.
     """
@@ -216,7 +221,11 @@ def validate_layout(data) -> dict:
     if not isinstance(positions, dict):
         raise ProjectError("A layout's positions are an object of IRI to [x, y].")
     shown = data.get("shown")
-    count = len(positions) + (len(shown) if isinstance(shown, list) else 0)
+    placed = data.get("placed") or []
+    count = (
+        len(positions) + (len(shown) if isinstance(shown, list) else 0)
+        + (len(placed) if isinstance(placed, list) else 0)
+    )
     if count > LAYOUT_MAX_ENTRIES:
         raise ProjectError(f"A layout holds at most {LAYOUT_MAX_ENTRIES:,} entries.")
     clean: dict = {}
@@ -230,6 +239,9 @@ def validate_layout(data) -> dict:
         if not (isinstance(shown, list) and all(_key(i) for i in shown)):
             raise ProjectError("A layout's shown set is a list of IRIs, or null.")
         shown = list(dict.fromkeys(shown))
+    if not (isinstance(placed, list) and all(_key(i) for i in placed)):
+        raise ProjectError("A layout's placed terms are a list of IRIs.")
+    placed = list(dict.fromkeys(placed))
     viewport = data.get("viewport")
     if viewport is not None:
         if not (isinstance(viewport, dict) and all(_finite(viewport.get(k)) for k in ("x", "y", "zoom"))):
@@ -244,6 +256,7 @@ def validate_layout(data) -> dict:
         "positions": clean,
         "shown": shown,
         "viewport": viewport,
+        "placed": placed,
     }
 
 
@@ -371,12 +384,20 @@ def header_of(graph: Graph) -> Optional[URIRef]:
     return found[0] if found else None
 
 
-def _with_references(graph: Graph, header: URIRef, chosen: list[dict]) -> None:
-    """One dcterms:requires per reference, and never owl:imports (D-121):
-    reusing a term by its prefix commits to nothing else. The prefixes are
-    written by keep_prefixes, as nothing uses them yet."""
+def _with_references(graph: Graph, header: URIRef, chosen: list[dict]) -> dict:
+    """Each reference added as Add a vocabulary adds it (D-128): through
+    vocabularies.add_lines, by the same rule, so FOAF and QUDT, which hold
+    rules, are imported. Returns the prefixes the lines declare, which
+    keep_prefixes writes, as nothing uses them yet."""
+    declared: dict = {}
     for entry in chosen:
-        graph.add((header, DCTERMS.requires, URIRef(entry["reuse"]["ontology"])))
+        source = vocabularies.bundled_of(entry)
+        prefix, namespace = next(iter(entry["reuse"]["prefixes"].items()))
+        lines, declares = vocabularies.add_lines(header, entry["reuse"]["ontology"], prefix, namespace, source.how)
+        for line in lines:
+            graph.add(line)
+        declared.update(declares)
+    return declared
 
 
 def _statement(subject: URIRef, predicate: URIRef, value: Literal) -> str:
@@ -715,10 +736,9 @@ class ProjectStore:
         header = header_of(graph)
         comment = Literal(description, lang=primary_language) if description and header is not None else None
         if not copying and (chosen or comment is not None):
-            _with_references(graph, header, chosen)
+            declared = _with_references(graph, header, chosen)
             if comment is not None:
                 graph.add((header, RDFS.comment, comment))
-            declared = {p: n for e in chosen for p, n in e["reuse"]["prefixes"].items()}
             text = references.keep_prefixes(
                 graph.serialize(format="longturtle"), declared, (prefix, base_iri)
             )

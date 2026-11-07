@@ -73,6 +73,9 @@ EXPECTED OUTPUT
       "owl" for owl:Class (or both) and "rdfs" for rdfs:Class alone
       (edit-page-rework 5.8). An imported box has none: absent means owl.
     - restrict(view, shown) -> the same shape, cut to the shown set.
+    - with_placed(view, placed, describe) -> the view with the layout's
+      placed outside terms as boxes (`placed: true`), the cached view
+      untouched (vocabularies-and-ontologies 5.8).
     - with_inferred(view, kinds, never) -> the view with inferred lines and
       never-members flags added, the cached view untouched.
 ================================================================================
@@ -433,6 +436,38 @@ def restrict(view: dict, shown: Optional[list]) -> dict:
         "edges": [e for e in view["edges"] if e["source"] in keep and e["target"] in keep],
         "limited": True,
     }
+
+
+def with_placed(view: dict, placed: Sequence[str], describe) -> dict:
+    """Outside terms put on the canvas with no line yet (vocabularies-and-
+    ontologies 5.8): each drawn as an outside box, read-only, as a linked
+    one is. `describe(iri)` gives {label, kind, imported, reused} or None
+    for a term no added vocabulary defines any more, which is not drawn.
+    Per request, from the layout: placing moves no revision (D-087)."""
+    if not placed:
+        return view
+    drawn = {node["iri"] for node in view["nodes"]}
+    extra = []
+    for iri in placed:
+        if iri in drawn:
+            continue
+        term = describe(iri)
+        if term is None:
+            continue
+        drawn.add(iri)
+        extra.append({
+            "iri": iri,
+            "kind": term["kind"],
+            "label": term["label"],
+            "fallback": False,
+            "imported": term["imported"],
+            "attributes": [],
+            "placed": True,
+            **({"reused": True} if term.get("reused") else {}),
+        })
+    if not extra:
+        return view
+    return {**view, "nodes": view["nodes"] + extra}
 
 
 def with_inferred(view: dict, kinds: list[tuple], never: set) -> dict:

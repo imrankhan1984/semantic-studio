@@ -134,6 +134,20 @@ BASIC IDEA
     and a Turtle apply names any term in a reference namespace that the
     reference does not define (5.7), after the text has applied.
 
+    A vocabulary is added and removed by two commands (vocabularies-and-
+    ontologies 5.3, 5.6, D-128). AddVocabulary writes what
+    vocabularies.add_lines gives -- owl:imports for a vocabulary that holds
+    rules, else dcterms:requires -- and declares its prefix; RemoveVocabulary
+    takes both away, refused while the document's statements use its terms.
+    A prefix is no statement, so a command carries it beside its delta into
+    the document's declarations, which every step's editor state holds:
+    undo takes it back with the lines, and a step with no statement but a
+    prefix is still a step. A step that adds or removes an owl:imports
+    resolves the imports again, locally and never over the network, so the
+    merged view follows the lines. The canvas draws the layout's placed
+    outside terms (5.8) as read-only boxes, per request, from the merged
+    view or the reused vocabulary's index.
+
 INPUTS / INPUT SOURCES
     - Project folders and manifests, through projects.ProjectStore.
     - Command names and arguments, and Turtle text, from routers/projects.py.
@@ -195,8 +209,8 @@ from .projects import (
     split_document_id,
     valid_lang,
 )
-from . import axioms, checks, examples, lexical, modeling_checks, naming, reasoning, references, sentences, settings, shacl, shapes_form, standard_terms
-from .canvas import build_canvas, restrict, with_inferred
+from . import axioms, checks, examples, lexical, modeling_checks, naming, reasoning, references, sentences, settings, shacl, shapes_form, standard_terms, vocabularies
+from .canvas import build_canvas, restrict, with_inferred, with_placed
 from .imports import imports_service, load_state
 from .snapshots import SnapshotService
 from .store import Ontology, OntologyStore, ParseTimeout
@@ -634,6 +648,11 @@ class Change:
     # The kind of class a CreateClass chose (D-117): the project's next
     # default, a manifest write and never part of the step.
     class_type: Optional[str] = None
+    # Prefixes a command declares and takes away (AddVocabulary and
+    # RemoveVocabulary, D-128): not statements, so carried beside the delta
+    # into the step's editor state, which undo restores.
+    declare: Optional[dict] = None
+    undeclare: Optional[list] = None
 
 
 class Context:
@@ -688,6 +707,11 @@ class Context:
             self._imported_view = self._imported()
             self._imported_read = True
         return self._imported_view
+
+    @property
+    def declared(self) -> dict:
+        """The document's declared prefixes (reference-ontologies 5.6)."""
+        return self._declared() if self._declared is not None else {}
 
     @property
     def imported_from(self) -> dict:
@@ -2717,6 +2741,36 @@ def cmd_set_class_type(ctx: Context, a: dict) -> Change:
     )
 
 
+def cmd_add_vocabulary(ctx: Context, a: dict) -> Change:
+    """AddVocabulary {iri, prefix} (vocabularies-and-ontologies 5.3, D-128):
+    owl:imports for a vocabulary that holds rules, else dcterms:requires,
+    decided here from the inspected copy, and the prefix, as one step."""
+    header = header_of(ctx.graph)
+    if header is None:
+        raise CommandError("This model has no ontology header to add a vocabulary to.")
+    try:
+        source, prefix = vocabularies.add_plan(ctx.graph, ctx.declared, ctx.manifest, None, a.get("iri"), a.get("prefix"))
+    except vocabularies.Refused as exc:
+        raise CommandError(str(exc)) from exc
+    lines, declares = vocabularies.add_lines(header, source.iri, prefix, source.namespace, source.how)
+    change = _change(ctx.graph, f"Added {source.title}", adds=lines)
+    change.declare = declares
+    return change
+
+
+def cmd_remove_vocabulary(ctx: Context, a: dict) -> Change:
+    """RemoveVocabulary {iri} (5.6): what Add wrote, the prefix with it, as
+    one step; refused while the document's statements use its terms."""
+    names = vocabularies.names_in(ctx.imported if ctx.imported is not None else ctx.graph)
+    try:
+        title, lines, undeclare = vocabularies.remove_plan(ctx.graph, ctx.declared, ctx.manifest, a.get("iri"), names)
+    except vocabularies.Refused as exc:
+        raise CommandError(str(exc)) from exc
+    change = _change(ctx.graph, f"Removed {title}", removes=lines)
+    change.undeclare = undeclare
+    return change
+
+
 AXIOM_COMMANDS = {
     "AddRestriction": cmd_add_restriction,
     "ReplaceRestriction": cmd_replace_restriction,
@@ -3387,6 +3441,8 @@ COMMANDS: dict[str, Callable[[Context, dict], Change]] = {
     "SetExampleValue": cmd_set_example_value,
     "AddExampleValue": cmd_add_example_value,
     "RemoveExampleValue": cmd_remove_example_value,
+    "AddVocabulary": cmd_add_vocabulary,
+    "RemoveVocabulary": cmd_remove_vocabulary,
     **AXIOM_COMMANDS,
     **SHAPE_COMMANDS,
 }
@@ -3791,10 +3847,11 @@ class EditingService:
                     raise CommandError("Only DeleteEntity, ShareDomain and SetClassType have a dry run.")
                 change = handler(ctx, args)
                 impact = None
-            if not change.added and not change.removed:
+            if not change.added and not change.removed and not change.declare and not change.undeclare:
                 raise CommandError("That would change nothing.")
             before = document.editor_state()
             self._apply(document, change, origin="command")
+            self._declare(document, change)
             self._push(document, change, before)
             if change.renamed:
                 self._move_layout(document, *change.renamed)
@@ -3811,7 +3868,38 @@ class EditingService:
                 result["created"] = str(change.created)
             if class_type is not None:
                 result["classType"] = class_type
-            return result
+        # Outside the locks: a change to what the model imports resolves it
+        # again, locally (D-128), so the merged view follows the lines.
+        self._settle_imports(document, change.added + change.removed)
+        return result
+
+    @staticmethod
+    def _declare(document: OpenDocument, change: Change) -> None:
+        """A command's prefixes (D-128): into the document's declarations,
+        read again by the step's editor state, and bound for longturtle."""
+        if not change.declare and not change.undeclare:
+            return
+        declared = {p: n for p, n in document.declared().items() if p not in (change.undeclare or [])}
+        for prefix, namespace in (change.declare or {}).items():
+            declared[prefix] = namespace
+            document.graph.bind(prefix, namespace, override=True, replace=True)
+        document._declared = (None, declared)
+
+    def _settle_imports(self, document: OpenDocument, triples: list) -> None:
+        """Resolve the document's imports again, local first and never over
+        the network, when a step added or removed one: an Add is loaded at
+        once, and an undo takes the import out of the merged view too. A
+        vocabulary whose own imports need a host not yet approved is left
+        for Load, which asks (5.3)."""
+        if not any(p == OWL.imports for _, p, _ in triples):
+            return
+        try:
+            imports_service.resolve(
+                document.ontology, allow_network=False,
+                parse_timeout=settings.parse_timeout(), max_bytes=settings.fetch_bytes(),
+            )
+        except Exception:  # noqa: BLE001 - the step is made; Load says what failed
+            pass
 
     def _remember_class_type(self, pid: str, change: Change) -> Optional[str]:
         """The kind a new class was made as is the project's next default
@@ -4105,7 +4193,8 @@ class EditingService:
                     raise CommandError(f"This also changed {other}, and they have changed since. Undo {other} first.")
                 return self._drop_orphan(document, step, document.undo, "undone")
             self._undo_step(document, step)
-            return {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
+        self._settle_imports(document, step.added + step.removed)
+        return {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
 
     def _undo_step(self, document: OpenDocument, step: Step) -> None:
         document.undo.pop()
@@ -4133,7 +4222,8 @@ class EditingService:
                     raise CommandError(f"This also changed {other}, and they have changed since. Redo {other} first.")
                 return self._drop_orphan(document, step, document.redo, "redone")
             self._redo_step(document, step)
-            return {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
+        self._settle_imports(document, step.added + step.removed)
+        return {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
 
     def _redo_step(self, document: OpenDocument, step: Step) -> None:
         document.redo.pop()
@@ -4358,14 +4448,49 @@ class EditingService:
             view = document._canvas[1]
             layout = self.projects.read_layout(pid, doc)
             revision = ontology.revision
+            declared = self.declared(document)
         # The project's kind decides what the palette offers and which boxes
         # the visual doors may change (D-089); the model is the same either way.
         kind = self.projects.manifest(pid).get("kind")
         drawn = restrict(view, layout["shown"])
+        # Placed outside terms (vocabularies-and-ontologies 5.8), from the
+        # layout, after the shown-set cut: placing one is choosing to see it.
+        drawn = with_placed(drawn, layout.get("placed") or [], lambda iri: self._outside_term(merged, declared, iri, langs))
         outcome = self.current_inferred(pid, imports) if inferred and doc == "model" else None
         if outcome is not None:
             drawn = with_inferred(drawn, outcome.inferred_kinds(), outcome.never_members())
         return {"revision": revision, "kind": kind, **drawn, "layout": layout}
+
+    @staticmethod
+    def _outside_term(merged: Optional[dict], declared: dict, iri: str, langs) -> Optional[dict]:
+        """A placed term's box (5.8): named from the merged view when it is
+        imported, else from the reused vocabulary's index; None when no
+        added vocabulary defines it any more."""
+        node = URIRef(iri)
+        if merged is not None and iri in merged["importedFrom"]:
+            graph = merged["graph"]
+            types = set(graph.objects(node, RDF.type))
+            kind = "concept" if SKOS.Concept in types and not types & {OWL.Class, RDFS.Class} else "class"
+            return {"label": pick_label_in(graph, node, langs)[0], "kind": kind, "imported": merged["importedFrom"][iri]}
+        found = references.term(declared, iri)
+        if found is None:
+            return None
+        term, title = found
+        return {"label": term["label"], "kind": "concept" if term["kind"] == "concept" else "class",
+                "imported": title, "reused": True}
+
+    def vocabularies(self, pid: str, doc: str) -> dict:
+        """The Edit page's Vocabularies section (vocabularies-and-ontologies
+        5.2): read under the document's lock, never changing it."""
+        document = self.document(pid, doc)
+        manifest = self.projects.manifest(pid)
+        with document.lock:
+            return vocabularies.listing(document.graph, self.declared(document), manifest, load_state(document.ontology))
+
+    def model_graph(self, pid: str) -> Graph:
+        """The open model, for inspect's check that a source is not the
+        model itself or an ontology importing it (5.9)."""
+        return self.document(pid, "model").graph
 
     def branch_map(self, pid: str) -> dict:
         """relationship -> its branch concept, read from the project's shapes
@@ -4449,7 +4574,9 @@ class EditingService:
         layout = self.projects.read_layout(document.pid, document.doc)
         g = document.graph
         mentioned = lambda iri: (URIRef(iri), None, None) in g or (None, None, URIRef(iri)) in g  # noqa: E731
-        kept = {iri: p for iri, p in layout["positions"].items() if mentioned(iri)}
+        # A placed outside term keeps its place with no line (5.8).
+        placed = set(layout.get("placed") or [])
+        kept = {iri: p for iri, p in layout["positions"].items() if mentioned(iri) or iri in placed}
         shown = [iri for iri in layout["shown"]] if layout["shown"] is not None else None
         if shown is not None:
             shown = [iri for iri in shown if mentioned(iri)]
@@ -4677,6 +4804,21 @@ class EditingService:
                     "defaultType": value_type_from_range(rng),
                     "source": where,
                 })
+        # An added vocabulary's properties (vocabularies-and-ontologies 5.5):
+        # Dublin Core Elements is fifteen plain properties and no rules, and
+        # dc:creator is offered here, marked with its title (AC-14).
+        for term, title in references.properties(self.declared(document)):
+            prop = URIRef(term["iri"])
+            if prop in seen:
+                continue
+            seen.add(prop)
+            out.append({
+                "iri": term["iri"],
+                "prefixed": prefixed(ctx.graph, prop),
+                "defaultType": value_type_from_range(None),
+                "source": "vocabulary",
+                "vocabulary": title,
+            })
         return out
 
     def missing_names(self, pid: str, doc: str) -> dict:

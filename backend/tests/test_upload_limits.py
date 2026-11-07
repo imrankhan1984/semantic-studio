@@ -394,3 +394,73 @@ def test_chosen_import_files_within_the_limit_reach_the_endpoint():
         files={"files": ("small.ttl", io.BytesIO(b"x" * 1024), "text/turtle")},
     )
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# vocabularies-and-ontologies AC-10: Add a vocabulary's file, refused as Load
+# refuses one
+# ---------------------------------------------------------------------------
+
+
+def _open_project() -> str:
+    pid = client.post("/api/projects", json={"name": "Capped", "template": "small"}).json()["id"]
+    assert client.post(f"/api/projects/{pid}/open").status_code == 200
+    return pid
+
+
+def _inspect_file(pid: str, body, **kw):
+    return client.post(
+        f"/api/projects/{pid}/vocabularies/inspect",
+        files={"file": ("big.nt", body, "application/n-triples")}, **kw,
+    )
+
+
+def test_a_vocabulary_file_over_the_limit_is_refused_with_loads_sentence(monkeypatch):
+    monkeypatch.setattr("app.settings.upload_bytes", lambda: 64 * 1024)
+    pid = _open_project()
+    response = _inspect_file(pid, io.BytesIO(make_ntriples(5_000)))
+    assert response.status_code == 413
+    assert response.json()["detail"]["message"].endswith("You can raise it in Settings → Limits.")
+    client.post(f"/api/projects/{pid}/close", json={"discard": True})
+
+
+def test_a_declared_oversize_vocabulary_file_is_refused_before_the_body_is_parsed():
+    pid = _open_project()
+    response = _inspect_file(pid, io.BytesIO(b"x" * 1024), headers={"content-length": str(200 * 1024 * 1024)})
+    assert response.status_code == 413
+    client.post(f"/api/projects/{pid}/close", json={"discard": True})
+
+
+def test_peak_memory_stays_small_while_rejecting_an_oversized_vocabulary_file(monkeypatch):
+    """A real 30 MB body against a 1 MB limit, measured as Load's is."""
+    monkeypatch.setattr("app.settings.upload_bytes", lambda: 1024 * 1024)
+    pid = _open_project()
+    body = io.BytesIO(b"x" * (30 * 1024 * 1024))
+    tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        response = _inspect_file(pid, body)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert response.status_code == 413
+    assert peak / (1024 * 1024) < 10, f"peak was {peak / (1024 * 1024):.2f} MB"
+    client.post(f"/api/projects/{pid}/close", json={"discard": True})
+
+
+def test_a_vocabulary_file_just_under_the_limit_is_read(monkeypatch):
+    monkeypatch.setattr("app.settings.upload_bytes", lambda: 64 * 1024)
+    pid = _open_project()
+    small = b"<http://example.org/v#a> a <http://www.w3.org/1999/02/22-rdf-syntax-ns#Property> .\n" * 3
+    response = _inspect_file(pid, io.BytesIO(small))
+    assert response.status_code == 200, response.text
+    assert response.json()["how"] == "reused"
+    client.post(f"/api/projects/{pid}/close", json={"discard": True})
+    # What inspect kept is in the run's shared data folder: gone again, so
+    # it is no known source in a later test.
+    from app import vocabularies
+    from app.imports import imports_service
+    from app.store import store
+
+    (store.data_dir / vocabularies.REGISTRY).unlink(missing_ok=True)
+    imports_service.cache.catalog_path.unlink(missing_ok=True)

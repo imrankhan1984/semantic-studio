@@ -64,6 +64,9 @@ client = TestClient(app, base_url="http://localhost", headers={"X-Semantic-Studi
 EX = "http://example.org/shop#"
 
 
+SHOP_HEADER = URIRef("http://example.org/shop")
+
+
 def U(local: str) -> URIRef:
     return URIRef(EX + local)
 
@@ -296,6 +299,11 @@ COMMAND_CASES = [
      [(U("Invoice"), RDF.type, RDFS.Class)], [(U("Invoice"), RDF.type, OWL.Class)], "Made Bill an RDFS class"),
     ("SetClassType", {"class": "shop:Invoice", "type": "owl"},
      [(U("Invoice"), RDF.type, OWL.Class)], [(U("Invoice"), RDF.type, RDFS.Class)], "Made Bill an OWL class"),
+    # vocabularies-and-ontologies 5.3, 5.6 (D-128): PROV-O holds rules.
+    ("AddVocabulary", {"iri": "http://www.w3.org/ns/prov-o", "prefix": "prov"},
+     [(SHOP_HEADER, OWL.imports, URIRef("http://www.w3.org/ns/prov-o"))], [], "Added PROV-O"),
+    ("RemoveVocabulary", {"iri": "http://www.w3.org/ns/prov-o"},
+     [], [(SHOP_HEADER, OWL.imports, URIRef("http://www.w3.org/ns/prov-o"))], "Removed PROV-O"),
 ]
 
 
@@ -2204,3 +2212,135 @@ def test_undo_of_a_pair_drops_the_orphan_when_the_partner_was_trimmed(pid, monke
     ok(pid, "CreateClass", label="Gadget")  # buries the branch's model half
     buried = client.post(f"/api/projects/{pid}/documents/shapes/undo")
     assert buried.status_code == 422 and "Undo the model first" in buried.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Vocabularies (vocabularies-and-ontologies 5.3 to 5.6, D-128)
+# ---------------------------------------------------------------------------
+
+PROV_O = URIRef("http://www.w3.org/ns/prov-o")
+PROV = "http://www.w3.org/ns/prov#"
+DC_ELEMENTS = URIRef("http://purl.org/dc/elements/1.1/")
+
+
+def source_text(pid: str) -> str:
+    return client.get(f"/api/projects/{pid}/documents/model/source").json()["text"]
+
+
+def undo_vocab(pid: str):
+    return client.post(f"/api/projects/{pid}/documents/model/undo")
+
+
+def redo_vocab(pid: str):
+    return client.post(f"/api/projects/{pid}/documents/model/redo")
+
+
+def test_add_imported_writes_the_import_and_the_prefix_as_one_step(pid):
+    """AC-3, AC-6: PROV-O holds rules, so owl:imports and prov:, one step;
+    undo puts the text back exactly, and redo the import again."""
+    before = source_text(pid)
+    result = ok(pid, "AddVocabulary", iri=str(PROV_O), prefix="prov")
+    assert result["label"] == "Added PROV-O"
+    assert (SHOP_HEADER, OWL.imports, PROV_O) in doc(pid).graph
+    after = source_text(pid)
+    assert f"PREFIX prov: <{PROV}>" in after and "owl:imports <http://www.w3.org/ns/prov-o>" in after
+    # Resolved at once, from the bundle, with no network.
+    rows = client.get(f"/api/ontologies/{pid}-model/imports").json()["imports"]
+    assert [(r["iri"], r["status"], r["source"]) for r in rows] == [(str(PROV_O), "resolved", "bundled")]
+    assert undo_vocab(pid).status_code == 200
+    assert source_text(pid) == before
+    assert (SHOP_HEADER, OWL.imports, PROV_O) not in doc(pid).graph
+    assert "prov" not in editing_service.declared(doc(pid))
+    # The merged view follows the lines: nothing imported after the undo.
+    assert client.get(f"/api/ontologies/{pid}-model/imports").json()["imports"] == []
+    assert redo_vocab(pid).status_code == 200
+    assert source_text(pid) == after
+
+
+def test_add_reused_writes_the_prefix_and_requires_as_one_step(pid):
+    """AC-6: a term list is reused, D-121's lines; undo restores the text."""
+    before = source_text(pid)
+    ok(pid, "AddVocabulary", iri=str(DC_ELEMENTS), prefix="dc")
+    graph = doc(pid).graph
+    assert (SHOP_HEADER, DCTERMS.requires, DC_ELEMENTS) in graph
+    assert not list(graph.triples((None, OWL.imports, None)))
+    assert f"PREFIX dc: <{DC_ELEMENTS}>" in source_text(pid)
+    assert undo_vocab(pid).status_code == 200
+    assert source_text(pid) == before
+
+
+def test_the_server_decides_imported_or_reused(pid):
+    """The browser never says: an extra field is no way past the rule."""
+    ok(pid, "AddVocabulary", iri=str(DC_ELEMENTS), prefix="dc", how="imported")
+    assert not list(doc(pid).graph.triples((None, OWL.imports, None)))
+
+
+def test_a_prefix_bound_to_another_namespace_is_refused(pid):
+    """AC-7: the sentence names both, and nothing is written."""
+    assert apply(pid, source_text(pid) + "\n@prefix prov: <http://example.org/provenance#> .\n").status_code == 200
+    before = revision(pid)
+    response = run(pid, "AddVocabulary", iri=str(PROV_O), prefix="prov")
+    assert response.status_code == 422
+    assert response.json()["detail"] == "prov: already means http://example.org/provenance# in this model. Choose another prefix."
+    assert revision(pid) == before
+    # Another prefix is fine.
+    ok(pid, "AddVocabulary", iri=str(PROV_O), prefix="provo")
+    assert editing_service.declared(doc(pid))["provo"] == PROV
+
+
+def test_an_added_vocabulary_is_not_added_twice(pid):
+    ok(pid, "AddVocabulary", iri=str(PROV_O), prefix="prov")
+    response = run(pid, "AddVocabulary", iri=str(PROV_O), prefix="prov")
+    assert response.status_code == 422 and response.json()["detail"] == "PROV-O is already added."
+
+
+def test_remove_is_refused_while_used_naming_statements_and_allowed_when_unused(pid):
+    """AC-8: refused while used, up to three statements in the app's words;
+    with none, exactly what Add wrote goes, and undo brings it back."""
+    before_add = set(doc(pid).graph)
+    ok(pid, "AddVocabulary", iri=str(PROV_O), prefix="prov")
+    added = source_text(pid)
+    operator = ok(pid, "CreateClass", label="Operator")["created"]
+    ok(pid, "AddSubClassOf", child=operator, parent=PROV + "Agent")
+    response = run(pid, "RemoveVocabulary", iri=str(PROV_O))
+    assert response.status_code == 422
+    assert response.json()["detail"] == "1 statement uses PROV-O terms, such as Operator is a kind of Agent. Change them first."
+    ok(pid, "CreateClass", label="Shift", parent=PROV + "Activity")
+    many = run(pid, "RemoveVocabulary", iri=str(PROV_O)).json()["detail"]
+    assert many.startswith("2 statements use PROV-O terms, such as ")
+    assert undo_vocab(pid).status_code == 200  # the Shift class
+    assert undo_vocab(pid).status_code == 200  # the subclass
+    assert undo_vocab(pid).status_code == 200  # Operator
+    assert source_text(pid) == added
+    removed = ok(pid, "RemoveVocabulary", iri=str(PROV_O))
+    assert removed["label"] == "Removed PROV-O"
+    # Exactly what Add wrote: the import and the prefix, nothing else.
+    assert set(doc(pid).graph) == before_add
+    assert "prov" not in editing_service.declared(doc(pid))
+    assert "PREFIX prov:" not in source_text(pid)
+    assert undo_vocab(pid).status_code == 200
+    assert source_text(pid) == added
+
+
+def test_remove_after_typing_only_a_prefix_takes_the_prefix(pid):
+    """The Turtle door's reused row: Remove takes the declaration away, a
+    step with no statement in it, and undo puts it back."""
+    text = source_text(pid) + f"\n@prefix dc: <{DC_ELEMENTS}> .\n"
+    assert apply(pid, text).status_code == 200
+    ok(pid, "RemoveVocabulary", iri=str(DC_ELEMENTS))
+    assert "dc" not in editing_service.declared(doc(pid))
+    assert undo_vocab(pid).status_code == 200
+    assert source_text(pid) == text
+
+
+def test_remove_reads_the_document_in_one_scan(pid, monkeypatch):
+    """Repository rule *Stage B*: one predicate scan, never a lookup per
+    term -- the statements are walked once whatever the vocabulary's size."""
+    from app import vocabularies
+
+    ok(pid, "AddVocabulary", iri=str(PROV_O), prefix="prov")
+    scans = []
+    real = vocabularies._usage
+    monkeypatch.setattr(vocabularies, "_usage", lambda *a: scans.append(1) or real(*a))
+    ok(pid, "RemoveVocabulary", iri=str(PROV_O))
+    assert scans == [1]
