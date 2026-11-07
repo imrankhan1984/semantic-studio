@@ -56,8 +56,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 2115 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 2096 tests, vitest
+cd backend  && python -m pytest tests    # 2174 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 2117 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -69,7 +69,7 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Forty-five backend tests carry
+**Timing budgets are separated, not deleted.** Forty-six backend tests carry
 `@pytest.mark.perf`; twelve frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
@@ -480,6 +480,8 @@ leaves one behind.
 - A result is current only for its revision, generation and imports view; the tree and the canvas drop its marks themselves, before their refetch lands. [Reasoning]
 - Tree rows are keyed and focused by their path (`row.key`), never the id: a node under two parents is two rows. [Reasoning]
 - A pair concluded both ways is shown one way, by IRI order, never by set order. [Reasoning]
+- Whether the reasoner uses a rule is decided only by `axioms.unused_by_reasoner`, measured against the engine; the form, the canvas, H1 and the reasoning result read it, and nothing is refused for it (D-129). [Rules the reasoner does not use]
+- The rules the reasoner does not use are counted in the main process, never in the worker; the summary carries `unused` only for a finished run. [Rules the reasoner does not use]
 
 **Rules on a class**
 - A restriction is read only in one of 5.8's exact shapes; anything else is its Turtle, read-only, and no command rewrites it (D-105). [Rules on a class]
