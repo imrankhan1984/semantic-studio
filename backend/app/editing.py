@@ -177,6 +177,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import json
+import logging
 import re
 import shutil
 import threading
@@ -215,6 +216,8 @@ from .imports import imports_service, load_state
 from .snapshots import SnapshotService
 from .store import Ontology, OntologyStore, ParseTimeout
 from .store import store as _default_store
+
+log = logging.getLogger(__name__)
 
 Triple = tuple
 
@@ -3893,13 +3896,16 @@ class EditingService:
         for Load, which asks (5.3)."""
         if not any(p == OWL.imports for _, p, _ in triples):
             return
+        # Under the document's lock, which edits take, so the closure never
+        # reads a graph a command is changing (code review); local work only.
         try:
-            imports_service.resolve(
-                document.ontology, allow_network=False,
-                parse_timeout=settings.parse_timeout(), max_bytes=settings.fetch_bytes(),
-            )
-        except Exception:  # noqa: BLE001 - the step is made; Load says what failed
-            pass
+            with document.lock:
+                imports_service.resolve(
+                    document.ontology, allow_network=False,
+                    parse_timeout=settings.parse_timeout(), max_bytes=settings.fetch_bytes(),
+                )
+        except Exception:  # noqa: BLE001 - the step is made; its row says not loaded
+            log.warning("Resolving the imports of %s after a change failed", document.ontology.id, exc_info=True)
 
     def _remember_class_type(self, pid: str, change: Change) -> Optional[str]:
         """The kind a new class was made as is the project's next default

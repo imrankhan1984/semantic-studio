@@ -288,18 +288,20 @@ export function useCanvasData(
       const current = layout.current;
       if (!current) return false;
       const before = current.placed ?? [];
-      const positions = at ? { ...current.positions, [at.iri]: at.point } : { ...current.positions };
+      const point = at ? { [at.iri]: at.point } : {};
       try {
         await flush();
-        settle((await putLayout(projectId, doc, { ...current, positions, placed: next }))?.generation);
+        // The positions as they are after the flush, not before it: a box
+        // moved meanwhile keeps its place (code review).
+        settle((await putLayout(projectId, doc, { ...current, positions: { ...current.positions, ...point }, placed: next }))?.generation);
       } catch (e) {
         current.placed = before;
         setSaveError(`The canvas could not change its outside terms: ${message(e)}`);
         return false;
       }
       current.placed = next;
-      current.positions = positions;
-      setPositions({ ...positions });
+      current.positions = { ...current.positions, ...point };
+      setPositions({ ...current.positions });
       setSaveError(null);
       setAttempt((a) => a + 1);
       return true;

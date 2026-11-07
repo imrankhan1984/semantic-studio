@@ -231,6 +231,9 @@ class Index:
             for t in terms
         ]
         self.defined = frozenset(defined)
+        # IRI -> term, for a placed box's name (5.8): one lookup, not a scan
+        # of QUDT's terms per box on every canvas fetch (code review).
+        self.by_iri = {t["iri"]: t for t in terms}
         # Local name -> IRI per namespace, for the closest match (5.7).
         self.locals: dict[str, dict[str, str]] = {}
         for iri in self.defined:
@@ -398,7 +401,7 @@ def term(declared: dict[str, str], iri: str) -> Optional[tuple[dict, str]]:
     for entry in in_use(declared):
         if not iri.startswith(tuple(namespaces_of(entry) & bound)):
             continue
-        found = next((t for t in index_of(entry).terms if t["iri"] == iri), None)
+        found = index_of(entry).by_iri.get(iri)
         if found is not None:
             return found, entry["reuse"]["title"]
     return None

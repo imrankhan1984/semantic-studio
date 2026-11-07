@@ -621,3 +621,21 @@ def test_a_recorded_hostile_namespace_is_refused_and_never_written():
     r = _command(pid, "AddVocabulary", {"iri": "http://example.org/old", "prefix": "old"})
     assert r.status_code == 422 and "Turtle cannot hold" in r.json()["detail"]
     assert references.keep_prefixes("<a> <b> <c> .\n", {"old": hostile}) == "<a> <b> <c> .\n"
+
+
+def test_an_import_no_source_names_owns_its_terms_and_guards_its_remove():
+    """Code review: an owl:imports of an ontology never inspected (typed in
+    Turtle, resolved from anywhere) is one row with its use counted, never
+    a second Not found row, and Remove is refused while it is used."""
+    pid = _project()
+    text = _source(pid) + (
+        "\n<http://example.org/pumps> <http://www.w3.org/2002/07/owl#imports> <http://example.org/team> .\n"
+        "<http://example.org/pumps#Pump> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/team#Machine> .\n"
+    )
+    assert _apply(pid, text).status_code == 200
+    listed = _list(pid)
+    assert listed["sentence"] == "Uses 1 vocabulary."
+    [row] = listed["rows"]
+    assert (row["iri"], row["status"], row["how"], row["uses"]) == ("http://example.org/team", "added", "imported", 1)
+    r = _command(pid, "RemoveVocabulary", {"iri": "http://example.org/team"})
+    assert r.status_code == 422 and r.json()["detail"].startswith("1 statement uses http://example.org/team terms")

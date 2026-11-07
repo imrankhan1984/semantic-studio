@@ -320,6 +320,21 @@ def _kept_path(ref: dict) -> Optional[Path]:
     return None
 
 
+def _index_key(entry: dict) -> Optional[str]:
+    """The hash a recorded copy's term index is kept under. A cached copy is
+    never changed in place (the cache checks its hash); a library file can
+    be, so its key moves with the file's size and time (code review)."""
+    sha = entry.get("sha256")
+    path = _kept_path(entry.get("ref") or {})
+    if sha is None or path is None or (entry.get("ref") or {}).get("kind") != "library":
+        return sha
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return hashlib.sha256(f"{sha}:{stat.st_size}:{stat.st_mtime_ns}".encode()).hexdigest()
+
+
 def recorded_sources() -> list[Source]:
     """What inspect kept, with its copy's whereabouts."""
     found = []
@@ -338,7 +353,7 @@ def recorded_sources() -> list[Source]:
                 ref=dict(entry.get("ref") or {}),
                 path=_kept_path(entry.get("ref") or {}),
                 format=entry.get("format"),
-                sha256=entry.get("sha256"),
+                sha256=_index_key(entry),
             ))
         except (KeyError, TypeError, StopIteration):
             continue
@@ -383,6 +398,16 @@ def known_sources() -> list[Source]:
 
 def source_for(iri: str, sources: Optional[list[Source]] = None) -> Optional[Source]:
     return next((s for s in (sources or known_sources()) if s.answers_to(iri)), None)
+
+
+def guessed_namespaces(iri: str, declared: dict) -> set[str]:
+    """What an import no known source names defines, as a library ontology
+    never inspected is guessed (code review): its IRI with # or /, and any
+    prefix the document binds under it. Without it Remove counted no use."""
+    base = normalize_iri(iri)
+    spaces = {base + "#", base + "/"}
+    spaces |= {ns for ns in declared.values() if normalize_iri(ns) == base}
+    return {ns for ns in spaces if iri_ok(ns)}
 
 
 def _by_namespace(sources: list[Source]) -> dict[str, Source]:
@@ -756,7 +781,7 @@ def listing(graph: Graph, declared: dict, manifest: dict, state: Optional[dict])
             "iri": iri,
             "title": source.title if source else (state_row or {}).get("sourceName") or document_title(Graph(), iri),
             "prefix": None,
-            "namespaces": sorted(source.namespaces) if source else [],
+            "namespaces": sorted(source.namespaces if source else guessed_namespaces(iri, declared)),
             "status": "added",
             "how": IMPORTED,
             "loaded": loaded,
@@ -917,7 +942,7 @@ def remove_plan(graph: Graph, declared: dict, manifest: dict, iri, names) -> tup
         raise Refused("Choose a vocabulary to remove.")
     iri = iri.strip()
     source = source_for(iri)
-    spaces = set(source.namespaces) if source else set()
+    spaces = set(source.namespaces) if source else guessed_namespaces(iri, declared)
     title = source.title if source else iri
     lines = [
         t for predicate in _ADDING for t in graph.triples((None, predicate, None))

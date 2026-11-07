@@ -498,7 +498,7 @@ leaves one behind.
 **Reference ontologies**
 - A term list is reused by its prefix and a `dcterms:requires`; a vocabulary with rules is imported (D-128, superseding D-121's *never*). [Reference terms, Vocabularies and ontologies]
 - A reference ontology is in use when the document declares a prefix bound to its namespace, read from the document's text, never from its graph (rdflib binds `foaf:` in every graph) and never because of `dcterms:requires`; `clean()` writes a declared reference prefix back, and the project's own at creation and in `clean()`. [Reference terms]
-- The reference index is built from the bundled files only, cached in memory and in the data folder by SHA-256, and never sent whole to the browser. [Reference terms]
+- The reference index is built from a bundled file or a copy Add a vocabulary kept, never from the network, cached in memory and in the data folder by SHA-256 (a library copy's key moving with its file), and never sent whole to the browser. [Reference terms, Vocabularies and ontologies]
 
 **Vocabularies**
 - `vocabularies.add_lines` is the only code that writes `owl:imports`, called by `AddVocabulary` and New project; `test_projects.py`'s AST scan allows nothing else and proves it catches a planted writer (D-128). [Vocabularies and ontologies]
