@@ -509,6 +509,7 @@ leaves one behind.
 - A web address reaches the broker only as `ontology:import`, through `vocabularies.inspect_url`; a recording server sees zero requests before approval and while offline. [Vocabularies and ontologies]
 - A placed term is the layout's `placed`, drawn per request: no revision, no dirty flag, no undo step (D-087); the prune on open keeps its position. [Vocabularies and ontologies]
 - A test that inspects a file removes `vocabularies.json` afterwards: the run shares one data folder. [Vocabularies and ontologies]
+- A namespace from a file is held to `vocabularies.iri_ok` where it enters (`describe`), at Add, and in `keep_prefixes` before a PREFIX line is written: rdflib keeps an IRI holding `>` and a newline. [Turtle cannot hold]
 
 **OWL or RDFS for each class**
 - A class is typed `owl:Class` or `rdfs:Class`, never both: CreateClass and SetClassType write one. Its kind is `axioms.kind_of`, the document's own typing first, for the commands and `/node` alike (D-117). [OWL or RDFS for each class]

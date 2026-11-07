@@ -142,6 +142,20 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Turtle's IRIREF: none of these, nor a space or control character. rdflib's
+# RDF/XML and JSON-LD parsers hand over an IRI holding `>` and a newline with
+# no more than a logged warning, and a namespace is written into a PREFIX
+# line: such a namespace closed the line and wrote statements of its own into
+# the model (security review). Checked where a namespace enters, from a file,
+# and again where one is written (references.keep_prefixes, add_plan).
+_NOT_IN_IRI = re.compile(r'[<>"{}|^`\\\x00-\x20\x7f]')
+
+
+def iri_ok(iri: str) -> bool:
+    """An IRI that can be written between < and > in Turtle as it is."""
+    return bool(iri) and _NOT_IN_IRI.search(iri) is None
+
+
 def namespace_of(iri: str) -> Optional[str]:
     """The namespace an IRI is a term of: up to its last # or /, for an
     http(s) IRI only. A urn: or a mailto: names no vocabulary."""
@@ -500,10 +514,14 @@ def describe(graph: Graph, fallback_title: str) -> dict:
     for subject in set(graph.subjects(RDF.type, None)):
         if isinstance(subject, URIRef):
             namespace = namespace_of(str(subject))
-            if namespace and not namespace.startswith(BUILTIN_NAMESPACES):
+            # A namespace Turtle cannot hold is never one the model declares.
+            if namespace and iri_ok(namespace) and not namespace.startswith(BUILTIN_NAMESPACES):
                 typed[namespace] += 1
-    headers = ontology_iris(graph)
-    header = next((str(s) for s in sorted(graph.subjects(RDF.type, OWL.Ontology)) if isinstance(s, URIRef)), None)
+    headers = [i for i in ontology_iris(graph) if iri_ok(i)]
+    header = next(
+        (str(s) for s in sorted(graph.subjects(RDF.type, OWL.Ontology)) if isinstance(s, URIRef) and iri_ok(str(s))),
+        None,
+    )
     if not typed and header is None:
         raise Refused("This file defines no terms to reuse.")
     main = typed.most_common(1)[0][0] if typed else normalize_iri(header) + "#"
@@ -872,6 +890,10 @@ def add_plan(graph: Graph, declared: dict, manifest: dict, state: Optional[dict]
     source = source_for(iri.strip())
     if source is None or source.how is None:
         raise Refused("Choose the vocabulary in Add a vocabulary… first, so it can be read.")
+    if not iri_ok(source.iri) or not all(iri_ok(ns) for ns in source.namespaces):
+        # A registry written before the check, or a library ontology's
+        # declared namespace: never written into the model's text.
+        raise Refused(f"{source.title} names an address Turtle cannot hold, so it cannot be added.")
     _refuse_self(graph, source.iri, source.aliases, source.imports)
     prefix = (prefix if isinstance(prefix, str) and prefix.strip() else source.prefix).strip()
     if not _PREFIX.fullmatch(prefix):

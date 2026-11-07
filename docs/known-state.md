@@ -3072,3 +3072,17 @@ EXPECTED OUTPUT
   **Not a bare Load.** 5.2 names the row action *Load*; wording 5.1's scan
   (`wording.test.ts`) keeps a control called *Load* out of the app, so the
   action is *Load its copy*.
+
+  **A namespace Turtle cannot hold is never written** (security review of this
+  build). rdflib's RDF/XML and JSON-LD parsers keep an IRI holding `>`, a
+  space or a newline with only a logged warning, and `keep_prefixes` writes a
+  declared namespace between `<` and `>` in a PREFIX line: a vocabulary file
+  whose subjects carried such an IRI closed the line and wrote statements of its
+  own into the model, which Save kept (reproduced end to end). `vocabularies.iri_ok`
+  (Turtle's IRIREF: no angle bracket, double quote, brace, bar, caret,
+  backtick or backslash, and no space or control character) is
+  applied three times: `describe` never counts such a namespace or header,
+  `add_plan` refuses a source holding one (a registry entry from before the
+  check, a library ontology's declared namespace), and `keep_prefixes` never
+  writes one. `test_a_namespace_turtle_cannot_hold_is_never_written_into_the_model`
+  runs the attack; it and its two neighbours fail with the check removed.

@@ -200,10 +200,12 @@ def keep_prefixes(text: str, declared: dict[str, str], own: Optional[tuple] = No
     wanted = {prefix: namespace for prefix, namespace in declared.items() if namespace in reference}
     if own and own[0] and own[1]:
         wanted.setdefault(own[0], own[1])
+    # Written between < and > below: a namespace Turtle cannot hold there is
+    # never written, whatever put it in the declarations (security review).
     missing = [
         (prefix, namespace)
         for prefix, namespace in sorted(wanted.items())
-        if namespace not in present.values() and prefix not in present
+        if namespace not in present.values() and prefix not in present and vocabularies.iri_ok(namespace)
     ]
     if not missing:
         return text

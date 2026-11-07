@@ -551,3 +551,73 @@ def test_registry_survives_a_restart_in_shape():
     [entry] = data["entries"].values()
     assert entry["iri"] == "http://example.org/team" and entry["rules"] == 0
     assert vocabularies.source_for("http://example.org/team").how == "reused"
+
+
+# ---------------------------------------------------------------------------
+# Security review: a namespace Turtle cannot hold never reaches the text
+# ---------------------------------------------------------------------------
+
+
+def _hostile_rdfxml(with_header: bool = True) -> bytes:
+    """RDF/XML whose subjects' IRIs hold `>` and a newline: rdflib's parser
+    keeps them with only a warning. Cut at the last `/`, the namespace
+    closes a PREFIX line and writes a statement of its own."""
+    tail = (
+        "http://example.org/v>\n<http://example.org/pumps> "
+        "<http://www.w3.org/2000/01/rdf-schema#comment> \"INJECTED\" .\nPREFIX zz: <http://example.org/a/"
+    )
+    escaped = tail.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("\n", "&#10;")
+    header = '<owl:Ontology xmlns:owl="http://www.w3.org/2002/07/owl#" rdf:about="http://example.org/vocab"/>' if with_header else ""
+    return (
+        '<?xml version="1.0"?><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+        + header
+        + "".join(f'<rdf:Property rdf:about="{escaped}{n}"/>' for n in "ABC")
+        + '<rdf:Property rdf:about="http://example.org/v/fine"/></rdf:RDF>'
+    ).encode()
+
+
+def test_a_namespace_turtle_cannot_hold_is_never_written_into_the_model():
+    """The review's attack, end to end: inspect, Add, save, reopen. The
+    hostile namespace is never read as one, so nothing is injected."""
+    pid = _project()
+    found = _inspect_file(pid, "v.rdf", _hostile_rdfxml()).json()
+    assert ">" not in found["namespace"] and "\n" not in found["namespace"]
+    assert vocabularies.iri_ok(found["namespace"]), found["namespace"]
+    assert _command(pid, "AddVocabulary", {"iri": found["iri"], "prefix": found["prefix"]}).status_code == 200
+    text = _source(pid)
+    assert "INJECTED" not in text and "zz:" not in text
+    assert client.post(f"/api/projects/{pid}/documents/model/save").status_code == 200
+    editing_service.close_all()
+    assert client.post(f"/api/projects/{pid}/open").status_code == 200
+    graph = editing_service.document(pid, "model").graph
+    assert not any("INJECTED" in str(o) for o in graph.objects())
+
+
+def test_a_file_of_nothing_but_hostile_names_is_refused():
+    """Header-less, the hostile namespace would be the IRI too: no term
+    Turtle can hold, so nothing to add."""
+    pid = _project()
+    tail = "http://example.org/v>\n<x> <y> \"z\" .\nPREFIX q: <http://example.org/a/A"
+    escaped = tail.replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("\n", "&#10;")
+    data = (
+        '<?xml version="1.0"?><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+        f'<rdf:Property rdf:about="{escaped}"/></rdf:RDF>'
+    ).encode()
+    r = _inspect_file(pid, "v.rdf", data)
+    assert r.status_code == 422 and r.json()["detail"] == "This file defines no terms to reuse."
+
+
+def test_a_recorded_hostile_namespace_is_refused_and_never_written():
+    """Defence again where a namespace leaves: a registry entry from before
+    the check is refused by Add, and keep_prefixes never writes one."""
+    from app import references
+
+    pid = _project()
+    hostile = "http://example.org/v>\n<a> <b> \"c\" .\nPREFIX z: <http://example.org/a/"
+    vocabularies._record(vocabularies.Source(
+        iri="http://example.org/old", title="Old", prefixes={"old": hostile}, kind="file",
+        name="File: old.ttl", statements=3, rules=0, ref={"kind": "cache", "key": "0" * 24},
+    ))
+    r = _command(pid, "AddVocabulary", {"iri": "http://example.org/old", "prefix": "old"})
+    assert r.status_code == 422 and "Turtle cannot hold" in r.json()["detail"]
+    assert references.keep_prefixes("<a> <b> <c> .\n", {"old": hostile}) == "<a> <b> <c> .\n"
