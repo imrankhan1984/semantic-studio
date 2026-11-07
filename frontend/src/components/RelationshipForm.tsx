@@ -74,7 +74,7 @@ import {
 } from "../modeling/sentences";
 import { projectStore } from "../state/projectStore";
 import type { ModelWarning } from "../types";
-import { Block, type Runner } from "./EditParts";
+import { Block, type Runner, useRunner } from "./EditParts";
 import EntityPicker from "./EntityPicker";
 import SharedDomain from "./SharedDomain";
 
@@ -182,7 +182,7 @@ interface Props {
 }
 
 /** Which small form is open: at most one at a time. */
-type Open = null | "domain" | "range" | "inverseName" | "inversePick" | "parent";
+type Open = null | "domain" | "range" | "inverseName" | "inversePick" | "parent" | "branch";
 
 export default function RelationshipForm({
   ontologyId,
@@ -195,6 +195,11 @@ export default function RelationshipForm({
   warnings = [],
 }: Props) {
   const { busy, errors, run, clear } = runner;
+  // A branch relationship's rule lives in shapes.ttl (skos-and-owl 5.3.2), so
+  // SetBranch and ClearBranch run on the shapes document, through their own
+  // runner; the Values from row reads the branch back from the node details,
+  // which the detail panel refetches when the shapes revision moves.
+  const shapesRunner = useRunner("shapes");
   // The start's kind (attribute-reuse 5.8). After *Make X an OWL class*
   // the offer gives way to *add a rule*, which takes the focus the pressed
   // button had, once the refetch has drawn it (code review).
@@ -291,6 +296,51 @@ export default function RelationshipForm({
     );
   };
 
+  /** The Values from row (skos-and-owl 5.3.1), shown in place of To for a
+   *  relationship whose range is skos:Concept: the branch concept with open
+   *  and Change… (a concept picker that runs SetBranch), or Any concept and
+   *  Change… that adds a rule; Clear runs ClearBranch. */
+  const branchRow = () => (
+    <div className="relationship-end">
+      <h5>Values from</h5>
+      {model.branch ? (
+        <p className="edit-value">
+          <button type="button" className="term-link" title={model.branch.iri} onClick={() => onSelect(model.branch!.iri)}>
+            {model.branch.label}
+          </button>
+          <span className="detail-note"> or a concept under it</span>
+          <button
+            type="button"
+            className="ghost edit-btn"
+            aria-label={`Clear the values list of ${name}`}
+            aria-disabled={shapesRunner.busy}
+            onClick={() => !shapesRunner.busy && void shapesRunner.run("branch", "ClearBranch", { property: iri })}
+          >
+            Clear
+          </button>
+        </p>
+      ) : (
+        <p className="detail-note">Any concept.</p>
+      )}
+      {open === "branch" ? (
+        <EntityPicker
+          ontologyId={ontologyId}
+          kind="concept"
+          label="Values from (a concept)"
+          exclude={[]}
+          busy={shapesRunner.busy}
+          error={shapesRunner.errors.branch || null}
+          onCancel={close}
+          onPick={async (target) => {
+            if (await shapesRunner.run("branch", "SetBranch", { property: iri, branch: target })) close();
+          }}
+        />
+      ) : (
+        opener("branch", "Change…", `Change the values of ${name}`)
+      )}
+    </div>
+  );
+
   const toggle = (characteristic: Characteristic, on: boolean) => {
     if (busy) return;
     void run("characteristic", "SetCharacteristic", { property: iri, characteristic, on });
@@ -352,7 +402,7 @@ export default function RelationshipForm({
             )}
           </>
         )}
-        {end("range", "To", model.range)}
+        {model.branchRange ? branchRow() : end("range", "To", model.range)}
         <div className="edit-actions">
           <button
             type="button"

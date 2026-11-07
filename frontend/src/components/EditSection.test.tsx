@@ -793,18 +793,16 @@ describe("the project's kind (relationships AC-2)", () => {
     });
   }
 
-  it("a concept in an ontology is shown read-only, with where it is changed", async () => {
+  it("a concept in an ontology is edited here like any own entity (D-127)", async () => {
     await renderKind(paid(), "ontology");
-    expect(
-      screen.getByText("A SKOS concept, read-only in an ontology. Edit it in Turtle, or change the project to a taxonomy."),
-    ).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Add broader concept" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Delete/ })).toBeNull();
+    expect(screen.queryByText(/read-only in an ontology/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Add broader concept" })).toBeTruthy();
   });
 
-  it("a class in a taxonomy is shown read-only, and the kind's own entity is edited as before", async () => {
+  it("a class in a taxonomy is edited here like any own entity (D-127)", async () => {
     await renderKind(invoice(), "taxonomy");
-    expect(screen.getByText(/A class, read-only in a taxonomy\./)).toBeTruthy();
+    expect(screen.queryByText(/read-only in a taxonomy/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Add subclass" })).toBeTruthy();
     cleanup();
     await renderKind(paid(), "taxonomy");
     expect(screen.getByRole("button", { name: "Add broader concept" })).toBeTruthy();
@@ -1060,7 +1058,7 @@ describe("relationship form (AC-7)", () => {
     });
   });
 
-  it("is read-only in a taxonomy, with the note (5.10 item 2)", async () => {
+  it("is edited in a taxonomy too, no read-only note (D-127)", async () => {
     await act(async () => {
       render(
         <EditSection
@@ -1074,8 +1072,9 @@ describe("relationship form (AC-7)", () => {
         />,
       );
     });
-    expect(screen.getByText(/A relationship, read-only in a taxonomy/)).toBeTruthy();
-    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByText(/read-only in a taxonomy/)).toBeNull();
+    // Its characteristics checkboxes are shown and editable.
+    expect(screen.queryAllByRole("checkbox").length).toBeGreaterThan(0);
   });
 });
 

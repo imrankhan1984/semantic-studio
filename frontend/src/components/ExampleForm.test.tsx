@@ -219,6 +219,18 @@ describe("an example's form (5.8)", () => {
     });
   });
 
+  it("offers only the branch and the concepts under it for a concept-valued relationship (5.3.4)", async () => {
+    const BRANCH: ExampleField = {
+      property: `${EX}hasStatus`, label: "has status", kind: "relationship", functional: false,
+      values: [], range: "http://www.w3.org/2004/02/skos/core#Concept", rangeLabel: "Concept",
+      options: [{ iri: `${EX}Status`, label: "Status" }, { iri: `${EX}Active`, label: "Active" }], optionsTotal: 2,
+    };
+    await renderForm(bob([BRANCH]));
+    const field = screen.getByRole("group", { name: /has status/ });
+    const choice = within(field).getByLabelText("Link to") as HTMLSelectElement;
+    expect([...choice.options].map((o) => o.textContent)).toEqual(["Choose a Concept…", "Status", "Active"]);
+  });
+
   it("removes a value as one command and keeps focus in the field", async () => {
     await renderForm(bob());
     const field = screen.getByRole("group", { name: /member of/ });

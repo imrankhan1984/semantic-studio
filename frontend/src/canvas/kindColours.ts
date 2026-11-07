@@ -42,7 +42,7 @@ import type { CanvasNode } from "../types";
 import { EDGES, KINDS, type KindTokens, type Theme } from "../theme/kinds";
 
 export type BoxKind = "owl" | "rdfs" | "concept" | "scheme" | "example" | "attribute";
-export type LineKind = "kindof" | "relationship" | "broader" | "related" | "rule";
+export type LineKind = "kindof" | "relationship" | "broader" | "related" | "rule" | "branch";
 export type { Theme };
 
 /** accent: the band, a line, a dot; tint: the header and label fill; ink:
@@ -68,6 +68,10 @@ const lines = (t: Theme): Record<LineKind, string> => ({
   broader: EDGES[t].broader,
   related: EDGES[t].related,
   rule: EDGES[t].disjointWith,
+  // A branch relationship points to concepts, so it takes the concept
+  // hierarchy's colour; its dotted pattern and list marker tell it apart
+  // from a plain relationship (skos-and-owl 5.3.1, not by colour alone).
+  branch: EDGES[t].broader,
 });
 export const LINES: Record<Theme, Record<LineKind, string>> = { light: lines("light"), dark: lines("dark") };
 /** A relationship's label has a tint of its own: the object property's. */

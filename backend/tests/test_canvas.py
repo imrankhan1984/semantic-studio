@@ -626,3 +626,28 @@ def test_canvas_with_union_attributes_budget():
     assert drawn == 2000
     median = _median_ms(lambda: canvas(pid), setup=invalidate)
     assert median <= limit_ms(150), f"the canvas view took {median:.0f} ms (median of 5)"
+
+
+# --- skos-and-owl (E-15): a branch relationship draws a branch line (5.3) ----------------
+
+
+def test_ac4_a_branch_relationship_draws_a_branch_line_to_its_concept(pid):
+    run(pid, "CreateBranchRelationship", label="has status", domain="shop:Invoice", branch="shop:Status")
+    branch_edges = [e for e in canvas(pid)["edges"] if e["kind"] == "branch"]
+    assert len(branch_edges) == 1
+    edge = branch_edges[0]
+    assert (edge["source"], edge["target"], edge["label"]) == (EX + "Invoice", EX + "Status", "has status")
+    # skos:Concept is never a box, and no relationship line is drawn to it.
+    nodes = {n["iri"] for n in canvas(pid)["nodes"]}
+    assert "http://www.w3.org/2004/02/skos/core#Concept" not in nodes
+    assert not any(e["kind"] == "relationship" and e.get("label") == "has status" for e in canvas(pid)["edges"])
+    # The view changes when only the shapes revision moves (SetBranch).
+    model_rev = state(pid)["revision"]
+    response = client.post(
+        f"/api/projects/{pid}/documents/shapes/commands",
+        json={"command": "SetBranch", "args": {"property": "shop:hasStatus", "branch": "shop:Paid"}},
+    )
+    assert response.status_code == 200, response.text
+    assert state(pid)["revision"] == model_rev, "SetBranch writes only the shapes document"
+    moved = [e for e in canvas(pid)["edges"] if e["kind"] == "branch"]
+    assert moved[0]["target"] == EX + "Paid"

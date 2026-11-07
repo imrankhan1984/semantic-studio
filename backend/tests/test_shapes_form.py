@@ -343,3 +343,27 @@ def test_two_domain_lines_offer_the_property_only_where_every_class_applies():
     offered = lambda cls: {e["label"] for e in shapes_form.paths_for(g, URIRef(UNI + cls), _local, ["en"])}  # noqa: E731
     assert "badge" not in offered("Manager") and "badge" not in offered("Team")
     assert "badge" in offered("TeamManager")
+
+
+# --- skos-and-owl (E-15): a branch rule reads as an editable rule with `under` (5.3) ------
+
+
+def test_a_branch_rule_reads_editable_with_under_and_any_other_node_is_read_only():
+    shape = read("""
+shop:S a sh:NodeShape ; rdfs:label "Rules"@en ; sh:targetClass shop:Person ;
+    sh:property [ sh:path shop:worksFor ; sh:class skos:Concept ;
+        sh:node [ sh:property [ sh:path [ sh:zeroOrMorePath skos:broader ] ; sh:hasValue shop:Status ] ] ] .
+""")
+    assert shape["editable"] is True, shape["unsupported"]
+    rule = next(r for r in shape["rules"] if r["path"] == [EX + "worksFor"])
+    assert rule["under"] == EX + "Status"
+    assert rule["class"] == str(SKOS.Concept)
+    assert rule["pathKind"] == "relationship"
+    # Any other sh:node keeps the shape read-only, as before.
+    other = read("""
+shop:S a sh:NodeShape ; rdfs:label "Rules"@en ; sh:targetClass shop:Person ;
+    sh:property [ sh:path shop:worksFor ; sh:node shop:Address ] .
+shop:Address a sh:NodeShape ; sh:property [ sh:path shop:name ; sh:minCount 1 ] .
+""")
+    assert other["editable"] is False
+    assert any("sh:node" in u for u in other["unsupported"])

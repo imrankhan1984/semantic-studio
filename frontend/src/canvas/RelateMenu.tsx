@@ -96,7 +96,9 @@ export default function RelateMenu({
   const ref = useRef<HTMLDivElement>(null);
   const sentenceId = useId();
   const offerRef = useRef<HTMLButtonElement>(null);
-  const [naming, setNaming] = useState(false);
+  // The choice being named: *new relationship…*, or a branch relationship
+  // between a class and a concept (skos-and-owl 5.3.1). Both ask only a name.
+  const [naming, setNaming] = useState<RelateChoice | null>(null);
   const [name, setName] = useState("");
 
   // On open, and after a swap: the first item, which now reads the other way.
@@ -116,7 +118,13 @@ export default function RelateMenu({
     all[next]?.focus();
   };
 
-  const newRelationship = choices.find((c) => c.kind === "newRelationship");
+  // The sentence under the name field: the relationship as typed, or, for a
+  // branch, the menu entry with the name filled in (*Each Motor has a motor
+  // type from Motor types*).
+  const preview =
+    naming?.kind === "branch"
+      ? naming.label.replace("…", name.trim() || "…")
+      : relationshipSentence(from, name, to);
   return (
     <div
       ref={ref}
@@ -151,11 +159,11 @@ export default function RelateMenu({
           </button>
         )}
       </div>
-      {naming && newRelationship ? (
+      {naming ? (
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (!busy && name.trim()) onChoose(newRelationship, name.trim());
+            if (!busy && name.trim()) onChoose(naming, name.trim());
           }}
         >
           <label className="edit-field-label" htmlFor="relate-name">
@@ -181,7 +189,7 @@ export default function RelateMenu({
             </p>
           ) : (
             <p id={sentenceId} className="relate-sentence">
-              {relationshipSentence(from, name, to)}
+              {preview}
             </p>
           )}
           <div className="edit-actions">
@@ -218,7 +226,7 @@ export default function RelateMenu({
                 aria-disabled={busy}
                 onClick={() => {
                   if (busy) return;
-                  if (choice.kind === "newRelationship") setNaming(true);
+                  if (choice.kind === "newRelationship" || choice.kind === "branch") setNaming(choice);
                   else onChoose(choice);
                 }}
               >

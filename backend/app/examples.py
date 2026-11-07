@@ -122,11 +122,36 @@ def subclasses(graph: Graph, cls) -> set:
 _TO_ITSELF = (OWL.SymmetricProperty, OWL.ReflexiveProperty)
 
 
-def _options(graph: Graph, node, prop, rng, every: list, names: Names) -> tuple[list, int]:
+def _concepts_under(graph: Graph, branch) -> set:
+    """A branch concept and every concept under it (skos-and-owl 5.3.4),
+    following skos:broader (and skos:narrower, its inverse) down, a loop cut."""
+    seen = {branch}
+    queue = [branch]
+    while queue:
+        current = queue.pop()
+        narrower = set(graph.subjects(SKOS.broader, current)) | set(graph.objects(current, SKOS.narrower))
+        for c in narrower:
+            if isinstance(c, URIRef) and c not in seen:
+                seen.add(c)
+                queue.append(c)
+    return seen
+
+
+def _all_concepts(graph: Graph) -> set:
+    return {s for s in graph.subjects(RDF.type, SKOS.Concept) if isinstance(s, URIRef)}
+
+
+def _options(graph: Graph, node, prop, rng, every: list, names: Names, branch=None) -> tuple[list, int]:
     """The examples a relationship may point to: of its end class or below,
-    every example when it has none. The example itself is left out unless
-    the relationship works both ways or always to itself: offered for any
+    every example when it has none. A relationship whose values are a branch of
+    concepts (5.3.4) offers the branch concept and every concept under it, or
+    every concept when it has no branch rule. The example itself is left out
+    unless the relationship works both ways or always to itself: offered for any
     other, it read as a suggestion to link Alice to Alice (PR #51 review)."""
+    if rng == SKOS.Concept:
+        pool = _concepts_under(graph, branch) if branch is not None else _all_concepts(graph)
+        ordered = sorted(pool, key=lambda c: (names(c).casefold(), str(c)))
+        return [{"iri": str(c), "label": names(c)} for c in ordered[:OPTIONS_CAP]], len(ordered)
     if rng is None:
         chosen = every
     else:
@@ -149,12 +174,16 @@ def _values(graph: Graph, node, prop, names: Names) -> list:
 
 
 def example_view(
-    graph: Graph, node, names: Names, languages: list, own: Optional[Graph] = None
+    graph: Graph, node, names: Names, languages: list, own: Optional[Graph] = None,
+    branches: Optional[dict] = None,
 ) -> Optional[dict]:
     """What an example's form shows (5.8), or None when `node` is not one.
 
     `graph` is the model with its imports where they are resolved; `own`,
-    the document, is where the choices of a relationship come from."""
+    the document, is where the choices of a relationship come from. `branches`
+    maps a concept-valued relationship to its branch concept (skos-and-owl
+    5.3.4), so its value picker offers that concept and those under it."""
+    branches = branches or {}
     if not is_example(graph, node):
         return None
     classes = example_classes(graph, node)
@@ -182,7 +211,9 @@ def example_view(
                 rng = URIRef(entry["range"]) if entry.get("range") else None
                 field["range"] = entry.get("range")
                 field["rangeLabel"] = entry.get("rangeLabel")
-                field["options"], field["optionsTotal"] = _options(graph, node, prop, rng, every, names)
+                field["options"], field["optionsTotal"] = _options(
+                    graph, node, prop, rng, every, names, branches.get(prop)
+                )
             fields.append(field)
     fields.sort(key=lambda f: (f["kind"] != "attribute", f["label"].casefold(), f["property"]))
     return {

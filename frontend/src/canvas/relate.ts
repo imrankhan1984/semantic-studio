@@ -41,9 +41,10 @@ BASIC IDEA
     round. A class may be linked to itself by a relationship (*Person knows
     Person*), never by *is a kind of*; a concept never to itself.
 
-    The project's kind decides which boxes the canvas may link (D-089): an
-    ontology's concepts, and a taxonomy's classes, are drawn but read-only
-    here, and a line from one says where to change them instead.
+    The project's kind decides only which box the palette offers first, never
+    what can be linked (D-127): every box the document defines is editable, and
+    a line between a class and a concept makes a relationship whose values are
+    a branch of concepts (skos-and-owl 5.3).
 
 INPUTS / INPUT SOURCES
     - The canvas view from the server: its kind, boxes, lines and undrawn
@@ -56,7 +57,7 @@ EXPECTED OUTPUT
 */
 
 import { moreRulesText } from "../modeling/ruleSentences";
-import { article, disjointEntry, equivalentEntry, existingSentence, linkSentence, makeOwlEntry, shareEntry } from "../modeling/sentences";
+import { article, branchEntry, disjointEntry, equivalentEntry, existingSentence, linkSentence, makeOwlEntry, shareEntry } from "../modeling/sentences";
 import type { CanvasNode, CanvasView } from "../types";
 import { kindWord } from "./kindColours";
 
@@ -89,37 +90,42 @@ export type RelateChoice =
   // A relationship that already ends at this line's end, from another
   // class (attribute-reuse 5.1): the reuse plan for it and this line's
   // start, in the start's form.
-  | { kind: "share"; label: string; name: string; property: string };
+  | { kind: "share"; label: string; name: string; property: string }
+  // A line between a class and a concept (skos-and-owl 5.3.1): a relationship
+  // from the class whose values are a branch of concepts. `domain` is the
+  // class, `branch` the concept, whichever way the line was drawn. Opens the
+  // new-relationship name field, then runs CreateBranchRelationship.
+  | { kind: "branch"; label: string; domain: string; branch: string };
 
 export type RelateResult =
   | { refusal: string }
   | { choices: RelateChoice[]; notes: string[] };
 
-const CLASS_CONCEPT =
-  "A class and a concept cannot be linked here. Use the form for other annotations.";
-
 function node(view: CanvasView, iri: string): CanvasNode | undefined {
   return view.nodes.find((n) => n.iri === iri);
-}
-
-/** Why a box of the other kind is not linked here, or null (D-089). */
-export function otherKindRefusal(view: CanvasView, box: CanvasNode): string | null {
-  if (view.kind === "ontology" && box.kind === "concept") {
-    return `${box.label} is a SKOS concept, read-only in an ontology. Edit it in Turtle, or change the project to a taxonomy.`;
-  }
-  if (view.kind === "taxonomy" && box.kind === "class") {
-    return `${box.label} is a class, read-only in a taxonomy. Edit it in Turtle, or change the project to an ontology.`;
-  }
-  return null;
 }
 
 export function relateChoices(view: CanvasView, fromIri: string, toIri: string): RelateResult {
   const from = node(view, fromIri);
   const to = node(view, toIri);
   if (!from || !to) return { refusal: "Draw the line from one box to another." };
-  if (from.kind !== to.kind) return { refusal: CLASS_CONCEPT };
-  const otherKind = otherKindRefusal(view, from) ?? otherKindRefusal(view, to);
-  if (otherKind) return { refusal: otherKind };
+  if (from.kind !== to.kind) {
+    // A line between a class and a concept (skos-and-owl 5.3.1): one choice,
+    // a relationship from the class whose values are a branch of concepts,
+    // with the class first whichever way the line was drawn. The new
+    // relationship starts at the class, so the class must be this model's.
+    const cls = from.kind === "class" ? from : to;
+    const concept = from.kind === "class" ? to : from;
+    if (cls.imported) {
+      return {
+        refusal: `${cls.label} comes from ${cls.imported === "outside" ? "outside this model" : cls.imported} and is read-only. Draw the line from a class of this model.`,
+      };
+    }
+    return {
+      choices: [{ kind: "branch", label: branchEntry(cls.label, concept.label), domain: cls.iri, branch: concept.iri }],
+      notes: [],
+    };
+  }
   const self = from.iri === to.iri;
   if (self && from.kind === "concept") return { refusal: `${from.label} cannot be narrower than itself.` };
   if (from.imported) {

@@ -178,6 +178,33 @@ def path_of(shapes: Graph, node) -> Optional[tuple]:
     return None
 
 
+def branch_under(shapes: Graph, prop) -> Optional[URIRef]:
+    """The concept a property shape's branch rule requires (skos-and-owl 5.3),
+    or None when the shape is not exactly a branch rule: one sh:node whose
+    single property walks sh:zeroOrMorePath skos:broader to one sh:hasValue
+    concept. Any other sh:node is left read-only, as before. The one reader of
+    the shape, used by the form, the commands and the canvas alike."""
+    nodes = list(shapes.objects(prop, SH.node))
+    if len(nodes) != 1 or not isinstance(nodes[0], BNode):
+        return None
+    inner_shape = nodes[0]
+    if set(shapes.predicates(inner_shape, None)) != {SH.property}:
+        return None
+    inners = list(shapes.objects(inner_shape, SH.property))
+    if len(inners) != 1 or not isinstance(inners[0], BNode):
+        return None
+    inner = inners[0]
+    if set(shapes.predicates(inner, None)) != {SH.path, SH.hasValue}:
+        return None
+    path_node = shapes.value(inner, SH.path)
+    if not isinstance(path_node, BNode) or set(shapes.predicates(path_node, None)) != {SH.zeroOrMorePath}:
+        return None
+    if shapes.value(path_node, SH.zeroOrMorePath) != SKOS.broader:
+        return None
+    value = shapes.value(inner, SH.hasValue)
+    return value if isinstance(value, URIRef) else None
+
+
 def _name_taken(model: Graph, languages: list) -> bool:
     """True when an attribute or relationship of the model is itself called
     "name": then rdfs:label reads *name (label)*, or the rule editor and the
@@ -314,7 +341,10 @@ def read_rules(shapes: Graph, node, model: Graph, names: Names, languages: list)
             else:
                 rule.setdefault("requiredLanguages", []).append(lang)
             continue
-        extra = set(shapes.predicates(prop, None)) - RULE_PREDICATES
+        # A branch rule's sh:node is the form's (skos-and-owl 5.3); any other
+        # sh:node stays read-only, as before.
+        under = branch_under(shapes, prop)
+        extra = set(shapes.predicates(prop, None)) - RULE_PREDICATES - ({SH.node} if under is not None else set())
         for predicate in sorted(extra):
             unsupported.append(_phrase(shapes, predicate))
         if path in plain:
@@ -322,6 +352,9 @@ def read_rules(shapes: Graph, node, model: Graph, names: Names, languages: list)
             continue
         plain.add(path)
         _read_constraints(shapes, prop, rule, names, unsupported)
+        if under is not None:
+            rule["under"] = str(under)
+            rule["underLabel"] = names(under)
     for rule in rules.values():
         if "requiredLanguages" in rule:
             rule["requiredLanguages"].sort()

@@ -39,7 +39,7 @@ INPUTS / INPUT SOURCES (props)
     - onChoose(action), onClose: the choice, or none.
 
 EXPECTED OUTPUT
-    - rowActions(kind, imported, canvas, otherKind) and the RowMenu component.
+    - rowActions(kind, imported, canvas, fixed) and the RowMenu component.
 ================================================================================
 */
 
@@ -52,19 +52,21 @@ export interface MenuItem<A extends string = RowAction> {
   label: string;
 }
 
-/** What a row offers, by its kind and whether it comes from an import. */
+/** What a row offers, by its kind and whether it comes from an import. A
+ *  `fixed` row (an inferred conclusion, D-127) offers no own actions; nothing
+ *  is fixed by the project's kind any more. */
 export function rowActions(
   kind: string,
   imported: boolean,
   canvas: { limited: boolean; shown: boolean } | null = null,
-  otherKind = false,
+  fixed = false,
 ): MenuItem[] {
   const drawable = kind === "class" || kind === "concept";
   const onCanvas: MenuItem[] =
     canvas?.limited && drawable
       ? [canvas.shown ? { action: "hide", label: "Hide from canvas" } : { action: "show", label: "Show on canvas" }]
       : [];
-  return [...(otherKind ? [] : ownActions(kind, imported)), ...onCanvas];
+  return [...(fixed ? [] : ownActions(kind, imported)), ...onCanvas];
 }
 
 function ownActions(kind: string, imported: boolean): MenuItem[] {

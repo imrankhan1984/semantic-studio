@@ -103,6 +103,9 @@ function shownFields(pathKind: string | undefined, kind: string, offersLanguages
 const CHECKS: (keyof ShapeRule)[] = [
   "minCount", "maxCount", "datatype", "class", "classLabel", "minLength", "maxLength", "pattern",
   "minInclusive", "maxInclusive", "in", "languageIn", "uniqueLang", "requiredLanguages",
+  // A branch rule's fields (skos-and-owl 5.3): the editor does not offer them,
+  // so they are preserved through an edit rather than dropped.
+  "under", "underLabel",
 ];
 
 const key = (path: string[]) => path.join(" ");

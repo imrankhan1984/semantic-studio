@@ -196,6 +196,7 @@ import {
 import AboutPanel from "./components/AboutPanel";
 import DetailPanel from "./components/DetailPanel";
 import ReasoningPanel, { ReasonControls } from "./components/ReasoningPanel";
+import { kindShownNotice, showToolsBody, showToolsTitle } from "./modeling/sentences";
 import { marksShown } from "./reasoning/reasonSentences";
 import ExploreStart from "./components/ExploreStart";
 import GraphNotice from "./components/GraphNotice";
@@ -611,7 +612,11 @@ export default function App() {
   // blocks from the languages array, and a new array per render would
   // redo that on every keystroke anywhere in App.
   const openDocName = projectDocuments.find((d) => d.ontologyId === activeId)?.doc ?? null;
-  const viewRevision = openDocName === "model" ? revision + dataGeneration : revision;
+  // A branch relationship's rule lives in the shapes document (skos-and-owl
+  // 5.3), so the model's views -- the canvas branch line, the Values from row
+  // -- refetch when the shapes revision moves as well as the model's.
+  const shapesRevision = projectDocuments.find((d) => d.doc === "shapes")?.revision ?? 0;
+  const viewRevision = openDocName === "model" ? revision + dataGeneration + shapesRevision : revision;
   // Where the model's data came from, for the Explore and Query source lines.
   const dataSources = useMemo(
     () => (openDocName === "model" ? (projectData?.snapshots ?? []).filter((d) => d.enabled) : []),
@@ -1772,7 +1777,7 @@ export default function App() {
     setProjectBusyId(project.id);
     try {
       await updateProject(project.id, { kind });
-      setNotice(`${project.name} is now ${kind === "ontology" ? "an ontology" : "a taxonomy"}. Nothing in the model was changed.`);
+      setNotice(kindShownNotice(project.name, kind));
       await refreshProjects();
       if (projectStore.getSnapshot().project?.id === project.id) await projectStore.reload();
     } catch (e: unknown) {
@@ -2715,7 +2720,7 @@ export default function App() {
 
       {changingKind && (
         <ConfirmDialog
-          title={`Change ${changingKind.name} to ${changingKind.kind === "ontology" ? "a taxonomy" : "an ontology"}?`}
+          title={showToolsTitle(changingKind.kind === "ontology" ? "taxonomy" : "ontology")}
           escape="cancel"
           actions={[
             { id: "cancel", label: "Cancel" },
@@ -2727,11 +2732,7 @@ export default function App() {
             if (answer === "change") void onChangeKind(project);
           }}
         >
-          <p>
-            {changingKind.kind === "ontology"
-              ? "The canvas and the tree will offer concepts instead of classes. Nothing in the model is rewritten: its classes stay, shown read-only and editable in Turtle."
-              : "The canvas and the tree will offer classes instead of concepts. Nothing in the model is rewritten: its concepts stay, shown read-only and editable in Turtle."}
-          </p>
+          <p>{showToolsBody(changingKind.kind === "ontology" ? "taxonomy" : "ontology")}</p>
         </ConfirmDialog>
       )}
 

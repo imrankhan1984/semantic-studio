@@ -35,7 +35,7 @@ EXPECTED OUTPUT
 import { useState } from "react";
 import ConfirmDialog from "../components/ConfirmDialog";
 
-export type LegendLine = "kindof" | "relationship" | "broader" | "related" | "inferred" | "rule";
+export type LegendLine = "kindof" | "relationship" | "broader" | "related" | "inferred" | "rule" | "branch";
 
 const WORDS: Record<LegendLine, string> = {
   kindof: "kind of",
@@ -44,6 +44,7 @@ const WORDS: Record<LegendLine, string> = {
   related: "related",
   inferred: "inferred",
   rule: "rule",
+  branch: "takes its values from",
 };
 
 /** Where each sample's ends are drawn: the canvas's own markers. */
@@ -54,6 +55,7 @@ const MARKERS: Record<LegendLine, { start?: string; end?: string }> = {
   related: { start: "url(#canvas-dot-related)", end: "url(#canvas-dot-related)" },
   inferred: { end: "url(#canvas-hollow-kindof)" },
   rule: { end: "url(#canvas-arrow-rule)" },
+  branch: { end: "url(#canvas-list-branch)" },
 };
 
 export function Legend({ lines }: { lines: LegendLine[] }) {

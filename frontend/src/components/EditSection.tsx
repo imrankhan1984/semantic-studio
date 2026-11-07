@@ -75,7 +75,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { linkTarget } from "../links";
 import { entityModel, structureOf, type Annotation, type EntityModel } from "../modeling/entity";
 import { examplesOf } from "../modeling/examples";
-import { otherKindReason } from "../modeling/sentences";
 import { describeValue, typeOfValue, valueProblem, toValue } from "../modeling/values";
 import type { CanvasSet, NodeDetails, ProjectKind } from "../types";
 import AnnotationAdder, { ValueInput } from "./AnnotationAdder";
@@ -126,9 +125,8 @@ export function annotationKey(a: Annotation): string {
  *  The branches below in one test, so DetailPanel hides the rules' raw rows
  *  exactly when they are said here (wording 5.6), and keeps them when they
  *  are not (code review: hiding them there lost them). */
-export function saysRules(details: NodeDetails, model: EntityModel, projectKind: ProjectKind | null): boolean {
+export function saysRules(details: NodeDetails, model: EntityModel, _projectKind: ProjectKind | null): boolean {
   if ((details.rules?.items.length ?? 0) === 0) return false;
-  if (otherKindReason(projectKind, model.kind) && model.defined && !details.importedFrom) return false;
   if (details.importedFrom || details.fromData || !model.defined) return false;
   return !details.example && structureOf(model.kind) === "class";
 }
@@ -138,7 +136,6 @@ export default function EditSection({
   details,
   primaryLanguage,
   languages,
-  projectKind = null,
   onSelect,
   onDeleted,
   canvas = null,
@@ -185,15 +182,8 @@ export default function EditSection({
   const iri = details.iri;
   const name = details.label;
 
-  // The project's other kind: shown, changed in Turtle (D-089).
-  const otherKind = otherKindReason(projectKind, model.kind);
-  if (otherKind && model.defined && !details.importedFrom) {
-    return (
-      <section className="edit-section read-only" aria-label="Edit">
-        <p className="detail-note">{otherKind}</p>
-      </section>
-    );
-  }
+  // Nothing is read-only by the project's kind any more (D-127): a concept in
+  // an ontology, or a class in a taxonomy, is edited here like any own entity.
 
   // 5.1: not this document's to change. The header already names the import.
   // Snapshot data is read-only too (csv-data-import 5.6): it is changed in

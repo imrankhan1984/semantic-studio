@@ -46,16 +46,25 @@ function counted(n: number, one: string, many: string): string {
 }
 
 export default function NothingSelected({ counts, taxonomy }: Props) {
-  const lines = counts
-    ? taxonomy
-      ? [counted(counts.concepts, "concept", "concepts")]
-      : [
-          counted(counts.classes, "class", "classes"),
-          counted(counts.relationships, "relationship", "relationships"),
-          counted(counts.attributes, "attribute", "attributes"),
-          counted(counts.examples, "example", "examples"),
-        ]
-    : [];
+  // Both kinds are counted when both exist (skos-and-owl 5.6, D-127): the
+  // project's own kind first, the other kind only when it has any. The
+  // relationship, attribute and example counts show whenever there are some,
+  // and always for an ontology, as before.
+  const lines: string[] = [];
+  if (counts) {
+    const classLine = counted(counts.classes, "class", "classes");
+    const conceptLine = counted(counts.concepts, "concept", "concepts");
+    const showClasses = !taxonomy || counts.classes > 0;
+    const showConcepts = taxonomy || counts.concepts > 0;
+    lines.push(
+      ...(taxonomy
+        ? [...(showConcepts ? [conceptLine] : []), ...(showClasses ? [classLine] : [])]
+        : [...(showClasses ? [classLine] : []), ...(showConcepts ? [conceptLine] : [])]),
+    );
+    if (!taxonomy || counts.relationships > 0) lines.push(counted(counts.relationships, "relationship", "relationships"));
+    if (!taxonomy || counts.attributes > 0) lines.push(counted(counts.attributes, "attribute", "attributes"));
+    if (!taxonomy || counts.examples > 0) lines.push(counted(counts.examples, "example", "examples"));
+  }
   return (
     <div className="nothing-selected">
       <h2 className="side-heading">Nothing selected</h2>

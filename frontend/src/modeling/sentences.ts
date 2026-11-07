@@ -222,33 +222,36 @@ export function rowEnds(
   return `${start} → ${ends.range ?? "no end yet"}`;
 }
 
-/** The one line shown when a document holds the other kind's content
- *  (5.1): how much, and where it is changed. Null when there is none. */
-export function otherKindNote(kind: "ontology" | "taxonomy" | null, count: number): string | null {
-  if (!kind || count === 0) return null;
-  const them = count === 1 ? "it" : "them";
-  return kind === "ontology"
-    ? `This ontology also contains ${count} SKOS ${count === 1 ? "concept" : "concepts"}. Edit ${them} in Turtle, or change the project to a taxonomy.`
-    : `This taxonomy also contains ${count} ${count === 1 ? "class" : "classes"}. Edit ${them} in Turtle, or change the project to an ontology.`;
+/** Changing the kind decides which tools show first, never what can be
+ *  changed (skos-and-owl 5.5, D-127). `to` is the kind the project becomes:
+ *  a taxonomy shows concepts first, an ontology classes. */
+function firstWord(to: "ontology" | "taxonomy"): string {
+  return to === "taxonomy" ? "concepts" : "classes";
 }
 
-/** Why one entity of the other kind is not changed in the visual doors. */
-export function otherKindReason(kind: "ontology" | "taxonomy" | null, entityKind: string): string | null {
-  if (kind === "ontology" && entityKind === "concept") {
-    return "A SKOS concept, read-only in an ontology. Edit it in Turtle, or change the project to a taxonomy.";
-  }
-  if (kind === "taxonomy" && entityKind === "class") {
-    return "A class, read-only in a taxonomy. Edit it in Turtle, or change the project to an ontology.";
-  }
-  // Relationships and attributes belong to classes, so a taxonomy shows them
-  // as it shows classes (5.10 item 2).
-  if (kind === "taxonomy" && entityKind === "objectProperty") {
-    return "A relationship, read-only in a taxonomy. Edit it in Turtle, or change the project to an ontology.";
-  }
-  if (kind === "taxonomy" && entityKind === "datatypeProperty") {
-    return "An attribute, read-only in a taxonomy. Edit it in Turtle, or change the project to an ontology.";
-  }
-  return null;
+export function showToolsTitle(to: "ontology" | "taxonomy"): string {
+  return `Show ${firstWord(to)} first?`;
+}
+
+export function showToolsBody(to: "ontology" | "taxonomy"): string {
+  return `Nothing in the model changes. The palette and the tree list ${firstWord(to)} first.`;
+}
+
+export function kindShownNotice(name: string, to: "ontology" | "taxonomy"): string {
+  return `${name} now shows ${firstWord(to)} first. Nothing in the model was changed.`;
+}
+
+/** The canvas relate-menu entry for a line between a class and a concept
+ *  (skos-and-owl 5.3.1): *Each Motor has a … from Motor types.* The class
+ *  comes first whichever way the line was drawn; the name is typed next. */
+export function branchEntry(className: string, concept: string): string {
+  return `Each ${className} has a … from ${concept}`;
+}
+
+/** The Edit form's *Values from* row read aloud (5.3.1): the branch concept,
+ *  or that any concept is allowed when there is no branch rule. */
+export function branchValuesText(concept: string | null): string {
+  return concept ? `${concept} or a concept under it` : "Any concept";
 }
 
 // ---------------------------------------------------------------------------

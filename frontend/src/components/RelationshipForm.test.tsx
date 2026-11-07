@@ -229,3 +229,47 @@ describe("Pointers, the code review's fixes (attribute-reuse 5.8)", () => {
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "add a rule to Employee" }));
   });
 });
+
+describe("Values from, a branch relationship (skos-and-owl 5.3.1)", () => {
+  const SKOS_CONCEPT = "http://www.w3.org/2004/02/skos/core#Concept";
+  const TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+  const RANGE = "http://www.w3.org/2000/01/rdf-schema#range";
+  const DOMAIN = "http://www.w3.org/2000/01/rdf-schema#domain";
+
+  function branchDetails(branch: { iri: string; label: string } | null): NodeDetails {
+    return {
+      iri: HR + "hasStatus",
+      prefixed: "hr:hasStatus",
+      label: "has status",
+      kind: "objectProperty",
+      outgoing: [
+        { predicate: { type: "uri", value: TYPE }, object: { type: "uri", value: "http://www.w3.org/2002/07/owl#ObjectProperty" } },
+        { predicate: { type: "uri", value: RANGE }, object: { type: "uri", value: SKOS_CONCEPT } },
+        { predicate: { type: "uri", value: DOMAIN }, object: { type: "uri", value: HR + "Gadget", label: "Gadget" } },
+      ],
+      incoming: [],
+      outgoingTotal: 3,
+      incomingTotal: 0,
+      domain: { form: "one", classes: [{ iri: HR + "Gadget", label: "Gadget" }] },
+      branchRange: true,
+      branch,
+    } as NodeDetails;
+  }
+
+  it("shows the branch concept with Change and Clear, and Any concept with none", async () => {
+    await act(async () => {
+      render(<Harness details={branchDetails({ iri: HR + "Types", label: "Motor types" })} warnings={[]} />);
+    });
+    const block = screen.getByRole("heading", { name: "From and to" }).closest("section") as HTMLElement;
+    expect(within(block).getByRole("heading", { name: "Values from" })).toBeTruthy();
+    expect(within(block).getByRole("button", { name: "Motor types" })).toBeTruthy();
+    expect(within(block).getByText(/or a concept under it/)).toBeTruthy();
+    expect(within(block).getByRole("button", { name: "Change the values of has status" })).toBeTruthy();
+    expect(within(block).getByRole("button", { name: "Clear the values list of has status" })).toBeTruthy();
+    cleanup();
+    await act(async () => {
+      render(<Harness details={branchDetails(null)} warnings={[]} />);
+    });
+    expect(screen.getByText("Any concept.")).toBeTruthy();
+  });
+});

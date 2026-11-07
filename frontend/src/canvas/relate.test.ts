@@ -240,12 +240,25 @@ describe("relateChoices", () => {
   });
 
   it.each([
-    ["Inv", "Paid", "A class and a concept cannot be linked here. Use the form for other annotations."],
     ["Agent", "Doc", "Agent comes from FOAF and is read-only. Draw the line from a box of this model."],
     ["Paid", "Paid", "Paid cannot be narrower than itself."],
     ["Paid", "Status", "Paid is already narrower than Status."],
   ])("refuses %s to %s with a sentence", (from, to, sentence) => {
     expect(relateChoices(view, from, to)).toEqual({ refusal: sentence });
+  });
+
+  it("offers a branch relationship between a class and a concept, class first (5.3.1)", () => {
+    // Drawn either way, the one choice puts the class as the relationship's
+    // start and the concept as the branch.
+    for (const [from, to] of [["Inv", "Paid"], ["Paid", "Inv"]] as const) {
+      const result = relateChoices(view, from, to);
+      if ("refusal" in result) throw new Error(result.refusal);
+      expect(result.choices).toHaveLength(1);
+      const choice = result.choices[0];
+      expect(choice.kind === "branch" && choice.domain).toBe("Inv");
+      expect(choice.kind === "branch" && choice.branch).toBe("Paid");
+      expect(choice.label).toBe("Each Invoice has a … from Paid");
+    }
   });
 
   it("lets a line end on an imported box", () => {
@@ -301,11 +314,14 @@ describe("relateChoices, relationships Stage A", () => {
     expect(result.choices[0].kind).toBe("newRelationship");
   });
 
-  it.each([
-    ["ontology", "Paid", "Status", "Paid is a SKOS concept, read-only in an ontology. Edit it in Turtle, or change the project to a taxonomy."],
-    ["taxonomy", "Inv", "Doc", "Invoice is a class, read-only in a taxonomy. Edit it in Turtle, or change the project to an ontology."],
-  ] as const)("in an %s, refuses a line between boxes of the other kind", (kind, from, to, sentence) => {
-    expect(relateChoices({ ...view, kind }, from, to)).toEqual({ refusal: sentence });
+  it("no longer refuses a line between boxes of the other kind (D-127)", () => {
+    // A taxonomy's classes are editable: Order to Invoice offers the class lines.
+    const taxonomy = relateChoices({ ...view, kind: "taxonomy" }, "Order", "Inv");
+    expect("choices" in taxonomy && taxonomy.choices.some((c) => c.kind === "subClassOf")).toBe(true);
+    // An ontology's concepts are editable too: no read-only sentence anywhere.
+    const ontology = relateChoices({ ...view, kind: "ontology" }, "Status", "Paid");
+    const refusal = "refusal" in ontology ? ontology.refusal : "";
+    expect(refusal).not.toMatch(/read-only/);
   });
 
   it("offers each kind's own lines", () => {

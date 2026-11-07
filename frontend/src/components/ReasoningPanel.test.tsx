@@ -294,10 +294,10 @@ describe("Reason and the results panel (Section 6)", () => {
     expect(screen.queryByText("The model changed after this run.")).toBeNull();
   });
 
-  it("is not offered in a taxonomy", async () => {
+  it("is offered in a taxonomy too (D-127)", async () => {
     await setup("taxonomy");
-    expect(screen.queryByRole("button", { name: "Reason" })).toBeNull();
-    expect(screen.getByText("Reasoning is for ontology projects.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reason" })).toBeTruthy();
+    expect(screen.queryByText("Reasoning is for ontology projects.")).toBeNull();
   });
 
   it("includes the snapshots only when asked, off by default", async () => {

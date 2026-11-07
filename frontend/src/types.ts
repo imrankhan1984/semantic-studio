@@ -602,6 +602,11 @@ export interface NodeDetails {
   // A project's relationship or attribute: its domain as the server's one
   // reader reads it (attribute-reuse 5.3).
   domain?: DomainReading;
+  // A relationship whose range is skos:Concept (skos-and-owl 5.3): its values
+  // are taken from a branch of concepts. `branch` is the branch concept read
+  // from the shapes rule, or null when there is no branch rule yet.
+  branchRange?: boolean;
+  branch?: { iri: string; label: string } | null;
 }
 
 /* --- a property's domain, read once (attribute-reuse 5.3, D-116) --------- */
@@ -1075,6 +1080,14 @@ export interface ChangeResult {
   // A Turtle apply: the prefixed names in a reference ontology's namespace
   // that it does not define (reference-ontologies 5.7). Information only.
   references?: UnknownReferenceTerms;
+  // A branch relationship's command changes two documents as one paired step
+  // (skos-and-owl 5.3.3): the other document's state, so both documents'
+  // revision, dirty flag and undo labels refresh together.
+  partner?: { doc: ProjectDocName; revision: number; state: ProjectDocumentState };
+  // An undo or redo of a paired half whose partner is gone (trimmed, or a
+  // dropped redo branch): the orphan is dropped and this sentence says why,
+  // rather than applying half a change (5.3.3).
+  dropped?: string;
 }
 
 /** The Turtle editor's check on Apply: at most five named, the rest counted. */
@@ -1199,7 +1212,11 @@ export interface CanvasEdge {
   // because it reads the same both ways (relationships 5.8).
   // "rule": a restriction to a named class (axioms-and-reasoning 5.9),
   // dashed, labelled from `rule` by ruleSentences.shortLabel.
-  kind: "subClassOf" | "broader" | "relationship" | "related" | "rule";
+  // "branch": a relationship whose values are a branch of concepts
+  // (skos-and-owl 5.3), drawn dotted from the class to the branch concept
+  // with a small list marker at the concept's end; `property` is the
+  // relationship, `label` its name.
+  kind: "subClassOf" | "broader" | "relationship" | "related" | "rule" | "branch";
   source: string;
   target: string;
   property?: string;
@@ -1314,6 +1331,13 @@ export interface ShapeRule {
   languageIn?: string[];
   uniqueLang?: boolean;
   requiredLanguages?: string[];
+  // A branch rule (skos-and-owl 5.3): each value is this concept or one under
+  // it. `under` is the branch concept's IRI, `underLabel` its name. The rule
+  // editor preserves them even though it does not offer them as a field, so a
+  // branch rule survives an edit (the "sends back every field it does not
+  // show" rule).
+  under?: string;
+  underLabel?: string;
 }
 
 export interface ShapeTarget {
