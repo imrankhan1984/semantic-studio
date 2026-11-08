@@ -56,7 +56,7 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 2174 tests (+2 marked `network`, deselected)
+cd backend  && python -m pytest tests    # 2214 tests (+2 marked `network`, deselected)
 cd frontend && npm run test              # 2117 tests, vitest
 ```
 
@@ -157,7 +157,10 @@ the results header in `ResultsTable.tsx` for the pattern.
 backend/app/
   main.py            FastAPI app, CORS for the dev frontend, static mount
   launcher.py        The Windows release's entry point (D-119): the port, a running
-                     copy reused, 127.0.0.1 only, the browser, three sentences
+                     copy reused only at its own version (D-130), 127.0.0.1
+                     only, the browser, three sentences
+  version.py         The one reader of the release's VERSION.txt, read once;
+                     "development" without one (X-15)
   local_guard.py     Refuses requests not from the app's own page (Host, header, Origin)
   net_guard.py       Outbound address judgement; hands rdflib's own network calls to the broker
   network_broker.py  The one door out: capability grants, offline, pinning, activity log;
@@ -343,6 +346,7 @@ leaves one behind.
 - The release never writes inside its own folder: `-B` in the start file, bytecode compiled at build, work in the data folder; smoke step 7 lists the folder. [Windows release]
 - The release workflow never publishes, it drafts; `test_release_workflow.py` scans for any way to publish and for the hash check. [Windows release]
 - `PYTHON_VERSION` is the exact patch with `backend-windows`'s minor, and `PYTHON_EMBED_SHA256` moves with it. [Windows release]
+- The launcher opens a running Semantic Studio only at its own `version()`; any other, or none, opens nothing and starts nothing (D-130). `version.py` is the one reader of `VERSION.txt`, and smoke step 1 holds health to the folder's. [running version]
 
 **Queries and imports**
 - No `async` route parses or builds on the event loop; that work goes through `run_in_threadpool` (`test_load_cancel.py` scans). [off the event loop]

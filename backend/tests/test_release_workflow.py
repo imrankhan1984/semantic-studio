@@ -9,7 +9,9 @@ SUMMARY
     only drafts one, and it builds from python.org's embeddable Python only
     when the file's SHA-256 is the one written in it. Also that the bundled
     Python is the minor version CI's backend-windows job tests, and that the
-    release's `._pth` lists exactly the four places 5.1 names.
+    release's `._pth` lists exactly the four places 5.1 names, and that the
+    smoke test's step 1 fails a server not at the folder's VERSION.txt
+    (launcher-version-check 5.4, AC-6).
 
 BASIC IDEA
     Configuration assertions, read from the workflow, the same model as
@@ -19,7 +21,7 @@ BASIC IDEA
     is first run over planted lines, each of which it must catch.
 
 INPUTS / INPUT SOURCES
-    - .github/workflows/release.yml and ci.yml; release/build.py.
+    - .github/workflows/release.yml and ci.yml; release/build.py and smoke.py.
 
 EXPECTED OUTPUT
     - Pass/fail per assertion.
@@ -132,6 +134,35 @@ def test_the_artifact_is_kept_seven_days_and_the_smoke_test_runs():
     smoke = next(s for s in steps if s.get("name") == "Smoke test")
     assert '"smoke test"' in smoke["run"] and "release/smoke.py" in smoke["run"]
     assert steps.index(smoke) < steps.index(upload)
+
+
+def _smoke():
+    spec = importlib.util.spec_from_file_location("release_smoke", ROOT / "release" / "smoke.py")
+    smoke = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(smoke)
+    return smoke
+
+
+def test_smoke_step_1_holds_health_to_the_folders_version(tmp_path):
+    """launcher-version-check 5.4, AC-6: a server that says another version
+    than the unzipped folder's VERSION.txt fails step 1."""
+    import pytest
+
+    smoke = _smoke()
+    (tmp_path / "VERSION.txt").write_text("Semantic Studio 1.1.0\nBuilt from commit abc\n", encoding="utf-8")
+    ours = {"status": "ok", "app": "semantic-studio"}
+    assert smoke.check_health({**ours, "version": "1.1.0"}, tmp_path) == "1.1.0"
+    for wrong in ({**ours, "version": "1.0.0"}, {**ours, "version": "development"}, ours,
+                  {"status": "ok", "version": "1.1.0"}):
+        with pytest.raises(smoke.Failed):
+            smoke.check_health(wrong, tmp_path)
+    (tmp_path / "VERSION.txt").unlink()
+    with pytest.raises(smoke.Failed, match="no VERSION.txt"):
+        smoke.check_health({**ours, "version": "development"}, tmp_path)
+    # Step 1 is the one that asks it.
+    source = (ROOT / "release" / "smoke.py").read_text(encoding="utf-8")
+    step_1 = source[source.index("def health():"):source.index("step(1,")]
+    assert "check_health(answer, top)" in step_1
 
 
 def test_no_script_has_an_expression_pasted_in():

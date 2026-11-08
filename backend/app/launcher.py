@@ -10,7 +10,10 @@ SUMMARY
     frontend, finds a port, reuses a Semantic Studio already running there,
     serves on 127.0.0.1 only, opens the browser once the server answers, and
     tells the person in three sentences where it is and how to stop it.
-    `uvicorn app.main:app` and Docker do not use it.
+    A Semantic Studio already running is opened only when it is this
+    version; another version is named, and nothing is opened or started
+    (launcher-version-check, X-15, D-130). `uvicorn app.main:app` and
+    Docker do not use it.
 
 BASIC IDEA
     Ports 8000 to 8019 are each bound once on 127.0.0.1, which says at no cost
@@ -18,8 +21,13 @@ BASIC IDEA
     connection to a closed port takes about two seconds to be refused, so
     asking all twenty would make a start wait forty. A taken port that
     answers as Semantic Studio means it is already running on this data
-    folder, and a second server would share it, so the browser is sent there
-    and the launcher exits. Otherwise the first free port's own socket is
+    folder, and a second server would share it, so the launcher never starts
+    one beside it. When its health answer names this copy's version the
+    browser is sent there and the launcher exits; any other version, or none
+    (every release before X-15), opens nothing: the person would otherwise
+    work in the old version believing they had the new one. The launcher
+    cannot stop the old one for them, since it may hold unsaved work, so it
+    says which version is running and where, and waits. Otherwise the first free port's own socket is
     handed to uvicorn: nothing can take the port between the check and the
     start, and the bound address is the one place the binding is decided.
 
@@ -50,7 +58,9 @@ EXPECTED OUTPUT
     - A server on 127.0.0.1 and the browser opened on it, with the address,
       the data folder and how to stop it printed in the console; exit 0 when
       the window is closed or Ctrl+C is pressed.
-    - Exit 0 after opening the browser on a Semantic Studio already running.
+    - Exit 0 after opening the browser on a Semantic Studio already running
+      at this version; exit 1, after a sentence naming both versions and the
+      address and a key press, when another version is running.
     - Exit 1, after a sentence and a key press, when 8000 to 8019 are taken;
       exit 2, after the traceback and a key press, on any other failure.
 ================================================================================
@@ -62,13 +72,16 @@ import argparse
 import http.client
 import json
 import os
+import re
 import socket
 import sys
 import threading
 import time
 import webbrowser
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
+
+from .version import DEVELOPMENT, version
 
 # The one address the release serves on and asks (requirement 7). Every bind
 # and every connection in this file names it; test_deployment_binding.py
@@ -118,33 +131,94 @@ def bind(port: int) -> Optional[socket.socket]:
     return sock
 
 
-def is_semantic_studio(port: int, timeout: Optional[float] = None) -> bool:
-    """Whether 127.0.0.1:port answers /api/health as this application.
+def health(port: int, timeout: Optional[float] = None) -> Optional[dict]:
+    """127.0.0.1:port's /api/health answer when it is this application's,
+    else None.
 
     http.client, so no proxy can be read in (AC-9). Anything that is not our
-    answer, a refusal, a timeout, another program's page, is a no."""
+    answer, a refusal, a timeout, another program's page, is None."""
     conn = http.client.HTTPConnection(LOOPBACK, port, timeout=PROBE_TIMEOUT_S if timeout is None else timeout)
     try:
         conn.request("GET", "/api/health")
         response = conn.getresponse()
         if response.status != 200:
-            return False
+            return None
         body = json.loads(response.read(4096))
-        return isinstance(body, dict) and body.get("app") == APP_ID
+        return body if isinstance(body, dict) and body.get("app") == APP_ID else None
     except (OSError, ValueError, http.client.HTTPException):
-        return False
+        return None
     finally:
         conn.close()
 
 
-def choose(ports=None) -> tuple[str, Optional[int], Optional[socket.socket]]:
-    """("running", port, None) for a Semantic Studio already serving,
-    ("free", port, socket) for the first port we hold, ("full", None, None).
+def is_semantic_studio(port: int, timeout: Optional[float] = None) -> bool:
+    """Whether 127.0.0.1:port answers /api/health as this application."""
+    return health(port, timeout) is not None
+
+
+# Whatever answered as Semantic Studio is on this machine, but its words
+# still reach a person's console, so anything longer or stranger than a
+# version is read as no version at all.
+_SHOWABLE = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}")
+_NUMBERS = re.compile(r"\d+(?:\.\d+)*")
+
+
+def running_version(answer: dict) -> Optional[str]:
+    """The version a health answer names, or None (a release before X-15)."""
+    said = answer.get("version")
+    return said if isinstance(said, str) and _SHOWABLE.fullmatch(said) else None
+
+
+def compare(running: Optional[str], own: str) -> str:
+    """"same", "older", "newer" or "another": the running copy against ours.
+
+    Part by part as numbers, a missing part read as 0, so 1.10.0 is newer
+    than 1.9.2 and 1.1 is 1.1.0. No version at all is older (AC-4). Two
+    identical words are the same version, `development` included: that is
+    a developer starting the same checkout twice, as before X-15. Otherwise
+    `development`, or anything that is not numbers, cannot be ordered."""
+    if running is None:
+        return "older"
+    if running == own:
+        return "same"
+    if DEVELOPMENT in (running, own) or not (_NUMBERS.fullmatch(running) and _NUMBERS.fullmatch(own)):
+        return "another"
+    theirs, ours = ([int(part) for part in v.split(".")] for v in (running, own))
+    width = max(len(theirs), len(ours))
+    theirs += [0] * (width - len(theirs))
+    ours += [0] * (width - len(ours))
+    if theirs == ours:
+        return "same"
+    return "older" if theirs < ours else "newer"
+
+
+def mismatch(running: Optional[str], own: str, port: int) -> str:
+    """The sentence for another version running (5.3), word for word."""
+    address = url(port).rstrip("/")
+    kind = compare(running, own)
+    close = f"Close its window, titled Semantic Studio, then start this one ({own}) again"
+    if kind == "older" and running is None:
+        return f"An older version of Semantic Studio is running at {address}. {close}."
+    if kind == "older":
+        return f"An older version of Semantic Studio ({running}) is running at {address}. {close}."
+    if kind == "newer":
+        return (f"A newer version of Semantic Studio ({running}) is running at {address}. "
+                f"{close}, or keep using the newer one.")
+    return (f"Another version of Semantic Studio ({running}) is running at {address}. "
+            f"Close it, then start this one ({own}) again.")
+
+
+def choose(ports=None) -> tuple[str, Optional[int], Union[socket.socket, str, None]]:
+    """("running", port, None) for a Semantic Studio already serving at this
+    version, ("running", port, sentence) for one at another version, with
+    what to say, ("free", port, socket) for the first port we hold,
+    ("full", None, None).
 
     A running one is looked for on every taken port before a free one is
     taken: the first start may have had to move past a program on 8000 that
     has since gone, and 8000 being free again must not start a second
-    server beside it."""
+    server beside it. The first one found decides, whatever its version: a
+    second server beside it would share its data folder."""
     held: dict[int, socket.socket] = {}
     ports = PORTS if ports is None else ports
     taken: list[int] = []
@@ -156,8 +230,12 @@ def choose(ports=None) -> tuple[str, Optional[int], Optional[socket.socket]]:
             held[port] = sock
     try:
         for port in taken:
-            if is_semantic_studio(port):
-                return "running", port, None
+            answer = health(port)
+            if answer is not None:
+                running, own = running_version(answer), version()
+                if compare(running, own) == "same":
+                    return "running", port, None
+                return "running", port, mismatch(running, own, port)
         if not held:
             return "full", None, None
         port = next(p for p in ports if p in held)
@@ -216,6 +294,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     state, port, sock = choose()
     if state == "full":
         print(ALL_TAKEN, flush=True)
+        _wait_for_a_key()
+        return 1
+    if state == "running" and isinstance(sock, str):
+        # Another version: nothing opened, nothing started (D-130). The
+        # person closes the old window, which may hold unsaved work.
+        print(sock, flush=True)
         _wait_for_a_key()
         return 1
     if state == "running":

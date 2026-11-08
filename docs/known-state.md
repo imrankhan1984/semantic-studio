@@ -3130,3 +3130,48 @@ EXPECTED OUTPUT
   (74 *at least*, 23 *exactly*) scan in about 17 ms, held under 100 ms by a
   `perf` test; QUDT brings SKOS, whose `skos:member` ranges over a class
   list, so SKOS appears as a source of one.
+
+### The launcher checks the running version (X-15, D-130)
+
+- **Built** 2026-11-08, spec `launcher-version-check` v1.0, on
+  `feature/launcher-version-check`.
+
+  **Why: the running version decides.** Before this a second start opened
+  any Semantic Studio already answering on 8000 to 8019, so a person who
+  unzipped a new release with the old window open worked in the old one,
+  on the same data folder, believing they had the new one. `/api/health`
+  now says `version`, and `launcher.choose()` opens the running one only
+  when `compare(running, own)` is *same*. Any other answer opens nothing,
+  starts nothing (the first one found still decides: a second server would
+  share its data folder) and prints one of 5.3's sentences, then waits for
+  Enter and exits 1. The launcher cannot stop the old one: it may hold
+  unsaved work (D-130).
+
+  **One reader.** `app/version.py` reads `VERSION.txt` above `app` once
+  (`lru_cache`), what follows *Semantic Studio* on the first line, and is
+  `development` for anything else, a missing or unreadable file included;
+  it never raises, since a start must not fail over a label. `main.py` and
+  `launcher.py` both import it, so neither imports the other.
+
+  **The rules of the comparison.** No `version` (every release before X-15)
+  is *older*, whatever this copy is. Identical words are *same*, so two
+  starts of one checkout (`development` twice) still reuse the first, as
+  before. Otherwise numbers compare part by part with a missing part 0
+  (`1.1` is `1.1.0`, `1.10.0` is newer than `1.9.2`), and `development`
+  or anything not numbers is *another*. A `version` that is not a short
+  version-shaped word (`_SHOWABLE`) is read as none: the console prints it.
+
+  **`choose()` keeps its shape.** Another version comes back as
+  `("running", port, sentence)`, the third slot the words instead of a
+  socket, so AC-9's proxy test (`("running", port)`, three health requests)
+  passes unchanged. The free ports bound on the way are let go as before.
+
+  **Smoke step 1** compares health's `version` with the folder's
+  `VERSION.txt`, read by `smoke.py` itself (`folder_version`), never through
+  `app.version`: the check is that the server says what the folder says.
+  Step 6 still passes, since both starts are one version.
+
+  **Removal checks.** The comparison in `choose()` removed: six launcher
+  tests red (the four sentences, the free port let go, the first one
+  deciding). The `version` field removed: the two health tests red. The
+  smoke comparison removed: `test_smoke_step_1_holds_health_to_the_folders_version` red.
