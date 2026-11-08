@@ -9,7 +9,10 @@ SUMMARY
     another program on the port not mistaken for it, uvicorn handed
     127.0.0.1 and never 0.0.0.0, STATIC_DIR beside `app`, the console's
     three sentences with the real data folder, and AC-9: its requests to its
-    own server never reach a proxy.
+    own server never reach a proxy. Then the version check
+    (launcher-version-check, Section 11): version() read from VERSION.txt,
+    /api/health saying it, the same version opened, and an older, newer,
+    unnamed or other one refused with its 5.3 sentence.
 
 BASIC IDEA
     The launcher is driven through `choose` and `main` with ports the
@@ -27,8 +30,12 @@ BASIC IDEA
     see zero requests while the launcher still finds its server. A urllib
     request in the launcher's place sends the proxy one.
 
+    The launcher's own version is pinned by replacing `launcher.version`, so
+    a result never depends on whether this checkout has a VERSION.txt; the
+    reader itself is tested on files written to a temporary folder.
+
 INPUTS / INPUT SOURCES
-    - app.launcher, app.store.
+    - app.launcher, app.store, app.version.
 
 EXPECTED OUTPUT
     - Pass/fail per test.
@@ -48,6 +55,7 @@ import pytest
 import uvicorn
 
 from app import launcher
+from app import version as version_module
 from app.store import default_data_dir
 
 APP_DIR = Path(launcher.__file__).resolve().parent
@@ -172,7 +180,7 @@ def test_every_port_taken_says_so_and_waits(taken, recorded, monkeypatch, capsys
 
 
 def test_a_running_semantic_studio_is_found_and_reused(serve, recorded, monkeypatch, capsys):
-    running = serve({"status": "ok", "app": "semantic-studio"})
+    running = serve({"status": "ok", "app": "semantic-studio", "version": launcher.version()})
     port = running.server_address[1]
     (later,) = free_ports(1)
     monkeypatch.setattr(launcher, "PORTS", [later, port])
@@ -350,3 +358,167 @@ def test_a_quick_restart_gets_the_same_port():
 
 def test_a_port_someone_listens_on_is_still_taken(taken):
     assert launcher.bind(taken()) is None
+
+
+# ---------------------------------------------------------------------------
+# X-15: the launcher checks the running version (launcher-version-check).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Semantic Studio 1.1.0\nBuilt from commit abc\n", "1.1.0"),
+    ("Semantic Studio 1.10.2\r\n", "1.10.2"),
+    ("", "development"),
+    ("Semantic Studio\n", "development"),
+    ("Semantic Studio \n", "development"),
+    ("Version 1.1.0\n", "development"),
+    ("\nSemantic Studio 1.1.0\n", "development"),
+])
+def test_version_is_what_follows_semantic_studio_on_the_first_line(tmp_path, text, expected):
+    path = tmp_path / "VERSION.txt"
+    path.write_bytes(text.encode("utf-8"))
+    assert version_module.read_version(path) == expected
+
+
+def test_version_without_a_file_or_with_an_unreadable_one_is_development(tmp_path):
+    assert version_module.read_version(tmp_path / "VERSION.txt") == "development"
+    assert version_module.read_version(tmp_path) == "development"  # a folder, not a file
+    bad = tmp_path / "bad.txt"
+    bad.write_bytes(b"Semantic Studio \xff\xfe\n")
+    assert version_module.read_version(bad) == "development"
+
+
+def test_version_reads_the_file_above_app_once():
+    assert version_module.VERSION_FILE == APP_DIR.parent / "VERSION.txt"
+    version_module.version.cache_clear()
+    try:
+        first = version_module.version()
+        assert version_module.version() == first
+        assert version_module.version.cache_info().misses == 1
+    finally:
+        version_module.version.cache_clear()
+
+
+def test_the_health_answer_says_the_version(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import app.main as main_module
+
+    monkeypatch.setattr(main_module, "version", lambda: "1.1.0")
+    client = TestClient(main_module.app, base_url="http://localhost")
+    assert client.get("/api/health").json() == {"status": "ok", "app": "semantic-studio", "version": "1.1.0"}
+
+
+def test_the_health_answer_says_development_from_source():
+    """This checkout has no VERSION.txt above app, as a copy run from source."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    assert not version_module.VERSION_FILE.exists()
+    client = TestClient(app, base_url="http://localhost")
+    assert client.get("/api/health").json()["version"] == version_module.version() == "development"
+
+
+@pytest.mark.parametrize("running, own, expected", [
+    ("1.10.0", "1.9.2", "newer"),
+    ("1.9.2", "1.10.0", "older"),
+    ("1.1.0", "1.1.0", "same"),
+    ("1.1", "1.1.0", "same"),
+    ("1.1.0", "1.1", "same"),
+    ("1.0.0", "1.1.0", "older"),
+    ("1.2.0", "1.1.0", "newer"),
+    ("2", "1.99.99", "newer"),
+    (None, "1.1.0", "older"),
+    (None, "development", "older"),
+    ("development", "1.1.0", "another"),
+    ("1.1.0", "development", "another"),
+    ("1.x-rc", "1.1.0", "another"),
+    ("1.1.0", "1.x-rc", "another"),
+    ("development", "development", "same"),
+])
+def test_versions_compare_part_by_part(running, own, expected):
+    assert launcher.compare(running, own) == expected
+
+
+@pytest.mark.parametrize("answer, expected", [
+    ({"app": "semantic-studio", "version": "1.0.0"}, "1.0.0"),
+    ({"app": "semantic-studio"}, None),
+    ({"app": "semantic-studio", "version": 1}, None),
+    ({"app": "semantic-studio", "version": ""}, None),
+    ({"app": "semantic-studio", "version": "1.0\n\x1b[2J"}, None),
+    ({"app": "semantic-studio", "version": "9" * 65}, None),
+])
+def test_only_a_version_shaped_answer_is_read(answer, expected):
+    assert launcher.running_version(answer) == expected
+
+
+@pytest.fixture
+def own_version(monkeypatch):
+    monkeypatch.setattr(launcher, "version", lambda: "1.1.0")
+    return "1.1.0"
+
+
+def test_the_same_version_running_is_opened_as_today(serve, recorded, own_version, monkeypatch, capsys):
+    running = serve({"status": "ok", "app": "semantic-studio", "version": "1.1.0"})
+    port = running.server_address[1]
+    monkeypatch.setattr(launcher, "PORTS", [port])
+    assert launcher.main(["--no-browser"]) == 0
+    assert capsys.readouterr().out.strip() == (
+        f"Semantic Studio is already running at http://127.0.0.1:{port}. Opening it in your browser."
+    )
+    assert "config" not in recorded and "opened" not in recorded
+    assert running.requests == ["/api/health"]
+
+
+MISMATCHES = [
+    ({"version": "1.0.0"},
+     "An older version of Semantic Studio (1.0.0) is running at {address}. "
+     "Close its window, titled Semantic Studio, then start this one (1.1.0) again."),
+    ({},
+     "An older version of Semantic Studio is running at {address}. "
+     "Close its window, titled Semantic Studio, then start this one (1.1.0) again."),
+    ({"version": "1.2.0"},
+     "A newer version of Semantic Studio (1.2.0) is running at {address}. "
+     "Close its window, titled Semantic Studio, then start this one (1.1.0) again, or keep using the newer one."),
+    ({"version": "development"},
+     "Another version of Semantic Studio (development) is running at {address}. "
+     "Close it, then start this one (1.1.0) again."),
+]
+
+
+@pytest.mark.parametrize("said, sentence", MISMATCHES, ids=["older", "no-version", "newer", "development"])
+def test_another_version_running_opens_nothing_and_says_which(
+        serve, recorded, own_version, monkeypatch, capsys, said, sentence):
+    running = serve({"status": "ok", "app": "semantic-studio", **said})
+    port = running.server_address[1]
+    # A free port after it: no server may be started there either.
+    monkeypatch.setattr(launcher, "PORTS", [port, *free_ports(1)])
+    waited = []
+    monkeypatch.setattr("builtins.input", lambda prompt="": waited.append(prompt) or "")
+    assert launcher.main([]) == 1
+    assert capsys.readouterr().out.strip() == sentence.format(address=f"http://127.0.0.1:{port}")
+    assert waited, "the window would close before the sentence is read"
+    assert "config" not in recorded and "announce" not in recorded, "a server was started beside another version"
+    assert "opened" not in recorded, "the browser was sent to another version"
+    assert running.requests == ["/api/health"]
+
+
+def test_the_free_port_is_let_go_when_another_version_is_found(serve, own_version):
+    running = serve({"status": "ok", "app": "semantic-studio", "version": "1.0.0"})
+    port = running.server_address[1]
+    (free,) = free_ports(1)
+    state, found, said = launcher.choose([port, free])
+    assert (state, found) == ("running", port)
+    assert isinstance(said, str) and "(1.0.0)" in said and "(1.1.0)" in said
+    again = launcher.bind(free)
+    assert again is not None, "choose kept a port it did not hand out"
+    again.close()
+
+
+def test_the_first_semantic_studio_found_decides(serve, own_version):
+    old = serve({"status": "ok", "app": "semantic-studio", "version": "1.0.0"})
+    same = serve({"status": "ok", "app": "semantic-studio", "version": "1.1.0"})
+    state, found, said = launcher.choose([old.server_address[1], same.server_address[1]])
+    assert (state, found) == ("running", old.server_address[1]) and isinstance(said, str)
+    assert same.requests == []

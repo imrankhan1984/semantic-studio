@@ -6,7 +6,7 @@ FILE: release/smoke.py
 SUMMARY
     The release's smoke test (release-packaging 5.4, steps 1 to 8): starts the
     unzipped release the way a person does and checks, failing on any miss,
-    that it answers, lists the four bundled entries, answers the Mars
+    that it answers with the version its VERSION.txt names, lists the four bundled entries, answers the Mars
     question, reasons and validates a Small project, listens on 127.0.0.1
     only, is found by a second start, wrote nothing inside its own folder,
     and trusts Windows' certificates.
@@ -87,6 +87,30 @@ def call(port: int, method: str, path: str, body=None, timeout: float = 120.0):
         return json.loads(text) if text else None
     finally:
         conn.close()
+
+
+def folder_version(top: Path) -> str:
+    """The version VERSION.txt names, read here rather than through
+    app.version: the check is that the server says what the folder says,
+    so it must not ask the server's own code what the folder says."""
+    path = top / "VERSION.txt"
+    if not path.is_file():
+        raise Failed("the folder has no VERSION.txt")
+    first = path.read_text(encoding="utf-8").splitlines()[:1]
+    if not first or not first[0].startswith("Semantic Studio ") or not first[0][16:].strip():
+        raise Failed(f"VERSION.txt's first line is {first[:1]}")
+    return first[0][16:].strip()
+
+
+def check_health(answer, top: Path) -> str:
+    """Step 1's judgement of /api/health (launcher-version-check 5.4, AC-6):
+    this application, at the version the unzipped folder says it is."""
+    if not isinstance(answer, dict) or answer.get("app") != "semantic-studio":
+        raise Failed(f"health answered {answer}")
+    expected = folder_version(top)
+    if answer.get("version") != expected:
+        raise Failed(f"health says version {answer.get('version')!r}, VERSION.txt says {expected!r}")
+    return expected
 
 
 def listing(top: Path) -> dict[str, tuple[int, int]]:
@@ -195,11 +219,10 @@ def run(top: Path, python: str | None) -> list[tuple[str, str]]:
                 raise Failed("no 'running at' line within 30 s")
             port = int(match.group(1))
             answer = call(port, "GET", "/api/health")
-            if answer.get("app") != "semantic-studio":
-                raise Failed(f"health answered {answer}")
-            return f"port {port}, {time.monotonic() - started:.1f} s"
+            said = check_health(answer, top)
+            return f"port {port}, version {said}, {time.monotonic() - started:.1f} s"
 
-        step(1, "/api/health answers within 30 s", health)
+        step(1, "/api/health answers within 30 s with the folder's version", health)
         if port is None:
             return results
 

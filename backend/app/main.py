@@ -79,6 +79,7 @@ from .routers import checks as checks_router
 from .routers import data, examples, network, ontologies, projects, queries, references
 from .routers import settings as settings_router
 from .store import store
+from .version import version
 
 
 @asynccontextmanager
@@ -278,10 +279,11 @@ async def _offline(_request: Request, exc: Offline) -> JSONResponse:
 # A trivial liveness probe. Deployment tooling (and our own scripts) hit this
 # to confirm the server is up before doing anything else. `app` is how the
 # release's launcher tells this application from another program on the same
-# port (release-packaging 5.2 item 3).
+# port (release-packaging 5.2 item 3), and `version` is how it tells this
+# copy from another one (launcher-version-check 5.1, D-130).
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "app": "semantic-studio"}
+    return {"status": "ok", "app": "semantic-studio", "version": version()}
 
 
 # --- serve the built frontend in production ---------------------------------
