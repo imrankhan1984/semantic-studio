@@ -100,8 +100,18 @@ interface Props {
 
 /** The block a finding's *open* names, as the form calls it: a label is
  *  one of the Names, and a header's title, description, creator and
- *  version are the ontology's annotations (design-checks 5.9). */
-const BLOCK_ANCHOR: Record<string, string> = { label: "label", definition: "definition", header: "header" };
+ *  version are the ontology's annotations (design-checks 5.9); a rule the
+ *  reasoner does not use, its Rules block, domain or range (H1). */
+const BLOCK_ANCHOR: Record<string, string> = {
+  label: "label",
+  definition: "definition",
+  header: "header",
+  // H1's rules (owl-rl-warnings 5.5): a class's Rules block, a property's
+  // domain or range. A relationship's range is in its From and to block.
+  rules: "rules",
+  domain: "domain",
+  range: "range",
+};
 
 /** The nearest ancestor that scrolls its content: the side panel. */
 function scrollingParent(from: HTMLElement): HTMLElement | null {
@@ -151,7 +161,8 @@ export default function EditSection({
     scrollTo && Object.prototype.hasOwnProperty.call(BLOCK_ANCHOR, scrollTo.block) ? BLOCK_ANCHOR[scrollTo.block] : null;
   useEffect(() => {
     if (!scrollBlock) return;
-    const block = sectionRef.current?.querySelector<HTMLElement>(`[data-edit-block="${scrollBlock}"]`);
+    const find = (anchor: string) => sectionRef.current?.querySelector<HTMLElement>(`[data-edit-block="${anchor}"]`);
+    const block = find(scrollBlock) ?? (scrollBlock === "range" ? find("domain") : null);
     const box = block ? scrollingParent(block) : null;
     if (!block || !box) return;
     const top = block.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;

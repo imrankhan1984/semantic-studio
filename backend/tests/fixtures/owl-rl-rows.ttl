@@ -1,0 +1,104 @@
+# owl-rl-warnings Section 1, one row per class or property, each with the
+# data that would show the reasoner using it. Names never cross rows, so the
+# whole file reasons once and each row is read on its own names.
+@prefix : <http://example.org/rows#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<http://example.org/rows> a owl:Ontology ; rdfs:label "Section 1 rows" .
+
+:Y a owl:Class ; rdfs:label "Y" .
+:p1 a owl:ObjectProperty ; rdfs:label "p1" .
+:p2 a owl:ObjectProperty ; rdfs:label "p2" .
+:p3 a owl:ObjectProperty ; rdfs:label "p3" .
+:p4 a owl:ObjectProperty ; rdfs:label "p4" .
+:p4z a owl:ObjectProperty ; rdfs:label "p4z" .
+:p5 a owl:ObjectProperty ; rdfs:label "p5" .
+:p6 a owl:ObjectProperty ; rdfs:label "p6" .
+:p7 a owl:ObjectProperty ; rdfs:label "p7" .
+:p8 a owl:ObjectProperty ; rdfs:label "p8" .
+:p9 a owl:ObjectProperty ; rdfs:label "p9" .
+:p9m a owl:ObjectProperty ; rdfs:label "p9m" .
+
+# Row 1: every R1 has at least one p1 that is a Y.
+:R1 a owl:Class ; rdfs:label "R1" ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p1 ; owl:someValuesFrom :Y ] .
+:r1 a :R1 ; rdfs:label "r1" .
+
+# Row 2: at least 2, and its qualified form.
+:R2 a owl:Class ; rdfs:label "R2" ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p2 ; owl:minCardinality "2"^^xsd:nonNegativeInteger ] .
+:R2q a owl:Class ; rdfs:label "R2q" ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p2 ; owl:minQualifiedCardinality "1"^^xsd:nonNegativeInteger ; owl:onClass :Y ] .
+:r2 a :R2, :R2q ; rdfs:label "r2" .
+
+# Row 3: exactly 1, and its qualified form; two values are not merged.
+:R3 a owl:Class ; rdfs:label "R3" ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p3 ; owl:cardinality "1"^^xsd:nonNegativeInteger ] .
+:R3q a owl:Class ; rdfs:label "R3q" ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p3 ; owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ; owl:onClass :Y ] .
+:r3 a :R3, :R3q ; rdfs:label "r3" ; :p3 :a3, :b3 .
+:a3 a :Y ; rdfs:label "a3" .
+:b3 a :Y ; rdfs:label "b3" .
+
+# Row 4: at most 1 merges two values; at most 0 is a problem.
+:R4 a owl:Class ; rdfs:label "R4" ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p4 ; owl:maxCardinality "1"^^xsd:nonNegativeInteger ] .
+:r4 a :R4 ; rdfs:label "r4" ; :p4 :a4, :b4 .
+:R4z a owl:Class ; rdfs:label "R4z" ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p4z ; owl:maxQualifiedCardinality "0"^^xsd:nonNegativeInteger ; owl:onClass :Y ] .
+:r4z a :R4z ; rdfs:label "r4z" ; :p4z :a4z .
+:a4z a :Y ; rdfs:label "a4z" .
+
+# Row 5: at most 2, with three values all different.
+:R5 a owl:Class ; rdfs:label "R5" ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p5 ; owl:maxCardinality "2"^^xsd:nonNegativeInteger ] .
+:r5 a :R5 ; rdfs:label "r5" ; :p5 :a5, :b5, :c5 .
+[] a owl:AllDifferent ; owl:distinctMembers ( :a5 :b5 :c5 ) .
+
+# Row 6: only p6 that are Y.
+:R6 a owl:Class ; rdfs:label "R6" ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p6 ; owl:allValuesFrom :Y ] .
+:r6 a :R6 ; rdfs:label "r6" ; :p6 :a6 .
+
+# Row 7: p7 with the value v7.
+:R7 a owl:Class ; rdfs:label "R7" ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p7 ; owl:hasValue :v7 ] .
+:r7 a :R7 ; rdfs:label "r7" .
+
+# Row 8: defined as things with at least one p8 that is a Y.
+:R8 a owl:Class ; rdfs:label "R8" ;
+    owl:equivalentClass [ a owl:Restriction ; owl:onProperty :p8 ; owl:someValuesFrom :Y ] .
+:r8 rdfs:label "r8" ; :p8 :a8 .
+:a8 a :Y ; rdfs:label "a8" .
+
+# Row 9: defined by a count; at least 1 is not used, at most 1 is.
+:W9 a owl:Class ; rdfs:label "W9" .
+:R9 a owl:Class ; rdfs:label "R9" ;
+    owl:equivalentClass [ a owl:Class ; owl:intersectionOf ( :W9
+        [ a owl:Restriction ; owl:onProperty :p9 ; owl:minCardinality "1"^^xsd:nonNegativeInteger ] ) ] .
+:r9 a :W9 ; rdfs:label "r9" ; :p9 :a9 .
+:R9m a owl:Class ; rdfs:label "R9m" ;
+    owl:equivalentClass [ a owl:Restriction ; owl:onProperty :p9m ; owl:maxCardinality "1"^^xsd:nonNegativeInteger ] .
+:r9m a :R9m ; rdfs:label "r9m" ; :p9m :a9m, :b9m .
+
+# Row 10: a domain and a range that are one of several classes.
+:A10 a owl:Class ; rdfs:label "A10" .
+:B10 a owl:Class ; rdfs:label "B10" .
+:C10 a owl:Class ; rdfs:label "C10" ; owl:disjointWith :A10, :B10 .
+:p10 a owl:ObjectProperty ; rdfs:label "p10" ; rdfs:domain [ a owl:Class ; owl:unionOf ( :A10 :B10 ) ] .
+:p10r a owl:ObjectProperty ; rdfs:label "p10r" ; rdfs:range [ a owl:Class ; owl:unionOf ( :A10 :B10 ) ] .
+:r10 a :C10 ; rdfs:label "r10" ; :p10 :x10 .
+:s10 rdfs:label "s10" ; :p10r :t10 .
+:t10 a :C10 ; rdfs:label "t10" .
+
+# Row 11: exactly one of B11 or C11.
+:B11 a owl:Class ; rdfs:label "B11" .
+:C11 a owl:Class ; rdfs:label "C11" .
+:R11 a owl:Class ; rdfs:label "R11" ; owl:disjointUnionOf ( :B11 :C11 ) .
+:r11 a :B11, :C11 ; rdfs:label "r11" .
+
+# Row 12: everything is p12-related to itself.
+:p12 a owl:ObjectProperty, owl:ReflexiveProperty ; rdfs:label "p12" .
+:r12 a owl:Thing ; rdfs:label "r12" .

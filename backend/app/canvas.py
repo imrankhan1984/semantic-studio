@@ -49,7 +49,9 @@ BASIC IDEA
     A class's rules (axioms-and-reasoning 5.9) are drawn too: a restriction
     whose filler is a named class is a `rule` line carrying its content, so
     the frontend labels it (*at least 1 · has line*, *defines*) and removes
-    it by its key; disjointness is listed in the box (`disjoint`), never a
+    it by its key, with `reasoner: "unused"` and its reason when
+    axioms.unused_by_reasoner says reasoning does not use it (owl-rl-warnings
+    5.3); disjointness is listed in the box (`disjoint`), never a
     line between boxes; anything else is counted (`moreRules`). Only the
     classes a predicate scan finds with rules are read: asking every class
     doubled the view's time.
@@ -330,6 +332,10 @@ def build_canvas(
                     "property": str(content.property), "propertyLabel": outside_label(content.property),
                     "fillerLabel": outside_label(filler),
                     "withLabel": outside_label(content.with_) if content.with_ is not None else None,
+                    # ⊘ on the line's label (owl-rl-warnings 5.3), as the
+                    # one decider answers.
+                    **({"reasoner": "unused", "reason": reason}
+                       if (reason := axioms.unused_by_reasoner(graph, node)) is not None else {}),
                 },
                 "key": axioms.key_json(content),
             })

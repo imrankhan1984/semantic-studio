@@ -13,7 +13,8 @@ BASIC IDEA
     The legend replaces the tree's old *Showing asserted…* note. Each
     sample is drawn with the same class as the canvas's own lines, so it
     can never show a pattern the canvas does not; and each has its word,
-    since colour is never the only signal (5.8).
+    since colour is never the only signal (5.8). Where rules are drawn, one
+    more line says what the ⊘ on a rule's label means (owl-rl-warnings 5.3).
 
     The help is ConfirmDialog with one Close: a modal with its heading
     focused, Tab kept inside, Escape closing, and focus given back to **?**.
@@ -76,6 +77,13 @@ export function Legend({ lines }: { lines: LegendLine[] }) {
             {WORDS[line]}
           </li>
         ))}
+        {/* The one symbol a line's label carries (owl-rl-warnings 5.3):
+            said here in words, and in each such line's name. */}
+        {lines.includes("rule") && (
+          <li className="legend-unused">
+            <span className="rule-unused-mark">⊘</span> marks a rule the reasoner does not use.
+          </li>
+        )}
       </ul>
       <button type="button" className="canvas-help-button" aria-haspopup="dialog" aria-label="Keyboard help" onClick={() => setHelp(true)}>
         ?

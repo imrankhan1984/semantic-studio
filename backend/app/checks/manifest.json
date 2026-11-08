@@ -356,7 +356,7 @@
     {
       "id": "H1",
       "file": "H1.rq",
-      "sha256": "e2b37791ce972275d5fd20917a49c376716c5e845deac6d348d4e325621f1841",
+      "sha256": "7acdd9fd3caf3cd5b72b84208de8d8805bf4c360b259f5142c5bb987e70774ee",
       "level": "Hint",
       "heading": "Rules that OWL 2 RL reasoning does not use",
       "fix": "Keep it if it documents the model; a reasoner in OWL 2 RL will not act on it.",

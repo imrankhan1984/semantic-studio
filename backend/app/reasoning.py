@@ -64,6 +64,8 @@ INPUTS / INPUT SOURCES
 
 EXPECTED OUTPUT
     - reason(...) -> RawResult; ReasoningService.run/stop/result/forget.
+    - unused_by_source(sources, languages) -> the rules the reasoner does
+      not use, per source, for a summary's `unused` (owl-rl-warnings 5.6).
     - Outcome.summary(), .page(group, offset), .about(iri), .why(s, p, o),
       .inferred_kinds(), .inferred_members(), .never_members().
 ================================================================================
@@ -82,7 +84,7 @@ from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, XSD
 from rdflib.util import from_n3
 
-from . import reasoning_worker
+from . import axioms, reasoning_worker
 from .graph_builder import pick_label_in
 from .sentences import a, verb
 
@@ -366,6 +368,7 @@ class Outcome:
         facts: Optional[dict] = None,
         problems: Optional[list] = None,
         never: Optional[set] = None,
+        unused: Optional[list] = None,
     ) -> None:
         self.status = status
         self.key = key
@@ -378,6 +381,8 @@ class Outcome:
         self.facts = facts or {g: [] for g in (*GROUPS, IMPORTED)}
         self.problems = problems or []
         self.never = never or set()
+        # owl-rl-warnings 5.6: [{source, name, items}], only for a finished run.
+        self.unused = unused or []
         self.shown = {f["t"] for listed in self.facts.values() for f in listed}
 
     # --- what the routes answer ---
@@ -413,6 +418,25 @@ class Outcome:
             "groups": [self._group(kind, 0) for kind in GROUPS],
             "importedFacts": self._group(IMPORTED, 0),
             "stale": self.stale(current),
+            # Absent unless the run finished: a run that timed out or was too
+            # large says nothing of what it used (owl-rl-warnings 5.6).
+            **({"unused": self._unused()} if self.status == "done" else {}),
+        }
+
+    def _unused(self) -> dict:
+        sources = [
+            {"source": s["source"], "name": s["name"], **self._unused_page(s, 0)} for s in self.unused
+        ]
+        return {"total": sum(s["count"] for s in sources), "sources": sources}
+
+    def _unused_page(self, source: dict, offset: int) -> dict:
+        listed = source["items"]
+        return {
+            "kind": UNUSED + source["source"],
+            "count": len(listed),
+            "total": len(listed),
+            "offset": offset,
+            "items": listed[offset:offset + UNUSED_PAGE],
         }
 
     def stale(self, current: Optional[Key]) -> bool:
@@ -428,6 +452,12 @@ class Outcome:
         }
 
     def page(self, kind: str, offset: int, current: Optional[Key] = None) -> dict:
+        if kind.startswith(UNUSED):
+            # A source's further rules: `unused:<source>`, 50 at a time.
+            for source in self.unused:
+                if UNUSED + source["source"] == kind:
+                    return {**self._unused_page(source, max(offset, 0)), "stale": self.stale(current)}
+            raise KeyError(kind)
         if kind not in self.facts:
             raise KeyError(kind)
         return {**self._group(kind, max(offset, 0)), "stale": self.stale(current)}
@@ -879,6 +909,7 @@ def analyse(
     probes: list[str],
     imported: Optional[set] = None,
     statements: int = 0,
+    unused: Optional[list] = None,
 ) -> Outcome:
     """Filter, group, explain nothing yet (Why? is asked per fact), and turn
     OWL-RL's messages into problems."""
@@ -977,7 +1008,7 @@ def analyse(
         problem.pop("id", None)
     return Outcome(
         "done", key, statements=statements, duration_ms=raw.duration_ms, stated=stated, closure=closure,
-        names=names, facts=facts, problems=problems, never=never,
+        names=names, facts=facts, problems=problems, never=never, unused=unused,
     )
 
 
@@ -1133,6 +1164,38 @@ def _kind_path(stated: Index, start, goal) -> Optional[list]:
                     return list(reversed(path))
                 queue.append(parent)
     return None
+
+
+# At most this many of a source's rules are listed at a time (owl-rl-warnings
+# 5.6); the rest are pages of the same group, as a fact group's are.
+UNUSED_PAGE = 50
+UNUSED = "unused:"
+
+
+def unused_by_source(sources: list[tuple], languages: list[str]) -> list[dict]:
+    """The rules the reasoner does not use, per source of the reasoning set
+    (owl-rl-warnings 5.6): `sources` is (id, name, graph, editable) for the
+    model and each added vocabulary. Read here, in the main process, from
+    the same documents the worker is sent, by axioms.unused_by_reasoner;
+    never in the worker, which runs OWL-RL and nothing else. A rule held by
+    two sources is listed under the first."""
+    out = []
+    seen: set = set()
+    for source, name, graph, editable in sources:
+        label = lambda term, g=graph: pick_label_in(g, term, languages)[0]  # noqa: E731
+        items = []
+        for subject, node, reason in axioms.unused_rules(graph):
+            key = (subject, node, reason) if isinstance(node, BNode) else (subject, reason)
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append({
+                "iri": str(subject), "reason": reason, "editable": editable,
+                "label": axioms.unused_label(graph, subject, node, reason, label),
+            })
+        if items:
+            out.append({"source": source, "name": name, "items": items})
+    return out
 
 
 def too_large(key: Key, statements: int) -> Outcome:

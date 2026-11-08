@@ -273,3 +273,17 @@ describe("Values from, a branch relationship (skos-and-owl 5.3.1)", () => {
     expect(screen.getByText("Any concept.")).toBeTruthy();
   });
 });
+
+describe("To, a range the reasoner does not use (owl-rl-warnings 5.4)", () => {
+  it("says the shared-domain sentence under To by the server's key, and nothing without it", async () => {
+    const one: DomainReading = { form: "one", classes: [ref("Employee")] };
+    const details = { ...propertyDetails("objectProperty", one), rangeReasoner: { reasoner: "unused" as const, reason: "classList" as const } };
+    await act(async () => {
+      render(<Harness details={details} warnings={[]} />);
+    });
+    expect(within(fromTo()).getByText(/draws no conclusion from a shared class list/)).toBeTruthy();
+    cleanup();
+    await show(one);
+    expect(within(fromTo()).queryByText(/draws no conclusion from a shared class list/)).toBeNull();
+  });
+});

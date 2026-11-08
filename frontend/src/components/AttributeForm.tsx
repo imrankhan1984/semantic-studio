@@ -32,7 +32,7 @@ EXPECTED OUTPUT
 
 import { useId, useRef, useState } from "react";
 import { domainLabel, sharedDomain, type EntityModel } from "../modeling/entity";
-import { oneValueExample, typeWord } from "../modeling/sentences";
+import { REASONER_NOTE, oneValueExample, typeWord } from "../modeling/sentences";
 import { DATATYPES } from "../modeling/values";
 import { Block, type Runner } from "./EditParts";
 import EntityPicker from "./EntityPicker";
@@ -80,7 +80,7 @@ export default function AttributeForm({ ontologyId, iri, name, model, runner, on
 
   return (
     <>
-      <Block title="Belongs to">
+      <Block title="Belongs to" anchor="domain">
         {sharedDomain(model) ? (
           // A shared domain (attribute-reuse 5.3): every class, and *Change
           // class* only for one, which would replace them all.
@@ -143,7 +143,8 @@ export default function AttributeForm({ ontologyId, iri, name, model, runner, on
         )}
       </Block>
 
-      <Block title="Type of value">
+      <Block title="Type of value" anchor="range">
+        {model.rangeUnused && <p className="detail-note">{REASONER_NOTE}</p>}
         <p className={datatype ? undefined : "detail-name-missing"}>
           {typeWord(datatype)}
           {datatype && <span className="owl-term"> {datatype}</span>}

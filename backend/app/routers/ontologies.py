@@ -778,10 +778,17 @@ def get_node(
             # every class listed with Remove is one UnshareDomain can take
             # out; an imported property's, from the view.
             own_property = axioms.property_kind(ontology.graph, URIRef(iri)) is not None
+            read_from = ontology.graph if own_property else graph
             details["domain"] = axioms.domain_json(
-                axioms.domain_of(ontology.graph if own_property else graph, URIRef(iri)),
-                labeler(graph, ontology.label_langs(lang)),
+                axioms.domain_of(read_from, URIRef(iri)), labeler(graph, ontology.label_langs(lang)),
             )
+            # A class list the reasoner does not use (owl-rl-warnings 5.4):
+            # the shared-domain sentence stands on the server's key, for a
+            # domain and, the same way, a range.
+            marks = modeling_checks.reasoner_marks(read_from, URIRef(iri))
+            details["domain"].update(marks.get("domain", {}))
+            if "range" in marks:
+                details["rangeReasoner"] = marks["range"]
             # Each class's kind (attribute-reuse 5.8): a pointer to add a
             # rule to an RDFS class offers to make it an OWL class instead.
             # `own`: only the document's own class can be changed here; an

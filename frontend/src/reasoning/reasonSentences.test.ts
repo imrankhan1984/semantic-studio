@@ -39,6 +39,8 @@ import {
   runningLine,
   staleLine,
   seconds,
+  unusedHeading,
+  unusedLine,
 } from "./reasonSentences";
 
 function group(kind: ReasoningGroup["kind"], total: number): ReasoningGroup {
@@ -140,5 +142,32 @@ describe("what goes stale (5.3)", () => {
     expect(marksShown(result(), { ...NOW, revision: 9 }, true)).toBe(false);
     expect(marksShown(result({ status: "timedOut" }), NOW, true)).toBe(false);
     expect(marksShown(null, NOW, true)).toBe(false);
+  });
+});
+
+describe("rules the reasoner did not use (owl-rl-warnings 5.6)", () => {
+  const source = (id: string, name: string, count: number) => ({
+    source: id, name, kind: `unused:${id}`, count, total: count, offset: 0, items: [],
+  });
+
+  it("names the noun once, with the model first, and joins the rest", () => {
+    expect(unusedLine({ total: 3, sources: [source("model", "Shop", 3)] })).toBe("Reasoning did not use 3 rules in your model.");
+    expect(unusedLine({ total: 98, sources: [source("model", "Shop", 1), source("qudt", "QUDT", 97)] })).toBe(
+      "Reasoning did not use 1 rule in your model and 97 in QUDT.",
+    );
+    expect(
+      unusedLine({ total: 1099, sources: [source("model", "Shop", 1), source("qudt", "QUDT", 1097), source("skos", "SKOS", 1)] }),
+    ).toBe("Reasoning did not use 1 rule in your model, 1,097 in QUDT and 1 in SKOS.");
+    expect(unusedLine({ total: 12, sources: [source("bfo", "BFO", 12)] })).toBe("Reasoning did not use 12 rules in BFO.");
+  });
+
+  it("says nothing when every rule was used, or the run said nothing of them", () => {
+    expect(unusedLine({ total: 0, sources: [] })).toBeNull();
+    expect(unusedLine(undefined)).toBeNull();
+  });
+
+  it("heads each source's list with its place and count", () => {
+    expect(unusedHeading(source("model", "Shop", 3))).toBe("In your model (3)");
+    expect(unusedHeading(source("qudt", "QUDT 3.5.2", 97))).toBe("In QUDT 3.5.2 (97)");
   });
 });

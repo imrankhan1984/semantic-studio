@@ -42,6 +42,8 @@ BASIC IDEA
     from the view, so an imported property is warned of too, without a Fix.
     The symmetric, reflexive and inverse warnings read the domain through
     axioms.domain_of, a union's every class rather than the first named.
+    reasoner_marks says which of a property's domain and range the reasoner
+    does not use, asked of axioms.unused_by_reasoner (owl-rl-warnings 5.4).
 
     axioms-and-reasoning 5.10 adds the checks on a class's rules, in the
     same words: a count on a relationship that is not simple, found by the
@@ -63,6 +65,8 @@ EXPECTED OUTPUT
     - *_refusal(...) -> the sentence, or None.
     - warnings(graph, prop, name) -> [{"text", "fix"?}] for one property.
     - never_members(graph, cls, name) -> [{"text", "disjoint"?}] for one class.
+    - reasoner_marks(graph, prop) -> {"domain"?, "range"?}, each
+      {"reasoner": "unused", "reason"}.
 ================================================================================
 """
 
@@ -75,7 +79,7 @@ from rdflib import BNode, Graph, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS
 
 from . import standard_terms
-from .axioms import class_type, defined, disjoint_pairs, disjoint_with, domain_of, named_pairs
+from .axioms import class_type, defined, disjoint_pairs, disjoint_with, domain_of, named_pairs, unused_by_reasoner
 from .sentences import article, verb
 
 Name = Callable[[URIRef], str]
@@ -563,6 +567,21 @@ def warnings(graph: Graph, prop: URIRef, name: Name) -> list[dict]:
                     "label": f"Set {name(inverse)} from {name(rng)} to {name(domain)}",
                 }
             out.append(warning)
+    return out
+
+
+def reasoner_marks(graph: Graph, prop: URIRef) -> dict:
+    """A domain or range the reasoner does not use (owl-rl-warnings 5.4):
+    `{"domain": {"reasoner": "unused", "reason"}, "range": {...}}`, each
+    only when axioms.unused_by_reasoner says so -- a class list today, the
+    shared-domain sentence's case, read for a range the same way."""
+    out = {}
+    for which, predicate in (("domain", RDFS.domain), ("range", RDFS.range)):
+        for node in graph.objects(prop, predicate):
+            reason = unused_by_reasoner(graph, node)
+            if reason is not None:
+                out[which] = {"reasoner": "unused", "reason": reason}
+                break
     return out
 
 

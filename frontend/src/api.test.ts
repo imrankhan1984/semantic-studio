@@ -239,6 +239,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   reasonProject: () => api.reasonProject("prj-1", false, false),
   stopReasoning: () => api.stopReasoning("prj-1"),
   getReasoningPage: () => api.getReasoningPage("prj-1", "memberships", 200, false),
+  getUnusedPage: () => api.getUnusedPage("prj-1", "unused:qudt", 50, false),
   getReasoningAbout: () => api.getReasoningAbout("prj-1", "http://example.org/A", false),
   getWhy: () => api.getWhy("prj-1", { s: "http://example.org/a", p: "http://example.org/p", o: "http://example.org/b" }),
   // Not requests: the approval plumbing and the display language. Listed so

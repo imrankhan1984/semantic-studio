@@ -9,7 +9,9 @@ SUMMARY
     causes, a reason for every fact, the run's bounds (limit, Stop, one at a
     time, the ceiling, a failing worker), what goes stale, that a run
     changes nothing in the project, and the inferred edges the tree and the
-    canvas are given. Plus the timing budgets of Section 10.
+    canvas are given. Plus the timing budgets of Section 10. owl-rl-warnings
+    5.6: the summary's `unused`, per source, 50 a page, absent after a
+    timeout or a set too large, and never read in the worker.
 
 BASIC IDEA
     Every model is written in the test (rdf-fixture): a shop model in
@@ -811,3 +813,71 @@ def test_two_domain_lines_make_a_subject_a_member_of_both():
     apply(pid, SHARED_DOMAIN)
     memberships = shown(reason(pid))["memberships"]
     assert "bob is an Employee" in memberships and "bob is a Manager" in memberships
+
+
+# --- rules the reasoner does not use (owl-rl-warnings 5.6, AC-6) ----------------------
+
+UNUSED_RULE = """
+:Order a owl:Class ; rdfs:label "Order"@en ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :hasLine ; owl:minCardinality 1 ] .
+:hasLine a owl:ObjectProperty ; rdfs:label "has line"@en .
+"""
+
+
+def test_the_summary_lists_the_models_unused_rules(shop):
+    assert reason(shop)["unused"] == {"total": 0, "sources": []}
+    apply(shop, SHOP + UNUSED_RULE)
+    unused = reason(shop)["unused"]
+    assert unused["total"] == 1
+    (source,) = unused["sources"]
+    assert (source["source"], source["count"], source["kind"]) == ("model", 1, "unused:model")
+    assert source["items"] == [
+        {"iri": EX + "Order", "reason": "atLeast", "editable": True, "label": "Order · at least 1 · has line"},
+    ]
+
+
+def test_an_imported_qudts_97_are_counted_by_source_fifty_at_a_time(shop, monkeypatch):
+    """QUDT through OWL-RL takes past the limit; what is counted here is the
+    main process's reading of the set, so the engine's answer is a finished
+    run with nothing added."""
+    apply(shop, SHOP + UNUSED_RULE)
+    added = client.post(
+        f"/api/projects/{shop}/documents/model/commands",
+        json={"command": "AddVocabulary", "args": {"iri": "http://qudt.org/3.5.2/qudt-all", "prefix": "qudt"}},
+    )
+    assert added.status_code == 200, added.text
+    monkeypatch.setattr(reasoning, "reason", lambda *a, **k: reasoning.RawResult("done"))
+    unused = reason(shop, imports=True)["unused"]
+    by_source = {s["source"]: s for s in unused["sources"]}
+    assert by_source["model"]["count"] == 1 and by_source["qudt"]["count"] == 97
+    # QUDT brings SKOS, whose has member ranges over a class list (row 10).
+    assert by_source["skos"]["items"][0]["label"] == "has member · range: Concept or Collection"
+    assert unused["total"] == 1 + 97 + 1
+    qudt = by_source["qudt"]
+    assert len(qudt["items"]) == 50 and all(not i["editable"] for i in qudt["items"])
+    assert {i["reason"] for i in qudt["items"]} <= {"atLeast", "exactly"}
+    page = client.get(f"/api/projects/{shop}/reasoning", params={"group": "unused:qudt", "offset": 50}).json()
+    assert page["total"] == 97 and page["offset"] == 50 and len(page["items"]) == 47
+    assert client.get(f"/api/projects/{shop}/reasoning", params={"group": "unused:nope"}).status_code == 404
+    # The switch off: the model alone.
+    assert [s["source"] for s in reason(shop)["unused"]["sources"]] == ["model"]
+
+
+def test_no_unused_line_after_a_timeout_or_a_set_too_large(shop, monkeypatch):
+    apply(shop, SHOP + UNUSED_RULE)
+    monkeypatch.setattr(reasoning, "reason", lambda *a, **k: reasoning.RawResult("timedOut", message="Stopped."))
+    assert "unused" not in reason(shop)
+    monkeypatch.setattr(reasoning, "MAX_STATEMENTS", 10)
+    assert "unused" not in reason(shop)
+
+
+def test_the_worker_never_reads_which_rules_it_does_not_use():
+    """5.6: computed in the main process, never inside the worker."""
+    import inspect
+    import re
+
+    from app import reasoning_worker
+
+    source = inspect.getsource(reasoning_worker)
+    assert not re.search(r"^\s*(?:from|import)\b.*\baxioms\b", source, re.M)
+    assert "unused" not in source

@@ -1,4 +1,4 @@
-# Rules outside OWL 2 RL, the profile Semantic Studio reasons in: some, at least or exactly, or at most above one, under a class; any rule but a value as a definition (a heuristic, read again through axioms.parse_restriction).
+# Rules the reasoner may not use: a some or a count under a class or in its definition, a class list as a domain or range, a disjoint union, a reflexive property. Candidates only: each is read again through axioms.unused_by_reasoner, the one decider (owl-rl-warnings 5.1, D-129).
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -9,22 +9,35 @@ PREFIX dc: <http://purl.org/dc/elements/1.1/>
 PREFIX sh: <http://www.w3.org/ns/shacl#>
 PREFIX ss: <urn:semantic-studio:check:>
 SELECT DISTINCT ?iri ?how ?rule WHERE {
-  VALUES ?type { owl:Class rdfs:Class }
-  ?iri a ?type .
-  FILTER(isIRI(?iri) && ss:own(?iri))
   {
+    VALUES ?type { owl:Class rdfs:Class }
+    ?iri a ?type .
     ?iri rdfs:subClassOf ?rule .
-    { ?rule owl:someValuesFrom|owl:minCardinality|owl:minQualifiedCardinality|owl:cardinality|owl:qualifiedCardinality ?x . }
-    UNION
-    { ?rule owl:maxCardinality|owl:maxQualifiedCardinality ?m . FILTER(?m > 1) }
+    ?rule owl:someValuesFrom|owl:minCardinality|owl:minQualifiedCardinality|owl:cardinality|owl:qualifiedCardinality|owl:maxCardinality|owl:maxQualifiedCardinality ?x .
+    FILTER(isBlank(?rule))
     BIND(rdfs:subClassOf AS ?how)
   } UNION {
-    ?iri owl:equivalentClass ?defining .
-    ?defining (owl:intersectionOf/rdf:rest*/rdf:first)? ?rule .
-    ?rule owl:onProperty ?property .
-    FILTER NOT EXISTS { ?rule owl:hasValue ?value . }
+    VALUES ?type { owl:Class rdfs:Class }
+    ?iri a ?type .
+    ?iri owl:equivalentClass ?rule .
+    ?rule (owl:intersectionOf/rdf:rest*/rdf:first)? ?part .
+    ?part owl:minCardinality|owl:minQualifiedCardinality|owl:cardinality|owl:qualifiedCardinality|owl:maxCardinality|owl:maxQualifiedCardinality ?x .
+    FILTER(isBlank(?rule))
     BIND(owl:equivalentClass AS ?how)
+  } UNION {
+    VALUES ?how { rdfs:domain rdfs:range }
+    ?iri ?how ?rule .
+    ?rule owl:unionOf ?members .
+    FILTER(isBlank(?rule))
+  } UNION {
+    ?iri owl:disjointUnionOf ?members .
+    BIND(?iri AS ?rule)
+    BIND(owl:disjointUnionOf AS ?how)
+  } UNION {
+    ?iri a owl:ReflexiveProperty .
+    BIND(?iri AS ?rule)
+    BIND(owl:ReflexiveProperty AS ?how)
   }
-  FILTER(isBlank(?rule))
+  FILTER(isIRI(?iri) && ss:own(?iri))
 }
 ORDER BY ?iri

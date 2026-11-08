@@ -16,7 +16,9 @@ SUMMARY
     Stage B: each hint H1 to H12 reports exactly its planted case as a
     question, at the level Hint after the other two (AC-13), changing no
     check's finding; H3 says when there is no reasoning result, and the
-    route hands it the current one.
+    route hands it the current one. H1 lists Section 1's unused rows of
+    owl-rl-warnings and none the reasoner uses, deciding only through
+    axioms.unused_by_reasoner (D-129).
 
 BASIC IDEA
     Most tests call checks.run on a parsed graph, through a stand-in for a
@@ -263,12 +265,41 @@ def test_h2_says_what_reasoning_typed_only_with_a_result(faults):
     ]
 
 
-def test_h1_reads_a_rule_only_through_parse_restriction(monkeypatch):
-    monkeypatch.setattr(checks.axioms, "parse_restriction", lambda g, node: None)
+def test_h1_decides_only_through_unused_by_reasoner(monkeypatch):
+    """The query lists candidates; the one decider says which are findings
+    (owl-rl-warnings 5.1, D-129)."""
+    monkeypatch.setattr(checks.axioms, "unused_by_reasoner", lambda g, node: None)
     assert by_id(run(parse(FIXTURES / "design-faults.ttl"), namespace="acme"))["H1"]["total"] == 0
+    assert by_id(run(parse(FIXTURES / "owl-rl-rows.ttl")))["H1"]["total"] == 0
 
 
-def test_h1_leaves_the_rules_owl_2_rl_uses():
+ROWS = "http://example.org/rows#"
+
+
+def test_h1_lists_section_1s_unused_rows_and_none_the_reasoner_uses():
+    """Rows 1, 2, 3, 5, 9, 10, 11 and 12 of the fixture, each opening its
+    block; none of 4, 6, 7 or 8: a definition by *some* is used (row 8)."""
+    group = by_id(run(parse(FIXTURES / "owl-rl-rows.ttl")))["H1"]
+    assert group["level"] == "Hint" and group["heading"] == "Rules that OWL 2 RL reasoning does not use"
+    said = {(f["iri"][len(ROWS):], f.get("block")): f["sentence"] for f in group["findings"]}
+    tail = " meant for a reasoner? OWL 2 RL, the reasoning Semantic Studio runs, does not use it."
+    assert said == {
+        ("R1", "rules"): "Is R1's rule \"p1 some Y\"" + tail,
+        ("R2", "rules"): "Is R2's rule \"p2 at least 2\"" + tail,
+        ("R2q", "rules"): "Is R2q's rule \"p2 at least 1 Y\"" + tail,
+        ("R3", "rules"): "Is R3's rule \"p3 exactly 1\"" + tail,
+        ("R3q", "rules"): "Is R3q's rule \"p3 exactly 1 Y\"" + tail,
+        ("R5", "rules"): "Is R5's rule \"p5 at most 2\"" + tail,
+        ("R9", "rules"): "Is R9's rule \"p9 at least 1\"" + tail,
+        ("p10", "domain"): "Is p10's rule \"domain: A10 or B10\"" + tail,
+        ("p10r", "range"): "Is p10r's rule \"range: A10 or B10\"" + tail,
+        ("R11", "rules"): "Is R11's rule \"exactly one of B11 or C11\"" + tail,
+        ("p12", None): "Is p12's rule \"reflexive\"" + tail,
+    }
+    assert group["total"] == len(said)
+
+
+def test_h1_leaves_the_rules_the_reasoner_uses():
     graph = Graph().parse(data="""
         @prefix owl: <http://www.w3.org/2002/07/owl#> .
         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -282,10 +313,9 @@ def test_h1_leaves_the_rules_owl_2_rl_uses():
         ex:Defined a owl:Class ; owl:equivalentClass [ a owl:Restriction ; owl:onProperty ex:p ; owl:hasValue ex:b ] .
         ex:ExactlyTwo a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex:p ; owl:cardinality 2 ] .
         ex:DefinedBySome a owl:Class ; owl:equivalentClass [ a owl:Restriction ; owl:onProperty ex:p ; owl:someValuesFrom ex:B ] .
+        ex:DefinedByOnly a owl:Class ; owl:equivalentClass [ a owl:Restriction ; owl:onProperty ex:p ; owl:allValuesFrom ex:B ] .
     """, format="turtle")
-    assert sorted(f["iri"] for f in by_id(run(graph))["H1"]["findings"]) == [
-        "http://example.org/r#DefinedBySome", "http://example.org/r#ExactlyTwo",
-    ]
+    assert sorted(f["iri"] for f in by_id(run(graph))["H1"]["findings"]) == ["http://example.org/r#ExactlyTwo"]
 
 
 def test_h5_h6_h7_read_their_word_rules():

@@ -9,7 +9,9 @@ SUMMARY
     the class's restrictions, disjoint classes and equivalent classes as
     sentences, each with Edit and Remove; under each restriction, the
     open-world note and *Check it in data too*; a rule outside the form's
-    sentences as its Turtle, read-only, with Edit in Turtle; the 5.10
+    sentences as its Turtle, read-only, with Edit in Turtle; under a rule
+    the server marks as one the reasoner does not use, its note, after the
+    open-world note (owl-rl-warnings 5.2); the 5.10
     warnings under the rule they concern; and *Add a rule*, which opens the
     sentence builder.
 
@@ -66,6 +68,7 @@ import {
   partsOf,
   removeCommand,
   stateOf,
+  unusedNote,
   type BuilderState,
 } from "../modeling/ruleSentences";
 import { projectStore, useProjectSelector } from "../state/projectStore";
@@ -192,7 +195,7 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
   };
 
   return (
-    <section className="rules-block" aria-labelledby={`rules-${cssId(iri)}`}>
+    <section className="rules-block" data-edit-block="rules" aria-labelledby={`rules-${cssId(iri)}`}>
       <h5 id={`rules-${cssId(iri)}`}>What is true of every {name}</h5>
       {general.length > 0 && (
         <ul className="form-warnings" aria-label="Warnings">
@@ -217,6 +220,9 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
                   <>
                     <p className="detail-note">Written in Turtle, outside the sentences this form writes:</p>
                     <pre className="rule-turtle">{item.turtle}</pre>
+                    {item.reasoner === "unused" && item.reason && (
+                      <p className="detail-note">{unusedNote(name, item.reason, null)}</p>
+                    )}
                     <button
                       type="button"
                       className="ghost edit-btn"
@@ -273,6 +279,9 @@ export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props
                     {item.type === "restriction" && (
                       <div className="rule-note">
                         <p className="detail-note">{openWorldNote(name, partsOf(item))}</p>
+                        {item.reasoner === "unused" && item.reason && (
+                          <p className="detail-note">{unusedNote(name, item.reason, partsOf(item))}</p>
+                        )}
                         {item.editable && (canEdit || rdfs) && (
                           <button
                             type="button"

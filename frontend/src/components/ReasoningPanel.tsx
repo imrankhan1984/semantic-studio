@@ -35,7 +35,9 @@ BASIC IDEA
 
     A group shows its first 200 facts with the true total in its heading;
     **Show more** asks the server for the next 200. Facts about imported
-    terms alone are one line, collapsed until opened. Nothing is an href:
+    terms alone are one line, collapsed until opened. The rules the run did
+    not use are one line, per source, with **Show them** (owl-rl-warnings
+    5.6); a timed-out or too-large run has none. Nothing is an href:
     a subject is selected as a tree row selects it.
 
 INPUTS / INPUT SOURCES (props)
@@ -53,13 +55,14 @@ EXPECTED OUTPUT
 */
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { getReasoningPage } from "../api";
+import { getReasoningPage, getUnusedPage } from "../api";
 import {
   DATA_SLOWER,
   EMPTY,
   INTRO,
   NOTHING,
   NOT_SAVED,
+  SHOW_THEM,
   STALE,
   VALUES_FOOTER,
   finishedLine,
@@ -69,10 +72,20 @@ import {
   panelHeading,
   premiseMark,
   runningLine,
+  unusedHeading,
+  unusedLine,
   type ReasoningNow,
 } from "../reasoning/reasonSentences";
 import { projectStore, useProjectSelector } from "../state/projectStore";
-import type { ProjectKind, ReasoningFact, ReasoningGroup, ReasoningProblem, ReasoningResult } from "../types";
+import type {
+  ProjectKind,
+  ReasoningFact,
+  ReasoningGroup,
+  ReasoningProblem,
+  ReasoningResult,
+  ReasoningUnused,
+  UnusedSource,
+} from "../types";
 import WhyDisclosure from "./WhyDisclosure";
 
 interface Props {
@@ -288,11 +301,22 @@ function Results({
     return <p className="detail-note reasoning-ending">{result.sentence}</p>;
   }
   const facts = result.groups.reduce((sum, g) => sum + g.total, 0) + result.importedFacts.total;
+  // What the run left out stands first, under the result's sentence, and
+  // also when nothing followed (owl-rl-warnings 5.6).
+  const unused = result.unused && unusedLine(result.unused) && (
+    <Unused key={`${token}|unused`} projectId={projectId} unused={result.unused} imports={imports} onSelect={onSelect} />
+  );
   if (result.problems.length === 0 && facts === 0) {
-    return <p className="detail-note">{NOTHING}</p>;
+    return (
+      <>
+        {unused}
+        <p className="detail-note">{NOTHING}</p>
+      </>
+    );
   }
   return (
     <>
+      {unused}
       {result.problems.length > 0 && (
         <section className="reasoning-group">
           <h4>Problems ({result.problems.length.toLocaleString("en-US")})</h4>
@@ -511,6 +535,115 @@ function Group({
       <h4>{heading}</h4>
       <FactList projectId={projectId} group={group} imports={imports} onSelect={onSelect} />
     </section>
+  );
+}
+
+/** *Reasoning did not use 3 rules in your model and 97 in QUDT.* with
+ *  **Show them** (owl-rl-warnings 5.6): the list, grouped by source; a
+ *  model's rule selects its class or property, which opens its Edit form,
+ *  and a vocabulary's is text, read-only. */
+function Unused({
+  projectId,
+  unused,
+  imports,
+  onSelect,
+}: {
+  projectId: string;
+  unused: ReasoningUnused;
+  imports: boolean;
+  onSelect: (iri: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const listId = useId();
+  return (
+    <section className="reasoning-unused">
+      <p className="detail-note">
+        {unusedLine(unused)}{" "}
+        <button type="button" className="link-btn" aria-expanded={open} aria-controls={listId} onClick={() => setOpen(!open)}>
+          {SHOW_THEM}
+        </button>
+      </p>
+      {open && (
+        <div id={listId}>
+          {unused.sources.map((source) => (
+            <UnusedList key={source.source} projectId={projectId} source={source} imports={imports} onSelect={onSelect} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function UnusedList({
+  projectId,
+  source,
+  imports,
+  onSelect,
+}: {
+  projectId: string;
+  source: UnusedSource;
+  imports: boolean;
+  onSelect: (iri: string) => void;
+}) {
+  const [items, setItems] = useState(source.items);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const from = useRef(0);
+  const focusFrom = useRef(false);
+  useLayoutEffect(() => {
+    if (!focusFrom.current) return;
+    focusFrom.current = false;
+    const row = listRef.current?.children[from.current];
+    (row?.querySelector<HTMLElement>("button") ?? (row as HTMLElement | undefined))?.focus();
+  });
+  const more = () => {
+    setLoading(true);
+    setError(null);
+    getUnusedPage(projectId, source.kind, items.length, imports)
+      .then((page) =>
+        setItems((current) => {
+          from.current = current.length;
+          return [...current, ...page.items];
+        }),
+      )
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  };
+  return (
+    <div className="reasoning-group">
+      <h4>{unusedHeading(source)}</h4>
+      <ul ref={listRef}>
+        {items.map((item, i) => (
+          // A text row takes focus only from Show more, never from Tab.
+          <li key={`${item.iri}|${item.reason}|${i}`} tabIndex={item.editable ? undefined : -1}>
+            {item.editable ? (
+              <button type="button" className="term-link" onClick={() => onSelect(item.iri)}>
+                {item.label}
+              </button>
+            ) : (
+              item.label
+            )}
+          </li>
+        ))}
+      </ul>
+      {items.length < source.count && (
+        <ShowMore
+          loading={loading}
+          shown={items.length}
+          total={source.count}
+          onMore={more}
+          onLeave={() => {
+            focusFrom.current = true;
+          }}
+        />
+      )}
+      {error && (
+        <p className="edit-error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

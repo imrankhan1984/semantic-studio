@@ -195,6 +195,9 @@ interface LineData extends Record<string, unknown> {
   inferred: boolean;
   // A rule (axioms 5.9): dotted, labelled with its short form.
   rule: boolean;
+  // A rule the reasoner does not use (owl-rl-warnings 5.3): ⊘ first in its
+  // label, so it survives a cut-off label; its meaning is in the line's name.
+  unused: boolean;
   // A click on the label is a click on its line (5.10 item 7).
   onLabel: (id: string) => void;
 }
@@ -266,10 +269,26 @@ function LabelledEdge(props: EdgeProps<Edge<LineData>>) {
               data.onLabel(props.id);
             }}
           >
-            {data.text}
+            <EdgeLabelText unused={data.unused} text={data.text} />
           </span>
         </EdgeLabelRenderer>
       )}
+    </>
+  );
+}
+
+/** A line's label: ⊘ first on a rule the reasoner does not use, so it
+ *  survives a cut-off label (owl-rl-warnings 5.3); hidden from a screen
+ *  reader, which hears *not used by reasoning* in the line's name. */
+export function EdgeLabelText({ unused, text }: { unused: boolean; text: string }) {
+  return (
+    <>
+      {unused && (
+        <span className="rule-unused-mark" aria-hidden="true">
+          ⊘{" "}
+        </span>
+      )}
+      {text}
     </>
   );
 }
@@ -777,7 +796,7 @@ function Canvas(props: ModelCanvasProps) {
             : e.kind === "relationship" || e.kind === "branch"
             ? `${label(view, e.source)} ${e.label} ${label(view, e.target)}`
             : e.kind === "rule"
-              ? `${ruleWords(view, e)}, a rule`
+              ? `${ruleWords(view, e)}, a rule${e.rule?.reasoner === "unused" ? ", not used by reasoning" : ""}`
               : `${linkSentence(e.kind, label(view, e.source), label(view, e.target))}${e.inferred ? ", inferred" : ""}`,
         // A hollow triangle at the parent for a kind of or broader line, a
         // filled arrow for a relationship or a rule, and a dot at both ends
@@ -803,6 +822,7 @@ function Canvas(props: ModelCanvasProps) {
           line: LINE_OF[e.kind],
           inferred: Boolean(e.inferred),
           rule: e.kind === "rule",
+          unused: e.kind === "rule" && e.rule?.reasoner === "unused",
           onLabel: clickLabel,
         },
       };

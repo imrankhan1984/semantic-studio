@@ -3086,3 +3086,47 @@ EXPECTED OUTPUT
   check, a library ontology's declared namespace), and `keep_prefixes` never
   writes one. `test_a_namespace_turtle_cannot_hold_is_never_written_into_the_model`
   runs the attack; it and its two neighbours fail with the check removed.
+
+### Rules the reasoner does not use (V-9, D-129)
+
+  **One decider, measured, never the W3C grammar.** `axioms.unused_by_reasoner`
+  answers, for one rule node, whether OWL-RL as the worker runs it
+  (`OWLRL_Semantics`, no axiomatic triples) acts on it: Section 1 of
+  owl-rl-warnings, twelve rows. The profile's grammar would flag a definition
+  by *at least one* or *only* (row 8); the engine places a thing that fits, so
+  the note would be false. `test_axioms.py` holds the table two ways: the
+  function's key per row, and the same rows (`tests/fixtures/owl-rl-rows.ttl`)
+  through `reasoning_worker._closure`, each "No" row concluding nothing it would
+  give and each "Yes" row its conclusion. OWL-RL names the *value* in an
+  at-most-0 message, not the subject, so the engine test looks for any of the
+  row's names. If owlrl changes, that test goes red first: change the table
+  with it, never the test alone.
+
+  **Every place reads it; the browser never decides.** `/node`'s rule items
+  (`axioms._marked`), a property's domain and range
+  (`modeling_checks.reasoner_marks`, `domain.reasoner`, `rangeReasoner`), the
+  canvas's rule edges (`rule.reasoner`), H1's reread and the reasoning
+  summary's `unused` all call it. The Rules form's note before Save reads
+  `choices.reasoner`, `axioms.builder_reasons()`: the function asked once per
+  form, kind and count of 0, 1 and 2 or more, so the builder looks up the
+  server's answer rather than carrying a copy of the table. The shared-domain
+  sentence now stands on `domain.reasoner`, not on `form === "union"`.
+
+  **H1 is the one list, not a new DC-30** (Imran, 2026-11-07). The spec asked
+  for a check DC-30 listing the same rules H1 already listed; H1 also flagged
+  row 8. H1.rq lists candidates only -- a *some* or a count under a class or
+  in a definition, a class-list domain or range, a disjoint union, a
+  reflexive property -- and `_h1` rereads each through the function, so the
+  query never decides. A rule the form reads keeps H1's words; any other is
+  `axioms.unused_words`. The pinned count stays 29 checks and 12 hints.
+
+  **Counted in the main process, per document.** `editing.reason` reads the
+  model and each resolved import (`imports.merged`'s `sources`, a bundled
+  vocabulary by its manifest id whichever way it resolved) under the model's
+  lock, before the worker starts; `reasoning_worker.py` never imports `axioms`
+  (`test_the_worker_never_reads_which_rules_it_does_not_use`). The summary
+  carries `unused` only for a run that finished; each source pages 50 at a
+  time through the existing `?group=unused:<source>` route. QUDT's 97
+  (74 *at least*, 23 *exactly*) scan in about 17 ms, held under 100 ms by a
+  `perf` test; QUDT brings SKOS, whose `skos:member` ranges over a class
+  list, so SKOS appears as a source of one.

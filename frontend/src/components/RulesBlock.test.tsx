@@ -17,6 +17,8 @@ SUMMARY
     after a remove, and never to the page. And an RDFS class (attribute-
     reuse 5.8): the one line and its offer in place of the builder, the
     note on Check in data, and a file's OWL statement about it read-only.
+    owl-rl-warnings 5.2 (AC-3): the note before Save for each rule the
+    server's table marks, Add still sent, and the note under a saved rule.
 
 BASIC IDEA
     The block is rendered with its runner, the api mocked as the other form
@@ -441,5 +443,94 @@ describe("a rule pointing to an RDFS class (attribute-reuse 5.8, Stage B review)
     const group = await chooseNote();
     expect(group.textContent).toContain("Rules need an OWL class; RDFS has no words for them.");
     expect(within(group).queryByRole("button", { name: "Make Note an OWL class" })).toBeNull();
+  });
+});
+
+describe("rules the reasoner does not use (owl-rl-warnings 5.2, AC-3)", () => {
+  // What the server sends with the choices: axioms.builder_reasons(), whose
+  // answers test_axioms.py holds to Section 1 and to the engine.
+  const REASONER = {
+    every: {
+      some: ["some", "some", "some"], atLeast: ["atLeast", "atLeast", "atLeast"], exactly: ["exactly", "exactly", "exactly"],
+      atMost: [null, null, "atMostMany"], only: [null, null, null], value: [null, null, null],
+    },
+    defines: {
+      some: [null, null, null], atLeast: ["definedByCount", "definedByCount", "definedByCount"],
+      exactly: ["definedByCount", "definedByCount", "definedByCount"], atMost: [null, null, "definedByCount"],
+      only: [null, null, null], value: [null, null, null],
+    },
+  } as const;
+  const choices = { ...CHOICES, reasoner: REASONER } as unknown as ClassRules["choices"];
+  const HEAD = "Reasoning won't use this rule: the reasoner here follows OWL 2 RL, which draws no conclusion from";
+
+  async function build(kind: string, n?: string, type = "every") {
+    await show(rulesOf([], { choices }));
+    fireEvent.click(screen.getByRole("button", { name: "Add a rule" }));
+    if (type !== "every") fireEvent.change(screen.getByRole("combobox", { name: "Rule" }), { target: { value: type } });
+    const property = type === "defines" ? "That (relationship or attribute)" : "Relationship or attribute";
+    fireEvent.change(screen.getByRole("combobox", { name: property }), { target: { value: EX + "hasLine" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "What is true of it" }), { target: { value: kind } });
+    if (n !== undefined) fireEvent.change(screen.getByRole("spinbutton", { name: "How many (0 to 1,000)" }), { target: { value: n } });
+    // Every blank filled, so Add waits on nothing but what the note might.
+    const filler = screen.queryByRole("combobox", { name: /^That (is|are)/ });
+    if (filler) fireEvent.change(filler, { target: { value: EX + "OrderLine" } });
+  }
+  const note = () => screen.getByRole("status").textContent;
+
+  it.each([
+    ["some", undefined, "every", `${HEAD} "at least one". To find an Order with no line, use Check it in data too.`],
+    ["atLeast", "3", "every", `${HEAD} "at least 3". To find an Order with fewer than 3 lines, use Check it in data too.`],
+    ["exactly", "2", "every", `${HEAD} "exactly 2", not even its "at most" part. To find an Order with another number of lines, use Check it in data too.`],
+    ["exactly", "1", "every", `${HEAD} "exactly one", not even its "at most" part. To find an Order with another number of lines, use Check it in data too. For reasoning to use "at most one", add it as a rule of its own.`],
+    ["atMost", "3", "every", `${HEAD} "at most 3". It uses "at most" only for 0 or 1.`],
+    ["atLeast", "2", "defines", "Reasoning won't use this definition: the reasoner here follows OWL 2 RL, which draws no conclusion from a count in a definition."],
+  ])("%s %s (%s) says before Save that reasoning won't use it", async (kind, n, type, sentence) => {
+    await build(kind, n, type);
+    expect(note()).toBe(sentence);
+    // A note never stops the rule: Add stays available.
+    expect(screen.getByRole("button", { name: "Add" }).getAttribute("aria-disabled")).not.toBe("true");
+  });
+
+  it.each([
+    ["only", undefined, "every"],
+    ["atMost", "1", "every"],
+    ["some", undefined, "defines"],
+  ])("%s %s (%s), which reasoning uses, has no note", async (kind, n, type) => {
+    await build(kind, n, type);
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+
+  it("the status region is in the page before the note, so the note is read once, and Add still sends the command", async () => {
+    await show(rulesOf([], { choices }));
+    fireEvent.click(screen.getByRole("button", { name: "Add a rule" }));
+    const region = screen.getByRole("status");
+    expect(region.textContent).toBe("");
+    fireEvent.change(screen.getByRole("combobox", { name: "Relationship or attribute" }), { target: { value: EX + "hasLine" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "What is true of it" }), { target: { value: "some" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "That is a (class)" }), { target: { value: EX + "OrderLine" } });
+    expect(screen.getByRole("status")).toBe(region);
+    expect(region.textContent).toMatch(/^Reasoning won't use this rule/);
+    expect(region.contains(document.activeElement)).toBe(false);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    });
+    expect(runCommand.mock.calls[0][2]).toBe("AddRestriction");
+  });
+
+  it("a saved rule the server marks keeps the note, between the open-world note and Check it in data too", async () => {
+    await show(rulesOf([{ ...some(), reasoner: "unused", reason: "some" }]));
+    const item = document.querySelector(".rule-item")!;
+    const texts = [...item.querySelectorAll(".rule-note > *")].map((el) => el.textContent);
+    expect(texts).toEqual([
+      "This describes every Order. It does not check your data: an Order with no line is not an error here.",
+      `${HEAD} "at least one". To find an Order with no line, use Check it in data too.`,
+      "Check it in data too",
+    ]);
+  });
+
+  it("a saved rule the reasoner uses has no note, and a Turtle rule carries one by the server's key", async () => {
+    await show(rulesOf([some(), { type: "turtle", turtle: ":Order owl:disjointUnionOf ( :A :B ) .", editable: false, reasoner: "unused", reason: "exactlyOneOf" }]));
+    expect(screen.queryByText(/^Reasoning won't use/, { selector: ".rule-note p" })).toBeNull();
+    expect(screen.getByText(`${HEAD} "exactly one of".`)).toBeTruthy();
   });
 });

@@ -338,6 +338,9 @@ export interface RuleLine {
   fillerLabel: string;
   // A defining form's named class: *A Manager is exactly a Person that ...*
   withLabel: string | null;
+  // A rule the reasoner does not use (owl-rl-warnings 5.3): ⊘ on its label.
+  reasoner?: "unused";
+  reason?: UnusedReason;
 }
 
 // The whole graph plus summary counts (the /graph response).
@@ -607,6 +610,8 @@ export interface NodeDetails {
   // from the shapes rule, or null when there is no branch rule yet.
   branchRange?: boolean;
   branch?: { iri: string; label: string } | null;
+  // A range that is a class list the reasoner does not use (owl-rl-warnings 5.4).
+  rangeReasoner?: ReasonerMark;
 }
 
 /* --- a property's domain, read once (attribute-reuse 5.3, D-116) --------- */
@@ -619,6 +624,9 @@ export interface DomainReading {
   // class's pointer offers to make it an OWL class before a rule.
   // `own`: the document's own class, the only kind SetClassType changes.
   classes: { iri: string; label: string; type?: ClassType; own?: boolean }[];
+  // A class list the reasoner does not use (owl-rl-warnings 5.4).
+  reasoner?: "unused";
+  reason?: UnusedReason;
 }
 
 /** ShareDomain's dry run (attribute-reuse 5.2): the case the server
@@ -754,6 +762,24 @@ export interface RuleRef {
   label: string;
 }
 
+/** Why the reasoner does not use a rule (owl-rl-warnings 5.1): the server's
+ *  key, axioms.unused_by_reasoner's answer, never decided here. */
+export type UnusedReason =
+  | "some"
+  | "atLeast"
+  | "exactly"
+  | "atMostMany"
+  | "definedByCount"
+  | "classList"
+  | "exactlyOneOf"
+  | "reflexive";
+
+/** A rule the server marks as one the reasoner does not use. */
+export interface ReasonerMark {
+  reasoner?: "unused";
+  reason?: UnusedReason;
+}
+
 export interface RuleRestriction {
   type: "restriction";
   form: RuleForm;
@@ -765,12 +791,14 @@ export interface RuleRestriction {
   with: RuleRef | null;
   key: RuleKey;
   editable: boolean;
+  reasoner?: "unused";
+  reason?: UnusedReason;
 }
 
 export type RuleItem =
   | RuleRestriction
   | { type: "disjoint" | "equivalent"; other: RuleRef; editable: boolean }
-  | { type: "turtle"; turtle: string; editable: false };
+  | ({ type: "turtle"; turtle: string; editable: false } & ReasonerMark);
 
 export interface RuleChoice extends RuleRef {
   kind?: "relationship" | "attribute";
@@ -784,6 +812,9 @@ export interface RuleChoices {
   // end must be an OWL class, so the builder offers to convert an RDFS one.
   classes: { items: (RuleRef & { type?: ClassType; own?: boolean })[]; total: number };
   things: { items: RuleRef[]; total: number };
+  // Whether reasoning uses the rule being built (owl-rl-warnings 5.2): by
+  // form and kind, the server's key at a count of 0, 1 and 2 or more.
+  reasoner?: Record<RuleForm, Record<RuleKind, (UnusedReason | null)[]>>;
 }
 
 export interface ClassRules {
@@ -1764,6 +1795,27 @@ export interface ReasoningResult {
   importedFacts: ReasoningGroup;
   // Stale already when it was answered: the model moved during the run.
   stale: boolean;
+  // The rules the reasoner did not use, per source (owl-rl-warnings 5.6);
+  // absent when the run did not finish.
+  unused?: ReasoningUnused;
+}
+
+/** One source's rules the reasoner did not use: the model's open their Edit
+ *  form (`editable`), a vocabulary's are read-only. `items` is a page of 50,
+ *  the rest asked for as the group `kind` (`unused:<source>`). */
+export interface UnusedSource {
+  source: string;
+  name: string;
+  kind: string;
+  count: number;
+  total: number;
+  offset: number;
+  items: { iri: string; reason: UnusedReason; editable: boolean; label: string }[];
+}
+
+export interface ReasoningUnused {
+  total: number;
+  sources: UnusedSource[];
 }
 
 export interface ReasoningPage extends ReasoningGroup {

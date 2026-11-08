@@ -55,8 +55,8 @@ BASIC IDEA
 
     The hints (5.6) are pinned queries too, each sentence a question. Their
     word lists (roles, quantities, units, singular words) are the
-    manifest's; their shapes are axioms.py's (a rule read by
-    parse_restriction for H1, a domain by domain_of for H2 and H9). H2 and H3
+    manifest's; their shapes are axioms.py's (a rule H1 lists only when
+    axioms.unused_by_reasoner says reasoning does not use it, D-129, a domain by domain_of for H2 and H9). H2 and H3
     read the project's current reasoning result, which the router hands in
     as (individual, class) pairs: without one H2 asks its question alone and
     H3 says in its group that there is no run to read. H3, H10 and H11 are
@@ -891,31 +891,48 @@ def _plain_words(text: str) -> list[str]:
 _RULE_WORDS = {"some": "some", "only": "only", "exactly": "exactly", "atLeast": "at least", "atMost": "at most"}
 
 
+# Where a rule's *open* leads (owl-rl-warnings 5.5): a class's Rules block,
+# or the property's domain or range.
+_H1_BLOCKS = {
+    str(RDFS.subClassOf): "rules", str(OWL.equivalentClass): "rules", str(OWL.disjointUnionOf): "rules",
+    str(RDFS.domain): "domain", str(RDFS.range): "range",
+}
+
+
 def _h1(entry, run, rows):
-    """A rule outside OWL 2 RL, said in the Edit page's words: only a shape
-    axioms.parse_restriction reads is said, as its words; any other is
-    Turtle's, which the class's Rules block shows."""
+    """A rule the reasoner does not use. The query lists candidates; each is
+    read again through axioms.unused_by_reasoner, the one decider (owl-rl-
+    warnings 5.1, D-129), so a definition by *some*, which the engine uses,
+    is never asked about. A rule the Edit form reads (parse_restriction,
+    parse_defining) is said in its words; any other in its short label."""
     t = entry["sentences"]["row"]
     out, seen = [], set()
     for r in rows:
-        iri, how, node = _cell(r["iri"]), _cell(r["how"]), BNode(_cell(r["rule"]))
+        iri, how = URIRef(_cell(r["iri"])), _cell(r["how"])
+        node = BNode(_cell(r["rule"])) if r["rule"].get("type") == "bnode" else URIRef(_cell(r["rule"]))
         if (iri, node) in seen:
             continue
         seen.add((iri, node))
-        parsed = axioms.parse_restriction(run.graph, node)
-        if parsed is None:
+        reason = axioms.unused_by_reasoner(run.graph, node)
+        if reason is None:
             continue
-        prop, kind, filler, n = parsed
-        # Under a class, at most one or a value is RL's; as a definition only
-        # a value is, which the query has already left out.
-        if how == str(RDFS.subClassOf) and (kind in ("only", "value") or (kind == "atMost" and (n or 0) <= 1)):
-            continue
-        words = [run.name(prop), _RULE_WORDS.get(kind, kind)]
-        if n is not None:
-            words.append(f"{n:,}")
-        if filler is not None and kind != "value":
-            words.append(run.name(filler))
-        out.append(_finding(iri, t.format(name=run.name(iri), rule=" ".join(words))))
+        parsed = None
+        if how == str(RDFS.subClassOf):
+            parsed = axioms.parse_restriction(run.graph, node)
+        elif how == str(OWL.equivalentClass):
+            defining = axioms.parse_defining(run.graph, node)
+            parsed = defining[1] if defining is not None else None
+        if parsed is not None:
+            prop, kind, filler, n = parsed
+            words = [run.name(prop), _RULE_WORDS.get(kind, kind)]
+            if n is not None:
+                words.append(f"{n:,}")
+            if filler is not None and kind != "value":
+                words.append(run.name(filler))
+            said = " ".join(words)
+        else:
+            said = axioms.unused_words(run.graph, iri, node, reason, run.name)
+        out.append(_finding(iri, t.format(name=run.name(iri), rule=said), _H1_BLOCKS.get(how)))
     return out
 
 

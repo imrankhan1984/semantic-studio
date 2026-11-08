@@ -60,6 +60,7 @@ EXPECTED OUTPUT
 import { useEffect, useId, useRef, useState } from "react";
 import { domainLabel, sharedDomain, type EntityModel, type Ref } from "../modeling/entity";
 import {
+  REASONER_NOTE,
   RULES_NEED_OWL,
   kindChangedAnnouncement,
   makeClassKind,
@@ -371,7 +372,7 @@ export default function RelationshipForm({
 
   return (
     <>
-      <Block title="From and to">
+      <Block title="From and to" anchor="domain">
         {sharedDomain(model) ? (
           <div className="relationship-end">
             <h5>From</h5>
@@ -403,6 +404,7 @@ export default function RelationshipForm({
           </>
         )}
         {model.branchRange ? branchRow() : end("range", "To", model.range)}
+        {model.rangeUnused && <p className="detail-note">{REASONER_NOTE}</p>}
         <div className="edit-actions">
           <button
             type="button"
