@@ -24,6 +24,10 @@ BASIC IDEA
     that panel replaces the very control the user was standing on, so App sets
     focusHeading and focus follows the selection here.
 
+    A term another file of the project defines (multi-file-projects 5.3)
+    says *Defined in vocab/equipment.ttl* in its header, with Open file, and
+    its Edit section is read-only.
+
 INPUTS / INPUT SOURCES (props)
     - ontologyId + iri: which entity to describe (null iri = panel hidden).
     - onNavigate: select another entity when its IRI is clicked.
@@ -119,6 +123,9 @@ interface Props {
   /** Why the entity cannot be edited here, when that is the document's fault. */
   readOnlyNote?: string | null;
   onDeleted?: (iri: string) => void;
+  /** Open the project file a term from another file lives in, with the term
+   *  selected there (multi-file-projects 5.3 item 2). */
+  onOpenFile?: (doc: string, iri: string) => void;
   canvas?: CanvasSet | null;
   /** A current reasoning result to show under the statements (5.7). */
   inferred?: { projectId: string; resultKey: string; imports: boolean } | null;
@@ -188,6 +195,7 @@ export default function DetailPanel({
   editing = null,
   readOnlyNote = null,
   onDeleted,
+  onOpenFile,
   canvas = null,
   inferred = null,
   scrollTo = null,
@@ -275,6 +283,21 @@ export default function DetailPanel({
           <div className="detail-prefixed">{details?.prefixed}</div>
           {details?.importedFrom && (
             <p className="detail-imported">Imported from {details.importedFrom} (read-only)</p>
+          )}
+          {details?.fromFile && (
+            // Another file of the project defines it (multi-file-projects
+            // 5.3 item 2): where, in words, and the way to it.
+            <p className="detail-imported detail-file">
+              Defined in {details.fromFile.file}
+              {onOpenFile && (
+                <>
+                  {" "}
+                  <button type="button" className="link-btn" onClick={() => onOpenFile(details.fromFile!.doc, iri)}>
+                    Open file
+                  </button>
+                </>
+              )}
+            </p>
           )}
           {details?.fromData && (
             // Snapshot data, never mistaken for the model (csv-data-import

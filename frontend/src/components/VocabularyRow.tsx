@@ -42,7 +42,7 @@ EXPECTED OUTPUT
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, getVocabularies, resolveImports } from "../api";
-import { projectStore, useProjectSelector } from "../state/projectStore";
+import { editDocId, projectStore, useProjectSelector } from "../state/projectStore";
 import type { VocabularyChoice, VocabularyList, VocabularyRow as Row } from "../types";
 import {
   LIST_FAILED,
@@ -82,11 +82,14 @@ export function VocabulariesSection({ projectId, revision, readOnly = false }: P
   const [reveal, setReveal] = useState<string | null>(null);
   const treeRef = useRef<HTMLDivElement>(null);
   const addRef = useRef<HTMLButtonElement>(null);
+  // The file the Edit page shows (multi-file-projects 5.3 item 5): each file
+  // keeps its own vocabularies on its own header.
+  const doc = useProjectSelector((s) => s.editDoc);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    getVocabularies(projectId, "model")
+    getVocabularies(projectId, doc)
       .then((next) => {
         if (cancelled) return;
         setList(next);
@@ -97,7 +100,7 @@ export function VocabulariesSection({ projectId, revision, readOnly = false }: P
     return () => {
       cancelled = true;
     };
-  }, [projectId, revision, attempt]);
+  }, [projectId, doc, revision, attempt]);
 
   // The canvas's *Add a term from…* footer asks for the dialog (5.8).
   const asked = useProjectSelector((s) => s.vocabularyDraft);
@@ -144,7 +147,7 @@ export function VocabulariesSection({ projectId, revision, readOnly = false }: P
     } else if (action === "load") {
       focusRow(row.iri);
       try {
-        await resolveImports(`${projectId}-model`);
+        await resolveImports(`${projectId}-${editDocId()}`);
         setAttempt((a) => a + 1);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -152,7 +155,7 @@ export function VocabulariesSection({ projectId, revision, readOnly = false }: P
     } else {
       focusRow(row.iri);
       try {
-        await projectStore.command("RemoveVocabulary", { iri: row.iri }, undefined, "model");
+        await projectStore.command("RemoveVocabulary", { iri: row.iri }, undefined, editDocId());
       } catch (e) {
         setError(e instanceof ApiError || e instanceof Error ? e.message : String(e));
       }

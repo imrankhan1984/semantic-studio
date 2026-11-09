@@ -403,7 +403,12 @@ def test_every_project_route_refuses_ids_and_documents_it_did_not_issue(method, 
     before = _snapshot()
     attempts = [path.replace("{pid}", bad).replace("{doc}", "model") for bad in BAD_IDS]
     if "{doc}" in path:
-        attempts += [path.replace("{pid}", real["id"]).replace("{doc}", bad) for bad in BAD_DOCS]
+        # A route ending in {doc} (a file's rename and remove, E-16): the
+        # client resolves a literal `..` last segment before sending, as a
+        # browser does, so it is the project's own route, not this one. Sent
+        # encoded instead, it reaches {doc} as `..` and is refused here.
+        docs = [d if not (path.endswith("{doc}") and d == "..") else "%2E%2E" for d in BAD_DOCS]
+        attempts += [path.replace("{pid}", real["id"]).replace("{doc}", bad) for bad in docs]
     for url in attempts:
         kwargs = {} if method in ("GET", "DELETE") else {"json": ANY_BODY}
         response = client.request(method, url, **kwargs)

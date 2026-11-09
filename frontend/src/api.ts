@@ -74,6 +74,8 @@ import type {
   Hierarchy,
   LanguageReport,
   OpenedProject,
+  FileChange,
+  FileRole,
   ProjectDocName,
   ProjectNaming,
   ProjectSummary,
@@ -1046,7 +1048,7 @@ function projectUrl(pid: string, rest = ""): string {
 }
 
 function documentUrl(pid: string, doc: ProjectDocName, rest: string): string {
-  return projectUrl(pid, `/documents/${doc}${rest}`);
+  return projectUrl(pid, `/documents/${encodeURIComponent(doc)}${rest}`);
 }
 
 /** A byte download (zip or Turtle), unwrapped the way downloadDocumentation is. */
@@ -1144,6 +1146,69 @@ export function addShapesDocument(pid: string): Promise<ProjectSummary> {
     headers: JSON_WRITE,
     body: JSON.stringify({ role: "shapes" }),
   }).then((r) => handle<ProjectSummary>(r));
+}
+
+/* --- the project's files and folders (multi-file-projects 8.2) ------------ */
+
+/** The `detail` of a refused name or folder (5.5 item 8): the sentence, and
+ *  the field it belongs beside, or null for the project as a whole. */
+export interface PathRefusal {
+  code: "path";
+  field: "name" | "folder" | "role" | null;
+  message: string;
+}
+
+export function pathRefusal(e: unknown): PathRefusal | null {
+  if (!(e instanceof ApiError)) return null;
+  const detail = e.detail as PathRefusal | undefined;
+  return detail?.code === "path" ? detail : null;
+}
+
+/** New file: a name (.ttl added when left off), a folder ("" is the
+ *  project's own), and a role. */
+export function addProjectFile(pid: string, role: FileRole, name: string, folder: string): Promise<FileChange> {
+  return send(projectUrl(pid, "/documents"), {
+    method: "POST",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ role, name, folder }),
+  }).then((r) => handle<FileChange>(r));
+}
+
+/** Rename, move, or both: the path only. */
+export function moveProjectFile(
+  pid: string,
+  doc: ProjectDocName,
+  change: { name?: string; folder?: string },
+): Promise<FileChange> {
+  return send(documentUrl(pid, doc, ""), {
+    method: "PATCH",
+    headers: JSON_WRITE,
+    body: JSON.stringify(change),
+  }).then((r) => handle<FileChange>(r));
+}
+
+/** Remove: into the project's own trash. */
+export function removeProjectFile(pid: string, doc: ProjectDocName): Promise<{ trashed: string; folders: string[] }> {
+  return send(documentUrl(pid, doc, ""), { method: "DELETE", headers: CLIENT_HEADER }).then((r) =>
+    handle<{ trashed: string; folders: string[] }>(r),
+  );
+}
+
+export function createProjectFolder(pid: string, path: string): Promise<{ folders: string[] }> {
+  return send(projectUrl(pid, "/folders"), {
+    method: "POST",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ path }),
+  }).then((r) => handle<{ folders: string[] }>(r));
+}
+
+/** An empty folder only. */
+export function removeProjectFolder(pid: string, path: string): Promise<{ folders: string[] }> {
+  return send(projectUrl(pid, "/folders"), {
+    method: "DELETE",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ path }),
+  }).then((r) => handle<{ folders: string[] }>(r));
 }
 
 // One typed command (5.4). The canvas (E-7) is its main caller.

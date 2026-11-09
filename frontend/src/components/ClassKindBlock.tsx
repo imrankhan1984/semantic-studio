@@ -48,7 +48,7 @@ import {
   kindChangedAnnouncement,
   makeItKind,
 } from "../modeling/sentences";
-import { projectStore, useProjectSelector } from "../state/projectStore";
+import { projectRevision, projectStore, useProjectSelector } from "../state/projectStore";
 import type { ClassType, ClassTypePlan } from "../types";
 import type { Runner } from "./EditParts";
 
@@ -70,7 +70,7 @@ export default function ClassKindBlock({ iri, name, classType, runner }: Props) 
   // A plan is for one class, one kind and one revision: another class, or
   // any change made meanwhile (an undo, Turtle), starts afresh, and an
   // answer to an older question is dropped (code review).
-  const revision = useProjectSelector((s) => s.documents.find((d) => d.doc === "model")?.revision ?? 0);
+  const revision = useProjectSelector((s) => projectRevision(s.documents));
   const question = useRef(0);
   useEffect(() => {
     question.current++;

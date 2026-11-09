@@ -869,6 +869,13 @@ def get_node(
         source = imports_service.merged(ontology)["importedFrom"].get(iri)
         if source is not None:
             details["importedFrom"] = source
+    # Another file of the project defines it (multi-file-projects 5.3 item
+    # 2): read-only here, and the panel says where, with Open file.
+    if ontology.editable:
+        view = imports_service.reading(ontology, imports)
+        found = (view or {}).get("fromFile", {}).get(iri)
+        if found is not None:
+            details["fromFile"] = found
     return details
 
 

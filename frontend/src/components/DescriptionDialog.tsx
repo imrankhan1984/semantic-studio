@@ -41,7 +41,7 @@ EXPECTED OUTPUT
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getNodeDetails } from "../api";
 import { DESCRIPTION_MAX } from "../projects/form";
-import { projectStore } from "../state/projectStore";
+import { primaryDocument, projectStore } from "../state/projectStore";
 import { useDialogTrap } from "./useDialogTrap";
 
 const RDFS_COMMENT = "http://www.w3.org/2000/01/rdf-schema#comment";
@@ -108,7 +108,7 @@ export default function DescriptionDialog({ ontologyId, header, primaryLanguage,
         "SetComment",
         { iri: header, value, lang: primaryLanguage },
         () => "Description saved.",
-        "model",
+        primaryDocument(projectStore.getSnapshot().documents)?.doc ?? "model",
       );
       onClose();
     } catch (e: unknown) {

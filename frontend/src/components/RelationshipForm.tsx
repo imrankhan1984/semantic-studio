@@ -75,7 +75,7 @@ import {
 } from "../modeling/sentences";
 import { projectStore } from "../state/projectStore";
 import type { ModelWarning } from "../types";
-import { Block, type Runner, useRunner } from "./EditParts";
+import { Block, type Runner, useRunner, useShapesDoc } from "./EditParts";
 import EntityPicker from "./EntityPicker";
 import SharedDomain from "./SharedDomain";
 
@@ -200,7 +200,7 @@ export default function RelationshipForm({
   // SetBranch and ClearBranch run on the shapes document, through their own
   // runner; the Values from row reads the branch back from the node details,
   // which the detail panel refetches when the shapes revision moves.
-  const shapesRunner = useRunner("shapes");
+  const shapesRunner = useRunner(useShapesDoc());
   // The start's kind (attribute-reuse 5.8). After *Make X an OWL class*
   // the offer gives way to *add a rule*, which takes the focus the pressed
   // button had, once the refetch has drawn it (code review).

@@ -18,10 +18,24 @@ BASIC IDEA
 
     No path from the client is ever used. A project id is "prj-" and twelve hex
     digits, minted here and checked with fullmatch before it becomes a folder
-    name; a document is one of a fixed set of names. Anything else is an
-    UnknownProject or UnknownDocument, which the router answers 404 -- the same
-    refusal whether the id is malformed, traverses (`../`, a backslash, an
-    absolute path) or simply does not exist, so nothing is learnt from probing.
+    name; a document id is `model`, `shapes` or `f` and eight hex digits,
+    checked the same way and looked up in the manifest, whose path alone is
+    joined to the folder (D-131). Anything else is an UnknownProject or
+    UnknownDocument, which the router answers 404 -- the same refusal whether
+    the id is malformed, traverses (`../`, a backslash, an absolute path) or
+    simply does not exist, so nothing is learnt from probing.
+
+    A project is a folder of Turtle files (multi-file-projects, D-131): up to
+    100, in folders up to three levels deep, each with an id and a role
+    (ontology, vocabulary, shapes; model.ttl's "model" is the project's
+    kind). The folder is the index: `index` walks it at open, finds a file
+    the manifest does not know and drops an entry whose file is gone, and
+    writes the manifest only when it did either, so a project made before
+    E-16 opens with project.json byte for byte as it was. A name typed or a
+    path found is held to 8.3 segment by segment (`segment_error`,
+    `folder_parts`), then resolved inside the folder by `inside`, which also
+    refuses a link or a junction on the way. New file, Move, Remove and the
+    folders are here; a removed file goes to the project's own .trash/.
 
     Templates are Turtle with {{base}}, {{prefix}}, {{ontology}}, {{name}} and
     {{lang}} placeholders, substituted before parsing. The name is the one
@@ -93,8 +107,10 @@ EXPECTED OUTPUT
     - Project folders and manifests on disk, and manifest dicts for the API;
       a template's starter shapes.ttl where it has one.
     - <doc>.layout.json, read, validated and written atomically.
-    - Raises ProjectError (400, a sentence), UnknownProject and UnknownDocument
-      (404).
+    - Files and folders made, moved and trashed; the folder index's answer
+      (entries, folders, found, missing, skipped).
+    - Raises ProjectError (400, a sentence), PathRefused (422, a sentence and
+      its field), UnknownProject and UnknownDocument (404).
 ================================================================================
 """
 
@@ -104,6 +120,7 @@ import copy
 import io
 import json
 import math
+import os
 import re
 import shutil
 import threading
@@ -124,10 +141,36 @@ from .queries_store import SavedQueryStore
 # trailing newline, the hole CF-5 closed for query ids.
 PROJECT_ID = re.compile(r"prj-[0-9a-f]{12}")
 
-# The only document names there are. The key is what the API and the
-# ontology id carry (prj-<hex>-model); the value is the file.
+# The two ids a project had before E-16, and their files at the root
+# (D-131): an entry without an `id` is read as one of these by its file.
+# Every other file's id is minted (`f` and eight hex digits) and kept in
+# the manifest. The id is what the API and the ontology id carry
+# (prj-<hex>-<id>); it is looked up in the manifest and never becomes a
+# path, and a path never becomes an id.
 DOCUMENTS = {"model": "model.ttl", "shapes": "shapes.ttl"}
 DOCUMENT_ROLES = {"model": "model", "shapes": "shapes"}
+DOC_ID = re.compile(r"model|shapes|f[0-9a-f]{8}")
+
+# A file's role decides which tools show first, never what can be changed
+# (D-127 per file). model.ttl's entry keeps role "model", read as the
+# project's kind, so Change kind works on it unchanged.
+ROLES = ("ontology", "vocabulary", "shapes")
+MODEL_ROLES = ("ontology", "vocabulary")
+
+# Section 8.5: fixed constants, not settings.
+MAX_FILES = 100
+MAX_LEVELS = 3
+
+# 8.3: one segment, compared without case where folders ignore it.
+SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}")
+# What the app keeps in a project folder for itself (5.1 item 1), compared
+# without case. `*.original.ttl` is the one-time backup Save writes beside
+# a file (D-083): found as a file of its own, it would put every term in
+# the project twice.
+RESERVED = {"project.json", "queries", "data", ".draft", ".trash"}
+RESERVED_SUFFIXES = (".layout.json", ".original.ttl")
+# Windows keeps these for devices, with any extension after them.
+DEVICES = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(10)), *(f"lpt{i}" for i in range(10))}
 
 # Each template and the kind of project it starts. "vocabulary" is the E-6
 # name for a small SKOS scheme, kept so a request naming it still works.
@@ -269,7 +312,119 @@ class UnknownProject(LookupError):
 
 
 class UnknownDocument(LookupError):
-    """A document name outside the fixed set, or one not created yet."""
+    """A document id the manifest does not hold, or one not created yet."""
+
+
+class PathRefused(ProjectError):
+    """A file or folder name, or a folder, outside 8.3's rules, or a limit
+    of 8.5 reached: one sentence, and the field it concerns ("name",
+    "folder", or None for the project as a whole) so the dialog shows it
+    there (5.5 item 8)."""
+
+    def __init__(self, message: str, field: Optional[str] = None):
+        super().__init__(message)
+        self.field = field
+
+
+def segment_error(name: str) -> Optional[str]:
+    """Why one file or folder name breaks 8.3, or None. The same rule for a
+    name typed in the browser and a name found on disk; files/names.ts holds
+    the browser's copy, tested on the same table (files/names.table.json)."""
+    if not isinstance(name, str) or not SEGMENT.fullmatch(name):
+        return (
+            "A name starts with a letter or a digit and uses only letters, digits, "
+            "spaces, dots, hyphens and underscores, up to 64 characters."
+        )
+    if name.endswith((".", " ")):
+        return "A name cannot end in a dot or a space."
+    folded = name.casefold()
+    if folded in RESERVED or folded.endswith(RESERVED_SUFFIXES):
+        return f"{name} is a name Semantic Studio keeps for itself."
+    if folded.split(".")[0] in DEVICES:
+        return f"{name} is a name Windows keeps for a device."
+    return None
+
+
+def folder_parts(folder: str) -> list[str]:
+    """A folder as its segments ("" is the project folder itself), or
+    PathRefused. A backslash, a drive letter, an absolute path or `..` never
+    passes: each is outside the segment rule."""
+    if folder is None or folder == "":
+        return []
+    if not isinstance(folder, str) or "\\" in folder or folder.startswith("/") or folder.endswith("/"):
+        raise PathRefused("A folder is written with / between its names, inside the project.", "folder")
+    parts = folder.split("/")
+    for part in parts:
+        reason = segment_error(part)
+        if reason is not None:
+            raise PathRefused(reason, "folder")
+    if len(parts) > MAX_LEVELS:
+        raise PathRefused(f"A project's folders go at most {MAX_LEVELS} levels deep.", "folder")
+    return parts
+
+
+def file_name(name: str) -> str:
+    """A file name as 5.5 item 5 takes it: trimmed, `.ttl` added when left
+    off, then held to 8.3."""
+    name = (name or "").strip() if isinstance(name, str) else ""
+    if not name:
+        raise PathRefused("A file needs a name.", "name")
+    if not name.lower().endswith(".ttl"):
+        name += ".ttl"
+    reason = segment_error(name)
+    if reason is not None:
+        raise PathRefused(reason, "name")
+    return name
+
+
+def entries(manifest: dict) -> list[dict]:
+    """The manifest's documents, each {id, file, role}: an entry made before
+    E-16 has no id and is read as `model` or `shapes` by its file (5.1 item
+    4). A copy, so a caller changing it changes nothing until it writes."""
+    out = []
+    for entry in manifest.get("documents", []):
+        doc = entry.get("id")
+        if doc is None:
+            doc = "shapes" if entry.get("role") == "shapes" and entry.get("file") == "shapes.ttl" else "model"
+        out.append({"id": doc, "file": entry["file"], "role": entry["role"]})
+    return out
+
+
+def entry_role(entry: dict, kind: Optional[str]) -> str:
+    """ontology, vocabulary or shapes: model.ttl's "model" is the project's
+    kind, a taxonomy's model a vocabulary file (5.1 item 3)."""
+    if entry["role"] == "model":
+        return "vocabulary" if kind == "taxonomy" else "ontology"
+    return entry["role"]
+
+
+def is_model_role(role: str) -> bool:
+    """A file of terms (ontology or vocabulary), as opposed to shapes."""
+    return role == "model" or role in MODEL_ROLES
+
+
+def file_folder(file: str) -> str:
+    return file.rsplit("/", 1)[0] if "/" in file else ""
+
+
+def file_basename(file: str) -> str:
+    return file.rsplit("/", 1)[-1]
+
+
+def file_header_iri(base_iri: str, file: str) -> str:
+    """A new ontology or vocabulary file's own header (5.1 item 6): the
+    base IRI plus the file's path without .ttl, so two files never share
+    one. A space is written %20, as an IRI cannot hold one."""
+    from urllib.parse import quote
+
+    return base_iri + quote(file[: -len(".ttl")], safe="/")
+
+
+def _is_junction(path: Path) -> bool:
+    """A Windows junction, which is_symlink() does not see: it leads out of
+    the folder as a link does (5.2 item 4). Python 3.12 and later."""
+    check = getattr(os.path, "isjunction", None)
+    return bool(check and check(path))
 
 
 def valid_lang(tag: str) -> bool:
@@ -457,6 +612,49 @@ def render_template(
     return text
 
 
+def _mint_id(listed: list[dict], file: Optional[str] = None) -> str:
+    """`f` and eight hex digits, minted once and kept in the manifest (5.1
+    item 2), never one the project already has."""
+    taken = {e["id"] for e in listed}
+    while True:
+        doc = "f" + uuid.uuid4().hex[:8]
+        if doc not in taken:
+            return doc
+
+
+def _prefix_lines(manifest: dict) -> str:
+    return f"@prefix {manifest['prefix']}: <{manifest['baseIri']}> .\n"
+
+
+def _shapes_text(manifest: dict) -> str:
+    """An empty shapes file: the model's prefix, a pattern project's own
+    shapes prefix beside it (design-checks 5.3), and sh:."""
+    own = (
+        f"@prefix {shapes_prefix(manifest['prefix'])}: <{manifest['shapesBaseIri']}> .\n"
+        if manifest.get("shapesBaseIri") else ""
+    )
+    return _prefix_lines(manifest) + own + "@prefix sh: <http://www.w3.org/ns/shacl#> .\n"
+
+
+def _model_text(manifest: dict, file: str, role: str) -> str:
+    """An empty ontology or vocabulary file with the project's prefixes and
+    its own header, labelled from the file name in the primary language
+    (5.1 item 6). model.ttl's header is the project's, as a template writes
+    it; every other file's is the base plus its path."""
+    base = manifest["baseIri"]
+    header = base.rstrip("#/") if role == "model" else file_header_iri(base, file)
+    label = manifest["name"] if role == "model" else file_basename(file)[: -len(".ttl")]
+    lang = manifest.get("primaryLanguage", "en")
+    skos = "@prefix skos: <http://www.w3.org/2004/02/skos/core#> .\n" if role == "vocabulary" else ""
+    return (
+        _prefix_lines(manifest)
+        + "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+        + "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
+        + skos
+        + f"\n<{header}> a owl:Ontology ;\n    rdfs:label \"{_turtle_string(label)}\"@{lang} .\n"
+    )
+
+
 class ProjectStore:
     """Every project on disk, and the manifests that describe them."""
 
@@ -491,13 +689,48 @@ class ProjectStore:
         return path
 
     @staticmethod
-    def document_file(doc: str) -> str:
-        if not isinstance(doc, str) or doc not in DOCUMENTS:
+    def check_id(doc: str) -> str:
+        """An id of the shape this store issues, or UnknownDocument: matched
+        in full before anything else is asked, so a path-like id is refused
+        the same way as one never issued."""
+        if not isinstance(doc, str) or not DOC_ID.fullmatch(doc):
             raise UnknownDocument(doc)
-        return DOCUMENTS[doc]
+        return doc
 
-    def document_path(self, pid: str, doc: str) -> Path:
-        path = self.folder(pid) / self.document_file(doc)
+    def entry(self, pid: str, doc: str, manifest: Optional[dict] = None) -> dict:
+        """The manifest's entry for an id, or UnknownDocument."""
+        self.check_id(doc)
+        for found in entries(manifest if manifest is not None else self.manifest(pid)):
+            if found["id"] == doc:
+                return found
+        raise UnknownDocument(doc)
+
+    def document_file(self, pid: str, doc: str, manifest: Optional[dict] = None) -> str:
+        """The file an id names, from the manifest alone (5.1 item 2)."""
+        return self.entry(pid, doc, manifest)["file"]
+
+    def inside(self, pid: str, relative: str) -> Path:
+        """The project folder joined with a path already held to 8.3, and
+        resolved: anything resolving outside the folder (a link on the way)
+        is PathRefused. The last line between a name and the filesystem."""
+        folder = self.folder(pid)
+        path = folder.joinpath(*relative.split("/")) if relative else folder
+        root = folder.resolve()
+        resolved = path.resolve()
+        if resolved != root and root not in resolved.parents:
+            raise PathRefused("That path leads outside the project folder.", "folder")
+        for parent in [path, *path.parents]:
+            if parent == folder:
+                break
+            if parent.is_symlink() or _is_junction(parent):
+                raise PathRefused("That path leads outside the project folder.", "folder")
+        return path
+
+    def document_path(self, pid: str, doc: str, manifest: Optional[dict] = None) -> Path:
+        try:
+            path = self.inside(pid, self.document_file(pid, doc, manifest))
+        except PathRefused as exc:
+            raise UnknownDocument(doc) from exc
         if not path.is_file():
             raise UnknownDocument(doc)
         return path
@@ -505,8 +738,11 @@ class ProjectStore:
     # --- layouts (visual-modeling 5.5) ------------------------------------------
 
     def layout_path(self, pid: str, doc: str) -> Path:
-        """<doc>.layout.json beside the document: a fixed name, a known doc."""
-        self.document_file(doc)  # UnknownDocument for a name not issued
+        """<id>.layout.json in the project folder, named by id (never by the
+        file's path), so a rename or a move keeps it (5.5 item 6). The id is
+        matched in full; the caller has found it in the manifest or among
+        the open documents."""
+        self.check_id(doc)
         return self.folder(pid) / f"{doc}.layout.json"
 
     def read_layout(self, pid: str, doc: str) -> dict:
@@ -579,7 +815,8 @@ class ProjectStore:
             "languages": manifest.get("languages", []),
             # None only for a project made before kinds, until it is opened.
             "kind": manifest.get("kind"),
-            "documents": manifest["documents"],
+            # Each entry with its id, a pre-E-16 entry's read from its file.
+            "documents": entries(manifest),
             "counts": manifest.get("counts", {}),
             # The data snapshots, for the card's line (csv-data-import 5.7);
             # written by snapshots.py whenever one changes.
@@ -801,31 +1038,282 @@ class ProjectStore:
         return self.summary(manifest)
 
     def add_document(self, pid: str, role: str) -> dict:
-        """Create shapes.ttl, empty. SHACL itself arrives with V-6."""
+        """Create shapes.ttl at the root, empty, with the id `shapes`: what
+        `{role: "shapes"}` alone has always meant (8.2), and what the first
+        shape command makes when the project has no shapes file."""
         if role != "shapes":
             raise ProjectError("Only a shapes document can be added.")
         folder = self.folder(pid)
         path = folder / DOCUMENTS["shapes"]
         with self._lock:
             manifest = self.manifest(pid)
-            if any(d["role"] == "shapes" for d in manifest["documents"]):
+            listed = entries(manifest)
+            if any(d["id"] == "shapes" for d in listed) or path.exists():
                 raise ProjectError("This project already has a shapes document.")
-            # A pattern project's shapes have their own base (design-checks
-            # 5.3), declared beside the model's.
-            own = (
-                f"@prefix {shapes_prefix(manifest['prefix'])}: <{manifest['shapesBaseIri']}> .\n"
-                if manifest.get("shapesBaseIri") else ""
-            )
-            path.write_text(
-                f"@prefix {manifest['prefix']}: <{manifest['baseIri']}> .\n"
-                + own
-                + "@prefix sh: <http://www.w3.org/ns/shacl#> .\n",
-                encoding="utf-8",
-            )
-            manifest["documents"].append({"file": "shapes.ttl", "role": "shapes"})
+            self._room(listed, folder, "", "shapes.ttl")
+            path.write_text(_shapes_text(manifest), encoding="utf-8")
+            listed.append({"id": "shapes", "file": "shapes.ttl", "role": "shapes"})
+            manifest["documents"] = listed
             manifest["updatedAt"] = _now()
             self.write_manifest(pid, manifest)
         return self.summary(manifest)
+
+    # --- files and folders (multi-file-projects 5.1, 5.2, 5.5) -------------------
+
+    def _room(self, listed: list[dict], folder: Path, under: str, name: str, *, moving: Optional[str] = None) -> None:
+        """A new name in a folder: under the file limit, and no file or
+        folder of that name there already, compared without case (Windows
+        folders ignore it). `moving` is the file being renamed or moved,
+        which does not clash with itself."""
+        if moving is None and len(listed) >= MAX_FILES:
+            raise PathRefused(f"This project has {MAX_FILES} files, the most it can hold.")
+        wanted = name.casefold()
+        target = folder.joinpath(*under.split("/")) if under else folder
+        for entry in listed:
+            if entry["file"] != moving and file_folder(entry["file"]) == under and file_basename(entry["file"]).casefold() == wanted:
+                raise PathRefused(f"There is already a file called {file_basename(entry['file'])} in this folder.", "name")
+        if target.is_dir():
+            for child in target.iterdir():
+                own = (f"{under}/{child.name}" if under else child.name)
+                if child.name.casefold() == wanted and own != moving:
+                    what = "folder" if child.is_dir() else "file"
+                    raise PathRefused(f"There is already a {what} called {child.name} in this folder.", "name")
+
+    def _existing_folder(self, pid: str, under: str) -> Path:
+        """A folder the project has, held to 8.3 and resolved inside it."""
+        folder_parts(under)
+        path = self.inside(pid, under)
+        if under and not path.is_dir():
+            raise PathRefused(f"There is no folder {under} in this project.", "folder")
+        return path
+
+    def add_file(self, pid: str, role: str, name: str, under: str = "") -> dict:
+        """A new file of a role at a folder (5.5 item 5): the project's
+        prefixes, and for ontology and vocabulary its own header (5.1 item
+        6), written; the entry minted and appended. Returns the entry."""
+        if role not in ROLES:
+            raise PathRefused("A file is an ontology, a vocabulary or shapes.", "role")
+        name = file_name(name)
+        under = under or ""
+        folder = self.folder(pid)
+        with self._lock:
+            self._existing_folder(pid, under)
+            manifest = self.manifest(pid)
+            listed = entries(manifest)
+            self._room(listed, folder, under, name)
+            file = f"{under}/{name}" if under else name
+            path = self.inside(pid, file)
+            if role == "shapes":
+                text = _shapes_text(manifest)
+            else:
+                text = _model_text(manifest, file, role)
+            entry = {"id": _mint_id(listed), "file": file, "role": role}
+            # Exclusive: a file that appeared since the listing is never
+            # written over.
+            with open(path, "x", encoding="utf-8", newline="\n") as handle:
+                handle.write(text)
+            listed.append(entry)
+            manifest["documents"] = listed
+            manifest["updatedAt"] = _now()
+            self.write_manifest(pid, manifest)
+        return entry
+
+    def move_file(self, pid: str, doc: str, name: Optional[str] = None, under: Optional[str] = None) -> dict:
+        """Rename, move, or both (5.5 item 6): the path changes and nothing
+        else -- the id, and so the layout (<id>.layout.json), the drafts and
+        the undo history, stay. Returns the entry as it now is."""
+        folder = self.folder(pid)
+        with self._lock:
+            manifest = self.manifest(pid)
+            listed = entries(manifest)
+            entry = self.entry(pid, doc, manifest)
+            new_name = file_name(name) if name is not None else file_basename(entry["file"])
+            new_under = (under or "") if under is not None else file_folder(entry["file"])
+            self._existing_folder(pid, new_under)
+            self._room(listed, folder, new_under, new_name, moving=entry["file"])
+            file = f"{new_under}/{new_name}" if new_under else new_name
+            if file == entry["file"]:
+                return entry
+            source = self.document_path(pid, doc, manifest)
+            target = self.inside(pid, file)
+            source.rename(target)
+            for found in listed:
+                if found["id"] == doc:
+                    found["file"] = file
+            manifest["documents"] = listed
+            manifest["updatedAt"] = _now()
+            self.write_manifest(pid, manifest)
+        return {**entry, "file": file}
+
+    def remove_file(self, pid: str, doc: str) -> str:
+        """Into the project's own .trash/ (5.5 item 7), its layout beside
+        it, and the entry dropped. The last ontology or vocabulary file is
+        refused. Returns where it went, from the project folder."""
+        folder = self.folder(pid)
+        with self._lock:
+            manifest = self.manifest(pid)
+            listed = entries(manifest)
+            entry = self.entry(pid, doc, manifest)
+            if is_model_role(entry["role"]) and sum(1 for e in listed if is_model_role(e["role"])) == 1:
+                raise ProjectError(
+                    f"{file_basename(entry['file'])} is the project's last ontology or vocabulary file, "
+                    "so it cannot be removed."
+                )
+            source = self.document_path(pid, doc, manifest)
+            trash = folder / TRASH_DIR
+            trash.mkdir(exist_ok=True)
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            target = trash / f"{stamp}-{doc}-{source.name}"
+            shutil.move(str(source), str(target))
+            layout = folder / f"{doc}.layout.json"
+            if layout.exists():
+                shutil.move(str(layout), str(trash / f"{stamp}-{doc}.layout.json"))
+            self._layouts.pop(layout, None)
+            manifest["documents"] = [e for e in listed if e["id"] != doc]
+            manifest["updatedAt"] = _now()
+            self.write_manifest(pid, manifest)
+        return f"{TRASH_DIR}/{target.name}"
+
+    def folders(self, pid: str) -> list[str]:
+        """The project's folders, by path, sorted: what the index walks."""
+        return self._walk(self.folder(pid))[1]
+
+    def create_folder(self, pid: str, path: str) -> list[str]:
+        parts = folder_parts(path)
+        if not parts:
+            raise PathRefused("A folder needs a name.", "name")
+        folder = self.folder(pid)
+        with self._lock:
+            under = "/".join(parts[:-1])
+            self._existing_folder(pid, under)
+            self._room(entries(self.manifest(pid)), folder, under, parts[-1], moving="")
+            self.inside(pid, path).mkdir()
+        return self.folders(pid)
+
+    def remove_folder(self, pid: str, path: str) -> list[str]:
+        """An empty folder only (5.5 item 4): nothing in it at all, so no
+        file the index skipped is lost with it."""
+        if not folder_parts(path):
+            raise PathRefused("The project folder itself cannot be removed.", "folder")
+        with self._lock:
+            target = self._existing_folder(pid, path)
+            if any(target.iterdir()):
+                raise PathRefused("Only an empty folder can be removed.", "folder")
+            target.rmdir()
+        return self.folders(pid)
+
+    def _walk(self, folder: Path) -> tuple[list[str], list[str], list[dict]]:
+        """(Turtle files, folders, skipped) under the project folder, up to
+        three folder levels (5.2 item 1). Each name is held to 8.3 segment by
+        segment; a link or a junction, which would lead out, is skipped and
+        so is anything resolving outside (5.2 item 4). The app's own names
+        and hidden names are passed over in silence."""
+        files: list[str] = []
+        folders: list[str] = []
+        skipped: list[dict] = []
+        root = folder.resolve()
+
+        def visit(path: Path, prefix: str, level: int) -> None:
+            try:
+                children = sorted(path.iterdir(), key=lambda p: p.name.casefold())
+            except OSError:
+                return
+            for child in children:
+                name = child.name
+                relative = f"{prefix}{name}"
+                folded = name.casefold()
+                if name.startswith(".") or (level == 0 and folded in RESERVED) or folded.endswith(RESERVED_SUFFIXES):
+                    continue
+                is_dir = child.is_dir()
+                if not is_dir and not folded.endswith(".ttl"):
+                    continue
+                if child.is_symlink() or _is_junction(child):
+                    skipped.append({"path": relative, "reason": f"{relative} is a link, so it was not read."})
+                    continue
+                try:
+                    resolved = child.resolve()
+                except OSError:
+                    continue
+                if root not in resolved.parents:
+                    skipped.append({"path": relative, "reason": f"{relative} leads outside the project folder."})
+                    continue
+                reason = segment_error(name)
+                if reason is not None:
+                    skipped.append({"path": relative, "reason": f"{relative} was not read: {reason}"})
+                    continue
+                if is_dir:
+                    if level >= MAX_LEVELS:
+                        skipped.append({"path": relative, "reason": (
+                            f"{relative} is more than {MAX_LEVELS} folder levels deep, so it was not read."
+                        )})
+                        continue
+                    folders.append(relative)
+                    visit(child, relative + "/", level + 1)
+                else:
+                    files.append(relative)
+
+        visit(folder, "", 0)
+        return files, sorted(folders, key=str.casefold), skipped
+
+    def index(self, pid: str, role_of: Callable[[Path], Optional[str]]) -> dict:
+        """The folder index (5.2), at open: the Turtle files on disk against
+        the manifest's entries. A known file keeps its id and role; a file
+        the manifest does not know is found, its role read by `role_of`
+        (None: it could not be read, and it is skipped); an entry whose file
+        is gone is dropped. The manifest is written only when something was
+        found or dropped (5.1 item 4), so a project made before E-16 opens
+        with project.json byte for byte as it was (AC-1).
+
+        Returns {entries, folders, found, missing, skipped, wroteModel}."""
+        folder = self.folder(pid)
+        with self._lock:
+            manifest = self.manifest(pid)
+            listed = entries(manifest)
+            files, folders, skipped = self._walk(folder)
+            on_disk = {f.casefold(): f for f in files}
+            kept, missing = [], []
+            for entry in listed:
+                found = on_disk.pop(entry["file"].casefold(), None)
+                if found is None:
+                    missing.append(entry["file"])
+                    continue
+                kept.append(entry)
+            found_files = []
+            for file in sorted(on_disk.values(), key=str.casefold):
+                if len(kept) >= MAX_FILES:
+                    skipped.append({"path": file, "reason": (
+                        f"{file} was not read: a project holds at most {MAX_FILES} files."
+                    )})
+                    continue
+                role = role_of(folder.joinpath(*file.split("/")))
+                if role is None:
+                    skipped.append({"path": file, "reason": f"{file} could not be read as Turtle, so it was not added."})
+                    continue
+                # model.ttl and shapes.ttl at the root keep their ids (5.1
+                # item 2), even when their entry was lost.
+                legacy = next((d for d, f in DOCUMENTS.items() if f == file and (d == "shapes") == (role == "shapes")), None)
+                doc = legacy if legacy and all(e["id"] != legacy for e in kept) else _mint_id(kept)
+                if doc == "model":
+                    role = "model"
+                kept.append({"id": doc, "file": file, "role": role})
+                found_files.append(file)
+            wrote_model = False
+            if not any(is_model_role(e["role"]) for e in kept):
+                # Never empty (Section 6): a project with no ontology or
+                # vocabulary file left gets an empty model.ttl, and says so.
+                path = folder / DOCUMENTS["model"]
+                if not path.exists():
+                    path.write_text(_model_text(manifest, "model.ttl", "model"), encoding="utf-8")
+                kept.insert(0, {"id": "model", "file": "model.ttl", "role": "model"})
+                wrote_model = True
+            if found_files or missing or wrote_model:
+                manifest["documents"] = kept
+                manifest["updatedAt"] = _now()
+                self.write_manifest(pid, manifest)
+        return {
+            "entries": kept, "folders": folders, "found": found_files,
+            "missing": missing, "skipped": skipped, "wroteModel": wrote_model,
+        }
 
     # --- rename, duplicate, trash, export --------------------------------------
 
@@ -866,7 +1354,16 @@ class ProjectStore:
         source = self.folder(pid)
         new_id = "prj-" + uuid.uuid4().hex[:12]
         target = self.dir / new_id
-        shutil.copytree(source, target, ignore=shutil.ignore_patterns(DRAFT_DIR, TRASH_DIR))
+        # Every file and folder, ids kept (5.7 item 1); never a link, which
+        # would copy whatever it leads to.
+        def ignored(where: str, names: list[str]) -> set[str]:
+            return {
+                n for n in names
+                if n in (DRAFT_DIR, TRASH_DIR) or os.path.islink(os.path.join(where, n))
+                or _is_junction(Path(where, n))
+            }
+
+        shutil.copytree(source, target, ignore=ignored)
         manifest = json.loads((target / MANIFEST).read_text(encoding="utf-8"))
         now = _now()
         manifest.update(id=new_id, name=f"{manifest['name']} (copy)", createdAt=now, updatedAt=now)
@@ -912,13 +1409,21 @@ class ProjectStore:
         moved to the project's own trash."""
         folder = self.folder(pid)
         buffer = io.BytesIO()
+        found: list[Path] = []
+        # Walked without following a link: a link in the folder would put
+        # whatever it leads to in the zip (5.7 item 2).
+        for where, dirs, names in os.walk(folder, followlinks=False):
+            here = Path(where)
+            dirs[:] = [
+                d for d in dirs
+                if not (here == folder and d in (DRAFT_DIR, TRASH_DIR))
+                and not os.path.islink(here / d) and not _is_junction(here / d)
+            ]
+            found += [here / n for n in names if not os.path.islink(here / n)]
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for path in sorted(folder.rglob("*")):
-                relative = path.relative_to(folder)
-                if relative.parts and relative.parts[0] in (DRAFT_DIR, TRASH_DIR):
-                    continue
+            for path in sorted(found):
                 if path.is_file():
-                    zf.write(path, relative.as_posix())
+                    zf.write(path, path.relative_to(folder).as_posix())
         return buffer.getvalue()
 
     # --- saved queries -----------------------------------------------------------
@@ -938,8 +1443,9 @@ class ProjectStore:
 
 
 def split_document_id(oid: str) -> Optional[tuple[str, str]]:
-    """prj-<hex>-model -> ("prj-<hex>", "model"), or None for anything else."""
-    match = re.fullmatch(r"(prj-[0-9a-f]{12})-(model|shapes)", oid or "")
+    """prj-<hex>-<id> -> ("prj-<hex>", "<id>"), or None for anything else:
+    the id is model, shapes or a minted f<8 hex> (5.1 item 2), in full."""
+    match = re.fullmatch(r"(prj-[0-9a-f]{12})-(model|shapes|f[0-9a-f]{8})", oid or "")
     return (match.group(1), match.group(2)) if match else None
 
 

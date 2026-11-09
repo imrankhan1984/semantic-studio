@@ -1297,7 +1297,8 @@ def test_the_first_shape_command_creates_shapes_ttl(bare):
     assert result["label"] == "Created shape Person rules"
     assert (project_store.folder(pid) / "shapes.ttl").exists()
     manifest = project_store.manifest(pid)
-    assert {"file": "shapes.ttl", "role": "shapes"} in manifest["documents"]
+    # Written with its id, and the model's entry gains its own (E-16 AC-2).
+    assert {"id": "shapes", "file": "shapes.ttl", "role": "shapes"} in manifest["documents"]
     g = shapes_graph(pid)
     shape = U("PersonRules")
     assert (shape, RDF.type, SH.NodeShape) in g
@@ -1477,7 +1478,8 @@ def test_a_refused_shape_command_says_why_and_changes_nothing(pid, command, args
 def test_shape_commands_belong_to_the_shapes_document(pid):
     response = run(pid, "CreateShape", target="shop:Person")
     assert response.status_code == 422
-    assert "shapes.ttl" in response.json()["detail"]
+    # Said by role since E-16: a project may hold several shapes files.
+    assert "Shapes live in a shapes file" in response.json()["detail"]
 
 
 def test_a_read_only_shape_is_refused_by_the_form_but_can_be_deleted(pid):

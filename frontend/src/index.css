@@ -7383,3 +7383,202 @@ kbd {
 .new-project-reference-choice .form-hint {
   margin: 2px 0 6px 24px;
 }
+
+/* --- the Files panel (multi-file-projects 5.5, D-132) ------------------- */
+
+/* The Edit page's left column: Files above the outline, each its own
+   section sharing the column by the outline's section rule -- an open
+   section 120 px at least, capped at its rows. */
+.main.edit-page > .edit-left {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border-soft);
+}
+
+.edit-left > .hierarchy-view {
+  flex: 1 1 auto;
+  min-height: 120px;
+}
+
+.main.shapes-page {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+}
+
+.main.shapes-page > .shapes-view {
+  min-width: 0;
+}
+
+.files-column {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.files-panel {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 45%;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg);
+}
+
+.files-column > .files-panel {
+  max-height: none;
+  flex: 1 1 auto;
+  border-bottom: none;
+}
+
+.files-head {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.files-fold {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  padding: 2px 4px;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.files-heading {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.files-toolbar {
+  display: flex;
+  gap: 6px;
+}
+
+.files-body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.files-body:not([hidden]) {
+  min-height: 120px;
+}
+
+.files-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 6px;
+}
+
+.files-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding-right: 6px;
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.files-row:hover {
+  background: var(--bg-raised);
+}
+
+/* The active file: a ring in the accent, as the outline's selected row, and
+   aria-current for whoever cannot see it. */
+.files-row.current {
+  background: var(--bg-raised);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.files-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.files-meta,
+.files-unsaved {
+  flex: none;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.files-caret {
+  flex: none;
+  width: 12px;
+  color: var(--text-dim);
+}
+
+.files-more {
+  margin-left: auto;
+  padding: 0 6px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.files-notice {
+  margin: 0 10px 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: var(--fs-xs);
+}
+
+.files-notice p {
+  margin: 0 0 4px;
+}
+
+.files-loading {
+  margin: 6px 10px;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.new-file-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.new-file-roles {
+  margin: 6px 0 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.new-file-role {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 6px;
+  align-items: center;
+  margin: 4px 0;
+}
+
+.new-file-role .hint {
+  grid-column: 2;
+  margin: 0;
+}
+
+.detail-file .link-btn {
+  margin-left: 4px;
+}

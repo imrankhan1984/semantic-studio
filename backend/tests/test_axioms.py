@@ -815,7 +815,7 @@ def test_a_rule_command_on_the_shapes_document_says_so(pid):
     response = run(pid, "AddDisjointWith", "shapes", a=EX + "Person", b=EX + "Order")
     assert response.status_code == 422
     assert response.json()["detail"] == (
-        "A class's rules live in model.ttl; run rule commands on the model document."
+        "A class's rules live in an ontology or vocabulary file; run rule commands there."
     )
 
 

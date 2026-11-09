@@ -69,6 +69,10 @@ BASIC IDEA
     runs only with a namespace set. DC-24 is a Problem in a project made
     under the address pattern; DC-27 calls an example address Worth a look.
 
+    A project's files are checked together (multi-file-projects 5.3 item
+    6): the router hands in `whole`, their graph and the sum of their
+    revisions, and the 10,000-statement cap counts it whole.
+
     Nothing here changes the document: the checks are SELECTs, and a
     finding only says where to go.
 
@@ -1505,15 +1509,23 @@ def run(
     timeout: Optional[float] = None,
     inferred: Optional[list] = None,
     questions: Optional[list] = None,
+    whole: Optional[dict] = None,
 ) -> dict:
     """Every check on one document, in the manifest's order; the caller is a
     worker thread (run_in_threadpool), never the event loop. `inferred` is
     the project's current reasoning result's conclusions, (individual,
     class) IRIs, for H2 and H3; None when there is none. `questions` is a
-    project's saved queries, run as its competency questions (5.8)."""
+    project's saved queries, run as its competency questions (5.8).
+
+    `whole` is a project's files read together (multi-file-projects 5.3
+    item 6): {graph, revision}, the graph every ontology and vocabulary file
+    or every shapes file, the revision the sum of theirs. The cap of 5.10
+    counts it whole. Reading it holds the asked file's lock, which every
+    change to any of the files takes too."""
     started = time.perf_counter()
-    graph = ontology.ensure_loaded()
-    revision, generation = ontology.revision, _generation(ontology)
+    graph = whole["graph"] if whole is not None else ontology.ensure_loaded()
+    revision = whole["revision"] if whole is not None else ontology.revision
+    generation = _generation(ontology)
     # 5.10 (D-125): too large to check. No query runs; the report names the
     # count and the cap, and still lists every check that would be listed, so
     # each can be opened as a query. The measures scan the whole graph too, so

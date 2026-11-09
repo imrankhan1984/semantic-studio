@@ -351,6 +351,16 @@ class Ontology:
     # A project model's snapshots, supplied by editing.py on open:
     # () -> (generation, [(graph, info)]). None everywhere else.
     snapshots: Optional[Callable[[], tuple]] = field(default=None, repr=False, compare=False)
+    # A project ontology or vocabulary file's other such files (multi-file-
+    # projects 5.3, D-131), supplied by editing.py on open:
+    # () -> (key, [(Ontology, {"doc", "file"})]), the key the files' epoch
+    # and the sum of their revisions. None everywhere else, and for a
+    # project of one file the list is empty and nothing changes.
+    siblings: Optional[Callable[[], tuple]] = field(default=None, repr=False, compare=False)
+    # The file with the project's other files (and their imports, by the
+    # switch), built by imports.py: one entry per value of the switch, keyed
+    # on the revision and the siblings' key (5.3 item 7).
+    file_cache: Optional[dict] = field(default=None, repr=False)
     # Moved by editing.py on every change to a project document. A library
     # ontology stays at 0 for ever, which is what keeps its caches built once.
     revision: int = 0

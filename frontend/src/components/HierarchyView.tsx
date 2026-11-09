@@ -54,6 +54,9 @@ BASIC IDEA
     suffix, in text, and the edge leading to it the origin "imported" -- the
     same seam, a third value.
 
+    A row another file of the project defines says *in vocab/equipment.ttl*
+    in words and offers none of its own actions (multi-file-projects 5.3).
+
 INPUTS / INPUT SOURCES (props)
     - ontologyId: which ontology's hierarchy to fetch (null renders nothing).
     - selected: the shared selection, so the matching row is aria-selected.
@@ -289,6 +292,9 @@ interface Row {
   importedFrom?: string;
   /** A data snapshot's label, for a row its data made (csv-data-import 5.6). */
   fromData?: string;
+  /** The project file that defines it, when another file does (multi-file-
+   *  projects 5.3 item 2): read-only here, the file named on the row. */
+  fromFile?: string;
   /** Has children AND this occurrence is not a cycle repeat. */
   expandable: boolean;
   expanded: boolean;
@@ -343,6 +349,7 @@ function flatten(
       origin,
       importedFrom: node.importedFrom,
       fromData: node.fromData,
+      fromFile: node.fromFile?.file,
       expandable,
       expanded: isExpanded,
       childCount: keptKids.length,
@@ -502,7 +509,7 @@ function countOf(forest: HierarchyForest, kind: string, query: string, ownOnly =
   let n = 0;
   for (const [id, node] of Object.entries(forest.nodes)) {
     if (node.kind !== kind) continue;
-    if (ownOnly && (node.importedFrom || node.fromData)) continue;
+    if (ownOnly && (node.importedFrom || node.fromData || node.fromFile)) continue;
     if (!q || node.label.toLowerCase().includes(q) || localName(id).toLowerCase().includes(q)) n++;
   }
   return n;
@@ -933,7 +940,7 @@ export default function HierarchyView({
           label={menu.row.label}
           items={rowActions(
             menu.row.kind,
-            Boolean(menu.row.importedFrom || menu.row.fromData),
+            Boolean(menu.row.importedFrom || menu.row.fromData || menu.row.fromFile),
             canvas ? { limited: canvas.limited, shown: canvas.shown.includes(menu.row.id) } : null,
             // An inferred row is a conclusion: none of its own actions (5.7).
             menu.fixed || menu.row.origin === "inferred",
@@ -1051,7 +1058,7 @@ function Forest({
 }: ForestProps) {
   const { forest, title } = section;
   const actionsOf = (row: Row) =>
-    rowActions(row.kind, Boolean(row.importedFrom || row.fromData), null, (fixedRow?.(row) ?? false) || row.origin === "inferred");
+    rowActions(row.kind, Boolean(row.importedFrom || row.fromData || row.fromFile), null, (fixedRow?.(row) ?? false) || row.origin === "inferred");
   const appears = useMemo(() => appearanceCounts(forest), [forest]);
   const keep = useMemo(() => keepForFilter(forest, filter), [forest, filter]);
   const treeRows = useMemo(
@@ -1477,6 +1484,11 @@ function TreeRow({
         // Snapshot data is never mistaken for the model (Section 7): its
         // label, a sample's words included, is on the row itself.
         <span className="hierarchy-imported hierarchy-data">{row.fromData}</span>
+      )}
+      {row.fromFile && !row.importedFrom && (
+        // Another file's term, in words (multi-file-projects 5.3 item 2):
+        // read-only here, changed in its own file.
+        <span className="hierarchy-imported hierarchy-file">in {row.fromFile}</span>
       )}
       {inferred && (
         // The derived channel (D-046): a badge, a non-colour cue (the dashed

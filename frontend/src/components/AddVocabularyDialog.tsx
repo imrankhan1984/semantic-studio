@@ -45,7 +45,7 @@ EXPECTED OUTPUT
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, getNetworkPolicy, inspectVocabulary, listOntologies } from "../api";
-import { projectStore } from "../state/projectStore";
+import { editDocId, projectStore } from "../state/projectStore";
 import type { BundledVocabulary, OntologySummary, VocabularyChoice, VocabularyInspection } from "../types";
 import { wrapTab } from "./useDialogTrap";
 import {
@@ -221,7 +221,7 @@ export default function AddVocabularyDialog({
     setAdding(true);
     setAddError("");
     try {
-      await projectStore.command("AddVocabulary", { iri: found.iri, prefix: prefix.trim() }, () => addedWords(found.sentence), "model");
+      await projectStore.command("AddVocabulary", { iri: found.iri, prefix: prefix.trim() }, () => addedWords(found.sentence), editDocId());
       closedByAdd.current = true;
       onAdded(found.iri);
     } catch (e) {

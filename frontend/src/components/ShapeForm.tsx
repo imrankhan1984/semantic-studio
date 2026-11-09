@@ -48,7 +48,7 @@ import { getShapeSuggestions } from "../api";
 import { pathWords, ruleSentence, shapeSentence } from "../modeling/shapeSentences";
 import type { ShapeForm as Shape, ShapePath, ShapeRule, ShapeSuggestions } from "../types";
 import ConfirmDialog from "./ConfirmDialog";
-import { Block, InlineText, useRunner, useReturnFocus } from "./EditParts";
+import { Block, InlineText, useRunner, useReturnFocus, useShapesDoc } from "./EditParts";
 import EntityPicker from "./EntityPicker";
 import RuleEditor from "./RuleEditor";
 
@@ -73,7 +73,9 @@ export default function ShapeForm({
   onDeleted,
   onEditInTurtle,
 }: Props) {
-  const runner = useRunner("shapes");
+  // The shape's own file (multi-file-projects 8.1), the main one by default.
+  const mainShapes = useShapesDoc();
+  const runner = useRunner(shape.doc ?? mainShapes);
   const { busy, errors, run } = runner;
   const [suggestions, setSuggestions] = useState<ShapeSuggestions | null>(null);
   const [suggestError, setSuggestError] = useState<string | null>(null);

@@ -60,9 +60,12 @@ import { useEffect, useId, useRef, useState } from "react";
 import { addShapesDocument, getLanguageReport } from "../api";
 import DescriptionDialog from "./DescriptionDialog";
 import { validLanguageTag } from "../projects/form";
+import { filePath } from "../files/tree";
 import {
   STATUS_WORDS,
   activeDocument,
+  isShapesDoc,
+  primaryDocument,
   projectStore,
   saveStatus,
   useProjectStore,
@@ -95,7 +98,6 @@ function inTextField(target: EventTarget | null): boolean {
   return !["button", "checkbox", "radio", "submit", "reset", "range", "color", "file"].includes(type);
 }
 
-const DOC_FILES: Record<ProjectDocName, string> = { model: "model.ttl", shapes: "shapes.ttl" };
 
 const NO_GUARD = (then: () => void) => then();
 
@@ -124,7 +126,8 @@ export default function ProjectHeader({
   const menuRef = useRef<HTMLUListElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [describing, setDescribing] = useState(false);
-  const model = state.documents.find((d) => d.doc === "model");
+  // The project's description is its first ontology file's header.
+  const model = primaryDocument(state.documents);
 
   const run = (action: () => Promise<unknown>) => {
     action().catch((e: unknown) => onError(e instanceof Error ? e.message : String(e)));
@@ -242,7 +245,7 @@ export default function ProjectHeader({
     run(() => projectStore.setLanguages([...project.languages, tag]));
   };
 
-  const hasShapes = state.documents.some((d) => d.doc === "shapes");
+  const hasShapes = state.documents.some(isShapesDoc);
 
   return (
     <div className="project-header">
@@ -262,7 +265,7 @@ export default function ProjectHeader({
       >
         {state.documents.map((d) => (
           <option key={d.doc} value={d.doc}>
-            {DOC_FILES[d.doc]}
+            {filePath(d)}
             {d.dirty ? " (unsaved)" : ""}
           </option>
         ))}
