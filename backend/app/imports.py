@@ -44,6 +44,13 @@ BASIC IDEA
     twice and a SPARQL SELECT over it returned duplicate rows. The RDF merge of
     two graphs is a set, and MergedView yields each triple once.
 
+    A project's other ontology and vocabulary files join a file's read views
+    the way data snapshots do, whatever the imports switch says
+    (multi-file-projects 5.3, D-131): file_view is the file, its imports,
+    the other files and their imports, each subject another file holds and
+    this one does not marked `fromFile`, keyed on the revision and the
+    siblings' key (their epoch and the sum of their revisions).
+
 INPUTS / INPUT SOURCES
     - The ontology's graph and the store (library lookups, parsing).
     - vocab/manifest.json and the files beside it.
@@ -1060,6 +1067,72 @@ class ImportsService:
                 cache[name] = build(view["graph"])
         return cache[name]
 
+    # --- the view with the project's other files (multi-file-projects 5.3) ----
+
+    def file_view(self, ontology: Ontology, imports: bool, parse_timeout: Optional[float] = None) -> Optional[dict]:
+        """A project file with the project's other ontology and vocabulary
+        files, read-only (5.3 item 2), and with the switch on each file's
+        resolved imports: the project's imported terms are the union of every
+        file's closure (5.3 item 5). None for anything with no other file, so
+        a project of one file is served exactly as before.
+
+        The file is first, then its imports, then the other files, then
+        their imports. A subject held by another file and not by this one is
+        marked with that file, `fromFile`, beside `importedFrom`. Cached per
+        value of the switch on the revision and the siblings' key -- their
+        epoch, which moves when a file is added, moved or removed, and the
+        sum of their revisions (5.3 item 7) -- and on each imports view by
+        identity, as the data view is."""
+        sibling_key, siblings = sibling_docs(ontology)
+        if not siblings:
+            return None
+        base = self.merged(ontology, parse_timeout) if imports else None
+        bases = [self.merged(other, parse_timeout) if imports and load_state(other) else None for other, _ in siblings]
+        key = (ontology.revision, sibling_key)
+        cache = ontology.file_cache or {}
+        held = cache.get(imports)
+        if (
+            held is not None and held["key"] == key and held["base"] is base
+            and len(held["bases"]) == len(bases) and all(a is b for a, b in zip(held["bases"], bases))
+        ):
+            return held
+        own = ontology.ensure_loaded()
+        graphs = list(base["graph"].graphs) if base is not None else [own]
+        others = [other.ensure_loaded() for other, _ in siblings]
+        extra = [g for b in bases if b is not None for g in b["graph"].graphs[1:]]
+        with ontology.reading():
+            view = MergedView(graphs + others + extra)
+            subjects = view.subjects_by_document()
+        own_subjects = subjects[0]
+        from_file: dict[str, dict] = {}
+        for (_, info), held_subjects in zip(siblings, subjects[len(graphs): len(graphs) + len(others)]):
+            for subject in held_subjects:
+                if isinstance(subject, URIRef) and subject not in own_subjects:
+                    from_file.setdefault(str(subject), info)
+        imported = dict(base["importedFrom"]) if base is not None else {}
+        sources = list(base["sources"]) if base is not None else []
+        for b in bases:
+            if b is None:
+                continue
+            for iri, name in b["importedFrom"].items():
+                if iri not in from_file and URIRef(iri) not in own_subjects:
+                    imported.setdefault(iri, name)
+            sources += [x for x in b["sources"] if all(x["id"] != y["id"] for y in sources)]
+        built = {
+            "graph": view,
+            "importedFrom": imported,
+            "fromFile": from_file,
+            "documents": (base["documents"] if base is not None else 0) + sum(b["documents"] for b in bases if b),
+            "sources": sources,
+            "others": others,
+            "key": key,
+            "base": base,
+            "bases": bases,
+            "derived": {},
+        }
+        ontology.file_cache = {**cache, imports: built}
+        return built
+
     # --- the view with data snapshots (csv-data-import 5.6) ----------------
 
     def reading(self, ontology: Ontology, imports: bool, parse_timeout: Optional[float] = None) -> Optional[dict]:
@@ -1073,9 +1146,14 @@ class ImportsService:
         snapshots' generation and the imports view under it: a snapshot
         switched off or refreshed moves the generation and nothing else."""
         generation, snapshots = snapshot_graphs(ontology)
+        # The project's other files join whatever the switch says, as data
+        # does (5.3 item 2): they are the project, not an import.
+        files = self.file_view(ontology, imports, parse_timeout)
         if not snapshots:
+            if files is not None:
+                return files
             return self.merged(ontology, parse_timeout) if imports else None
-        base = self.merged(ontology, parse_timeout) if imports else None
+        base = files if files is not None else (self.merged(ontology, parse_timeout) if imports else None)
         key = (ontology.revision, generation)
         cache = ontology.data_cache or {}
         held = cache.get(imports)
@@ -1089,7 +1167,7 @@ class ImportsService:
             subjects = view.subjects_by_document()
             # The document and the data, without the imports: where the
             # tree's Examples section looks for individuals.
-            examples_from = MergedView([own] + data)
+            examples_from = MergedView([own] + (base.get("others", []) if base is not None else []) + data)
         data_from: dict[str, dict] = {}
         for (_, info), held_subjects in zip(snapshots, subjects[len(graphs):]):
             for subject in held_subjects:
@@ -1098,6 +1176,7 @@ class ImportsService:
         built = {
             "graph": view,
             "importedFrom": base["importedFrom"] if base is not None else {},
+            "fromFile": base.get("fromFile", {}) if base is not None else {},
             "documents": base["documents"] if base is not None else 0,
             "dataFrom": data_from,
             "snapshots": [info for _, info in snapshots],
@@ -1143,6 +1222,13 @@ def merged_query_schema(ontology: Ontology, parse_timeout: Optional[float] = Non
     return imports_service.derived(ontology, "schema", build_query_schema)
 
 
+def sibling_docs(ontology: Ontology) -> tuple:
+    """(key, [(Ontology, info)]): a project file's other ontology and
+    vocabulary files (5.3 item 2), or (None, []) for anything else."""
+    provider = ontology.siblings
+    return provider() if provider is not None else (None, [])
+
+
 def snapshot_graphs(ontology: Ontology) -> tuple[int, list]:
     """(generation, [(graph, info)]): a project model's switched-on data."""
     provider = ontology.snapshots
@@ -1169,14 +1255,14 @@ def view_viz(
     view = imports_service.reading(ontology, imports, parse_timeout)
     if view is None:
         return ontology.viz(lang)
-    if "dataFrom" not in view:
+    if "dataFrom" not in view and "fromFile" not in view:
         return merged_viz(ontology, parse_timeout, lang)
     langs = ontology.label_langs(lang)
     return _data_derived(
         ontology, view, ("viz", langs),
-        lambda g: mark_data_viz(
-            mark_imported_viz(build_viz_graph(g, langs=langs), view["importedFrom"]), view["dataFrom"]
-        ),
+        lambda g: mark_file_viz(mark_data_viz(
+            mark_imported_viz(build_viz_graph(g, langs=langs), view["importedFrom"]), view.get("dataFrom", {})
+        ), view.get("fromFile", {})),
     )
 
 
@@ -1186,17 +1272,21 @@ def view_hierarchy(
     view = imports_service.reading(ontology, imports, parse_timeout)
     if view is None:
         return ontology.hierarchy(lang)
-    if "dataFrom" not in view:
+    if "dataFrom" not in view and "fromFile" not in view:
         return merged_hierarchy(ontology, parse_timeout, lang)
     langs = ontology.label_langs(lang)
+    # Without data, the file and the other files are where the tree looks
+    # for examples and its own properties (5.3 item 2). Built inside the
+    # cached build, never on a request the cache answers.
+    def own() -> Graph:
+        return view.get("examplesFrom") or MergedView([ontology.graph, *view.get("others", [])])
+
     return _data_derived(
         ontology, view, ("hierarchy", langs),
-        lambda g: mark_data_hierarchy(
-            mark_imported_hierarchy(
-                build_hierarchy(g, langs=langs, own=view["examplesFrom"]), view["importedFrom"]
-            ),
-            view["dataFrom"],
-        ),
+        lambda g: mark_file_hierarchy(mark_data_hierarchy(
+            mark_imported_hierarchy(build_hierarchy(g, langs=langs, own=own()), view["importedFrom"]),
+            view.get("dataFrom", {}),
+        ), view.get("fromFile", {})),
     )
 
 
@@ -1204,7 +1294,7 @@ def view_query_schema(ontology: Ontology, imports: bool, parse_timeout: Optional
     view = imports_service.reading(ontology, imports, parse_timeout)
     if view is None:
         return ontology.query_schema()
-    if "dataFrom" not in view:
+    if "dataFrom" not in view and "fromFile" not in view:
         return merged_query_schema(ontology, parse_timeout)
     return _data_derived(ontology, view, "schema", build_query_schema)
 
@@ -1216,6 +1306,28 @@ def mark_data_viz(viz: dict, data_from: dict[str, dict]) -> dict:
         if info is not None:
             node["fromData"] = info["source"]
     return viz
+
+
+def mark_file_viz(viz: dict, from_file: dict[str, dict]) -> dict:
+    """Name the project file each node another file defines lives in
+    (multi-file-projects 5.3 item 2): {doc, file}, read-only here."""
+    for node in viz["nodes"]:
+        info = from_file.get(node["id"])
+        if info is not None:
+            node["fromFile"] = info
+    return viz
+
+
+def mark_file_hierarchy(tree: dict, from_file: dict[str, dict]) -> dict:
+    """The tree's rows another project file defines carry that file."""
+    for forest in tree.values():
+        if not isinstance(forest, dict) or "nodes" not in forest:
+            continue
+        for node_id, node in forest["nodes"].items():
+            info = from_file.get(node_id)
+            if info is not None:
+                node["fromFile"] = info
+    return tree
 
 
 def mark_data_hierarchy(tree: dict, data_from: dict[str, dict]) -> dict:

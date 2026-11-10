@@ -251,6 +251,15 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   alreadyDefined: async () => api.alreadyDefined(null),
   // Nor this: reads a standard-term refusal's body (standard-terms 5.3).
   standardTerm: async () => api.standardTerm(null),
+  // The project's files and folders (multi-file-projects 8.2): a POST and a
+  // PATCH, two DELETEs, a POST and a DELETE for folders; pathRefusal reads a
+  // refused name's body and sends nothing.
+  addProjectFile: () => api.addProjectFile("prj-1", "ontology", "core", "vocab"),
+  moveProjectFile: () => api.moveProjectFile("prj-1", "f0123abcd", { name: "base" }),
+  removeProjectFile: () => api.removeProjectFile("prj-1", "f0123abcd"),
+  createProjectFolder: () => api.createProjectFolder("prj-1", "vocab"),
+  removeProjectFolder: () => api.removeProjectFolder("prj-1", "vocab"),
+  pathRefusal: async () => api.pathRefusal(null),
 };
 
 describe("api client header (S-6)", () => {
@@ -283,12 +292,14 @@ describe("api client header (S-6)", () => {
     // file's Remove) and a POST (Test connection, external-access 5.5);
     // Settings → Naming one PUT (design-checks 5.1); a read-aloud tick one
     // PUT (design-checks 5.8); Add a vocabulary's inspect two POSTs, JSON
-    // and a file (vocabularies-and-ontologies 5.3).
+    // and a file (vocabularies-and-ontologies 5.3); the Files panel two
+    // POSTs, a PATCH and two DELETEs (multi-file-projects 8.2).
     const expected = [
-      ...Array(7).fill("DELETE"),
+      ...Array(9).fill("DELETE"),
       "PATCH",
       "PATCH",
-      ...Array(35).fill("POST"),
+      "PATCH",
+      ...Array(37).fill("POST"),
       ...Array(8).fill("PUT"),
     ];
     expect(mutating.map((r) => r.method).sort()).toEqual(expected);

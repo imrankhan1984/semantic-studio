@@ -399,9 +399,15 @@ def test_s16_the_revisions_checked_come_back_so_a_change_shows_as_stale(pid):
     text = client.get(f"/api/projects/{pid}/documents/model/source").json()["text"]
     text = text.replace('shop:bob a shop:Person ; rdfs:label "Bob"@en ;', 'shop:bob a shop:Person ; rdfs:label "Bob"@en ; shop:name "Bob" ;')
     assert client.put(f"/api/projects/{pid}/documents/model/source", json={"text": text}).status_code == 200
-    state = client.post(f"/api/projects/{pid}/open").json()["documents"]
-    assert next(d for d in state if d["doc"] == "model")["revision"] != model_rev
+    # The browser's comparison (ResultPanels.tsx): projectRevision, the
+    # ontology files' sum plus the server's shift, against revisions.model.
+    # model.ttl's own revision is not comparable: creating shapes.ttl moved
+    # the shift.
+    opened = client.post(f"/api/projects/{pid}/open").json()
+    now = opened["revisionShift"] + sum(d["revision"] for d in opened["documents"] if d.get("role") != "shapes")
+    assert now != model_rev, "the change did not make the result stale"
     second = validate(pid)
+    assert second["revisions"]["model"] == now
     assert second["revisions"]["model"] > model_rev
     assert second["revisions"]["shapes"] == shapes_rev
     # Unsaved changes are checked: Bob now has a name, and nothing was saved.

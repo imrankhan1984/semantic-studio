@@ -310,6 +310,9 @@ export interface VizNode {
   // An individual from a data snapshot: the file it was imported from
   // (csv-data-import 5.6).
   fromData?: string;
+  // A project file's node another file of the project defines (multi-file-
+  // projects 5.3 item 2): read-only here, opened in its own file.
+  fromFile?: FileRef;
   // A picker's match from a reference ontology the document has in use by
   // its prefix, not imported (reference-ontologies 5.6): its title, "FOAF".
   fromReference?: string;
@@ -490,6 +493,9 @@ export interface HierarchyNode {
   // An individual from a data snapshot: the snapshot's id, which names its
   // source in the row (csv-data-import 5.6).
   fromData?: string;
+  // Another file of the project defines it (multi-file-projects 5.3 item 2):
+  // the row says where, and its actions are not offered.
+  fromFile?: FileRef;
   // A class's typing (edit-page-rework 5.8): "rdfs" only for a class typed
   // rdfs:Class and not owl:Class. Absent means "owl".
   classType?: ClassType;
@@ -591,6 +597,9 @@ export interface NodeDetails {
   // An individual from a data snapshot: where it came from, and its row
   // (csv-data-import 5.6). Read-only; it has no example form.
   fromData?: DataSource & { row: number | null };
+  // Another file of the project defines it (multi-file-projects 5.3 item 2):
+  // the panel says *Defined in vocab/equipment.ttl* with Open file.
+  fromFile?: FileRef;
   // A project's class: its rules (axioms-and-reasoning 5.9), the 5.10
   // warnings, and what the sentence builder offers when the class is this
   // document's to change (null when it is not).
@@ -1023,7 +1032,9 @@ export interface ProjectSummary {
   prefix: string;
   primaryLanguage: string;
   languages: string[];
-  documents: { file: string; role: ProjectDocName }[];
+  // Each file with its id and role (D-131); `model` is model.ttl's role,
+  // read as the project's kind.
+  documents: { id?: ProjectDocName; file: string; role: string }[];
   counts: { classes?: number; properties?: number; concepts?: number; triples?: number };
   // Ontology or taxonomy (D-089): which tools the visual doors offer. Null
   // only for a project made before kinds, until it is first opened.
@@ -1064,7 +1075,41 @@ export interface ClassTypePlan {
   refused: string | null;
 }
 
-export type ProjectDocName = "model" | "shapes";
+/** A project file's id (multi-file-projects 5.1 item 2, D-131): `model`
+ *  and `shapes` for the two files every project had before E-16, `f` and
+ *  eight hex digits for any other. Looked up in the manifest by the server,
+ *  never a path; files/names.ts holds the pattern. */
+export type ProjectDocName = string;
+
+/** What a file is for (5.1 item 3): which tools show first, never what can
+ *  be changed (D-127 per file). */
+export type FileRole = "ontology" | "vocabulary" | "shapes";
+
+/** A file of the open project, as a view names it. */
+export interface FileRef {
+  doc: ProjectDocName;
+  file: string;
+}
+
+/** What the folder index said at the open (5.2): files found, entries
+ *  dropped, paths skipped with their sentence, and an empty model.ttl
+ *  written when no ontology or vocabulary file was left. */
+export interface IndexNotice {
+  found: string[];
+  missing: string[];
+  skipped: { path: string; reason: string }[];
+  wroteModel: boolean;
+}
+
+/** New file, Rename or Move answered: the entry as it is now, the file's
+ *  state, and the folders. */
+export interface FileChange {
+  entry: { id: ProjectDocName; file: string; role: string };
+  document: ProjectDocumentState;
+  folders: string[];
+  project?: ProjectSummary;
+  revisionShift?: number;
+}
 
 export type ProjectKind = "ontology" | "taxonomy";
 
@@ -1079,6 +1124,10 @@ export type ProjectTemplate = "empty" | "small" | "taxonomy-empty" | "taxonomy-s
 // it by (prj-<hex>-<doc>); `revision` keys every refetch (D-081).
 export interface ProjectDocumentState {
   doc: ProjectDocName;
+  // The path from the project folder, with /, and the role (D-131). Absent
+  // only from a server before E-16, when the id says both.
+  file?: string;
+  role?: FileRole;
   ontologyId: string;
   revision: number;
   dirty: boolean;
@@ -1096,6 +1145,15 @@ export interface OpenedProject {
   project: ProjectSummary;
   documents: ProjectDocumentState[];
   recovery: { available: boolean; draftTime: string | null };
+  // The folder index's answer (multi-file-projects 5.2); absent from a
+  // server before E-16.
+  folders?: string[];
+  found?: string[];
+  missing?: string[];
+  skipped?: { path: string; reason: string }[];
+  wroteModel?: boolean;
+  // Added to every sum of the files' revisions (5.3 item 7).
+  revisionShift?: number;
 }
 
 // A command, an apply, an undo or a redo.
@@ -1111,6 +1169,9 @@ export interface ChangeResult {
   // A Turtle apply: the prefixed names in a reference ontology's namespace
   // that it does not define (reference-ontologies 5.7). Information only.
   references?: UnknownReferenceTerms;
+  // A Turtle apply: each term the text defines that another file of the
+  // project defines too (multi-file-projects 5.3 item 4), warned, applied.
+  definedElsewhere?: { iri: string; label: string; doc: ProjectDocName; file: string; message: string }[];
   // A branch relationship's command changes two documents as one paired step
   // (skos-and-owl 5.3.3): the other document's state, so both documents'
   // revision, dirty flag and undo labels refresh together.
@@ -1288,6 +1349,9 @@ export interface CanvasNode {
   fallback: boolean;
   // Outside this document: the import it comes from, or "outside". Read-only.
   imported?: string;
+  // Another file of the project defines it (multi-file-projects 5.3 item 2):
+  // read-only here, named by its file.
+  fromFile?: FileRef;
   // Put on the canvas by Add a term from… with no line yet (5.8), and from
   // a vocabulary reused by prefix rather than imported.
   placed?: boolean;
@@ -1466,6 +1530,10 @@ export interface ShapeForm {
   rules: ShapeRule[];
   editable: boolean;
   unsupported: string[];
+  // The shapes file it lives in (multi-file-projects 8.1): its form's
+  // commands go there. Absent from a server before E-16: shapes.ttl.
+  doc?: ProjectDocName;
+  file?: string;
 }
 
 export interface ShapesListing {

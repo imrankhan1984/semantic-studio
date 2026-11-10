@@ -3175,3 +3175,124 @@ EXPECTED OUTPUT
   tests red (the four sentences, the free port let go, the first one
   deciding). The `version` field removed: the two health tests red. The
   smoke comparison removed: `test_smoke_step_1_holds_health_to_the_folders_version` red.
+
+### Multi-file projects (E-16 PR 1, D-131, D-132)
+
+- **Built** 2026-11-09, spec `multi-file-projects` v1.0, PR 1 (Sections
+  5.1 to 5.8), on `feature/multi-file-projects`. Tabs (5.9) are PR 2.
+
+  **Why ids, not paths.** A project was `model.ttl` and `shapes.ttl` under
+  two fixed names. It is now any Turtle file in the folder, up to 100 and
+  three folder levels, each with an id the manifest keeps: `model` and
+  `shapes` for the two files every project had, `f` and eight hex digits for
+  any other, minted once. The id is matched in full (`DOC_ID`), looked up in
+  the manifest, and only the manifest's path is joined to the folder, by
+  `projects.inside`, which resolves the result and refuses anything outside
+  the folder or a link (or a Windows junction, `os.path.isjunction`) on the
+  way. So a renamed or moved file keeps its id, its layout
+  (`<id>.layout.json`), its draft (`.draft/<id>.ttl`) and its undo history,
+  and no request can name a path.
+
+  **The folder is the index.** `ProjectStore.index` walks the folder at
+  open (`_walk`: hidden names and the app's own skipped in silence, a link,
+  a bad name or a fourth level skipped and said), matches what it finds with
+  the manifest without case, mints an id for a file it did not know (its
+  role read from its content by `EditingService._found_role`), and drops an
+  entry whose file is gone. It writes the manifest **only** when it found or
+  dropped something: AC-1's byte-for-byte `project.json` depends on it, and
+  `test_ac1_old_project_opens_unchanged` is written by hand as a pre-E-16
+  project lies on disk, so it does not move when `create()` does. A project
+  left with no ontology or vocabulary file gets an empty `model.ttl`.
+
+  **Reserved names.** `project.json`, `queries`, `data`, `.draft`, `.trash`
+  and anything ending `.layout.json` or `.original.ttl`. The last is not in
+  the spec's list: Save's one-time backup of a commented file
+  (`<name>.original.ttl`, D-083) sits beside the file, and the index would
+  otherwise find it as a file of its own and put every term in the project
+  twice. The name rule is one table (`frontend/src/files/names.table.json`)
+  that `test_multi_file.py` and `files/names.test.ts` both read.
+
+  **What each file sees.** An ontology or vocabulary file's `Ontology` gets
+  a `siblings` provider (the project's other such files), and
+  `ImportsService.file_view` joins them into every read view, read-only,
+  marking each subject another file holds and this one does not as
+  `fromFile {doc, file}`, as data snapshots are joined and marked
+  `fromData`. Explore, Query, the outline, the canvas and the detail panel
+  all read through it, so the whole project is read from whichever file is
+  open. A shapes file is not joined (its views are as `shapes.ttl`'s were);
+  its commands read every ontology file through `_project_model`.
+  Validation, reasoning and the Checks report (`whole_for_checks`) read the
+  ontology and vocabulary files together, the shapes files together.
+
+  **The key: revision, epoch, sum.** A file's views key on its own revision
+  and the siblings' key, `(epoch, sum of their revisions)`. The spec says
+  the sum; the epoch is there because a sum comes round again after a file
+  is removed (3 + 2, remove the 2, two edits: 5 again) and the view would
+  still hold the removed file. Removing the key's second half turns
+  `test_ac13` red. Reasoning keys on the sum and the project view's
+  identity, which carries the epoch the same way.
+
+  **One lock order, all of them.** A command or an Apply in one file reads
+  the others, and the canvas and the outline of one file read another
+  file's graph under their own lock only. Every change -- command, Apply,
+  undo, redo, recovery, a file's move or removal -- takes every file's lock
+  through `_all_locks`, shapes files first then the others, each in manifest
+  order (8.4). A reader holding one lock therefore never meets a change in
+  another file, and two changes never wait on each other (AC-20, a hundred
+  rounds in two threads). Commands in one project run one at a time; at ten
+  files and 10,000 statements a command took 2.9 ms, against 50.
+
+  **The cross-file refusal.** `SUBJECT_ARGS` names, per command, the
+  argument that is the term it changes; `_cross_file` refuses before the
+  handler when another file types that term (*Pump is defined in core.ttl.
+  Open that file to change it.*). `_cross_file_change` then checks the
+  delta: a new IRI another file defines (*already defined in*), and any
+  statement whose subject another file defines, whatever argument named it.
+  A pointer (a range, a parent) stays allowed, its statements in this file.
+  Apply allows a term another file defines and answers `definedElsewhere`,
+  shown under the editor (5.3 item 4).
+
+  **Drafts and recovery.** `_draft_paths` is the project folder's
+  `.draft/<id>`, so `model` and `shapes` keep the names a pre-E-16 draft
+  has (AC-21). Recovery now parses every draft before it changes any file:
+  it used to apply them one by one, so a broken second draft left the first
+  restored.
+
+  **Found on the way.** `test_projects.py`'s route scan sent `/documents/..`
+  to the two new routes that end in `{doc}`; the client resolves the `..`
+  before sending, as a browser does, so the request was the project's own
+  PATCH and DELETE (it renamed and trashed the test project). Not a hole --
+  the URL is a different route -- but the scan now sends that case encoded
+  (`%2E%2E`), which reaches `{doc}` and is 404. Export walks without
+  following links, and duplicate copies none: a link in the folder would
+  have zipped or copied whatever it led to.
+
+  **Found in the code review.** Ten findings, each fixed with a test:
+  the browser keyed every whole-project view on the bare sum while the
+  server had the epoch, so removing an unedited file refreshed nothing and
+  an old validation still read as current -- now both sides add the
+  server's `revisionShift` (a file added or moved +1, a removal the file's
+  revision +1), sent with every open and file change; removing the file on
+  screen left `activeId` on its unregistered id (App now follows the store);
+  the comments question was project-wide while the backup is per file
+  (`commentsWarnedDocs`); the index folded case on Linux, where Core.ttl
+  and core.ttl are two files (`os.path.normcase`); the folder routes waited
+  on the store's lock on the event loop; removing model.ttl orphaned its
+  saved queries (moved to the first file left); the empty-model fallback
+  could land on a model.ttl that was there as shapes or unreadable (the name
+  moves on to *model 2.ttl*); an ontology file named shapes.ttl at the root
+  stopped the first shape command (refused); reasoning read the file list
+  twice; `project_graph` rebuilt a view per call. Explore and Query now read
+  from the project's first file, whose id carries its saved queries, and
+  Edit returns to the file chosen in Files, the selection going with it.
+
+  **Not built, said in the PR.** A folder's Rename (5.5 item 4) has no
+  route in 8.2. The Shapes page shows Files beside its own list rather than
+  above an outline it does not have.
+
+  **Removal checks.** `_cross_file` and `_cross_file_change` emptied:
+  `test_ac10` and `test_ac11` red. The reserved names out of
+  `segment_error`: twelve AC-6 tests red. The siblings' key out of the file
+  view's key: `test_ac13` red. Drafts beside the file again: `test_ac17`
+  red. `aria-current` off the Files row, or `.ttl` no longer added in
+  `files/names.ts`: seven vitest tests red.

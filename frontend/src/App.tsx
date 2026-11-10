@@ -148,6 +148,16 @@ BASIC IDEA
     question is RemoveDialog, which can offer the saved queries as a zip
     before they go (wording-and-query-export 5.11).
 
+    A project is a folder of files (multi-file-projects, D-131, D-132). The
+    Edit and Shapes pages hold the Files panel in their left column, above
+    the outline; choosing a file opens an ontology or vocabulary file on
+    Edit (activeId becomes its ontology id) and a shapes file on Shapes. A
+    file's views hold every other file's terms, so they key on the sum of
+    every file's revision; Explore and Query read the whole project from
+    whichever file is open. Open file, on a term another file defines,
+    opens that file with the term selected, and a check's finding opens its
+    term in the file that defines it.
+
 INPUTS / INPUT SOURCES
     - The backend API (via api.ts) for the ontology list and graph.
     - User interaction: header tabs, dropdown, graph clicks, search.
@@ -171,6 +181,7 @@ import {
   exportSavedQueries,
   getGraph,
   getNeighborhood,
+  getNodeDetails,
   getResultNodes,
   grantNetwork,
   listImports,
@@ -189,10 +200,17 @@ import { triggerDownload } from "./download";
 import {
   activeDocument,
   dataGenerationOf,
+  isShapesDoc,
+  mainShapesDocument,
+  primaryDocument,
+  projectRevision,
   projectStore,
   revisionOf,
+  shapesRevision as shapesRevisionOf,
   useProjectSelector,
 } from "./state/projectStore";
+import FilesPanel from "./components/FilesPanel";
+import { filePath } from "./files/tree";
 import AboutPanel from "./components/AboutPanel";
 import DetailPanel from "./components/DetailPanel";
 import ReasoningPanel, { ReasonControls } from "./components/ReasoningPanel";
@@ -250,6 +268,7 @@ import type {
   MergeResult,
   OntologySummary,
   ProjectDocName,
+  ProjectDocumentState,
   ProjectSummary,
   Theme,
   VizGraph,
@@ -611,23 +630,33 @@ export default function App() {
   // for the open project's model.ttl only. Memoized: the form derives its
   // blocks from the languages array, and a new array per render would
   // redo that on every keystroke anywhere in App.
-  const openDocName = projectDocuments.find((d) => d.ontologyId === activeId)?.doc ?? null;
+  const openDocState = projectDocuments.find((d) => d.ontologyId === activeId) ?? null;
+  const openDocName = openDocState?.doc ?? null;
+  // An ontology or vocabulary file (multi-file-projects 5.1 item 3): what
+  // model.ttl alone was before, the editing form's and the canvas's file.
+  const openIsModel = openDocState !== null && !isShapesDoc(openDocState);
   // A branch relationship's rule lives in the shapes document (skos-and-owl
   // 5.3), so the model's views -- the canvas branch line, the Values from row
-  // -- refetch when the shapes revision moves as well as the model's.
-  const shapesRevision = projectDocuments.find((d) => d.doc === "shapes")?.revision ?? 0;
-  const viewRevision = openDocName === "model" ? revision + dataGeneration + shapesRevision : revision;
+  // -- refetch when the shapes revision moves as well as the model's; and
+  // a file's views hold every other file's terms (5.3 item 7), so they key
+  // on every file's revision.
+  // The server's shift is part of every sum (5.3 item 7): read here, so a
+  // file added, moved or removed moves every key below.
+  const revisionShift = useProjectSelector((s) => s.revisionShift);
+  const allRevisions = projectRevision(projectDocuments, false, revisionShift);
+  const viewRevision = openIsModel ? allRevisions + dataGeneration : revision;
   // Where the model's data came from, for the Explore and Query source lines.
   const dataSources = useMemo(
-    () => (openDocName === "model" ? (projectData?.snapshots ?? []).filter((d) => d.enabled) : []),
-    [openDocName, projectData],
+    () => (openIsModel ? (projectData?.snapshots ?? []).filter((d) => d.enabled) : []),
+    [openIsModel, projectData],
   );
-  const modelOntologyId = projectDocuments.find((d) => d.doc === "model")?.ontologyId ?? null;
+  // The project's first ontology file: its id carries the saved queries.
+  const modelOntologyId = primaryDocument(projectDocuments)?.ontologyId ?? null;
   // Settings → Library names these; one array per library, not per render.
   const bundledMissing = useMemo(() => missingBundled(ontologies).map((b) => b.name), [ontologies]);
   const editingModel = useMemo(
     () =>
-      openProjectSummary && openDocName === "model"
+      openProjectSummary && openIsModel
         ? {
             primaryLanguage: openProjectSummary.primaryLanguage,
             languages: openProjectSummary.languages,
@@ -635,7 +664,7 @@ export default function App() {
             kind: openProjectSummary.kind,
           }
         : null,
-    [openProjectSummary, openDocName],
+    [openProjectSummary, openIsModel],
   );
   // Reasoning (axioms-and-reasoning 5.1 to 5.7). The marks show in the tree,
   // the canvas and the detail panel only while the last result is current
@@ -645,7 +674,9 @@ export default function App() {
   const reasoningResult = useProjectSelector((s) => s.reasoning);
   const showInferred = useProjectSelector((s) => s.showInferred);
   const reasoningToken = useProjectSelector((s) => s.reasoningToken);
-  const modelRevision = projectDocuments.find((d) => d.doc === "model")?.revision ?? 0;
+  // The whole project is reasoned over (5.3 item 6): the server keys a
+  // result on the sum of the ontology and vocabulary files' revisions.
+  const modelRevision = projectRevision(projectDocuments, true, revisionShift);
   const reasoningNow = useMemo(
     () => ({ revision: modelRevision, generation: dataGeneration, imports: includeImports }),
     [modelRevision, dataGeneration, includeImports],
@@ -765,8 +796,8 @@ export default function App() {
     ? null
     : openDocName === null
       ? "From the library, read-only. Start a project from it to change it."
-      : openDocName === "shapes"
-        ? "shapes.ttl is edited as Turtle, in View; this form edits model.ttl."
+      : openDocState && isShapesDoc(openDocState)
+        ? `${openDocState.file ?? "shapes.ttl"} is edited on the Shapes page or as Turtle, in View.`
         : null;
   // The project list, for the Home screen's first section.
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -807,7 +838,7 @@ export default function App() {
   // made is undone on the next move to any tab but Shapes, or Explore drew
   // shapes.ttl's 0 nodes. `shapesInView` marks that switch alone; the
   // project bar's picker clears it, so a document picked there is kept.
-  const hasShapesDoc = projectDocuments.some((d) => d.doc === "shapes");
+  const hasShapesDoc = projectDocuments.some(isShapesDoc);
   const previousMode = useRef(mode);
   const shapesInView = useRef(false);
   useEffect(() => {
@@ -815,21 +846,35 @@ export default function App() {
     previousMode.current = mode;
     const snap = projectStore.getSnapshot();
     if (!snap.project) return;
-    const model = snap.documents.find((d) => d.doc === "model");
-    const shapes = snap.documents.find((d) => d.doc === "shapes");
+    // The file Edit shows, and the shapes file the Shapes page shows: the
+    // one chosen in Files, else the main one (multi-file-projects 5.5).
+    const model = snap.documents.find((d) => d.doc === snap.editDoc) ?? primaryDocument(snap.documents);
+    const active = snap.documents.find((d) => d.doc === snap.activeDoc);
+    const shapes = active && isShapesDoc(active) ? active : mainShapesDocument(snap.documents);
+    // Explore and Query read the whole project from its first file, whose
+    // id carries the saved queries (multi-file-projects 5.6); Edit shows
+    // the file chosen in Files. The selection goes with the move.
+    const onFile = snap.documents.find((d) => d.ontologyId === activeId);
+    const follow = (to: { ontologyId: string } | null | undefined) => {
+      if (!to || !onFile || isShapesDoc(onFile) || activeId === to.ontologyId) return;
+      pendingSelection.current = selectedRef.current;
+      setActiveId(to.ontologyId);
+    };
+    if (mode === "explore" || mode === "query") follow(primaryDocument(snap.documents));
+    else if (mode === "hierarchy") follow(model);
     if (mode === "shapes") {
       shapesInView.current = false;
       if (model && activeId !== model.ontologyId) setActiveId(model.ontologyId);
-      if (shapes && snap.activeDoc !== "shapes") projectStore.switchDocument("shapes");
+      if (shapes && snap.activeDoc !== shapes.doc) projectStore.switchDocument(shapes.doc);
     } else if (was === "shapes") {
       if (mode === "view" && shapes) {
         setActiveId(shapes.ontologyId);
         shapesInView.current = true;
-      } else if (snap.activeDoc !== "model") projectStore.switchDocument("model");
+      } else if (model && snap.activeDoc !== model.doc) projectStore.switchDocument(model.doc);
     } else if (was === "view" && mode !== "view" && shapesInView.current) {
       shapesInView.current = false;
       if (model && activeId !== model.ontologyId) setActiveId(model.ontologyId);
-      if (snap.activeDoc !== "model") projectStore.switchDocument("model");
+      if (model && snap.activeDoc !== model.doc) projectStore.switchDocument(model.doc);
     }
     // activeId is read, not followed: only entering, leaving, or the first
     // shape making shapes.ttl moves the document.
@@ -999,7 +1044,8 @@ export default function App() {
     (editingProjectDoc && projectDoc && openProjectSummary
       ? {
           id: projectDoc.ontologyId,
-          name: `${openProjectSummary.name} (${projectDoc.doc}.ttl)`,
+          // The file by its path (multi-file-projects 5.1), never its id.
+          name: `${openProjectSummary.name} (${filePath(projectDoc)})`,
           source: "project",
           format: "turtle",
           triples: projectDoc.triples,
@@ -1516,18 +1562,29 @@ export default function App() {
         if (!iri) return;
         if (to === "edit") {
           const snap = projectStore.getSnapshot();
-          const model = snap.documents.find((d) => d.doc === "model");
-          if (!model) return;
+          const shown = snap.documents.find((d) => d.doc === snap.editDoc) ?? primaryDocument(snap.documents);
+          if (!shown) return;
           const block = finding.block;
-          setCheckBlock((held) => (block ? { iri, block, token: (held?.token ?? 0) + 1 } : null));
-          if (snap.activeDoc !== "model") projectStore.switchDocument("model");
-          setMode("hierarchy");
-          if (activeId !== model.ontologyId) {
-            pendingSelection.current = iri;
-            setActiveId(model.ontologyId);
-          } else {
-            selectAndFocus(iri, true);
+          const open = (model: ProjectDocumentState) => {
+            setCheckBlock((held) => (block ? { iri, block, token: (held?.token ?? 0) + 1 } : null));
+            if (projectStore.getSnapshot().activeDoc !== model.doc) projectStore.switchDocument(model.doc);
+            setMode("hierarchy");
+            if (activeId !== model.ontologyId) {
+              pendingSelection.current = iri;
+              setActiveId(model.ontologyId);
+            } else {
+              selectAndFocus(iri, true);
+            }
+          };
+          // The term in its own file (multi-file-projects 5.3 item 6): the
+          // file Edit shows knows, by fromFile, when another one defines it.
+          if (snap.documents.filter((d) => !isShapesDoc(d)).length < 2) {
+            open(shown);
+            return;
           }
+          void getNodeDetails(shown.ontologyId, iri)
+            .then((d) => d.fromFile?.doc, () => undefined)
+            .then((owner) => open(projectStore.getSnapshot().documents.find((d) => d.doc === owner) ?? shown));
           return;
         }
         setMode("explore");
@@ -1587,9 +1644,9 @@ export default function App() {
     (iri: string) => {
       guardEditor(() => {
         const snap = projectStore.getSnapshot();
-        const model = snap.documents.find((d) => d.doc === "model");
+        const model = snap.documents.find((d) => d.doc === snap.editDoc) ?? primaryDocument(snap.documents);
         if (!model) return;
-        if (snap.activeDoc !== "model") projectStore.switchDocument("model");
+        if (snap.activeDoc !== model.doc) projectStore.switchDocument(model.doc);
         setSourceTarget(null);
         setMode("explore");
         if (activeId !== model.ontologyId) {
@@ -1605,8 +1662,11 @@ export default function App() {
 
   // Edit in Turtle (5.5): View on shapes.ttl, the caret at the shape.
   const editShapeInTurtle = useCallback(
-    (shape: { iri: string | null }) => {
+    (shape: { iri: string | null; doc?: string }) => {
       const project = projectStore.getSnapshot().project;
+      // The shape's own file (multi-file-projects 8.1): View shows the
+      // active shapes file, so it is made the active one first.
+      if (shape.doc && projectStore.getSnapshot().activeDoc !== shape.doc) projectStore.switchDocument(shape.doc);
       const find: string[] = [];
       if (shape.iri && project) {
         if (shape.iri.startsWith(project.baseIri)) find.push(`${project.prefix}:${shape.iri.slice(project.baseIri.length)}`);
@@ -1834,6 +1894,40 @@ export default function App() {
     } else run();
   };
 
+  // Choosing a file in Files (multi-file-projects 5.5 item 3): an ontology
+  // or vocabulary file opens on the Edit page, a shapes file on the Shapes
+  // page; with `iri`, Open file from another file's term selects it there.
+  const onOpenFile = (doc: ProjectDocName, iri?: string) => {
+    guardEditor(() => {
+      const target = projectStore.getSnapshot().documents.find((d) => d.doc === doc);
+      if (!target) return;
+      shapesInView.current = false;
+      setSourceTarget(null);
+      projectStore.switchDocument(doc);
+      if (isShapesDoc(target)) {
+        setMode("shapes");
+        return;
+      }
+      setMode("hierarchy");
+      if (activeId !== target.ontologyId) {
+        if (iri) pendingSelection.current = iri;
+        setActiveId(target.ontologyId);
+      } else if (iri) {
+        selectAndFocus(iri, true);
+      }
+    });
+  };
+
+  // A file removed in Files (5.5 item 7): when it was the one shown, the
+  // views go to the file the store moved to, as its id is gone.
+  const onFileRemoved = (removed: ProjectDocName, next: ProjectDocumentState | null) => {
+    const gone = `${openProjectSummary?.id}-${removed}`;
+    if (activeId !== gone) return;
+    setSelected(null);
+    const to = next && !isShapesDoc(next) ? next : primaryDocument(projectStore.getSnapshot().documents);
+    if (to) setActiveId(to.ontologyId);
+  };
+
   const onSwitchDocument = (doc: ProjectDocName) => {
     guardEditor(() => {
       const target = projectStore.getSnapshot().documents.find((d) => d.doc === doc);
@@ -1910,6 +2004,28 @@ export default function App() {
     }
   };
 
+  // The Edit page's outline, inside the left column with Files for a
+  // project, alone for a library ontology.
+  const outline = (
+    <HierarchyView
+      ontologyId={activeId}
+      selected={selected}
+      onSelect={selectFromOutsideGraph}
+      imports={includeImports}
+      revision={viewRevision}
+      language={displayLanguage}
+      editing={editingModel}
+      onDeleted={onEntityDeleted}
+      canvas={canvasLent}
+      dataSources={projectData?.snapshots}
+      onImportData={editingModel ? openDataImport : undefined}
+      inferred={inferredMarks}
+      inferredToken={reasoningToken}
+      canvasShown={showCanvas}
+      onCounts={editingModel ? setModelCounts : undefined}
+    />
+  );
+
   // The Edit page's details, built once for its two places: the side
   // panel's Details tab, and beside a library ontology's outline (5.9).
   const editDetail =
@@ -1927,6 +2043,7 @@ export default function App() {
         editing={editingModel}
         readOnlyNote={readOnlyNote}
         onDeleted={onEntityDeleted}
+        onOpenFile={openProjectSummary ? onOpenFile : undefined}
         canvas={canvasLent}
         inferred={detailInferred}
         scrollTo={checkBlock && checkBlock.iri === selected ? checkBlock : null}
@@ -2250,14 +2367,18 @@ export default function App() {
           }}
         />
       ) : mode === "shapes" && openProjectSummary ? (
-        <main className="main">
+        <main className="main shapes-page">
+          {/* Files above the page's own list (multi-file-projects 5.5, D-132). */}
+          <div className="files-column">
+            <FilesPanel onOpenFile={onOpenFile} onRemoved={onFileRemoved} onError={(message) => setError(message)} />
+          </div>
           <ShapesView
             // Another project is a new list: its arrival selects its own first shape.
             key={openProjectSummary.id}
             projectId={openProjectSummary.id}
             kind={openProjectSummary.kind}
             languages={[openProjectSummary.primaryLanguage, ...openProjectSummary.languages]}
-            modelOntologyId={projectDocuments.find((d) => d.doc === "model")?.ontologyId ?? activeId!}
+            modelOntologyId={modelOntologyId ?? activeId!}
             onSelectEntity={selectFromResults}
             onEditInTurtle={editShapeInTurtle}
             onError={(message) => setError(message)}
@@ -2285,23 +2406,17 @@ export default function App() {
             !editingModel ? "main edit-page library" : showCanvas ? "main edit-page with-canvas" : "main edit-page no-canvas"
           }
         >
-          <HierarchyView
-            ontologyId={activeId}
-            selected={selected}
-            onSelect={selectFromOutsideGraph}
-            imports={includeImports}
-            revision={viewRevision}
-            language={displayLanguage}
-            editing={editingModel}
-            onDeleted={onEntityDeleted}
-            canvas={canvasLent}
-            dataSources={projectData?.snapshots}
-            onImportData={editingModel ? openDataImport : undefined}
-            inferred={inferredMarks}
-            inferredToken={reasoningToken}
-            canvasShown={showCanvas}
-            onCounts={editingModel ? setModelCounts : undefined}
-          />
+          {/* Files above Outline, each its own section (multi-file-projects
+              5.5 item 1, D-132), for a project only: a library ontology is
+              one file and has no Files. */}
+          {openProjectSummary ? (
+            <div className="edit-left">
+              <FilesPanel onOpenFile={onOpenFile} onRemoved={onFileRemoved} onError={(message) => setError(message)} />
+              {outline}
+            </div>
+          ) : (
+            outline
+          )}
           {showCanvas && openProjectSummary && editingModel && (
             <CanvasBoundary onRetry={() => setModelCanvas(loadCanvas)}>
               <Suspense
@@ -2313,7 +2428,7 @@ export default function App() {
               >
                 <ModelCanvas
                   projectId={openProjectSummary.id}
-                  doc="model"
+                  doc={openDocName ?? "model"}
                   revision={revision}
                   language={displayLanguage}
                   primaryLanguage={editingModel.primaryLanguage}
@@ -2480,10 +2595,10 @@ export default function App() {
                   <ChecksView
                     key={activeId}
                     ontologyId={activeId}
-                    name={projectDoc.doc === "shapes" ? `${openProjectSummary.name} shapes` : openProjectSummary.name}
-                    revision={revision}
+                    name={isShapesDoc(projectDoc) ? `${openProjectSummary.name} shapes` : openProjectSummary.name}
+                    revision={isShapesDoc(projectDoc) ? (shapesRevisionOf(projectDocuments, revisionShift) ?? 0) : modelRevision}
                     ownBase={openProjectSummary.baseIri}
-                    shapesDoc={projectDoc.doc === "shapes"}
+                    shapesDoc={isShapesDoc(projectDoc)}
                     projectId={openProjectSummary.id}
                     onOpen={openFromChecks}
                     onOpenQuery={openCheckAsQuery}
@@ -2552,6 +2667,7 @@ export default function App() {
                 editing={editingModel}
                 readOnlyNote={readOnlyNote}
                 onDeleted={onEntityDeleted}
+                onOpenFile={openProjectSummary ? onOpenFile : undefined}
               />
             )
           ) : null}

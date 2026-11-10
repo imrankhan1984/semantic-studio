@@ -73,7 +73,7 @@ import {
 } from "../modeling/ruleSentences";
 import { projectStore, useProjectSelector } from "../state/projectStore";
 import type { ClassRules, RuleItem, RuleKey, RuleRestriction } from "../types";
-import { useRunner, type Runner } from "./EditParts";
+import { useRunner, useShapesDoc, type Runner } from "./EditParts";
 import { useWarningAnnouncer } from "./RelationshipForm";
 import RuleBuilder from "./RuleBuilder";
 
@@ -92,7 +92,7 @@ type Open = null | { initial: BuilderState | null; replacing: RuleKey | null; fr
 
 export default function RulesBlock({ iri, name, rules, runner, onSelect }: Props) {
   const { busy, errors, run, clear } = runner;
-  const shapes = useRunner("shapes");
+  const shapes = useRunner(useShapesDoc());
   const [open, setOpenState] = useState<Open>(null);
   const opened = useRef(0);
   const setOpen = (next: Omit<NonNullable<Open>, "token"> | null) =>

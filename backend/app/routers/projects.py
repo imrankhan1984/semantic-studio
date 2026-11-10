@@ -16,7 +16,10 @@ SUMMARY
     on demand (shacl-authoring 5.1 to 5.7); reasoning on demand, its
     Stop, its pages and its reasons (axioms-and-reasoning Stage A); and a
     document's vocabularies and Add a vocabulary's inspect
-    (vocabularies-and-ontologies 5.2, 5.3, D-128).
+    (vocabularies-and-ontologies 5.2, 5.3, D-128); and a project's files
+    and folders (multi-file-projects 8.2, D-131): New file, a file's rename
+    or move (PATCH) and removal (DELETE), and a folder's creation and
+    removal.
 
 BASIC IDEA
     Thin, like the other routers: shape the request, call projects.py or
@@ -40,6 +43,12 @@ BASIC IDEA
     multipart under the upload cap, as Load's, and a choice is JSON under
     16 KB; a web address reaches the broker only through vocabularies.py,
     so an unapproved host is main.py's 409 before any request leaves.
+
+    A route taking {doc} that reads a body (the apply, the layout, a file's
+    rename or move) matches the project, then the id against the manifest,
+    before it reads a byte (multi-file-projects 8.2): an id not issued is 404
+    and no file is read. A refused name or folder is 422 with its sentence
+    and the field it concerns (`{code: "path", field, message}`).
 
 INPUTS / INPUT SOURCES
     - HTTP requests from the frontend, every mutating one carrying the client
@@ -81,7 +90,7 @@ from ..editing import (
     editing_service,
     project_store,
 )
-from ..projects import DESCRIPTION_MAX, LAYOUT_MAX_BYTES, ProjectError, UnknownDocument, UnknownProject
+from ..projects import DESCRIPTION_MAX, LAYOUT_MAX_BYTES, PathRefused, ProjectError, UnknownDocument, UnknownProject
 from ..store import ParseError, ParseTimeout, detect_format, store
 from . import ontologies
 
@@ -133,7 +142,28 @@ class CloseProject(BaseModel):
 
 
 class NewDocument(BaseModel):
-    role: Literal["shapes"]
+    """A new file (multi-file-projects 8.2). `{role: "shapes"}` alone keeps
+    its meaning, shapes.ttl at the root; with a name, any role, at a folder.
+    Each name and folder is held to 8.3 in projects.py, where the sentence
+    and the field it concerns come from."""
+    role: Literal["ontology", "vocabulary", "shapes"]
+    name: Optional[str] = Field(default=None, max_length=200)
+    folder: str = Field(default="", max_length=400)
+
+
+class MoveDocument(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=200)
+    folder: Optional[str] = Field(default=None, max_length=400)
+
+
+class FolderPath(BaseModel):
+    path: str = Field(max_length=400)
+
+
+# The body of a file's rename or move, and of a folder's create or remove:
+# a few names, read capped, and only after the project and the id are known.
+SMALL_BODY_MAX_BYTES = 16 * 1024
+SMALL_BODY_TOO_LARGE = "This request is larger than a file or folder name can make it."
 
 
 class RunCommand(BaseModel):
@@ -164,6 +194,13 @@ def _errors():
         yield
     except (UnknownProject, UnknownDocument) as exc:
         raise HTTPException(status_code=404, detail="There is no such project or document.") from exc
+    except PathRefused as exc:
+        # A name or a folder outside 8.3, or a limit of 8.5 (multi-file-
+        # projects 5.5 item 8): the sentence and the field it belongs beside.
+        # Caught before ProjectError, which it subclasses.
+        raise HTTPException(
+            status_code=422, detail={"code": "path", "field": exc.field, "message": str(exc)},
+        ) from exc
     except NotOpen as exc:
         raise HTTPException(status_code=409, detail="Open the project first.") from exc
     except Dirty as exc:
@@ -311,7 +348,69 @@ def close_project(pid: str, body: Optional[CloseProject] = None) -> dict:
 @router.post("/{pid}/documents")
 def add_document(pid: str, body: NewDocument) -> dict:
     with _errors():
-        return editing_service.add_document(pid, body.role)
+        if body.name is None:
+            if body.role != "shapes" or body.folder:
+                raise PathRefused("A new file needs a name.", "name")
+            return editing_service.add_document(pid, body.role)
+        return editing_service.add_file(pid, body.role, body.name, body.folder)
+
+
+def _known(pid: str, doc: str) -> None:
+    """The project, then the id against the manifest (8.2): an id not
+    issued is 404 before any body is read and before any file is."""
+    project_store.folder(pid)
+    project_store.entry(pid, doc)
+
+
+@router.patch("/{pid}/documents/{doc}")
+async def move_document(pid: str, doc: str, request: Request) -> dict:
+    """Rename or move a file (5.5 item 6): its path only."""
+    with _errors():
+        _known(pid, doc)
+    payload = await ontologies.read_json_capped(request, SMALL_BODY_MAX_BYTES, SMALL_BODY_TOO_LARGE)
+    try:
+        body = MoveDocument.model_validate(payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="The body is {name?, folder?}.") from exc
+    with _errors():
+        return await run_in_threadpool(editing_service.move_file, pid, doc, body.name, body.folder)
+
+
+@router.delete("/{pid}/documents/{doc}")
+def remove_document(pid: str, doc: str) -> dict:
+    """To the project's own trash (5.5 item 7)."""
+    with _errors():
+        _known(pid, doc)
+        return editing_service.remove_file(pid, doc)
+
+
+async def _folder_body(pid: str, request: Request) -> FolderPath:
+    with _errors():
+        project_store.folder(pid)
+    payload = await ontologies.read_json_capped(request, SMALL_BODY_MAX_BYTES, SMALL_BODY_TOO_LARGE)
+    try:
+        return FolderPath.model_validate(payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="The body is {path}.") from exc
+
+
+@router.post("/{pid}/folders")
+async def create_folder(pid: str, request: Request) -> dict:
+    body = await _folder_body(pid, request)
+    with _errors():
+        # Off the event loop: it waits on the project store's lock, which
+        # an open's folder index holds while it reads found files.
+        return await run_in_threadpool(editing_service.create_folder, pid, body.path)
+
+
+@router.delete("/{pid}/folders")
+async def remove_folder(pid: str, request: Request) -> dict:
+    """An empty folder only (5.5 item 4)."""
+    body = await _folder_body(pid, request)
+    with _errors():
+        # Off the event loop: it waits on the project store's lock, which
+        # an open's folder index holds while it reads found files.
+        return await run_in_threadpool(editing_service.remove_folder, pid, body.path)
 
 
 @router.post("/{pid}/documents/{doc}/commands")
@@ -336,8 +435,11 @@ async def put_source(pid: str, doc: str, request: Request) -> dict:
 
     Invalid Turtle changes nothing and comes back 422 with line, column and
     rdflib's message. The body is read in chunks and refused past the upload
-    cap while reading, not after.
+    cap while reading, not after, and only once the project and the id are
+    known (multi-file-projects 8.2).
     """
+    with _errors():
+        _known(pid, doc)
     limit = settings.upload_bytes()
     chunks: list[bytes] = []
     total = 0
@@ -390,6 +492,8 @@ def get_layout(pid: str, doc: str) -> dict:
 async def put_layout(pid: str, doc: str, request: Request) -> dict:
     """Replace the canvas layout. Not a model change: no revision, no dirty
     flag, no undo step (D-087). Validated in projects.validate_layout."""
+    with _errors():
+        _known(pid, doc)
     payload = await ontologies.read_json_capped(request, LAYOUT_MAX_BYTES, LAYOUT_TOO_LARGE)
     with _errors():
         return editing_service.put_layout(pid, doc, payload)
@@ -417,7 +521,7 @@ class InspectChoice(BaseModel):
 
 def _with_added(pid: str, found: dict) -> dict:
     """`alreadyAdded`, from the list as it stands (5.9)."""
-    rows = editing_service.vocabularies(pid, "model")["rows"]
+    rows = editing_service.vocabularies(pid, editing_service.primary(pid).doc)["rows"]
     source = vocabularies.source_for(found["iri"])
     found["alreadyAdded"] = any(
         r["status"] == "added" and (source.answers_to(r["iri"]) if source else r["iri"] == found["iri"])

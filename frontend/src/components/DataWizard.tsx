@@ -94,7 +94,7 @@ import {
   unmatchedLines,
 } from "../modeling/dataSentences";
 import { wizardKindLine, wizardKindNote } from "../modeling/sentences";
-import { defaultClassType, projectStore, useProjectSelector } from "../state/projectStore";
+import { defaultClassType, editDocId, projectStore, useProjectSelector } from "../state/projectStore";
 import type {
   ClassType,
   ColumnChoice,
@@ -937,7 +937,7 @@ function RowStep({
     const label = newName.trim();
     if (!label) return;
     try {
-      const result = await projectStore.command("CreateClass", { label, type: kind }, undefined, "model");
+      const result = await projectStore.command("CreateClass", { label, type: kind }, undefined, editDocId());
       setCreating(false);
       setNewName("");
       setLoadToken((t) => t + 1);
@@ -1105,7 +1105,7 @@ function ColumnsStep({
         "CreateDatatypeProperty",
         { label, domain: classIri, datatype },
         undefined,
-        "model",
+        editDocId(),
       );
       setAdding(null);
       if (result.created) onCreated(column, result.created);

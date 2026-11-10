@@ -104,5 +104,7 @@ describe("kind colours (edit-page-rework 5.8)", () => {
     expect(kindWord({ kind: "concept" })).toBe("concept");
     expect(kindWord({ kind: "class", imported: "FOAF" })).toBe("imported · FOAF");
     expect(kindWord({ kind: "class", imported: "outside" })).toBe("outside this model");
+    // Another project file's box, by its file name (multi-file-projects 5.3).
+    expect(kindWord({ kind: "class", imported: "modules/pumps.ttl", fromFile: { doc: "f00000001", file: "modules/pumps.ttl" } })).toBe("in pumps.ttl");
   });
 });

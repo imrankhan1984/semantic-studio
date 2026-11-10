@@ -78,6 +78,16 @@ BASIC IDEA
     (attribute-reuse 5.6), unless its form chose: the server keeps that
     choice in the manifest and the summary here follows its answer.
 
+    A project is a folder of files (multi-file-projects, D-131), each with an
+    id and a role. `activeDoc` is any of them; `editDoc` is the ontology or
+    vocabulary file the Edit page last showed, which the commands made
+    outside a file's own view (Add a vocabulary, the data wizard, a draft)
+    run on, as they ran on model.ttl before. The Files panel's actions --
+    New file, New folder, Rename, Move, Remove -- are here, each replacing
+    the list from the server's answer. The views key on the sum of every
+    file's revision (projectRevision), so a change in one file refreshes
+    the others' views (5.3 item 7).
+
 INPUTS / INPUT SOURCES
     - api.ts, for every project call.
 
@@ -91,8 +101,13 @@ import { useSyncExternalStore } from "react";
 import {
   ApiError,
   applyDocumentSource,
+  addProjectFile,
   closeProject,
+  createProjectFolder,
   listData,
+  moveProjectFile,
+  removeProjectFile,
+  removeProjectFolder,
   openProject,
   recoverProject,
   redoChange,
@@ -112,6 +127,8 @@ import type {
   ChangeResult,
   ClassType,
   CreatingKind,
+  FileRole,
+  IndexNotice,
   ProjectDocName,
   ProjectDocumentState,
   ProjectSummary,
@@ -126,6 +143,18 @@ export interface ProjectSnapshot {
   project: ProjectSummary | null;
   documents: ProjectDocumentState[];
   activeDoc: ProjectDocName;
+  /** The ontology or vocabulary file the Edit page last showed: where a
+   *  command made outside a file's own view runs (multi-file-projects). */
+  editDoc: ProjectDocName;
+  /** The project's folders, by path from the project folder, sorted. */
+  folders: string[];
+  /** What the open's folder index found, dropped and skipped (5.2), said
+   *  once at the top of the Files panel until dismissed. */
+  fileNotice: IndexNotice | null;
+  /** The server's shift (5.3 item 7): added to every sum of the files'
+   *  revisions so it grows when a file is added, moved or removed. Taken
+   *  from the server's answers, never counted here. */
+  revisionShift: number;
   saving: boolean;
   displayLanguage: string | null;
   recovery: { draftTime: string } | null;
@@ -230,6 +259,10 @@ const EMPTY: ProjectSnapshot = {
   project: null,
   documents: [],
   activeDoc: "model",
+  editDoc: "model",
+  folders: [],
+  fileNotice: null,
+  revisionShift: 0,
   saving: false,
   displayLanguage: null,
   recovery: null,
@@ -390,6 +423,66 @@ export function activeDocument(
   return state.documents.find((d) => d.doc === state.activeDoc) ?? null;
 }
 
+/** A file's role (5.1 item 3): the server's word, or for a state from a
+ *  server before E-16 the one its id meant. */
+export function docRole(d: Pick<ProjectDocumentState, "doc"> & { role?: FileRole }): FileRole {
+  return d.role ?? (d.doc === "shapes" ? "shapes" : "ontology");
+}
+
+export function isShapesDoc(d: Pick<ProjectDocumentState, "doc"> & { role?: FileRole }): boolean {
+  return docRole(d) === "shapes";
+}
+
+/** The project's first ontology or vocabulary file: model.ttl in every
+ *  project made before E-16. Its id carries the project's saved queries. */
+export function primaryDocument(documents: ProjectDocumentState[]): ProjectDocumentState | null {
+  return documents.find((d) => d.doc === "model") ?? documents.find((d) => !isShapesDoc(d)) ?? null;
+}
+
+/** The first shapes file (5.1 item 5), where a form writes a shape; null
+ *  while the project has none, when the first shape command makes one. */
+export function mainShapesDocument(documents: ProjectDocumentState[]): ProjectDocumentState | null {
+  return documents.find(isShapesDoc) ?? null;
+}
+
+/** The id a shape command goes to: the main shapes file, or `shapes`, which
+ *  the server makes on the first one (shacl-authoring 8). */
+export function shapesDocId(documents: ProjectDocumentState[]): ProjectDocName {
+  return mainShapesDocument(documents)?.doc ?? "shapes";
+}
+
+/** The sum of the ontology and vocabulary files' revisions, or of every
+ *  file's, and the server's shift (5.3 item 7): what the server keys a
+ *  whole-project answer on. A sum alone stays put or comes round again
+ *  when a file is removed; with the shift it only grows. */
+export function projectRevision(
+  documents: ProjectDocumentState[],
+  modelOnly = true,
+  shift: number = snapshot.revisionShift,
+): number {
+  return documents.reduce((sum, d) => (modelOnly && isShapesDoc(d) ? sum : sum + d.revision), shift);
+}
+
+/** The sum of the shapes files' revisions and the shift, null while there
+ *  is none. */
+export function shapesRevision(documents: ProjectDocumentState[], shift: number = snapshot.revisionShift): number | null {
+  const shapes = documents.filter(isShapesDoc);
+  return shapes.length ? shapes.reduce((sum, d) => sum + d.revision, shift) : null;
+}
+
+/** The id commands made outside a file's own view run on. */
+export function editDocId(): ProjectDocName {
+  return snapshot.editDoc;
+}
+
+/** The backup a first clean save of a commented file keeps (D-083), named
+ *  by its file: model.original.ttl, core.original.ttl. */
+function backupName(doc: ProjectDocName): string {
+  const file = snapshot.documents.find((d) => d.doc === doc)?.file ?? `${doc}.ttl`;
+  const base = file.split("/").pop() ?? file;
+  return `${base.replace(/\.ttl$/i, "")}.original.ttl`;
+}
+
 /** The data snapshots' generation, 0 before any is known. */
 export function dataGenerationOf(state: Pick<ProjectSnapshot, "data">): number {
   return state.data?.generation ?? 0;
@@ -457,12 +550,24 @@ export const projectStore = {
     const opened = await openProject(pid);
     validationRun++;
     reasoningRun++;
+    const primary = primaryDocument(opened.documents)!;
+    const notice: IndexNotice = {
+      found: opened.found ?? [],
+      missing: opened.missing ?? [],
+      skipped: opened.skipped ?? [],
+      wroteModel: opened.wroteModel ?? false,
+    };
     set({
       ...EMPTY,
       announcement: snapshot.announcement,
       project: opened.project,
       documents: opened.documents,
-      activeDoc: "model",
+      activeDoc: primary.doc,
+      editDoc: primary.doc,
+      folders: opened.folders ?? [],
+      revisionShift: opened.revisionShift ?? 0,
+      fileNotice:
+        notice.found.length || notice.missing.length || notice.skipped.length || notice.wroteModel ? notice : null,
       displayLanguage: opened.project.primaryLanguage,
       recovery:
         opened.recovery.available && opened.recovery.draftTime
@@ -472,7 +577,7 @@ export const projectStore = {
     announce(`Opened ${opened.project.name}. ${STATUS_WORDS[saveStatus(snapshot)]}.`);
     // The snapshot list is not needed to show the project, so it follows.
     void projectStore.loadData().catch(() => undefined);
-    return opened.documents.find((d) => d.doc === "model")!.ontologyId;
+    return primary.ontologyId;
   },
 
   /** Fetch the open project's data snapshots. Kept only if the project
@@ -525,14 +630,90 @@ export const projectStore = {
   },
 
   switchDocument(doc: ProjectDocName): void {
-    set({ activeDoc: doc, editorDraft: null });
+    const next = snapshot.documents.find((d) => d.doc === doc);
+    // An ontology or vocabulary file becomes the one Edit shows.
+    const editDoc = next && !isShapesDoc(next) ? doc : snapshot.editDoc;
+    set({ activeDoc: doc, editDoc, editorDraft: null });
+  },
+
+  dismissFileNotice(): void {
+    if (snapshot.fileNotice !== null) set({ fileNotice: null });
+  },
+
+  /** New file (5.5 item 5). The server's answer carries the new file's
+   *  state; the list follows it, and the caller opens the file. A refusal
+   *  throws the server's ApiError, its sentence and field in `detail`. */
+  async addFile(role: FileRole, name: string, folder: string): Promise<ProjectDocumentState> {
+    const project = requireProject();
+    const made = await addProjectFile(project.id, role, name, folder);
+    if (snapshot.project?.id !== project.id) return made.document;
+    set({
+      documents: [...snapshot.documents, made.document], folders: made.folders,
+      project: made.project ?? snapshot.project, revisionShift: made.revisionShift ?? snapshot.revisionShift,
+    });
+    announce(`Created ${made.entry.file}.`);
+    return made.document;
+  },
+
+  /** Rename or move (5.5 item 6): the path only; id, history and layout stay. */
+  async moveFile(doc: ProjectDocName, change: { name?: string; folder?: string }): Promise<ProjectDocumentState> {
+    const project = requireProject();
+    const moved = await moveProjectFile(project.id, doc, change);
+    if (snapshot.project?.id !== project.id) return moved.document;
+    set({ documents: withDocument(moved.document), folders: moved.folders, revisionShift: moved.revisionShift ?? snapshot.revisionShift });
+    announce(`${change.name === undefined ? "Moved" : "Renamed"} to ${moved.entry.file}.`);
+    return moved.document;
+  },
+
+  /** Remove (5.5 item 7): to the project's trash. The active file falls
+   *  back to the project's first ontology file. */
+  async removeFile(doc: ProjectDocName): Promise<ProjectDocumentState | null> {
+    const project = requireProject();
+    const gone = snapshot.documents.find((d) => d.doc === doc);
+    const result = await removeProjectFile(project.id, doc);
+    if (snapshot.project?.id !== project.id) return null;
+    const documents = snapshot.documents.filter((d) => d.doc !== doc);
+    const primary = primaryDocument(documents);
+    const activeDoc = snapshot.activeDoc === doc ? (primary?.doc ?? "model") : snapshot.activeDoc;
+    const editDoc = snapshot.editDoc === doc ? (primary?.doc ?? "model") : snapshot.editDoc;
+    set({
+      documents, folders: result.folders, activeDoc, editDoc,
+      editorDraft: snapshot.activeDoc === doc ? null : snapshot.editorDraft,
+      revisionShift: result.revisionShift ?? snapshot.revisionShift,
+    });
+    announce(`Moved ${gone?.file ?? "the file"} to the project's trash.`);
+    // What the views go to when the removed file was the one shown.
+    return documents.find((d) => d.doc === activeDoc) ?? null;
+  },
+
+  async createFolder(path: string): Promise<string[]> {
+    const project = requireProject();
+    const result = await createProjectFolder(project.id, path);
+    if (snapshot.project?.id === project.id) {
+      set({ folders: result.folders });
+      announce(`Created the folder ${path}.`);
+    }
+    return result.folders;
+  },
+
+  async removeFolder(path: string): Promise<string[]> {
+    const project = requireProject();
+    const result = await removeProjectFolder(project.id, path);
+    if (snapshot.project?.id === project.id) {
+      set({ folders: result.folders });
+      announce(`Removed the folder ${path}.`);
+    }
+    return result.folders;
   },
 
   /** Track a newly added document (shapes.ttl) from a fresh open. */
   async reload(): Promise<void> {
     const project = requireProject();
     const opened = await openProject(project.id);
-    set({ project: opened.project, documents: opened.documents });
+    set({
+      project: opened.project, documents: opened.documents, folders: opened.folders ?? snapshot.folders,
+      revisionShift: opened.revisionShift ?? snapshot.revisionShift,
+    });
   },
 
   async undo(): Promise<void> {
@@ -577,7 +758,10 @@ export const projectStore = {
       // The first shape command made shapes.ttl (shacl-authoring 8): track
       // it from a fresh open, as Add shapes.ttl does.
       const opened = await openProject(project.id);
-      set({ project: opened.project, documents: opened.documents });
+      set({
+        project: opened.project, documents: opened.documents, folders: opened.folders ?? snapshot.folders,
+        revisionShift: opened.revisionShift ?? snapshot.revisionShift,
+      });
     }
     if (announcement) {
       set({ documents: changedDocuments(result) });
@@ -660,7 +844,7 @@ export const projectStore = {
       // An edit made while it ran leaves it stale on arrival (5.3): saying
       // only "Reasoned in 4 s" would call it current.
       const now: ReasoningNow = {
-        revision: snapshot.documents.find((d) => d.doc === "model")?.revision ?? 0,
+        revision: projectRevision(snapshot.documents),
         generation: dataGenerationOf(snapshot),
         imports: importsNow(),
       };
@@ -750,7 +934,7 @@ export const projectStore = {
     set({ creatingBusy: true, creatingError: null });
     try {
       const [name, args] = draftCommand(draft, draft.extra);
-      const result = await projectStore.command(name, args, undefined, "model");
+      const result = await projectStore.command(name, args, undefined, snapshot.editDoc);
       // Closed, or another draft begun, while it ran: nothing to finish.
       if (snapshot.creating?.token !== draft.token) return result.created ?? null;
       // The field pressed is about to go: focus waits where the creation
@@ -857,11 +1041,7 @@ export const projectStore = {
         return "warning";
       }
       set({ documents: withDocument(result.state) });
-      announce(
-        confirmRewrite
-          ? `Saved. The previous file was kept as ${doc}.original.ttl.`
-          : "Saved.",
-      );
+      announce(confirmRewrite ? `Saved. The previous file was kept as ${backupName(doc)}.` : "Saved.");
       return "saved";
     } finally {
       set({ saving: false });

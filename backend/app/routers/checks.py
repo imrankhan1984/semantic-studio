@@ -18,7 +18,11 @@ BASIC IDEA
     event loop (the load-bearing rule test_load_cancel.py scans for). A
     project document is named by its ontology id (prj-<hex>-model), or by
     the project id with `doc`; either way the id is matched in full before
-    it names anything, and one not issued is 404.
+    it names anything, and one not issued is 404. A project's report reads
+    the whole project (multi-file-projects 5.3 item 6): every ontology and
+    vocabulary file for any of them, every shapes file for a shapes file,
+    the same answer whichever is asked; its saved queries, the competency
+    questions, are kept on its first ontology file.
 
 INPUTS / INPUT SOURCES
     - The ontology store and, for a project document, its manifest.
@@ -43,7 +47,7 @@ from fastapi import APIRouter, HTTPException
 
 from .. import checks, settings
 from ..editing import NotOpen, editing_service, project_store
-from ..projects import PROJECT_ID, UnknownProject, split_document_id
+from ..projects import DOC_ID, PROJECT_ID, UnknownProject, split_document_id
 from ..store import store
 
 router = APIRouter(tags=["checks"])
@@ -57,10 +61,10 @@ def list_checks() -> list[dict]:
 
 
 @router.get("/api/ontologies/{oid}/checks")
-def run_checks(oid: str, doc: Optional[Literal["model", "shapes"]] = None) -> dict:
+def run_checks(oid: str, doc: Optional[str] = None) -> dict:
     if doc is not None:
-        # The project id with its document: matched in full first.
-        if not PROJECT_ID.fullmatch(oid):
+        # The project id with its document: both matched in full first.
+        if not PROJECT_ID.fullmatch(oid) or not DOC_ID.fullmatch(doc):
             raise HTTPException(status_code=404, detail=NOT_FOUND)
         oid = f"{oid}-{doc}"
     ontology = store.get(oid)
@@ -70,24 +74,36 @@ def run_checks(oid: str, doc: Optional[Literal["model", "shapes"]] = None) -> di
     project = None
     inferred = None
     questions = None
+    kind = "model"
+    whole = None
     if split is not None:
         try:
             project = project_store.manifest(split[0])
-            if split[1] == "model":
-                # The project's saved queries on its model are its competency
-                # questions (5.8), each run by the report.
-                questions = [q for q in project_store.queries(split[0]).list() if q.get("ontologyId") == ontology.id]
         except UnknownProject as exc:
             raise HTTPException(status_code=404, detail=NOT_FOUND) from exc
-        if split[1] == "model":
+        try:
+            # The report reads the whole project (multi-file-projects 5.3
+            # item 6): every ontology and vocabulary file, or every shapes
+            # file, whichever file was asked for; the same answer for any.
+            whole = editing_service.whole_for_checks(split[0], split[1])
+        except NotOpen:
+            whole = None
+        kind = whole["kind"] if whole is not None else ("shapes" if split[1] == "shapes" else "model")
+        if kind == "model":
+            # The project's saved queries are its competency questions
+            # (5.8), each run by the report: they are saved on the project's
+            # first ontology file, as they always were on model.ttl.
+            primary = whole["primary"] if whole is not None else ontology.id
+            questions = [q for q in project_store.queries(split[0]).list() if q.get("ontologyId") == primary]
             inferred = _current_inferred(split[0])
     return checks.run(
         ontology,
         project=project,
-        doc=split[1] if split else "model",
+        doc=kind,
         namespace=settings.namespace(),
         inferred=inferred,
         questions=questions,
+        whole=whole,
     )
 
 

@@ -44,7 +44,7 @@ EXPECTED OUTPUT
 */
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { projectStore } from "../state/projectStore";
+import { projectStore, shapesDocId, useProjectSelector } from "../state/projectStore";
 import type { ChangeResult, ProjectDocName } from "../types";
 
 /** Run one command for one field: its busy flag and its refusal. */
@@ -66,8 +66,14 @@ export interface Runner {
   alive: () => boolean;
 }
 
+/** The main shapes file's id (multi-file-projects 5.1 item 5), `shapes`
+ *  while the project has none: where a form writes a shape. */
+export function useShapesDoc(): ProjectDocName {
+  return useProjectSelector((s) => shapesDocId(s.documents));
+}
+
 /** `doc` names the document the commands go to; the open one by default.
- *  The Shapes view passes "shapes" (shacl-authoring 5.3). */
+ *  The Shapes view passes the main shapes file (shacl-authoring 5.3). */
 export function useRunner(doc?: ProjectDocName): Runner {
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});

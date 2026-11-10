@@ -58,7 +58,7 @@ import {
   panelName,
 } from "../modeling/shapeSentences";
 import { dataLabel } from "../modeling/dataSentences";
-import { dataGenerationOf, projectStore, useProjectSelector } from "../state/projectStore";
+import { dataGenerationOf, projectRevision, projectStore, shapesRevision, useProjectSelector } from "../state/projectStore";
 import type { DataSource, ProjectDocumentState, ValidationPanel, ValidationResult } from "../types";
 
 // A shape on every class or every concept checks the model itself, where an
@@ -77,9 +77,9 @@ export function isStale(
   generation: number | null = null,
 ): boolean {
   if (!result) return false;
-  const rev = (doc: string) => documents.find((d) => d.doc === doc)?.revision ?? null;
+  // The server's sums over the files (multi-file-projects 5.3 item 7).
   const data = generation !== null && result.revisions.data !== undefined && generation !== result.revisions.data;
-  return rev("model") !== result.revisions.model || rev("shapes") !== result.revisions.shapes || data;
+  return projectRevision(documents) !== result.revisions.model || shapesRevision(documents) !== result.revisions.shapes || data;
 }
 
 interface ButtonProps {

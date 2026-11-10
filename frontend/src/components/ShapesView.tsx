@@ -45,6 +45,10 @@ BASIC IDEA
     shows Shape; the form stays mounted, hidden, under Results, so a rule
     open in it keeps its edits through a run.
 
+    Every shapes file's shapes are listed, each carrying its file, and a
+    shape's form writes to its own file; a new shape goes to the main
+    shapes file, the first (multi-file-projects 5.1 item 5, 8.1).
+
 INPUTS / INPUT SOURCES (props)
     - projectId, kind, languages, modelOntologyId, revisions.
     - onSelectEntity: a problem's link (App selects the individual).
@@ -59,9 +63,9 @@ EXPECTED OUTPUT
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { getShapes } from "../api";
 import { STATE_WORDS, problemsFound, rowSentence } from "../modeling/shapeSentences";
-import { projectStore, useProjectSelector } from "../state/projectStore";
+import { projectRevision, projectStore, shapesRevision as shapesRevisionOf, useProjectSelector } from "../state/projectStore";
 import type { PanelState, ProjectKind, ShapeForm as Shape, ShapesListing } from "../types";
-import { useRunner, useReturnFocus } from "./EditParts";
+import { useRunner, useReturnFocus, useShapesDoc } from "./EditParts";
 import EntityPicker from "./EntityPicker";
 import ResultPanels, { ValidateButton, isStale } from "./ResultPanels";
 import ShapeForm from "./ShapeForm";
@@ -93,14 +97,16 @@ export default function ShapesView({
   const documents = useProjectSelector((s) => s.documents);
   const validation = useProjectSelector((s) => s.validation);
   const validating = useProjectSelector((s) => s.validating);
-  const modelRevision = documents.find((d) => d.doc === "model")?.revision ?? 0;
-  const shapesRevision = documents.find((d) => d.doc === "shapes")?.revision ?? null;
+  // Every file's revision (multi-file-projects 5.3 item 7): the shapes of
+  // every shapes file, about the classes of every other.
+  const modelRevision = projectRevision(documents);
+  const shapesRevision = shapesRevisionOf(documents);
   const revisions = `${modelRevision}|${shapesRevision}`;
   const [listing, setListing] = useState<ShapesListing | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [choosing, setChoosing] = useState<null | "menu" | "class">(null);
-  const runner = useRunner("shapes");
+  const runner = useRunner(useShapesDoc());
   const [plusRef, restorePlus] = useReturnFocus();
   const menuId = useId();
   const menuRef = useRef<HTMLDivElement>(null);

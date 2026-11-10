@@ -56,8 +56,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 2214 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 2117 tests, vitest
+cd backend  && python -m pytest tests    # 2362 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 2212 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -69,7 +69,7 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Forty-six backend tests carry
+**Timing budgets are separated, not deleted.** Forty-nine backend tests carry
 `@pytest.mark.perf`; twelve frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
@@ -193,9 +193,12 @@ backend/app/
   loads.py           The loads running now, by the browser's id; a cancel's
                      mark, which store.add reads before it writes (D-115)
   projects.py        Project folders and manifests: create, list, rename,
-                     duplicate, trash, export; per-project saved queries
+                     duplicate, trash, export; per-project saved queries;
+                     a project's files (D-131): ids, the folder index, the
+                     path rules of 8.3, New file, Move, Remove, folders
   editing.py         The only mutator of a project document: commands, undo,
-                     Turtle apply, save rule, autosave, recovery
+                     Turtle apply, save rule, autosave, recovery; every file
+                     of a project, the lock order, the cross-file refusal
   modeling_checks.py The 5.9 checks: refusals and warnings, in plain words
   templates/         The three New project templates, Turtle with placeholders
   graph_builder.py   RDF -> visualization nodes and edges, labels, node kinds
@@ -284,6 +287,10 @@ frontend/src/
                      measures' words, staleness, where a finding leads
   vocabularies/      Pure Vocabularies words (words.ts, D-128): a row's
                      status and source, its use, its menu, the dialog's tabs
+  files/             Pure Files panel logic (multi-file-projects, D-131): the
+                     name rule (names.ts, with names.table.json, the one
+                     table both sides test) and the tree's order and words
+                     (tree.ts)
   connectionWords.ts Settings → Network's Connection words: the system proxy,
                      the trust, the file, and what a Save sends (D-123)
   referenceWords.ts  The Turtle editor's line for a reference term it does
@@ -301,7 +308,7 @@ release/             The Windows release: the start file, README.txt,
 docs/known-state.md  Why each load-bearing rule below exists
 ```
 
-`sparql/`, `explore/`, `home/`, `projects/`, `modeling/`, `reasoning/`, `explain/`, `naming/`, `checks/` and `vocabularies/` are the same idea ten times: logic a
+`sparql/`, `explore/`, `home/`, `projects/`, `modeling/`, `reasoning/`, `explain/`, `naming/`, `checks/`, `vocabularies/` and `files/` are the same idea eleven times: logic a
 component needs, kept out of the component so it can be tested without
 rendering. `removalPrompt.ts`, `sourceTarget.ts`, `networkWords.ts`, `connectionWords.ts`, `statusWords.ts`, `limitWords.ts`, `referenceWords.ts`,
 `links.ts` and `catalogue.ts` are the same idea for one function and one constant. Prefer this
@@ -546,6 +553,20 @@ leaves one behind.
 
 **Standard terms**
 - A home-made copy of a standard axiom is refused by every door, with no way past; `standard_terms.py` is the only reader of the catalogue (D-126). [standard terms]
+
+**Multi-file projects**
+- A file's id is the manifest's (`model`, `shapes`, `f` and eight hex), matched in full and never a path; only the manifest's path is joined, through `projects.inside`, which resolves it inside the project folder and refuses a link or a junction on the way (D-131). [Multi-file projects]
+- Every name typed and every path found passes `segment_error` and `folder_parts`; `files/names.ts` is the browser's copy, both held to `files/names.table.json`. [Multi-file projects]
+- `*.original.ttl` and `*.layout.json` are reserved names: the folder index would read Save's backup as a file of its own and put every term in the project twice. [Multi-file projects]
+- The manifest is written at open only when the index found or dropped a file: a project made before E-16 opens with `project.json` byte for byte as it was (AC-1). [Multi-file projects]
+- Every change takes every file's lock in the 8.4 order (`_all_locks`: shapes files first, then the others, each in manifest order); a view holds its own file's lock only, which is enough because every change holds them all. [Multi-file projects]
+- A file's views key on its revision and the siblings' key, the files' epoch and the sum of their revisions; the epoch moves when a file is added, moved or removed, as a sum alone comes round again. [Multi-file projects]
+- Every whole-project revision both sides compare (validation, reasoning, Checks, the views' keys) is the sum plus the server's `revisionShift`, sent with the open and every file change and never counted in the browser: a removal or a rename leaves a bare sum unmoved. [Multi-file projects]
+- The comments question is asked once per file: `commentsWarned` stands for model.ttl and shapes.ttl, any other file is listed in `commentsWarnedDocs`. [Multi-file projects]
+- At the project folder `model.ttl` is kept for an ontology or vocabulary file and `shapes.ttl` for a shapes file; a removed file's saved queries move to the project's first ontology file. [Multi-file projects]
+- A change to a term another file defines is refused twice: by `SUBJECT_ARGS` before the handler, and by `_cross_file_change` on the delta after it; a new command that changes a term names its subject argument there. [Multi-file projects]
+- Drafts are `.draft/<id>` in the project folder, never beside a nested file; recovery parses every draft before it changes any file, all or none. [Multi-file projects]
+- Export and duplicate never follow a link: `os.walk(followlinks=False)` and a copy that skips links. [Multi-file projects]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

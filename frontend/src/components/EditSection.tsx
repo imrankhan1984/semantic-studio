@@ -137,7 +137,7 @@ export function annotationKey(a: Annotation): string {
  *  are not (code review: hiding them there lost them). */
 export function saysRules(details: NodeDetails, model: EntityModel, _projectKind: ProjectKind | null): boolean {
   if ((details.rules?.items.length ?? 0) === 0) return false;
-  if (details.importedFrom || details.fromData || !model.defined) return false;
+  if (details.importedFrom || details.fromData || details.fromFile || !model.defined) return false;
   return !details.example && structureOf(model.kind) === "class";
 }
 
@@ -199,13 +199,17 @@ export default function EditSection({
   // 5.1: not this document's to change. The header already names the import.
   // Snapshot data is read-only too (csv-data-import 5.6): it is changed in
   // its file and refreshed, never edited here.
-  if (details.importedFrom || details.fromData || !model.defined) {
+  // Another file of the project defines it (multi-file-projects 5.3 item
+  // 3): changed in its own file, which the header's Open file opens.
+  if (details.importedFrom || details.fromData || details.fromFile || !model.defined) {
     return (
       <section className="edit-section read-only" aria-label="Edit">
         <p className="detail-note">
           {details.importedFrom
             ? `From ${details.importedFrom}, read-only.`
-            : details.fromData
+            : details.fromFile
+              ? `Defined in ${details.fromFile.file}, read-only here. Open that file to change it.`
+              : details.fromData
               ? `Imported data, read-only: change ${details.fromData.source} and refresh it from the project's Data.`
               : "Defined outside this document, read-only."}
         </p>

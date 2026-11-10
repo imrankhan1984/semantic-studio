@@ -46,6 +46,9 @@ BASIC IDEA
     store; once the text is here the caret goes to the first place the
     shape is written (indexOf, never a pattern built from ontology text).
 
+    The file is named by its path, and an Apply that defines a term another
+    file defines too says so under the editor (multi-file-projects 5.3).
+
 INPUTS / INPUT SOURCES (props)
     - projectId, doc, revision: what to load and when to load it again.
     - onSelectEntity, onError: a result's link and a failed check, for
@@ -60,7 +63,8 @@ EXPECTED OUTPUT
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { StandardTermError, TurtleError, getDocumentSource } from "../api";
 import { unknownTermLines } from "../referenceWords";
-import { projectStore, useProjectSelector } from "../state/projectStore";
+import { filePath } from "../files/tree";
+import { isShapesDoc, projectStore, useProjectSelector } from "../state/projectStore";
 import type { ProjectDocName } from "../types";
 import ResultPanels, { ValidateButton } from "./ResultPanels";
 
@@ -74,7 +78,6 @@ interface Props {
 
 const NOTHING = () => undefined;
 
-const FILES: Record<ProjectDocName, string> = { model: "model.ttl", shapes: "shapes.ttl" };
 
 interface ParseProblem {
   message: string;
@@ -98,6 +101,11 @@ function offsetOf(text: string, line: number, column: number): number {
 
 export default function TurtleEditor({ projectId, doc, revision, onSelectEntity = NOTHING, onError = NOTHING }: Props) {
   const editorDraft = useProjectSelector((s) => s.editorDraft);
+  // The file by its path, and whether it is a shapes file, by its role
+  // (multi-file-projects 5.1).
+  const docState = useProjectSelector((s) => s.documents.find((d) => d.doc === doc));
+  const file = docState ? filePath(docState) : filePath({ doc });
+  const shapesFile = docState ? isShapesDoc(docState) : doc === "shapes";
   const editorTarget = useProjectSelector((s) => s.editorTarget);
   const shownTarget = useRef(0);
   const [base, setBase] = useState<string | null>(null);
@@ -159,7 +167,9 @@ export default function TurtleEditor({ projectId, doc, revision, onSelectEntity 
     const applied = editorDraft;
     try {
       const result = await projectStore.applyEditor();
-      setNotes(unknownTermLines(result?.references));
+      // A term another file defines too: applied, and said here (multi-
+      // file-projects 5.3 item 4).
+      setNotes([...(result?.definedElsewhere ?? []).map((w) => w.message), ...unknownTermLines(result?.references)]);
       // What the server now holds as the editor's text, so the box does not
       // flash back to the old text while the refetch is in flight.
       setBase(applied);
@@ -224,7 +234,7 @@ export default function TurtleEditor({ projectId, doc, revision, onSelectEntity 
     <section className="source-view turtle-editor" aria-labelledby="source-view-heading">
       <div className="source-toolbar">
         <h2 id="source-view-heading" className="source-title" tabIndex={-1}>
-          Turtle · {FILES[doc]}
+          Turtle · {file}
         </h2>
         <span className="turtle-state" data-state={applying ? "applying" : problem ? "error" : edited ? "edited" : "clean"}>
           {state}
@@ -246,7 +256,7 @@ export default function TurtleEditor({ projectId, doc, revision, onSelectEntity 
         >
           {applying ? "Applying…" : "Apply  Ctrl+Enter"}
         </button>
-        {doc === "shapes" && (
+        {shapesFile && (
           <ValidateButton onError={onError} blocked={edited ? "Apply the text first, so what is checked is what you see." : null} />
         )}
       </div>
@@ -289,7 +299,7 @@ export default function TurtleEditor({ projectId, doc, revision, onSelectEntity 
         <textarea
           ref={textRef}
           className="turtle-textarea"
-          aria-label={`Turtle source of ${FILES[doc]}`}
+          aria-label={`Turtle source of ${file}`}
           aria-describedby="turtle-editor-help"
           aria-invalid={problem ? true : undefined}
           value={text}
@@ -311,7 +321,7 @@ export default function TurtleEditor({ projectId, doc, revision, onSelectEntity 
         Press Ctrl+Enter to apply. Tab moves to the next control. An apply is one step of Undo.
         A relative IRI such as &lt;owns&gt; is read as the project&apos;s base IRI followed by owns.
       </p>
-      {doc === "shapes" && (
+      {shapesFile && (
         <section className="turtle-results" aria-label="Validation results">
           <ResultPanels onSelect={onSelectEntity} />
         </section>

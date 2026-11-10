@@ -13,6 +13,16 @@ SUMMARY
 BASIC IDEA
     A document, once its project is opened, is an Ontology registered in the
     store under prj-<hex>-<doc>, so every read endpoint serves it unchanged.
+    A project holds any number of them (multi-file-projects, D-131): every
+    file the folder index lists is opened, each ontology or vocabulary file
+    reading the others' terms read-only beside its own (imports.file_view),
+    and a command on a term another file defines is refused with the
+    sentence that says where it lives. Every change takes every file's lock,
+    shapes files first, each group in manifest order (8.4), so a view that
+    holds its own file's lock never reads another file mid-change. Whole-
+    project reads -- validation, reasoning, the Checks report -- take the
+    files together, keyed on the sum of their revisions and an epoch that
+    moves when a file is added, moved or removed.
     Every change goes through one path: work out a delta (triples to add,
     triples to remove, both restricted to what would really change), apply it,
     bump the revision -- which is what every cached view is keyed on -- and push
@@ -119,7 +129,7 @@ BASIC IDEA
 
     Autosave never runs on the request path. A change arms a timer (two seconds,
     reset by every later change); the timer thread snapshots the document under
-    its lock and writes .draft/<doc>.ttl outside it. Recovery reads that draft
+    its lock and writes .draft/<id>.ttl in the project folder outside it. Recovery reads that draft
     back as unsaved content: the undo history is not recovered, which is simpler
     than replaying a journal and survives blank nodes, which a triple journal
     would not.
@@ -204,15 +214,18 @@ from .projects import (
     UnknownDocument,
     document_id,
     DESCRIPTION_MAX,
+    entry_role,
+    file_basename,
     graph_counts,
     header_of,
+    infer_kind,
     shapes_prefix,
     split_document_id,
     valid_lang,
 )
 from . import axioms, checks, examples, lexical, modeling_checks, naming, reasoning, references, sentences, settings, shacl, shapes_form, standard_terms, vocabularies
 from .canvas import build_canvas, restrict, with_inferred, with_placed
-from .imports import imports_service, load_state
+from .imports import MergedView, imports_service, load_state
 from .snapshots import SnapshotService
 from .store import Ontology, OntologyStore, ParseTimeout
 from .store import store as _default_store
@@ -1445,7 +1458,7 @@ def share_plan(ctx: Context, a: dict) -> dict:
     """ShareDomain's dry run: the case of 5.2 and what it offers, decided
     here alone so the form and the canvas say the same thing."""
     if ctx.doc != "model":
-        raise CommandError("Attributes and relationships live in model.ttl; share them there.")
+        raise CommandError("Attributes and relationships live in an ontology or vocabulary file; share them there.")
     prop = _property(ctx, a)
     if a.get("class") is None:
         return _separate_plan(ctx, prop)
@@ -2078,7 +2091,7 @@ def cmd_delete_entity(ctx: Context, a: dict) -> Change:
 
 def _model_doc(ctx: Context) -> None:
     if ctx.doc != "model":
-        raise CommandError("Examples live in model.ttl; run example commands on the model document.")
+        raise CommandError("Examples live in an ontology or vocabulary file; run example commands there.")
 
 
 def _class_graph(ctx: Context) -> Graph:
@@ -2290,7 +2303,7 @@ class NoSuchRule(CommandError):
 
 def _rules_doc(ctx: Context) -> None:
     if ctx.doc != "model":
-        raise CommandError("A class's rules live in model.ttl; run rule commands on the model document.")
+        raise CommandError("A class's rules live in an ontology or vocabulary file; run rule commands there.")
 
 
 def _own_class(ctx: Context, a: dict, key: str = "class") -> URIRef:
@@ -2795,7 +2808,7 @@ _COUNTS = ("minCount", "maxCount", "minLength", "maxLength")
 
 def _shapes_ctx(ctx: Context) -> None:
     if ctx.doc != "shapes":
-        raise CommandError("Shapes live in shapes.ttl; run shape commands on the shapes document.")
+        raise CommandError("Shapes live in a shapes file; run shape commands there.")
 
 
 def _model_name(ctx: Context, iri) -> str:
@@ -3406,6 +3419,29 @@ SHAPE_COMMANDS = {
 }
 
 
+# The argument naming the term a command changes (multi-file-projects 5.3
+# item 3): one another file defines is refused before the command reads
+# anything, with the sentence that says where it lives. A command's other
+# arguments only point (a range, a parent, a filler) and stay allowed;
+# _cross_file_change catches any statement about such a term these miss.
+SUBJECT_ARGS = {
+    **{n: "iri" for n in (
+        "SetLabel", "SetComment", "AddAnnotation", "RemoveAnnotation", "ReplaceAnnotation", "DeleteEntity",
+        "SetExampleValue", "AddExampleValue", "RemoveExampleValue",
+    )},
+    "RenameIri": "old",
+    **{n: "child" for n in ("AddSubClassOf", "RemoveSubClassOf", "AddSubPropertyOf", "RemoveSubPropertyOf")},
+    **{n: "property" for n in (
+        "SetDomain", "SetRange", "SwapEnds", "SetEnds", "ClearDomain", "ClearRange", "ShareDomain",
+        "UnshareDomain", "SetInverse", "ClearInverse", "SetCharacteristic", "CreateBranchRelationship",
+    )},
+    **{n: "concept" for n in (
+        "AddBroader", "RemoveBroader", "AddRelated", "RemoveRelated", "AddMapping", "RemoveMapping",
+    )},
+    **{n: "class" for n in ("AddRestriction", "ReplaceRestriction", "RemoveRestriction", "SetClassType")},
+    **{n: "a" for n in ("AddDisjointWith", "RemoveDisjointWith", "AddEquivalentClass", "RemoveEquivalentClass")},
+}
+
 COMMANDS: dict[str, Callable[[Context, dict], Change]] = {
     "CreateClass": cmd_create_class,
     "CreateObjectProperty": cmd_create_object_property,
@@ -3490,10 +3526,31 @@ class OpenDocument:
     # (revision and langs, view, the imports view it was built with): the
     # canvas's boxes and lines (D-081).
     _canvas: Optional[tuple] = None
+    # The manifest entry's role ("model", "ontology", "vocabulary" or
+    # "shapes") and file, the path from the project folder with / (D-131).
+    # `shown_role` is the role as the API says it: model.ttl's "model" read
+    # as the project's kind (5.1 item 3), kept current by refresh_manifest.
+    role: str = "model"
+    file: str = ""
+    shown_role: str = "ontology"
+    # The project folder: drafts live in its .draft/ by id, never beside a
+    # nested file (5.4 item 3).
+    root: Optional[Path] = None
 
     @property
     def graph(self) -> Graph:
         return self.ontology.graph
+
+    @property
+    def is_shapes(self) -> bool:
+        return self.role == "shapes"
+
+    @property
+    def kind(self) -> str:
+        """What a command reads the document as: "model" for an ontology or
+        vocabulary file, "shapes" for a shapes file (5.1 item 3). The rules
+        that once named model.ttl and shapes.ttl ask this."""
+        return "shapes" if self.is_shapes else "model"
 
     def clean(self) -> str:
         """longturtle of the current graph, once per revision, with the
@@ -3539,6 +3596,8 @@ class OpenDocument:
     def state(self) -> dict:
         return {
             "doc": self.doc,
+            "file": self.file,
+            "role": self.shown_role,
             "ontologyId": self.ontology.id,
             "revision": self.ontology.revision,
             "dirty": self.dirty,
@@ -3562,7 +3621,10 @@ BASE = object()
 
 
 def _draft_paths(document: OpenDocument) -> tuple[Path, Path]:
-    folder = document.path.parent / DRAFT_DIR
+    """.draft/<id>.ttl and .json in the project folder, by id: a nested
+    file's draft never lands beside it, and model and shapes keep the names
+    a draft written before E-16 has (5.4 item 3, AC-21)."""
+    folder = (document.root or document.path.parent) / DRAFT_DIR
     return folder / f"{document.doc}.ttl", folder / f"{document.doc}.json"
 
 
@@ -3580,6 +3642,16 @@ class EditingService:
         # documents, so nothing here edits them, but they open and close
         # with the project and join its views and its validation.
         self.snapshots = SnapshotService(projects)
+        # Moved whenever a project's set of files or their paths changes
+        # (5.3 item 7): part of every file's view key beside the revisions.
+        self._epoch: dict[str, int] = {}
+        # Added to every whole-project revision sum (5.3 item 7): 1 for each
+        # file added or moved, and a removed file's revision and 1, so the
+        # sum the server and the browser key on only ever grows. A sum alone
+        # can stay put or come round again when a file goes.
+        self._shift: dict[str, int] = {}
+        # Each project's model view over its files (_project_model).
+        self._model_views: dict[str, tuple] = {}
 
     def configure(self, projects: ProjectStore, store: OntologyStore) -> None:
         self.close_all()
@@ -3590,14 +3662,15 @@ class EditingService:
     # --- opening and closing --------------------------------------------------
 
     def _load(self, pid: str, doc: str, manifest: dict) -> OpenDocument:
-        path = self.projects.document_path(pid, doc)
+        entry = self.projects.entry(pid, doc, manifest)
+        path = self.projects.document_path(pid, doc, manifest)
         text = path.read_text(encoding="utf-8")
         # The file may hold the editor's text verbatim, relative IRIs and all.
         graph = parse_turtle(text, None, manifest["baseIri"])
         languages = (manifest.get("primaryLanguage", "en"), *manifest.get("languages", []))
         ontology = Ontology(
             id=document_id(pid, doc),
-            name=f"{manifest['name']} ({path.name})",
+            name=f"{manifest['name']} ({entry['file']})",
             source="project",
             format="turtle",
             meta={
@@ -3614,6 +3687,8 @@ class EditingService:
         document = OpenDocument(
             pid, doc, path, ontology, last_text=text, save_point=BASE, saved_text=text,
             own=(manifest.get("prefix"), manifest["baseIri"]),
+            role=entry["role"], file=entry["file"], shown_role=entry_role(entry, manifest.get("kind")),
+            root=self.projects.folder(pid),
         )
         ontology.source_provider = lambda: document.text().encode("utf-8")
         # Every view reads under the same lock the edits take, so a build never
@@ -3621,30 +3696,227 @@ class EditingService:
         ontology.lock = document.lock
         return document
 
+    def _attach(self, pid: str, document: OpenDocument) -> None:
+        """An ontology or vocabulary file's views join the switched-on data
+        and the project's other such files (5.3 items 2 and 6), so every
+        file's Explore, Query and outline read the whole project."""
+        if document.is_shapes:
+            return
+        document.ontology.snapshots = lambda: self.snapshots.active(pid)
+        document.ontology.siblings = lambda: self._siblings(pid, document.doc)
+
+    def _siblings(self, pid: str, doc: str) -> tuple:
+        """(key, [(Ontology, {doc, file})]) of the project's other ontology
+        and vocabulary files, in manifest order. The key is the files' epoch
+        -- moved when a file is added, moved or removed, so a sum that comes
+        round again after a removal is never taken for the old one -- and
+        the sum of their revisions (5.3 item 7)."""
+        others = [d for d in list(self._open.get(pid, {}).values()) if not d.is_shapes and d.doc != doc]
+        key = (self._epoch.get(pid, 0), sum(d.ontology.revision for d in others))
+        return key, [(d.ontology, {"doc": d.doc, "file": d.file}) for d in others]
+
     def open(self, pid: str) -> dict:
-        manifest = self.projects.manifest(pid)
+        self.projects.folder(pid)  # UnknownProject first, if it is that
         with self._lock:
             documents = self._open.get(pid)
+            index = None
             if documents is None:
-                documents = {}
-                for entry in manifest["documents"]:
-                    doc = entry["role"]
-                    documents[doc] = self._load(pid, doc, manifest)
-                    self._prune_layout(documents[doc])
-                # A project made before kinds is judged from its model (D-089).
-                self.projects.ensure_kind(pid, documents["model"].graph)
+                # The folder is the index (5.2): files added outside the app
+                # are found, files gone are dropped, the manifest written
+                # only when either happened.
+                index = self.projects.index(pid, self._found_role)
                 manifest = self.projects.manifest(pid)
+                documents = {}
+                for entry in index["entries"]:
+                    documents[entry["id"]] = self._load(pid, entry["id"], manifest)
+                    self._prune_layout(documents[entry["id"]])
+                # A project made before kinds is judged from its model (D-089).
+                self.projects.ensure_kind(pid, self._primary(documents).graph)
+                manifest = self.projects.manifest(pid)
+                for document in documents.values():
+                    document.shown_role = entry_role({"role": document.role}, manifest.get("kind"))
                 # data.ttl is read now, so no view ever runs a mapping.
                 self.snapshots.load(pid)
-                documents["model"].ontology.snapshots = lambda: self.snapshots.active(pid)
                 self._open[pid] = documents
+                self._epoch[pid] = self._epoch.get(pid, 0) + 1
+                self._shift[pid] = 0
                 for document in documents.values():
+                    self._attach(pid, document)
                     self.store.register_document(document.ontology)
-        return {
+                if index["found"] or index["missing"] or index["wroteModel"]:
+                    self._write_counts(pid)
+            manifest = self.projects.manifest(pid)
+        result = {
             "project": self.projects.summary(manifest),
             "documents": [d.state() for d in documents.values()],
             "recovery": self._recovery(documents.values()),
+            "folders": self.projects.folders(pid),
+            "revisionShift": self._shift.get(pid, 0),
         }
+        # What the index found, dropped and skipped, said once: only by the
+        # open that read the folder (5.2 items 2 to 4).
+        result["found"] = index["found"] if index else []
+        result["missing"] = index["missing"] if index else []
+        result["skipped"] = index["skipped"] if index else []
+        result["wroteModel"] = bool(index and index["wroteModel"])
+        return result
+
+    @staticmethod
+    def _found_role(path: Path) -> Optional[str]:
+        """A found file's role, read from its content (5.2 item 2): shapes
+        when it declares a node or property shape, else infer_kind's answer
+        as a file role. None when it is not Turtle, so it is skipped."""
+        try:
+            graph = parse_turtle(path.read_text(encoding="utf-8"), settings.parse_timeout(), None)
+        except (TurtleSyntaxError, ParseTimeout, OSError, UnicodeDecodeError, ValueError):
+            return None
+        if any(True for _ in graph.subjects(RDF.type, SH.NodeShape)) or any(
+            True for _ in graph.subjects(RDF.type, SH.PropertyShape)
+        ):
+            return "shapes"
+        return "vocabulary" if infer_kind(graph) == "taxonomy" else "ontology"
+
+    # --- the project's files (multi-file-projects 5.1 to 5.5) -------------------
+
+    @staticmethod
+    def _primary(documents: dict) -> OpenDocument:
+        """The project's first ontology or vocabulary file: model.ttl in
+        every project made before E-16. Its kind, its saved queries and the
+        Explore and Query pages are the project's (5.6)."""
+        model = documents.get("model")
+        if model is not None:
+            return model
+        return next(d for d in documents.values() if not d.is_shapes)
+
+    def primary(self, pid: str) -> OpenDocument:
+        return self._primary(self._project_documents(pid))
+
+    def model_docs(self, pid: str) -> list[OpenDocument]:
+        """The ontology and vocabulary files, in manifest order."""
+        # list() first: one atomic copy, as a file may be added meanwhile.
+        return [d for d in list(self._project_documents(pid).values()) if not d.is_shapes]
+
+    def shapes_docs(self, pid: str) -> list[OpenDocument]:
+        return [d for d in list(self._open.get(pid, {}).values()) if d.is_shapes]
+
+    def main_shapes(self, pid: str) -> Optional[OpenDocument]:
+        """The first shapes entry (5.1 item 5): where a form writes a shape."""
+        found = self.shapes_docs(pid)
+        return found[0] if found else None
+
+    def _ordered(self, pid: str, documents: Iterable[OpenDocument]) -> list[OpenDocument]:
+        """The one lock order (8.4): shapes files first, then the others,
+        each group in manifest order. Every path taking more than one file's
+        lock takes them in this order, so two never wait on each other."""
+        wanted = {d.doc for d in documents}
+        order = list(self._open.get(pid, {}).values())
+        return [d for d in order if d.is_shapes and d.doc in wanted] + [
+            d for d in order if not d.is_shapes and d.doc in wanted
+        ]
+
+    @contextlib.contextmanager
+    def _all_locks(self, pid: str):
+        """Every file's lock, in the 8.4 order. Every change takes them all:
+        a command or an apply in one file reads the others (5.3), and a view
+        holding only its own file's lock then never reads another file while
+        it changes, since no change can run beside it."""
+        with contextlib.ExitStack() as stack:
+            for document in self._ordered(pid, self._open.get(pid, {}).values()):
+                stack.enter_context(document.lock)
+            yield
+
+    def project_revision(self, pid: str, model_only: bool = True) -> int:
+        """The sum of the files' revisions (5.3 item 7), the ontology and
+        vocabulary files' or every file's, and the shift, which makes it
+        grow whenever a file is added, moved or removed. The browser adds
+        the same shift, sent with the open and every change of files."""
+        return self._shift.get(pid, 0) + sum(
+            d.ontology.revision for d in list(self._project_documents(pid).values())
+            if not (model_only and d.is_shapes)
+        )
+
+    def shapes_revision(self, pid: str, shapes: list) -> Optional[int]:
+        """The shapes files' sum and the shift; None while there is none."""
+        return self._shift.get(pid, 0) + sum(d.ontology.revision for d in shapes) if shapes else None
+
+    def _shifted(self, pid: str, by: int) -> None:
+        self._shift[pid] = self._shift.get(pid, 0) + by
+
+    def _write_counts(self, pid: str) -> None:
+        """Home's counts, the project's totals over its ontology and
+        vocabulary files (5.8)."""
+        totals: dict = {}
+        for document in self.model_docs(pid):
+            for key, value in graph_counts(document.graph).items():
+                totals[key] = totals.get(key, 0) + value
+        self.projects.update_manifest(pid, counts=totals)
+
+    def _install(self, pid: str, doc: str) -> OpenDocument:
+        """A file just made, loaded and served, the epoch moved so every
+        other file's views take it in."""
+        document = self._load(pid, doc, self.projects.manifest(pid))
+        with self._lock:
+            self._open[pid][doc] = document
+            self._epoch[pid] = self._epoch.get(pid, 0) + 1
+            self._shifted(pid, 1)
+        self._attach(pid, document)
+        self.store.register_document(document.ontology)
+        return document
+
+    def add_file(self, pid: str, role: str, name: str, folder: str = "") -> dict:
+        """New file (5.5 item 5): written by projects.py, then opened when
+        the project is. Answers the new file's state, as `open` gives it."""
+        entry = self.projects.add_file(pid, role, name, folder)
+        result = {"entry": entry, "folders": self.projects.folders(pid)}
+        if pid in self._open:
+            result["document"] = self._install(pid, entry["id"]).state()
+        result["project"] = self.projects.summary(self.projects.manifest(pid))
+        result["revisionShift"] = self._shift.get(pid, 0)
+        return result
+
+    def move_file(self, pid: str, doc: str, name: Optional[str], folder: Optional[str]) -> dict:
+        """Rename or move (5.5 item 6): the path only. The open file keeps
+        its id, graph, undo history and layout; it is told its new path
+        under every lock, so a save never writes the old one."""
+        with self._all_locks(pid):
+            entry = self.projects.move_file(pid, doc, name, folder)
+            document = self._open.get(pid, {}).get(doc)
+            if document is not None:
+                document.file = entry["file"]
+                document.path = self.projects.document_path(pid, doc)
+                document.ontology.data_path = document.path
+                document.ontology.name = f"{self.projects.manifest(pid)['name']} ({entry['file']})"
+                self._epoch[pid] = self._epoch.get(pid, 0) + 1
+                self._shifted(pid, 1)
+        result = {"entry": entry, "folders": self.projects.folders(pid), "revisionShift": self._shift.get(pid, 0)}
+        if document is not None:
+            result["document"] = document.state()
+        return result
+
+    def remove_file(self, pid: str, doc: str) -> dict:
+        """Remove (5.5 item 7): to the project's trash, out of every view.
+        Its draft goes with it; a paired step whose other half was in it is
+        dropped when next reached, as one trimmed away is (5.3.3)."""
+        with self._all_locks(pid):
+            trashed = self.projects.remove_file(pid, doc)
+            document = self._open.get(pid, {}).get(doc)
+            if document is not None:
+                self._cancel(document)
+                self._remove_draft(document)
+                with self._lock:
+                    self._open[pid].pop(doc, None)
+                    self._epoch[pid] = self._epoch.get(pid, 0) + 1
+                    self._shifted(pid, document.ontology.revision + 1)
+                self.store.unregister_document(document.ontology.id)
+        if pid in self._open:
+            self._write_counts(pid)
+        return {"trashed": trashed, "folders": self.projects.folders(pid), "revisionShift": self._shift.get(pid, 0)}
+
+    def create_folder(self, pid: str, path: str) -> dict:
+        return {"folders": self.projects.create_folder(pid, path)}
+
+    def remove_folder(self, pid: str, path: str) -> dict:
+        return {"folders": self.projects.remove_folder(pid, path)}
 
     def _recovery(self, documents: Iterable[OpenDocument]) -> dict:
         """A draft newer than its file, not yet recovered or discarded."""
@@ -3665,7 +3937,7 @@ class EditingService:
         return pid in self._open
 
     def document(self, pid: str, doc: str) -> OpenDocument:
-        self.projects.document_file(doc)  # UnknownDocument for a name not issued
+        self.projects.check_id(doc)  # UnknownDocument for an id of no issued shape
         documents = self._open.get(pid)
         if documents is None:
             self.projects.folder(pid)  # UnknownProject first, if it is that
@@ -3685,6 +3957,8 @@ class EditingService:
             raise Dirty(pid)
         with self._lock:
             self._open.pop(pid, None)
+            self._model_views.pop((pid, True), None)
+            self._model_views.pop((pid, False), None)
         for document in documents.values():
             with document.lock:
                 self._cancel(document)
@@ -3702,58 +3976,139 @@ class EditingService:
             self.close(pid, discard=True)
 
     def add_document(self, pid: str, role: str) -> dict:
+        """`{role: "shapes"}` alone: shapes.ttl at the root (8.2)."""
         summary = self.projects.add_document(pid, role)
         if pid in self._open:
-            manifest = self.projects.manifest(pid)
-            document = self._load(pid, role, manifest)
-            with self._lock:
-                self._open[pid][role] = document
-            self.store.register_document(document.ontology)
+            self._install(pid, "shapes")
         return summary
 
     def refresh_manifest(self, pid: str) -> None:
-        """Names and languages changed on the manifest reach the open documents."""
+        """Names, languages and the kind changed on the manifest reach the
+        open documents: model.ttl's role is read as the kind (5.1 item 3)."""
         documents = self._open.get(pid)
         if not documents:
             return
         manifest = self.projects.manifest(pid)
         languages = (manifest.get("primaryLanguage", "en"), *manifest.get("languages", []))
         for document in documents.values():
-            document.ontology.name = f"{manifest['name']} ({document.path.name})"
+            document.ontology.name = f"{manifest['name']} ({document.file})"
             document.ontology.languages = languages
+            document.shown_role = entry_role({"role": document.role}, manifest.get("kind"))
 
     # --- changing a document ----------------------------------------------------
 
     def _context(self, document: OpenDocument) -> Context:
         manifest = self.projects.manifest(document.pid)
+        siblings = not document.is_shapes and len(self.model_docs(document.pid)) > 1
 
         def imported() -> Optional[Graph]:
+            # The project's other files are read as imports are: a command
+            # may point to their terms, never change them (5.3 item 3).
+            if siblings:
+                return imports_service.file_view(document.ontology, True)["graph"]
             if not load_state(document.ontology):
                 return None
             return imports_service.merged(document.ontology)["graph"]
 
         def imported_from() -> dict:
+            if siblings:
+                view = imports_service.file_view(document.ontology, True)
+                return {**view["importedFrom"], **{iri: info["file"] for iri, info in view["fromFile"].items()}}
             if not load_state(document.ontology):
                 return {}
             return imports_service.merged(document.ontology)["importedFrom"]
 
         model = None
-        if document.doc != "model":
-            model_doc = self._open[document.pid]["model"]
-            model = lambda: self._model_view(model_doc)  # noqa: E731
+        if document.is_shapes:
+            model = lambda: self._project_model(document.pid)  # noqa: E731
         return Context(
-            document.graph, manifest, imported, document.doc, model, imported_from,
+            document.graph, manifest, imported, document.kind, model, imported_from,
             lambda: self.declared(document),
         )
 
+    def _elsewhere(self, document: OpenDocument, iri) -> Optional[OpenDocument]:
+        """The other ontology or vocabulary file that defines `iri` -- types
+        it -- when this file does not (5.3 items 3 and 4). None otherwise."""
+        if document.is_shapes or not isinstance(iri, URIRef) or (iri, RDF.type, None) in document.graph:
+            return None
+        for other in self.model_docs(document.pid):
+            if other is not document and (iri, RDF.type, None) in other.graph:
+                return other
+        return None
+
+    def _label_in(self, document: OpenDocument, iri: URIRef) -> str:
+        languages = [lang for lang in (document.ontology.languages or ("en",))]
+        return pick_label_in(document.graph, iri, languages)[0]
+
+    def _cross_file(self, document: OpenDocument, name: str, args: dict, ctx: Context) -> None:
+        """A command changing a term another file defines is refused with
+        one sentence and no change (5.3 item 3); one pointing to it is not.
+        The term a command changes is its subject argument."""
+        key = SUBJECT_ARGS.get(name)
+        if key is None or not isinstance(args.get(key), str):
+            return
+        try:
+            iri = ctx.iri(args[key])
+        except CommandError:
+            return
+        other = self._elsewhere(document, iri)
+        if other is not None:
+            raise CommandError(
+                f"{self._label_in(other, iri)} is defined in {file_basename(other.file)}. Open that file to change it."
+            )
+
+    def _cross_file_change(self, document: OpenDocument, change: Change) -> None:
+        """After the handler: a new term another file defines is refused
+        (5.3 item 4, the AlreadyDefined rule widened to the project), and
+        so is any statement about a term another file defines, whichever
+        argument named it. Nothing has changed yet."""
+        if document.is_shapes or len(self.model_docs(document.pid)) < 2:
+            return
+        new = change.created if change.created is not None else (change.renamed[1] if change.renamed else None)
+        if new is not None:
+            # Read before the change: this file does not type a new term yet.
+            other = self._elsewhere(document, new)
+            if other is not None:
+                raise CommandError(f"{self._label_in(other, new)} is already defined in {file_basename(other.file)}.")
+        for s, _, _ in [*change.added, *change.removed]:
+            if s == new:
+                continue
+            other = self._elsewhere(document, s)
+            if other is not None:
+                raise CommandError(
+                    f"{self._label_in(other, s)} is defined in {file_basename(other.file)}. Open that file to change it."
+                )
+
+    def defined_elsewhere(self, document: OpenDocument, graph: Graph) -> list[dict]:
+        """Turtle Apply's warning (5.3 item 4): each term the text defines
+        that another file defines too, with the same sentence a command's
+        refusal gives. Information under the editor, never a refusal."""
+        if document.is_shapes:
+            return []
+        out = []
+        for subject in sorted({s for s in graph.subjects(RDF.type, None) if isinstance(s, URIRef)}):
+            for other in self.model_docs(document.pid):
+                if other is not document and (subject, RDF.type, None) in other.graph:
+                    label = self._label_in(other, subject)
+                    out.append({
+                        "iri": str(subject), "label": label, "doc": other.doc, "file": other.file,
+                        "message": f"{label} is already defined in {file_basename(other.file)}.",
+                    })
+                    break
+        return out
+
     def declared(self, document: OpenDocument) -> dict:
         """The prefixes that put a reference in use for a document: its own,
-        and for shapes.ttl the model's too, whose classes a shape is about."""
+        and for a shapes file every ontology and vocabulary file's too, whose
+        classes a shape is about."""
         own = document.declared()
-        if document.doc == "model":
+        if not document.is_shapes:
             return own
-        model_doc = self._open.get(document.pid, {}).get("model")
-        return {**(model_doc.declared() if model_doc else {}), **own}
+        merged: dict = {}
+        for model_doc in self._open.get(document.pid, {}).values():
+            if not model_doc.is_shapes:
+                merged.update(model_doc.declared())
+        return {**merged, **own}
 
     def declared_for(self, oid: str) -> dict:
         """declared() for an ontology id, or {} for anything not an open
@@ -3769,12 +4124,85 @@ class EditingService:
         """(model with its imports, manifest, names) under the model's lock,
         for the data wizard: what a row can be, and what a column can
         become, are the model's classes, attributes and relationships."""
-        model_doc = self._project_documents(pid)["model"]
+        self._project_documents(pid)
         manifest = self.projects.manifest(pid)
         languages = [manifest.get("primaryLanguage", "en"), *manifest.get("languages", [])]
-        with model_doc.lock:
-            model = self._model_view(model_doc)
+        with self._all_locks(pid):
+            model = self._project_model(pid)
             yield model, manifest, lambda iri: pick_label_in(model, iri, languages)[0]
+
+    def _project_model(self, pid: str) -> Graph:
+        """Every ontology and vocabulary file with its resolved imports, read
+        only (5.3 item 6): what a shape is about, what validation checks and
+        what the data wizard reads. One file's view is _model_view, as
+        before. The caller holds every file's lock; the view is kept until
+        any file's revision, the epoch or an imports view moves."""
+        documents = self.model_docs(pid)
+        if len(documents) == 1:
+            return self._model_view(documents[0])
+        return self._project_view(pid, True)
+
+    def _project_view(self, pid: str, imports: bool, documents: Optional[list] = None) -> "MergedView":
+        """Every ontology and vocabulary file, with each one's resolved
+        imports when `imports`, as one read-only view, kept per value of the
+        switch until any file's revision, the epoch or an imports view moves:
+        the same object while nothing has, so a reasoning result's key can
+        compare it by identity (5.3 item 7). The caller holds every lock,
+        and may pass the files it read, so both read the same list."""
+        documents = documents if documents is not None else self.model_docs(pid)
+        views = [
+            imports_service.merged(d.ontology) if imports and load_state(d.ontology) else None for d in documents
+        ]
+        key = (self._epoch.get(pid, 0), tuple((d.doc, d.ontology.revision) for d in documents))
+        held = self._model_views.get((pid, imports))
+        if held is not None and held[0] == key and all(a is b for a, b in zip(held[1], views)):
+            return held[2]
+        graphs = [d.graph for d in documents] + [
+            g for v in views if v is not None for g in v["graph"].graphs[1:]
+        ]
+        view = MergedView(graphs)
+        imported: dict = {}
+        sources: list = []
+        for v in views:
+            if v is not None:
+                for iri, name in v["importedFrom"].items():
+                    imported.setdefault(iri, name)
+                sources += [s for s in v["sources"] if all(s["id"] != t["id"] for t in sources)]
+        view.imported_from = imported
+        view.sources = sources
+        self._model_views[(pid, imports)] = (key, views, view)
+        return view
+
+    def whole_for_checks(self, pid: str, doc: str) -> Optional[dict]:
+        """What the Checks report reads for a file (5.3 item 6): the
+        project's ontology and vocabulary files together for any of them, its
+        shapes files together for a shapes file, with the sum of their
+        revisions, and the primary file's id, on which the project's saved
+        queries are kept. None for a file the project does not have open."""
+        document = self._open.get(pid, {}).get(doc)
+        if document is None:
+            raise NotOpen(pid)
+        primary = self.primary(pid).ontology.id
+        # Built under every lock: a view reads each file's subjects as it is
+        # made, and no change may run meanwhile.
+        with self._all_locks(pid):
+            if document.is_shapes:
+                shapes = self.shapes_docs(pid)
+                graph = shapes[0].graph if len(shapes) == 1 else MergedView([d.graph for d in shapes])
+                return {"kind": "shapes", "graph": graph, "primary": primary,
+                        "revision": self.shapes_revision(pid, shapes)}
+            return {"kind": "model", "graph": self.project_graph(pid), "primary": primary,
+                    "revision": self.project_revision(pid)}
+
+    def project_graph(self, pid: str) -> Graph:
+        """The ontology and vocabulary files together, without imports: what
+        the Checks report reads for the whole project (5.3 item 6), as it
+        read model.ttl alone before. One file's is its own graph."""
+        documents = self.model_docs(pid)
+        if len(documents) == 1:
+            return documents[0].graph
+        # The cached view without imports: rebuilt only when a file moves.
+        return self._project_view(pid, False, documents)
 
     @staticmethod
     def _model_view(model_doc: "OpenDocument") -> Graph:
@@ -3806,37 +4234,40 @@ class EditingService:
             # The model's four statements and the shapes rule as one paired undo
             # step (skos-and-owl 5.3, 5.3.3): handled on its own, since it is the
             # one command that writes two documents at once.
-            if doc != "model":
-                raise CommandError("A branch relationship is created on the model document.")
             if dry_run:
                 raise CommandError("Only DeleteEntity, ShareDomain and SetClassType have a dry run.")
-            return self._create_branch_relationship(pid, args)
+            document = self.document(pid, doc)
+            if document.is_shapes:
+                raise CommandError("A branch relationship is created in an ontology or vocabulary file.")
+            return self._create_branch_relationship(pid, document, args)
         handler = COMMANDS.get(name)
         if handler is None:
             raise CommandError(f"There is no command called {name}.")
-        if doc == "shapes" and name in SHAPE_COMMANDS and pid in self._open and "shapes" not in self._open[pid]:
+        # The first shape command makes shapes.ttl when the project has no
+        # shapes file at all (shacl-authoring 8).
+        if doc == "shapes" and name in SHAPE_COMMANDS and pid in self._open and not self.shapes_docs(pid):
             self._first_shapes_command(pid, handler, args, dry_run)
         document = self.document(pid, doc)
-        # A shape command reads the model (targets, paths, names) as well:
-        # its lock too, always after the shapes document's, so a model edit
-        # never changes what the command is checking against.
         # A command may ask whether a reference defines a term; the first
         # time, that parses its bundled file (QUDT: seconds), so it is built
         # here, before the locks every view of the document waits on.
         references.warm(self.declared(document))
         # Deleting a branch relationship also removes its branch rule in the
-        # shapes document, as one paired step (5.3.2). The shapes lock is taken
-        # first, the documented order, whenever a model delete might pair.
-        shapes_doc = self._open[pid].get("shapes") if doc == "model" and name == "DeleteEntity" else None
-        shapes_lock = shapes_doc.lock if shapes_doc is not None else contextlib.nullcontext()
-        model_lock = self._open[pid]["model"].lock if doc != "model" else contextlib.nullcontext()
-        with shapes_lock, document.lock, model_lock:
+        # main shapes file, as one paired step (5.3.2).
+        shapes_doc = self.main_shapes(pid) if not document.is_shapes and name == "DeleteEntity" else None
+        # Every file's lock, in the 8.4 order: a shape command reads the
+        # model (targets, paths, names), a command in one file reads the
+        # others, and a delete may pair with the shapes.
+        with self._all_locks(pid):
             ctx = self._context(document)
+            # A command on a term another file defines (5.3 item 3).
+            self._cross_file(document, name, args, ctx)
             if name == "DeleteEntity":
                 change, impact = delete_plan(ctx, args)
                 if dry_run:
                     return {"dryRun": True, "impact": impact, "revision": document.ontology.revision}
-                paired = self._delete_branch_rules(pid, shapes_doc, change)
+                self._cross_file_change(document, change)
+                paired = self._delete_branch_rules(document, shapes_doc, change)
                 if paired is not None:
                     return paired
             elif name == "ShareDomain" and dry_run:
@@ -3852,6 +4283,8 @@ class EditingService:
                 impact = None
             if not change.added and not change.removed and not change.declare and not change.undeclare:
                 raise CommandError("That would change nothing.")
+            if name != "DeleteEntity":  # checked above, before it could pair
+                self._cross_file_change(document, change)
             before = document.editor_state()
             self._apply(document, change, origin="command")
             self._declare(document, change)
@@ -3934,41 +4367,45 @@ class EditingService:
         first commands at once make it once (both found in review)."""
         if dry_run:
             raise CommandError("Only DeleteEntity, ShareDomain and SetClassType have a dry run.")
-        model_doc = self._open[pid]["model"]
         manifest = self.projects.manifest(pid)
-        with model_doc.lock:
-            probe = Context(Graph(), manifest, lambda: None, "shapes", lambda: self._model_view(model_doc))
+        with self._all_locks(pid):
+            probe = Context(Graph(), manifest, lambda: None, "shapes", lambda: self._project_model(pid))
             handler(probe, args)  # raises CommandError, the sentence, before anything is made
         self._ensure_shapes(pid)
 
     def _ensure_shapes(self, pid: str) -> None:
-        """Make shapes.ttl and open it if it is not open yet, under the service
-        lock so two callers make it once (shacl-authoring 8). The caller has
-        already checked the command against an empty shapes document, so a
-        refusal leaves no file behind."""
+        """Make shapes.ttl and open it if the project has no shapes file yet,
+        under the service lock so two callers make it once (shacl-authoring
+        8). The caller has already checked the command against an empty
+        shapes document, so a refusal leaves no file behind."""
         with self._lock:
-            if "shapes" in self._open.get(pid, {}):
+            if any(d.is_shapes for d in self._open.get(pid, {}).values()):
                 return
             self.projects.add_document(pid, "shapes")
             document = self._load(pid, "shapes", self.projects.manifest(pid))
             self._open[pid]["shapes"] = document
+            self._epoch[pid] = self._epoch.get(pid, 0) + 1
+            self._shifted(pid, 1)
         self.store.register_document(document.ontology)
 
-    def _create_branch_relationship(self, pid: str, args: dict) -> dict:
-        """CreateBranchRelationship (5.3): the model's four statements and the
-        branch rule in the class's shape, one paired undo step across the two
-        documents (5.3.3). The model half is validated first, so a refusal
-        leaves no shapes.ttl behind; the shapes half then reads the new
-        relationship from the model view and the two are pushed as a pair."""
-        model_doc = self.document(pid, "model")
+    def _create_branch_relationship(self, pid: str, model_doc: OpenDocument, args: dict) -> dict:
+        """CreateBranchRelationship (5.3): the file's four statements and the
+        branch rule in the class's shape in the main shapes file, one paired
+        undo step across the two (5.3.3, multi-file-projects 5.4 item 1). The
+        model half is validated first, so a refusal leaves no shapes.ttl
+        behind; the shapes half then reads the new relationship from the
+        model view and the two are pushed as a pair."""
         references.warm(self.declared(model_doc))
-        with model_doc.lock:
-            branch_create_model_plan(self._context(model_doc), args)  # raises before any file is made
+        with self._all_locks(pid):
+            ctx = self._context(model_doc)
+            self._cross_file(model_doc, "CreateBranchRelationship", args, ctx)
+            branch_create_model_plan(ctx, args)  # raises before any file is made
         self._ensure_shapes(pid)
-        shapes_doc = self.document(pid, "shapes")
-        with shapes_doc.lock, model_doc.lock:
+        shapes_doc = self.main_shapes(pid)
+        with self._all_locks(pid):
             model_ctx = self._context(model_doc)
             model_change, prop, domain, branch = branch_create_model_plan(model_ctx, args)
+            self._cross_file_change(model_doc, model_change)
             model_before = model_doc.editor_state()
             shapes_before = shapes_doc.editor_state()
             # Apply the model half first: the shapes half reads the new
@@ -3986,16 +4423,16 @@ class EditingService:
                 "state": model_doc.state(),
                 "created": str(prop),
                 "partner": {
-                    "doc": "shapes",
+                    "doc": shapes_doc.doc,
                     "revision": shapes_doc.ontology.revision,
                     "delta": _delta_json(shapes_change),
                     "state": shapes_doc.state(),
                 },
             }
 
-    def _delete_branch_rules(self, pid: str, shapes_doc, change: Change):
+    def _delete_branch_rules(self, model_doc: OpenDocument, shapes_doc, change: Change):
         """When a DeleteEntity removes object properties that have branch rules,
-        remove those rules in the shapes document as the same paired step
+        remove those rules in the main shapes file as the same paired step
         (5.3.2). Returns the paired result, or None when nothing pairs so the
         caller deletes as an ordinary one-document step."""
         if shapes_doc is None:
@@ -4006,7 +4443,6 @@ class EditingService:
         removes = branch_rule_removes(shapes_doc.graph, deleted)
         if not removes:
             return None
-        model_doc = self.document(pid, "model")
         shapes_change = _change(shapes_doc.graph, change.label, removes=removes)
         if not shapes_change.removed:
             return None
@@ -4021,7 +4457,7 @@ class EditingService:
             "delta": _delta_json(change),
             "state": model_doc.state(),
             "partner": {
-                "doc": "shapes",
+                "doc": shapes_doc.doc,
                 "revision": shapes_doc.ontology.revision,
                 "delta": _delta_json(shapes_change),
                 "state": shapes_doc.state(),
@@ -4035,7 +4471,8 @@ class EditingService:
         manifest = self.projects.manifest(pid)
         bases = tuple(b for b in (manifest.get(k) for k in ("baseIri", "shapesBaseIri", "dataBaseIri")) if b)
         primary = manifest.get("primaryLanguage", "en")
-        with document.lock:
+        # Every file's lock (8.4): the warning below reads the other files.
+        with self._all_locks(pid):
             graph = document.graph
             # A text introducing an own copy of a standard axiom is refused
             # before anything changes (standard-terms 5.6): the comparison is
@@ -4063,6 +4500,9 @@ class EditingService:
                 "state": document.state(),
             }
             declared = self.declared(document)
+            # A term another file defines too: applied, and said under the
+            # editor (5.3 item 4); E-17 turns it into a check finding.
+            result["definedElsewhere"] = self.defined_elsewhere(document, parsed)
         # Outside the lock: the first check of a QUDT project builds its
         # index, and the text has applied already (5.7: information, not a
         # refusal). `parsed` is this request's own graph.
@@ -4137,24 +4577,28 @@ class EditingService:
 
     @contextlib.contextmanager
     def _both_locks(self, pid: str):
-        """The shapes lock then the model lock, the documented order (5.3.3),
-        so an undo or a redo of a paired step applies its two halves under both.
-        Only the model when no shapes document is open; undo and redo are only
-        ever called on model or shapes."""
-        documents = self._open.get(pid, {})
-        with contextlib.ExitStack() as stack:
-            for role in ("shapes", "model"):
-                document = documents.get(role)
-                if document is not None:
-                    stack.enter_context(document.lock)
+        """An undo or a redo of a paired step applies its two halves under
+        both files' locks (5.3.3): every file's, in the 8.4 order, the shapes
+        files first as the documented order always had them."""
+        with self._all_locks(pid):
             yield
 
     @staticmethod
-    def _partner_present(partner: OpenDocument, step: Step) -> bool:
+    def _partner_present(partner: Optional[OpenDocument], step: Step) -> bool:
         """The partner half is still somewhere in the other document's history
-        (buried), rather than gone for good (trimmed past UNDO_LIMIT, or dropped
-        with a redo branch). Compared by identity (5.3.3)."""
+        (buried), rather than gone for good (trimmed past UNDO_LIMIT, dropped
+        with a redo branch, or its file removed). Compared by identity (5.3.3)."""
+        if partner is None:
+            return False
         return any(s is step for s in partner.undo) or any(s is step for s in partner.redo)
+
+    def _other(self, pid: str, step: Step) -> str:
+        """The paired step's other file in words: today's two phrases for
+        model and shapes, the file's name for any other."""
+        if step.partner_doc in ("shapes", "model"):
+            return f"the {step.partner_doc}"
+        partner = self._open.get(pid, {}).get(step.partner_doc)
+        return file_basename(partner.file) if partner is not None else "another file"
 
     def _drop_orphan(self, document: OpenDocument, step: Step, stack: list, verb: str) -> dict:
         """A paired step whose partner is gone cannot be applied on its own
@@ -4165,7 +4609,7 @@ class EditingService:
         stack.pop()  # the orphan is the top of its own stack
         if document.save_point is step:
             document.save_point = None
-        other = "the shapes" if step.partner_doc == "shapes" else "the model"
+        other = self._other(document.pid, step)
         return {
             "revision": document.ontology.revision,
             "label": step.label,
@@ -4188,12 +4632,12 @@ class EditingService:
                 raise CommandError("There is nothing to undo.")
             step = document.undo[-1]
             if step.partner is not None:
-                partner = self._open[pid][step.partner_doc]
-                if partner.undo and partner.undo[-1] is step.partner:
+                partner = self._open[pid].get(step.partner_doc)
+                if partner is not None and partner.undo and partner.undo[-1] is step.partner:
                     for half in ((document, step), (partner, step.partner)):
                         self._undo_step(*half)
                     return self._paired_result(document, partner, step.label)
-                other = "the shapes" if step.partner_doc == "shapes" else "the model"
+                other = self._other(pid, step)
                 if self._partner_present(partner, step.partner):
                     # Still there, only not on top: undo the other document first.
                     raise CommandError(f"This also changed {other}, and they have changed since. Undo {other} first.")
@@ -4218,12 +4662,12 @@ class EditingService:
                 raise CommandError("There is nothing to redo.")
             step = document.redo[-1]
             if step.partner is not None:
-                partner = self._open[pid][step.partner_doc]
-                if partner.redo and partner.redo[-1] is step.partner:
+                partner = self._open[pid].get(step.partner_doc)
+                if partner is not None and partner.redo and partner.redo[-1] is step.partner:
                     for half in ((document, step), (partner, step.partner)):
                         self._redo_step(*half)
                     return self._paired_result(document, partner, step.label)
-                other = "the shapes" if step.partner_doc == "shapes" else "the model"
+                other = self._other(pid, step)
                 if self._partner_present(partner, step.partner):
                     raise CommandError(f"This also changed {other}, and they have changed since. Redo {other} first.")
                 return self._drop_orphan(document, step, document.redo, "redone")
@@ -4258,11 +4702,24 @@ class EditingService:
             rewriting = document.visual_since_save
             manifest = self.projects.manifest(pid)
             on_disk = document.path.read_text(encoding="utf-8")
-            if rewriting and has_comments(on_disk) and not manifest.get("commentsWarned"):
+            # Beside the file, named by its file: model.original.ttl as
+            # before, core.original.ttl for core.ttl. The index never reads
+            # one as a file of its own (projects.RESERVED_SUFFIXES).
+            backup = f"{Path(document.file).stem}.original.ttl"
+            # Asked once per file, as the backup is made per file: the
+            # project-wide flag stands for model.ttl and shapes.ttl, the two
+            # files it covered before E-16, and every other file is listed
+            # by id in commentsWarnedDocs once warned.
+            legacy = doc in ("model", "shapes")
+            warned = manifest.get("commentsWarned") if legacy else doc in manifest.get("commentsWarnedDocs", [])
+            if rewriting and has_comments(on_disk) and not warned:
                 if not confirm_rewrite:
-                    return {"needsCommentsWarning": True, "backup": f"{doc}.original.ttl"}
-                shutil.copyfile(document.path, document.path.with_name(f"{doc}.original.ttl"))
-                manifest["commentsWarned"] = True
+                    return {"needsCommentsWarning": True, "backup": backup}
+                shutil.copyfile(document.path, document.path.with_name(backup))
+                if legacy:
+                    manifest["commentsWarned"] = True
+                else:
+                    manifest["commentsWarnedDocs"] = [*manifest.get("commentsWarnedDocs", []), doc]
             tmp = document.path.with_suffix(".ttl.tmp")
             tmp.write_text(text, encoding="utf-8")
             tmp.replace(document.path)
@@ -4276,8 +4733,14 @@ class EditingService:
             document.saved_text = text
             saved_at = _now()
             manifest["updatedAt"] = saved_at
-            if doc == "model":
-                manifest["counts"] = graph_counts(document.graph)
+            if not document.is_shapes:
+                # Home's counts are the project's totals over its ontology
+                # and vocabulary files (5.8).
+                totals: dict = {}
+                for model_doc in self.model_docs(pid):
+                    for key, value in graph_counts(model_doc.graph).items():
+                        totals[key] = totals.get(key, 0) + value
+                manifest["counts"] = totals
             self.projects.write_manifest(pid, manifest)
             return {"savedAt": saved_at, "state": document.state()}
 
@@ -4375,18 +4838,24 @@ class EditingService:
                 meta = {}
             drafts[document.doc] = (document, draft, meta)
         present = [m.get("pair") for _, _, m in drafts.values() if m.get("pair") is not None]
-        for document, draft, meta in drafts.values():
-            with document.lock:
-                if action == "discard":
+        base = self.projects.manifest(pid)["baseIri"]
+        with self._all_locks(pid):
+            if action == "discard":
+                for document, _, _ in drafts.values():
                     self._remove_draft(document)
-                    continue
+                return {"documents": [d.state() for d in documents.values()]}
+            # Every draft is read and parsed before any file changes, so
+            # recovery restores all of them or none (5.4 item 4).
+            restoring = []
+            for document, draft, meta in drafts.values():
                 token = meta.get("pair")
                 if token is not None and present.count(token) < 2:
                     # An orphan half (5.3.3): dropped, with the existing notice.
                     self._remove_draft(document)
                     continue
                 text = draft.read_text(encoding="utf-8")
-                parsed = parse_turtle(text, timeout, self.projects.manifest(pid)["baseIri"])
+                restoring.append((document, meta, text, parse_turtle(text, timeout, base)))
+            for document, meta, text, parsed in restoring:
                 graph = document.graph
                 for t in list(graph):
                     graph.remove(t)
@@ -4405,7 +4874,7 @@ class EditingService:
                 # The draft's declarations, whichever text the editor shows.
                 document._declared = (None, references.declared_prefixes(text))
                 document.visual_since_save = bool(meta.get("visualSinceSave", not meta.get("fromEditor")))
-        return {"documents": [d.state() for d in documents.values()]}
+            return {"documents": [d.state() for d in documents.values()]}
 
     # --- the modeling canvas (visual-modeling 5.4 to 5.6) ---------------------------
 
@@ -4425,7 +4894,7 @@ class EditingService:
         # document (skos-and-owl 5.3); the shapes lock is taken first, the
         # documented order, and the cache is keyed on its revision too, so the
         # canvas changes when only the shapes revision moves.
-        shapes_doc = self._open.get(pid, {}).get("shapes") if doc == "model" else None
+        shapes_doc = self.main_shapes(pid) if not document.is_shapes else None
         with contextlib.ExitStack() as stack:
             if shapes_doc is not None:
                 stack.enter_context(shapes_doc.lock)
@@ -4434,8 +4903,11 @@ class EditingService:
             # import state without moving the revision, and an imported box
             # kept "outside this model" until an unrelated edit (found in
             # review). merged() is itself cached, so the same view is the
-            # same object until the imports change.
-            merged = imports_service.merged(ontology) if load_state(ontology) else None
+            # same object until the imports change. With other files, the
+            # file view, which is a new object whenever any of them changes
+            # (5.3 item 7): their boxes are drawn read-only, named by file.
+            files = imports_service.file_view(ontology, True) if not document.is_shapes else None
+            merged = files if files is not None else (imports_service.merged(ontology) if load_state(ontology) else None)
             shapes_graph = shapes_doc.graph if shapes_doc is not None else None
             shapes_rev = shapes_doc.ontology.revision if shapes_doc is not None else None
             key = (ontology.revision, langs, shapes_rev)
@@ -4443,13 +4915,21 @@ class EditingService:
             # The view itself is kept and compared by identity, not by id(),
             # which a freed view's successor can be given.
             if held is None or held[0] != key or held[2] is not merged:
+                outside = merged["importedFrom"] if merged else None
+                if files is not None:
+                    outside = {**files["importedFrom"], **{i: f["file"] for i, f in files["fromFile"].items()}}
                 view = build_canvas(
                     document.graph,
                     langs,
                     merged["graph"] if merged else None,
-                    merged["importedFrom"] if merged else None,
+                    outside,
                     shapes=shapes_graph,
                 )
+                if files is not None:
+                    for node in view["nodes"]:
+                        found = files["fromFile"].get(node["iri"])
+                        if found is not None:
+                            node["fromFile"] = found
                 document._canvas = (key, view, merged)
             view = document._canvas[1]
             layout = self.projects.read_layout(pid, doc)
@@ -4462,7 +4942,7 @@ class EditingService:
         # Placed outside terms (vocabularies-and-ontologies 5.8), from the
         # layout, after the shown-set cut: placing one is choosing to see it.
         drawn = with_placed(drawn, layout.get("placed") or [], lambda iri: self._outside_term(merged, declared, iri, langs))
-        outcome = self.current_inferred(pid, imports) if inferred and doc == "model" else None
+        outcome = self.current_inferred(pid, imports) if inferred and not document.is_shapes else None
         if outcome is not None:
             drawn = with_inferred(drawn, outcome.inferred_kinds(), outcome.never_members())
         return {"revision": revision, "kind": kind, **drawn, "layout": layout}
@@ -4496,23 +4976,24 @@ class EditingService:
     def model_graph(self, pid: str) -> Graph:
         """The open model, for inspect's check that a source is not the
         model itself or an ontology importing it (5.9)."""
-        return self.document(pid, "model").graph
+        self._project_documents(pid)
+        with self._all_locks(pid):
+            return self.project_graph(pid)
 
     def branch_map(self, pid: str) -> dict:
         """relationship -> its branch concept, read from the project's shapes
         document (skos-and-owl 5.3.4), so an example form's value picker offers
-        the branch and the concepts under it. {} when no shapes document is
-        open. Only the shapes lock is taken, never nested under the model."""
-        shapes_doc = self._open.get(pid, {}).get("shapes")
-        if shapes_doc is None:
-            return {}
+        the branch and the concepts under it, from every shapes file. {} when
+        none is open. Only a shapes lock is taken, one at a time, never nested
+        under the model."""
         out: dict = {}
-        with shapes_doc.lock:
-            g = shapes_doc.graph
-            for _, pshape in g.subject_objects(SH.property):
-                path = shapes_form.path_of(g, g.value(pshape, SH.path))
-                if path is not None and len(path) == 1 and shapes_form.branch_under(g, pshape) is not None:
-                    out[path[0]] = shapes_form.branch_under(g, pshape)
+        for shapes_doc in self.shapes_docs(pid):
+            with shapes_doc.lock:
+                g = shapes_doc.graph
+                for _, pshape in g.subject_objects(SH.property):
+                    path = shapes_form.path_of(g, g.value(pshape, SH.path))
+                    if path is not None and len(path) == 1 and shapes_form.branch_under(g, pshape) is not None:
+                        out.setdefault(path[0], shapes_form.branch_under(g, pshape))
         return out
 
     def get_layout(self, pid: str, doc: str) -> dict:
@@ -4537,12 +5018,14 @@ class EditingService:
         Turtle: like the layout, no revision, no dirty flag, no undo step. A
         tick is taken only for a link the model holds now; an untick always,
         so a tick left by a link since removed can still go."""
-        document = self.document(pid, "model")
+        self._project_documents(pid)
         manifest = self.projects.manifest(pid)
-        with document.lock:
+        # The whole project's hierarchy, as the report reads it (5.3 item 6).
+        with self._all_locks(pid):
+            graph = self.project_graph(pid)
             links = {
                 checks.link_key(*link)
-                for link in checks.hierarchy_links(document.graph, checks.own_rule(document.graph, manifest))
+                for link in checks.hierarchy_links(graph, checks.own_rule(graph, manifest))
             }
         if agreed and key not in links:
             raise CommandError("That link is not in the model now. Run the checks again to read it as it stands.")
@@ -4602,24 +5085,27 @@ class EditingService:
     def shapes_view(self, pid: str) -> dict:
         """Every listed shape in the form's structure (5.1, 5.5). An empty
         list, not an error, while the project has no shapes.ttl."""
-        documents = self._project_documents(pid)
+        self._project_documents(pid)
         manifest = self.projects.manifest(pid)
         languages = [manifest.get("primaryLanguage", "en"), *manifest.get("languages", [])]
-        model_doc = documents["model"]
-        shapes_doc = documents.get("shapes")
-        if shapes_doc is None:
-            return {"revision": None, "modelRevision": model_doc.ontology.revision,
+        shapes_docs = self.shapes_docs(pid)
+        if not shapes_docs:
+            return {"revision": None, "modelRevision": self.project_revision(pid),
                     "kind": manifest.get("kind"), "shapes": []}
-        with shapes_doc.lock, model_doc.lock:
-            model = self._model_view(model_doc)
+        # Every shapes file's shapes, each with its file, so its form writes
+        # there (multi-file-projects 5.3 item 6, 8.1).
+        with self._all_locks(pid):
+            model = self._project_model(pid)
             names = lambda iri: pick_label_in(model, iri, languages)[0]  # noqa: E731
-            shapes = [
-                shapes_form.read_shape(shapes_doc.graph, node, model, names, languages)
-                for node in shapes_form.listed_shapes(shapes_doc.graph)
-            ]
+            shapes = []
+            for shapes_doc in shapes_docs:
+                for node in shapes_form.listed_shapes(shapes_doc.graph):
+                    shape = shapes_form.read_shape(shapes_doc.graph, node, model, names, languages)
+                    shape["doc"], shape["file"] = shapes_doc.doc, shapes_doc.file
+                    shapes.append(shape)
             return {
-                "revision": shapes_doc.ontology.revision,
-                "modelRevision": model_doc.ontology.revision,
+                "revision": self.shapes_revision(pid, shapes_docs),
+                "modelRevision": self.project_revision(pid),
                 "kind": manifest.get("kind"),
                 "shapes": shapes,
             }
@@ -4627,24 +5113,21 @@ class EditingService:
     def shape_suggestions(self, pid: str, target: Optional[str], shape: Optional[str] = None) -> dict:
         """What a rule can be about for a target, and the rules the model
         suggests that the shape does not already have (5.4)."""
-        documents = self._project_documents(pid)
+        self._project_documents(pid)
         manifest = self.projects.manifest(pid)
         languages = [manifest.get("primaryLanguage", "en"), *manifest.get("languages", [])]
-        model_doc = documents["model"]
-        shapes_doc = documents.get("shapes")
-        # The shapes document's lock before the model's, the order every
-        # shape command takes them in.
-        shapes_lock = shapes_doc.lock if shapes_doc is not None else contextlib.nullcontext()
-        with shapes_lock, model_doc.lock:
-            model = self._model_view(model_doc)
-            ctx = Context(model_doc.graph, manifest, lambda: None)
+        # Every file's lock in the 8.4 order, as every shape command takes them.
+        with self._all_locks(pid):
+            model = self._project_model(pid)
+            ctx = Context(self.primary(pid).graph, manifest, lambda: None)
             target_iri = ctx.iri(target, "class")
             names = lambda iri: pick_label_in(model, iri, languages)[0]  # noqa: E731
             existing: list = []
-            if shape and shapes_doc is not None:
+            for shapes_doc in self.shapes_docs(pid) if shape else ():
                 node = shapes_form.find_shape(shapes_doc.graph, shape)
                 if node is not None:
                     existing = shapes_form.read_rules(shapes_doc.graph, node, model, names, languages)[0]
+                    break
             return shapes_form.suggestions(model, target_iri, existing, names, languages)
 
     def validate(self, pid: str, timeout: Optional[float] = None) -> dict:
@@ -4655,32 +5138,34 @@ class EditingService:
 
         The switched-on data snapshots are checked too (csv-data-import
         5.6), and each panel says which of them it found individuals in."""
-        documents = self._project_documents(pid)
+        self._project_documents(pid)
         manifest = self.projects.manifest(pid)
         languages = [manifest.get("primaryLanguage", "en"), *manifest.get("languages", [])]
-        model_doc = documents["model"]
         data = Graph()
-        with model_doc.lock:
-            for prefix, namespace in model_doc.graph.namespaces():
-                data.bind(prefix, namespace)
-            for t in self._model_view(model_doc):
+        shapes = Graph()
+        shapes_revision = None
+        # Every ontology and vocabulary file is the data, every shapes file
+        # the shapes (multi-file-projects 5.3 item 6), copied under every
+        # lock in the 8.4 order and checked outside them.
+        with self._all_locks(pid):
+            for model_doc in self.model_docs(pid):
+                for prefix, namespace in model_doc.graph.namespaces():
+                    data.bind(prefix, namespace)
+            for t in self._project_model(pid):
                 data.add(t)
-            model_revision = model_doc.ontology.revision
+            model_revision = self.project_revision(pid)
+            shapes_docs = self.shapes_docs(pid)
+            for shapes_doc in shapes_docs:
+                for prefix, namespace in shapes_doc.graph.namespaces():
+                    shapes.bind(prefix, namespace)
+                for t in shapes_doc.graph:
+                    shapes.add(t)
+            shapes_revision = self.shapes_revision(pid, shapes_docs)
         generation, snapshots = self.snapshots.active(pid)
         for graph, _ in snapshots:
             for t in graph:
                 data.add(t)
         sources = {URIRef(iri): sid for iri, (sid, _) in self.snapshots.origins(pid).items()}
-        shapes = Graph()
-        shapes_revision = None
-        shapes_doc = documents.get("shapes")
-        if shapes_doc is not None:
-            with shapes_doc.lock:
-                for prefix, namespace in shapes_doc.graph.namespaces():
-                    shapes.bind(prefix, namespace)
-                for t in shapes_doc.graph:
-                    shapes.add(t)
-                shapes_revision = shapes_doc.ontology.revision
         result = shacl.validate(data, shapes, languages, timeout, sources=sources)
         result["revisions"] = {"model": model_revision, "shapes": shapes_revision, "data": generation}
         result["dataSources"] = [info for _, info in snapshots]
@@ -4691,9 +5176,25 @@ class EditingService:
     def reasoning_key(self, pid: str, imports: bool, include_data: bool = False) -> reasoning.Key:
         """What a result computed now would be keyed on (5.3): the model's
         revision, the snapshots' generation and the imports view in use."""
-        ontology = self._project_documents(pid)["model"].ontology
-        view = imports_service.merged(ontology) if imports and load_state(ontology) else None
-        return reasoning.Key(ontology.revision, self.snapshots.generation(pid), imports, include_data, view)
+        revision, view = self._reasoning_view(pid, imports)
+        return reasoning.Key(revision, self.snapshots.generation(pid), imports, include_data, view)
+
+    def _reasoning_view(self, pid: str, imports: bool, documents: Optional[list] = None) -> tuple:
+        """(revision, view) a result is keyed on. One file: its revision and
+        its imports view when the switch is on, as before. Several: the sum
+        of their revisions and the project view (5.3 item 7), a new object
+        whenever a file is added, moved or removed, so a sum that comes
+        round again is never taken for the old one."""
+        documents = documents if documents is not None else self.model_docs(pid)
+        if len(documents) == 1:
+            ontology = documents[0].ontology
+            return (
+                self._shift.get(pid, 0) + ontology.revision,
+                imports_service.merged(ontology) if imports and load_state(ontology) else None,
+            )
+        with self._all_locks(pid):
+            revision = self._shift.get(pid, 0) + sum(d.ontology.revision for d in documents)
+            return revision, self._project_view(pid, imports, documents)
 
     def reason(self, pid: str, include_data: bool, imports: bool, limit: Optional[float] = None) -> dict:
         """One run over the model with its examples, its imports when the
@@ -4708,30 +5209,42 @@ class EditingService:
         # classes reasons and gets the existing empty result. ReasoningRefused
         # stays for its other causes.
         languages = [manifest.get("primaryLanguage", "en"), *manifest.get("languages", [])]
-        model_doc = documents["model"]
         handle = reasoning.service.begin(pid)
         outcome = None
         try:
             model = Graph()
-            with model_doc.lock:
-                ontology = model_doc.ontology
-                view = imports_service.merged(ontology) if imports and load_state(ontology) else None
-                source = view["graph"] if view is not None else model_doc.graph
+            # Every ontology and vocabulary file (multi-file-projects 5.3 item
+            # 6), copied under every lock in the 8.4 order, the list read once
+            # and handed on, so the view and the copy are of the same files.
+            with self._all_locks(pid):
+                model_docs = self.model_docs(pid)
+                revision, view = self._reasoning_view(pid, imports, model_docs)
+                if len(model_docs) > 1:
+                    source = view
+                    imported = set(view.imported_from)
+                    import_sources = view.sources
+                else:
+                    source = view["graph"] if view is not None else model_docs[0].graph
+                    imported = set(view["importedFrom"]) if view is not None else set()
+                    import_sources = view.get("sources", []) if view is not None else []
                 for t in source:
                     model.add(t)
-                # The model's own classes get the probe's test members (5.5).
-                probes = sorted(
-                    str(c) for c in model_doc.graph.subjects(RDF.type, OWL.Class)
+                # The files' own classes get the probe's test members (5.5).
+                probes = sorted({
+                    str(c) for d in model_docs for c in d.graph.subjects(RDF.type, OWL.Class)
                     if isinstance(c, URIRef) and not reasoning.built_in(c)
-                )
-                key = reasoning.Key(ontology.revision, self.snapshots.generation(pid), imports, include_data, view)
-                imported = set(view["importedFrom"]) if view is not None else set()
+                })
+                key = reasoning.Key(revision, self.snapshots.generation(pid), imports, include_data, view)
                 # What the reasoner will not use, per source of the same set
                 # (owl-rl-warnings 5.6): read here, never in the worker. The
-                # model's rules open their Edit form; a vocabulary's do not.
-                sources = [("model", manifest.get("name") or "your model", model_doc.graph, True)]
-                if view is not None:
-                    sources += [(s["id"], s["name"], s["graph"], False) for s in view.get("sources", [])]
+                # files' rules open their Edit form; a vocabulary's do not.
+                # model.ttl is "model", as before; another file is its id.
+                sources = [
+                    (d.doc, (manifest.get("name") or "your model") if d.doc == "model" else file_basename(d.file),
+                     d.graph, True)
+                    for d in model_docs
+                ]
+                sources += [(s["id"], s["name"], s["graph"], False) for s in import_sources]
                 unused = reasoning.unused_by_source(sources, languages)
             data = Graph()
             if include_data:
@@ -4783,10 +5296,11 @@ class EditingService:
         return outcome
 
     def project_of(self, ontology_id: str) -> Optional[str]:
-        """The open project whose model has this ontology id, if any."""
+        """The open project one of whose ontology or vocabulary files has
+        this ontology id, if any: the whole project is reasoned over, so a
+        result marks every such file's tree (5.3 item 6)."""
         for pid, documents in list(self._open.items()):
-            model = documents.get("model")
-            if model is not None and model.ontology.id == ontology_id:
+            if any(not d.is_shapes and d.ontology.id == ontology_id for d in documents.values()):
                 return pid
         return None
 

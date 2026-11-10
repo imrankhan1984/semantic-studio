@@ -340,7 +340,7 @@ def test_a_refused_example_command_changes_nothing(pid, command, args, fragment)
 def test_example_commands_run_on_the_model_only(pid):
     response = run(pid, "CreateExample", doc="shapes", **{"class": "shop:Person", "label": "Bob"})
     assert response.status_code == 422
-    assert "Examples live in model.ttl" in response.json()["detail"]
+    assert "Examples live in an ontology or vocabulary file" in response.json()["detail"]
 
 
 @pytest.mark.parametrize(

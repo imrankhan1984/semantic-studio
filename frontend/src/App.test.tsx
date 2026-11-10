@@ -98,6 +98,7 @@ const {
   listImports,
   listProjects,
   openProject,
+  removeProjectFile,
   closeProject,
   createProject,
   getDocumentSource,
@@ -149,6 +150,7 @@ const {
   // authoring-foundations. listProjects is mount's second request.
   listProjects: vi.fn(),
   openProject: vi.fn(),
+  removeProjectFile: vi.fn(),
   closeProject: vi.fn(),
   createProject: vi.fn(),
   getDocumentSource: vi.fn(),
@@ -212,6 +214,7 @@ vi.mock("./api", async (importOriginal) => ({
   listImports,
   listProjects,
   openProject,
+  removeProjectFile,
   closeProject,
   createProject,
   getDocumentSource,
@@ -263,6 +266,7 @@ const ALL_API = {
   getNetworkActivity,
   listProjects,
   openProject,
+  removeProjectFile,
   closeProject,
   createProject,
   getDocumentSource,
@@ -3412,6 +3416,117 @@ describe("App project kinds (relationships Stage A)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(updateProject).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("App Files panel (multi-file-projects 5.5 item 3, AC-24)", () => {
+  const CORE_OID = "prj-0123456789ab-f00000001";
+  const RULES_OID = "prj-0123456789ab-f00000002";
+  const threeFiles = () => ({
+    project: PROJECT,
+    documents: [
+      { ...docState(), file: "model.ttl", role: "ontology" as const },
+      { ...docState(), doc: "f00000001", ontologyId: CORE_OID, file: "vocab/core.ttl", role: "vocabulary" as const },
+      { ...docState(), doc: "f00000002", ontologyId: RULES_OID, file: "rules/rules.ttl", role: "shapes" as const },
+    ],
+    recovery: { available: false, draftTime: null },
+    folders: ["rules", "vocab"],
+  });
+
+  it("opens an ontology or vocabulary file on the Edit page, a shapes file on the Shapes page", async () => {
+    listProjects.mockResolvedValue([PROJECT]);
+    openProject.mockResolvedValue(threeFiles());
+    getShapes.mockResolvedValue({ revision: 0, modelRevision: 0, kind: "ontology", shapes: [] });
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open Invoices" }));
+    });
+    await act(async () => {
+      fireEvent.click(tab("Edit"));
+    });
+    // Files above Outline, in the Edit page's left column.
+    const tree = screen.getByRole("tree", { name: "Files" });
+    expect(within(tree).getAllByRole("treeitem").map((r) => r.getAttribute("aria-label"))).toEqual([
+      "rules, folder, 1 file, expanded",
+      "rules.ttl, shapes file, in rules",
+      "vocab, folder, 1 file, expanded",
+      "core.ttl, vocabulary file, in vocab",
+      "model.ttl, ontology file",
+    ]);
+    fetchHierarchy.mockClear();
+    await act(async () => {
+      fireEvent.click(within(tree).getByRole("treeitem", { name: /^core\.ttl/ }));
+    });
+    expect(tab("Edit").getAttribute("aria-selected")).toBe("true");
+    expect(projectStore.getSnapshot().activeDoc).toBe("f00000001");
+    expect(fetchHierarchy.mock.calls.some((call) => call[0] === CORE_OID)).toBe(true);
+    expect(within(screen.getByRole("tree", { name: "Files" })).getByRole("treeitem", { name: /^core\.ttl/ })
+      .getAttribute("aria-current")).toBe("true");
+    await act(async () => {
+      fireEvent.keyDown(screen.getByRole("treeitem", { name: /^rules\.ttl/ }), { key: "Enter" });
+    });
+    expect(tab("Shapes").getAttribute("aria-selected")).toBe("true");
+    expect(projectStore.getSnapshot().activeDoc).toBe("f00000002");
+    // The Shapes page has Files too, and Edit comes back to the file it showed.
+    expect(screen.getByRole("tree", { name: "Files" })).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(tab("Edit"));
+    });
+    expect(projectStore.getSnapshot().activeDoc).toBe("f00000001");
+  });
+
+  it("reads Explore from the project's first file, and Edit comes back to the chosen one (5.6)", async () => {
+    listProjects.mockResolvedValue([PROJECT]);
+    openProject.mockResolvedValue(threeFiles());
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open Invoices" }));
+    });
+    await act(async () => {
+      fireEvent.click(tab("Edit"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("treeitem", { name: /^core\.ttl/ }));
+    });
+    getGraph.mockClear();
+    await act(async () => {
+      fireEvent.click(tab("Explore"));
+    });
+    expect(getGraph.mock.calls.every((call) => call[0] === OID)).toBe(true);
+    expect(getGraph).toHaveBeenCalled();
+    fetchHierarchy.mockClear();
+    await act(async () => {
+      fireEvent.click(tab("Edit"));
+    });
+    expect(fetchHierarchy.mock.calls.some((call) => call[0] === CORE_OID)).toBe(true);
+  });
+
+  it("goes to the file left when the one shown is removed (review)", async () => {
+    listProjects.mockResolvedValue([PROJECT]);
+    openProject.mockResolvedValue(threeFiles());
+    removeProjectFile.mockResolvedValue({ trashed: ".trash/x", folders: ["rules", "vocab"], revisionShift: 3 });
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open Invoices" }));
+    });
+    await act(async () => {
+      fireEvent.click(tab("Edit"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("treeitem", { name: /^core\.ttl/ }));
+    });
+    fetchHierarchy.mockClear();
+    fireEvent.keyDown(screen.getByRole("treeitem", { name: /^core\.ttl/ }), { key: "F10", shiftKey: true });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Remove…" }));
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove" }));
+    });
+    expect(removeProjectFile).toHaveBeenCalledWith(PROJECT.id, "f00000001");
+    expect(projectStore.getSnapshot().activeDoc).toBe("model");
+    expect(projectStore.getSnapshot().revisionShift).toBe(3);
+    // The outline reads model.ttl now, never the removed file's id.
+    expect(fetchHierarchy.mock.calls.some((call) => call[0] === OID)).toBe(true);
+    expect(fetchHierarchy.mock.calls.some((call) => call[0] === CORE_OID)).toBe(false);
   });
 });
 
