@@ -847,6 +847,110 @@ def test_folders_are_made_and_removed_only_when_empty(plant):
     assert emptied.json()["folders"] == ["vocab"]
 
 
+# --- found in the code review ---------------------------------------------------------------
+
+
+def test_the_project_revision_never_comes_round_again(plant):
+    """5.3 item 7 with the shift: removing an unedited file leaves the bare
+    sum where it was, so a validation or a reasoning result would still read
+    as current over a file that is gone."""
+    pid, core, equipment = plant
+    assert client.post(f"/api/projects/{pid}/open").json()["revisionShift"] == 2  # two files added
+    first = client.post(f"/api/projects/{pid}/validate").json()["revisions"]["model"]
+    removed = client.delete(f"/api/projects/{pid}/documents/{equipment}").json()
+    assert removed["revisionShift"] == 3  # equipment's revision 0, and 1
+    after = client.post(f"/api/projects/{pid}/validate").json()["revisions"]["model"]
+    assert after > first
+    renamed = client.patch(f"/api/projects/{pid}/documents/{core}", json={"name": "base"}).json()
+    assert renamed["revisionShift"] == 4
+    assert client.post(f"/api/projects/{pid}/validate").json()["revisions"]["model"] > after
+
+
+def test_the_comments_question_is_asked_for_each_file(plant):
+    pid, core, equipment = plant
+    commented = "# kept by hand\n" + f"<{EX}Gauge> a <http://www.w3.org/2002/07/owl#Class> .\n"
+    for doc in ("model", core):
+        path = editing_service.document(pid, doc).path
+        text = path.read_text(encoding="utf-8")
+        path.write_text(commented + text, encoding="utf-8")
+    client.post(f"/api/projects/{pid}/close", json={"discard": True})
+    client.post(f"/api/projects/{pid}/open")
+    for doc, backup in (("model", "model.original.ttl"), (core, "core.original.ttl")):
+        ok(pid, doc, "CreateClass", label=f"Visual {doc}")
+        asked = client.post(f"/api/projects/{pid}/documents/{doc}/save").json()
+        assert asked == {"needsCommentsWarning": True, "backup": backup}
+        saved = client.post(f"/api/projects/{pid}/documents/{doc}/save", json={"confirmRewrite": True})
+        assert saved.status_code == 200
+        assert (editing_service.document(pid, doc).path.parent / backup).is_file()
+    manifest = project_store.manifest(pid)
+    assert manifest["commentsWarned"] is True and manifest["commentsWarnedDocs"] == [core]
+
+
+def test_a_case_change_outside_the_app_on_a_case_sensitive_disk(tmp_path):
+    probe = tmp_path / "Probe"
+    probe.write_text("x", encoding="utf-8")
+    if (tmp_path / "probe").exists():
+        pytest.skip("this filesystem ignores case, so one name is one file")
+    pid = new_project()
+    core = add_file(pid, "Core")["entry"]["id"]
+    client.post(f"/api/projects/{pid}/close", json={"discard": True})
+    folder_path = project_store.folder(pid)
+    (folder_path / "Core.ttl").rename(folder_path / "core.ttl")
+    opened = client.post(f"/api/projects/{pid}/open")
+    assert opened.status_code == 200, opened.text
+    body = opened.json()
+    assert body["missing"] == ["Core.ttl"] and body["found"] == ["core.ttl"]
+    assert core not in {d["doc"] for d in body["documents"]}
+
+
+def test_removing_model_ttl_keeps_its_saved_queries(plant):
+    pid, core, equipment = plant
+    saved = client.post("/api/queries", json={
+        "name": "All classes", "ontologyId": f"{pid}-model", "mode": "text",
+        "sparql": "SELECT ?c WHERE { ?c a <http://www.w3.org/2002/07/owl#Class> }",
+    })
+    assert saved.status_code == 200, saved.text
+    assert client.delete(f"/api/projects/{pid}/documents/model").status_code == 200
+    listed = client.get("/api/queries", params={"ontology": f"{pid}-{core}"}).json()
+    assert [q["name"] for q in listed] == ["All classes"]
+    report = client.get(f"/api/ontologies/{pid}-{core}/checks").json()
+    assert [q["name"] for q in report["aids"]["questions"]] == ["All classes"]
+
+
+def test_no_model_file_left_never_lands_on_a_file_that_is_there():
+    pid = new_project()
+    client.post(f"/api/projects/{pid}/close", json={"discard": True})
+    folder_path = project_store.folder(pid)
+    # model.ttl now holds shapes: found again as a shapes file, and the
+    # project has no ontology file left.
+    (folder_path / "model.ttl").write_text(
+        "@prefix sh: <http://www.w3.org/ns/shacl#> .\n"
+        f"<{EX}S> a sh:NodeShape ; sh:targetClass <{EX}Pump> .\n", encoding="utf-8")
+    manifest = project_store.manifest(pid)
+    manifest["documents"] = []
+    project_store.write_manifest(pid, manifest)
+    opened = client.post(f"/api/projects/{pid}/open").json()
+    files = {d["file"]: d for d in opened["documents"]}
+    assert files["model.ttl"]["role"] == "shapes" and files["model.ttl"]["doc"] != "model"
+    assert files["model 2.ttl"]["role"] == "ontology" and opened["wroteModel"] is True
+    assert len({d["doc"] for d in opened["documents"]}) == len(opened["documents"])
+
+
+def test_shapes_ttl_at_the_root_is_kept_for_a_shapes_file(plant):
+    pid, core, equipment = plant
+    refused = client.post(f"/api/projects/{pid}/documents", json={"role": "ontology", "name": "shapes"})
+    assert refused.status_code == 422
+    assert refused.json()["detail"]["message"] == "At the project folder, shapes.ttl is kept for a shapes file."
+    assert client.patch(f"/api/projects/{pid}/documents/{core}", json={"name": "shapes"}).status_code == 422
+    # In a folder the name is free, and the first shape command still makes
+    # shapes.ttl at the root.
+    add_file(pid, "shapes", folder="vocab")
+    made = client.post(f"/api/projects/{pid}/documents/shapes/commands",
+                       json={"command": "CreateShape", "args": {"target": EX + "Pump"}})
+    assert made.status_code == 200, made.text
+    assert (project_store.folder(pid) / "shapes.ttl").is_file()
+
+
 # --- Section 10: the budgets ------------------------------------------------------------------
 
 PREFIXES = (

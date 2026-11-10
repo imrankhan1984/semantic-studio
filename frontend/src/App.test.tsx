@@ -98,6 +98,7 @@ const {
   listImports,
   listProjects,
   openProject,
+  removeProjectFile,
   closeProject,
   createProject,
   getDocumentSource,
@@ -149,6 +150,7 @@ const {
   // authoring-foundations. listProjects is mount's second request.
   listProjects: vi.fn(),
   openProject: vi.fn(),
+  removeProjectFile: vi.fn(),
   closeProject: vi.fn(),
   createProject: vi.fn(),
   getDocumentSource: vi.fn(),
@@ -212,6 +214,7 @@ vi.mock("./api", async (importOriginal) => ({
   listImports,
   listProjects,
   openProject,
+  removeProjectFile,
   closeProject,
   createProject,
   getDocumentSource,
@@ -263,6 +266,7 @@ const ALL_API = {
   getNetworkActivity,
   listProjects,
   openProject,
+  removeProjectFile,
   closeProject,
   createProject,
   getDocumentSource,
@@ -3469,6 +3473,60 @@ describe("App Files panel (multi-file-projects 5.5 item 3, AC-24)", () => {
       fireEvent.click(tab("Edit"));
     });
     expect(projectStore.getSnapshot().activeDoc).toBe("f00000001");
+  });
+
+  it("reads Explore from the project's first file, and Edit comes back to the chosen one (5.6)", async () => {
+    listProjects.mockResolvedValue([PROJECT]);
+    openProject.mockResolvedValue(threeFiles());
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open Invoices" }));
+    });
+    await act(async () => {
+      fireEvent.click(tab("Edit"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("treeitem", { name: /^core\.ttl/ }));
+    });
+    getGraph.mockClear();
+    await act(async () => {
+      fireEvent.click(tab("Explore"));
+    });
+    expect(getGraph.mock.calls.every((call) => call[0] === OID)).toBe(true);
+    expect(getGraph).toHaveBeenCalled();
+    fetchHierarchy.mockClear();
+    await act(async () => {
+      fireEvent.click(tab("Edit"));
+    });
+    expect(fetchHierarchy.mock.calls.some((call) => call[0] === CORE_OID)).toBe(true);
+  });
+
+  it("goes to the file left when the one shown is removed (review)", async () => {
+    listProjects.mockResolvedValue([PROJECT]);
+    openProject.mockResolvedValue(threeFiles());
+    removeProjectFile.mockResolvedValue({ trashed: ".trash/x", folders: ["rules", "vocab"], revisionShift: 3 });
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open Invoices" }));
+    });
+    await act(async () => {
+      fireEvent.click(tab("Edit"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("treeitem", { name: /^core\.ttl/ }));
+    });
+    fetchHierarchy.mockClear();
+    fireEvent.keyDown(screen.getByRole("treeitem", { name: /^core\.ttl/ }), { key: "F10", shiftKey: true });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Remove…" }));
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove" }));
+    });
+    expect(removeProjectFile).toHaveBeenCalledWith(PROJECT.id, "f00000001");
+    expect(projectStore.getSnapshot().activeDoc).toBe("model");
+    expect(projectStore.getSnapshot().revisionShift).toBe(3);
+    // The outline reads model.ttl now, never the removed file's id.
+    expect(fetchHierarchy.mock.calls.some((call) => call[0] === OID)).toBe(true);
+    expect(fetchHierarchy.mock.calls.some((call) => call[0] === CORE_OID)).toBe(false);
   });
 });
 

@@ -398,7 +398,9 @@ async def _folder_body(pid: str, request: Request) -> FolderPath:
 async def create_folder(pid: str, request: Request) -> dict:
     body = await _folder_body(pid, request)
     with _errors():
-        return editing_service.create_folder(pid, body.path)
+        # Off the event loop: it waits on the project store's lock, which
+        # an open's folder index holds while it reads found files.
+        return await run_in_threadpool(editing_service.create_folder, pid, body.path)
 
 
 @router.delete("/{pid}/folders")
@@ -406,7 +408,9 @@ async def remove_folder(pid: str, request: Request) -> dict:
     """An empty folder only (5.5 item 4)."""
     body = await _folder_body(pid, request)
     with _errors():
-        return editing_service.remove_folder(pid, body.path)
+        # Off the event loop: it waits on the project store's lock, which
+        # an open's folder index holds while it reads found files.
+        return await run_in_threadpool(editing_service.remove_folder, pid, body.path)
 
 
 @router.post("/{pid}/documents/{doc}/commands")

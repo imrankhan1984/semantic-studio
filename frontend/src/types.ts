@@ -1108,6 +1108,7 @@ export interface FileChange {
   document: ProjectDocumentState;
   folders: string[];
   project?: ProjectSummary;
+  revisionShift?: number;
 }
 
 export type ProjectKind = "ontology" | "taxonomy";
@@ -1151,6 +1152,8 @@ export interface OpenedProject {
   missing?: string[];
   skipped?: { path: string; reason: string }[];
   wroteModel?: boolean;
+  // Added to every sum of the files' revisions (5.3 item 7).
+  revisionShift?: number;
 }
 
 // A command, an apply, an undo or a redo.

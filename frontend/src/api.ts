@@ -1188,9 +1188,12 @@ export function moveProjectFile(
 }
 
 /** Remove: into the project's own trash. */
-export function removeProjectFile(pid: string, doc: ProjectDocName): Promise<{ trashed: string; folders: string[] }> {
+export function removeProjectFile(
+  pid: string,
+  doc: ProjectDocName,
+): Promise<{ trashed: string; folders: string[]; revisionShift?: number }> {
   return send(documentUrl(pid, doc, ""), { method: "DELETE", headers: CLIENT_HEADER }).then((r) =>
-    handle<{ trashed: string; folders: string[] }>(r),
+    handle<{ trashed: string; folders: string[]; revisionShift?: number }>(r),
   );
 }
 

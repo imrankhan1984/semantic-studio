@@ -56,8 +56,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 2356 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 2210 tests, vitest
+cd backend  && python -m pytest tests    # 2362 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 2212 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -561,6 +561,9 @@ leaves one behind.
 - The manifest is written at open only when the index found or dropped a file: a project made before E-16 opens with `project.json` byte for byte as it was (AC-1). [Multi-file projects]
 - Every change takes every file's lock in the 8.4 order (`_all_locks`: shapes files first, then the others, each in manifest order); a view holds its own file's lock only, which is enough because every change holds them all. [Multi-file projects]
 - A file's views key on its revision and the siblings' key, the files' epoch and the sum of their revisions; the epoch moves when a file is added, moved or removed, as a sum alone comes round again. [Multi-file projects]
+- Every whole-project revision both sides compare (validation, reasoning, Checks, the views' keys) is the sum plus the server's `revisionShift`, sent with the open and every file change and never counted in the browser: a removal or a rename leaves a bare sum unmoved. [Multi-file projects]
+- The comments question is asked once per file: `commentsWarned` stands for model.ttl and shapes.ttl, any other file is listed in `commentsWarnedDocs`. [Multi-file projects]
+- At the project folder `model.ttl` is kept for an ontology or vocabulary file and `shapes.ttl` for a shapes file; a removed file's saved queries move to the project's first ontology file. [Multi-file projects]
 - A change to a term another file defines is refused twice: by `SUBJECT_ARGS` before the handler, and by `_cross_file_change` on the delta after it; a new command that changes a term names its subject argument there. [Multi-file projects]
 - Drafts are `.draft/<id>` in the project folder, never beside a nested file; recovery parses every draft before it changes any file, all or none. [Multi-file projects]
 - Export and duplicate never follow a link: `os.walk(followlinks=False)` and a copy that skips links. [Multi-file projects]

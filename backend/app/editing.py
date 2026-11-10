@@ -3645,6 +3645,11 @@ class EditingService:
         # Moved whenever a project's set of files or their paths changes
         # (5.3 item 7): part of every file's view key beside the revisions.
         self._epoch: dict[str, int] = {}
+        # Added to every whole-project revision sum (5.3 item 7): 1 for each
+        # file added or moved, and a removed file's revision and 1, so the
+        # sum the server and the browser key on only ever grows. A sum alone
+        # can stay put or come round again when a file goes.
+        self._shift: dict[str, int] = {}
         # Each project's model view over its files (_project_model).
         self._model_views: dict[str, tuple] = {}
 
@@ -3706,8 +3711,7 @@ class EditingService:
         -- moved when a file is added, moved or removed, so a sum that comes
         round again after a removal is never taken for the old one -- and
         the sum of their revisions (5.3 item 7)."""
-        documents = self._open.get(pid, {})
-        others = [d for d in documents.values() if not d.is_shapes and d.doc != doc]
+        others = [d for d in list(self._open.get(pid, {}).values()) if not d.is_shapes and d.doc != doc]
         key = (self._epoch.get(pid, 0), sum(d.ontology.revision for d in others))
         return key, [(d.ontology, {"doc": d.doc, "file": d.file}) for d in others]
 
@@ -3735,6 +3739,7 @@ class EditingService:
                 self.snapshots.load(pid)
                 self._open[pid] = documents
                 self._epoch[pid] = self._epoch.get(pid, 0) + 1
+                self._shift[pid] = 0
                 for document in documents.values():
                     self._attach(pid, document)
                     self.store.register_document(document.ontology)
@@ -3746,6 +3751,7 @@ class EditingService:
             "documents": [d.state() for d in documents.values()],
             "recovery": self._recovery(documents.values()),
             "folders": self.projects.folders(pid),
+            "revisionShift": self._shift.get(pid, 0),
         }
         # What the index found, dropped and skipped, said once: only by the
         # open that read the folder (5.2 items 2 to 4).
@@ -3787,10 +3793,11 @@ class EditingService:
 
     def model_docs(self, pid: str) -> list[OpenDocument]:
         """The ontology and vocabulary files, in manifest order."""
-        return [d for d in self._project_documents(pid).values() if not d.is_shapes]
+        # list() first: one atomic copy, as a file may be added meanwhile.
+        return [d for d in list(self._project_documents(pid).values()) if not d.is_shapes]
 
     def shapes_docs(self, pid: str) -> list[OpenDocument]:
-        return [d for d in self._open.get(pid, {}).values() if d.is_shapes]
+        return [d for d in list(self._open.get(pid, {}).values()) if d.is_shapes]
 
     def main_shapes(self, pid: str) -> Optional[OpenDocument]:
         """The first shapes entry (5.1 item 5): where a form writes a shape."""
@@ -3819,11 +3826,21 @@ class EditingService:
             yield
 
     def project_revision(self, pid: str, model_only: bool = True) -> int:
-        """The sum of the files' revisions (5.3 item 7): the ontology and
-        vocabulary files', or every file's."""
-        return sum(
-            d.ontology.revision for d in self._project_documents(pid).values() if not (model_only and d.is_shapes)
+        """The sum of the files' revisions (5.3 item 7), the ontology and
+        vocabulary files' or every file's, and the shift, which makes it
+        grow whenever a file is added, moved or removed. The browser adds
+        the same shift, sent with the open and every change of files."""
+        return self._shift.get(pid, 0) + sum(
+            d.ontology.revision for d in list(self._project_documents(pid).values())
+            if not (model_only and d.is_shapes)
         )
+
+    def shapes_revision(self, pid: str, shapes: list) -> Optional[int]:
+        """The shapes files' sum and the shift; None while there is none."""
+        return self._shift.get(pid, 0) + sum(d.ontology.revision for d in shapes) if shapes else None
+
+    def _shifted(self, pid: str, by: int) -> None:
+        self._shift[pid] = self._shift.get(pid, 0) + by
 
     def _write_counts(self, pid: str) -> None:
         """Home's counts, the project's totals over its ontology and
@@ -3841,6 +3858,7 @@ class EditingService:
         with self._lock:
             self._open[pid][doc] = document
             self._epoch[pid] = self._epoch.get(pid, 0) + 1
+            self._shifted(pid, 1)
         self._attach(pid, document)
         self.store.register_document(document.ontology)
         return document
@@ -3853,6 +3871,7 @@ class EditingService:
         if pid in self._open:
             result["document"] = self._install(pid, entry["id"]).state()
         result["project"] = self.projects.summary(self.projects.manifest(pid))
+        result["revisionShift"] = self._shift.get(pid, 0)
         return result
 
     def move_file(self, pid: str, doc: str, name: Optional[str], folder: Optional[str]) -> dict:
@@ -3868,7 +3887,8 @@ class EditingService:
                 document.ontology.data_path = document.path
                 document.ontology.name = f"{self.projects.manifest(pid)['name']} ({entry['file']})"
                 self._epoch[pid] = self._epoch.get(pid, 0) + 1
-        result = {"entry": entry, "folders": self.projects.folders(pid)}
+                self._shifted(pid, 1)
+        result = {"entry": entry, "folders": self.projects.folders(pid), "revisionShift": self._shift.get(pid, 0)}
         if document is not None:
             result["document"] = document.state()
         return result
@@ -3886,10 +3906,11 @@ class EditingService:
                 with self._lock:
                     self._open[pid].pop(doc, None)
                     self._epoch[pid] = self._epoch.get(pid, 0) + 1
+                    self._shifted(pid, document.ontology.revision + 1)
                 self.store.unregister_document(document.ontology.id)
         if pid in self._open:
             self._write_counts(pid)
-        return {"trashed": trashed, "folders": self.projects.folders(pid)}
+        return {"trashed": trashed, "folders": self.projects.folders(pid), "revisionShift": self._shift.get(pid, 0)}
 
     def create_folder(self, pid: str, path: str) -> dict:
         return {"folders": self.projects.create_folder(pid, path)}
@@ -4121,13 +4142,14 @@ class EditingService:
             return self._model_view(documents[0])
         return self._project_view(pid, True)
 
-    def _project_view(self, pid: str, imports: bool) -> "MergedView":
+    def _project_view(self, pid: str, imports: bool, documents: Optional[list] = None) -> "MergedView":
         """Every ontology and vocabulary file, with each one's resolved
         imports when `imports`, as one read-only view, kept per value of the
         switch until any file's revision, the epoch or an imports view moves:
         the same object while nothing has, so a reasoning result's key can
-        compare it by identity (5.3 item 7). The caller holds every lock."""
-        documents = self.model_docs(pid)
+        compare it by identity (5.3 item 7). The caller holds every lock,
+        and may pass the files it read, so both read the same list."""
+        documents = documents if documents is not None else self.model_docs(pid)
         views = [
             imports_service.merged(d.ontology) if imports and load_state(d.ontology) else None for d in documents
         ]
@@ -4168,7 +4190,7 @@ class EditingService:
                 shapes = self.shapes_docs(pid)
                 graph = shapes[0].graph if len(shapes) == 1 else MergedView([d.graph for d in shapes])
                 return {"kind": "shapes", "graph": graph, "primary": primary,
-                        "revision": sum(d.ontology.revision for d in shapes)}
+                        "revision": self.shapes_revision(pid, shapes)}
             return {"kind": "model", "graph": self.project_graph(pid), "primary": primary,
                     "revision": self.project_revision(pid)}
 
@@ -4179,7 +4201,8 @@ class EditingService:
         documents = self.model_docs(pid)
         if len(documents) == 1:
             return documents[0].graph
-        return MergedView([d.graph for d in documents])
+        # The cached view without imports: rebuilt only when a file moves.
+        return self._project_view(pid, False, documents)
 
     @staticmethod
     def _model_view(model_doc: "OpenDocument") -> Graph:
@@ -4362,6 +4385,7 @@ class EditingService:
             document = self._load(pid, "shapes", self.projects.manifest(pid))
             self._open[pid]["shapes"] = document
             self._epoch[pid] = self._epoch.get(pid, 0) + 1
+            self._shifted(pid, 1)
         self.store.register_document(document.ontology)
 
     def _create_branch_relationship(self, pid: str, model_doc: OpenDocument, args: dict) -> dict:
@@ -4682,11 +4706,20 @@ class EditingService:
             # before, core.original.ttl for core.ttl. The index never reads
             # one as a file of its own (projects.RESERVED_SUFFIXES).
             backup = f"{Path(document.file).stem}.original.ttl"
-            if rewriting and has_comments(on_disk) and not manifest.get("commentsWarned"):
+            # Asked once per file, as the backup is made per file: the
+            # project-wide flag stands for model.ttl and shapes.ttl, the two
+            # files it covered before E-16, and every other file is listed
+            # by id in commentsWarnedDocs once warned.
+            legacy = doc in ("model", "shapes")
+            warned = manifest.get("commentsWarned") if legacy else doc in manifest.get("commentsWarnedDocs", [])
+            if rewriting and has_comments(on_disk) and not warned:
                 if not confirm_rewrite:
                     return {"needsCommentsWarning": True, "backup": backup}
                 shutil.copyfile(document.path, document.path.with_name(backup))
-                manifest["commentsWarned"] = True
+                if legacy:
+                    manifest["commentsWarned"] = True
+                else:
+                    manifest["commentsWarnedDocs"] = [*manifest.get("commentsWarnedDocs", []), doc]
             tmp = document.path.with_suffix(".ttl.tmp")
             tmp.write_text(text, encoding="utf-8")
             tmp.replace(document.path)
@@ -5071,7 +5104,7 @@ class EditingService:
                     shape["doc"], shape["file"] = shapes_doc.doc, shapes_doc.file
                     shapes.append(shape)
             return {
-                "revision": sum(d.ontology.revision for d in shapes_docs),
+                "revision": self.shapes_revision(pid, shapes_docs),
                 "modelRevision": self.project_revision(pid),
                 "kind": manifest.get("kind"),
                 "shapes": shapes,
@@ -5127,8 +5160,7 @@ class EditingService:
                     shapes.bind(prefix, namespace)
                 for t in shapes_doc.graph:
                     shapes.add(t)
-            if shapes_docs:
-                shapes_revision = sum(d.ontology.revision for d in shapes_docs)
+            shapes_revision = self.shapes_revision(pid, shapes_docs)
         generation, snapshots = self.snapshots.active(pid)
         for graph, _ in snapshots:
             for t in graph:
@@ -5147,18 +5179,22 @@ class EditingService:
         revision, view = self._reasoning_view(pid, imports)
         return reasoning.Key(revision, self.snapshots.generation(pid), imports, include_data, view)
 
-    def _reasoning_view(self, pid: str, imports: bool) -> tuple:
+    def _reasoning_view(self, pid: str, imports: bool, documents: Optional[list] = None) -> tuple:
         """(revision, view) a result is keyed on. One file: its revision and
         its imports view when the switch is on, as before. Several: the sum
         of their revisions and the project view (5.3 item 7), a new object
         whenever a file is added, moved or removed, so a sum that comes
         round again is never taken for the old one."""
-        documents = self.model_docs(pid)
+        documents = documents if documents is not None else self.model_docs(pid)
         if len(documents) == 1:
             ontology = documents[0].ontology
-            return ontology.revision, (imports_service.merged(ontology) if imports and load_state(ontology) else None)
+            return (
+                self._shift.get(pid, 0) + ontology.revision,
+                imports_service.merged(ontology) if imports and load_state(ontology) else None,
+            )
         with self._all_locks(pid):
-            return self.project_revision(pid), self._project_view(pid, imports)
+            revision = self._shift.get(pid, 0) + sum(d.ontology.revision for d in documents)
+            return revision, self._project_view(pid, imports, documents)
 
     def reason(self, pid: str, include_data: bool, imports: bool, limit: Optional[float] = None) -> dict:
         """One run over the model with its examples, its imports when the
@@ -5173,15 +5209,16 @@ class EditingService:
         # classes reasons and gets the existing empty result. ReasoningRefused
         # stays for its other causes.
         languages = [manifest.get("primaryLanguage", "en"), *manifest.get("languages", [])]
-        model_docs = [d for d in documents.values() if not d.is_shapes]
         handle = reasoning.service.begin(pid)
         outcome = None
         try:
             model = Graph()
             # Every ontology and vocabulary file (multi-file-projects 5.3 item
-            # 6), copied under every lock in the 8.4 order.
+            # 6), copied under every lock in the 8.4 order, the list read once
+            # and handed on, so the view and the copy are of the same files.
             with self._all_locks(pid):
-                revision, view = self._reasoning_view(pid, imports)
+                model_docs = self.model_docs(pid)
+                revision, view = self._reasoning_view(pid, imports, model_docs)
                 if len(model_docs) > 1:
                     source = view
                     imported = set(view.imported_from)

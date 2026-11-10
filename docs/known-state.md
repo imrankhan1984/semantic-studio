@@ -3267,6 +3267,25 @@ EXPECTED OUTPUT
   following links, and duplicate copies none: a link in the folder would
   have zipped or copied whatever it led to.
 
+  **Found in the code review.** Ten findings, each fixed with a test:
+  the browser keyed every whole-project view on the bare sum while the
+  server had the epoch, so removing an unedited file refreshed nothing and
+  an old validation still read as current -- now both sides add the
+  server's `revisionShift` (a file added or moved +1, a removal the file's
+  revision +1), sent with every open and file change; removing the file on
+  screen left `activeId` on its unregistered id (App now follows the store);
+  the comments question was project-wide while the backup is per file
+  (`commentsWarnedDocs`); the index folded case on Linux, where Core.ttl
+  and core.ttl are two files (`os.path.normcase`); the folder routes waited
+  on the store's lock on the event loop; removing model.ttl orphaned its
+  saved queries (moved to the first file left); the empty-model fallback
+  could land on a model.ttl that was there as shapes or unreadable (the name
+  moves on to *model 2.ttl*); an ontology file named shapes.ttl at the root
+  stopped the first shape command (refused); reasoning read the file list
+  twice; `project_graph` rebuilt a view per call. Explore and Query now read
+  from the project's first file, whose id carries its saved queries, and
+  Edit returns to the file chosen in Files, the selection going with it.
+
   **Not built, said in the PR.** A folder's Rename (5.5 item 4) has no
   route in 8.2. The Shapes page shows Files beside its own list rather than
   above an outline it does not have.

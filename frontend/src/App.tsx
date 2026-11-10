@@ -640,7 +640,10 @@ export default function App() {
   // -- refetch when the shapes revision moves as well as the model's; and
   // a file's views hold every other file's terms (5.3 item 7), so they key
   // on every file's revision.
-  const allRevisions = projectRevision(projectDocuments, false);
+  // The server's shift is part of every sum (5.3 item 7): read here, so a
+  // file added, moved or removed moves every key below.
+  const revisionShift = useProjectSelector((s) => s.revisionShift);
+  const allRevisions = projectRevision(projectDocuments, false, revisionShift);
   const viewRevision = openIsModel ? allRevisions + dataGeneration : revision;
   // Where the model's data came from, for the Explore and Query source lines.
   const dataSources = useMemo(
@@ -673,7 +676,7 @@ export default function App() {
   const reasoningToken = useProjectSelector((s) => s.reasoningToken);
   // The whole project is reasoned over (5.3 item 6): the server keys a
   // result on the sum of the ontology and vocabulary files' revisions.
-  const modelRevision = projectRevision(projectDocuments);
+  const modelRevision = projectRevision(projectDocuments, true, revisionShift);
   const reasoningNow = useMemo(
     () => ({ revision: modelRevision, generation: dataGeneration, imports: includeImports }),
     [modelRevision, dataGeneration, includeImports],
@@ -848,6 +851,17 @@ export default function App() {
     const model = snap.documents.find((d) => d.doc === snap.editDoc) ?? primaryDocument(snap.documents);
     const active = snap.documents.find((d) => d.doc === snap.activeDoc);
     const shapes = active && isShapesDoc(active) ? active : mainShapesDocument(snap.documents);
+    // Explore and Query read the whole project from its first file, whose
+    // id carries the saved queries (multi-file-projects 5.6); Edit shows
+    // the file chosen in Files. The selection goes with the move.
+    const onFile = snap.documents.find((d) => d.ontologyId === activeId);
+    const follow = (to: { ontologyId: string } | null | undefined) => {
+      if (!to || !onFile || isShapesDoc(onFile) || activeId === to.ontologyId) return;
+      pendingSelection.current = selectedRef.current;
+      setActiveId(to.ontologyId);
+    };
+    if (mode === "explore" || mode === "query") follow(primaryDocument(snap.documents));
+    else if (mode === "hierarchy") follow(model);
     if (mode === "shapes") {
       shapesInView.current = false;
       if (model && activeId !== model.ontologyId) setActiveId(model.ontologyId);
@@ -1904,6 +1918,16 @@ export default function App() {
     });
   };
 
+  // A file removed in Files (5.5 item 7): when it was the one shown, the
+  // views go to the file the store moved to, as its id is gone.
+  const onFileRemoved = (removed: ProjectDocName, next: ProjectDocumentState | null) => {
+    const gone = `${openProjectSummary?.id}-${removed}`;
+    if (activeId !== gone) return;
+    setSelected(null);
+    const to = next && !isShapesDoc(next) ? next : primaryDocument(projectStore.getSnapshot().documents);
+    if (to) setActiveId(to.ontologyId);
+  };
+
   const onSwitchDocument = (doc: ProjectDocName) => {
     guardEditor(() => {
       const target = projectStore.getSnapshot().documents.find((d) => d.doc === doc);
@@ -2346,7 +2370,7 @@ export default function App() {
         <main className="main shapes-page">
           {/* Files above the page's own list (multi-file-projects 5.5, D-132). */}
           <div className="files-column">
-            <FilesPanel onOpenFile={onOpenFile} onError={(message) => setError(message)} />
+            <FilesPanel onOpenFile={onOpenFile} onRemoved={onFileRemoved} onError={(message) => setError(message)} />
           </div>
           <ShapesView
             // Another project is a new list: its arrival selects its own first shape.
@@ -2387,7 +2411,7 @@ export default function App() {
               one file and has no Files. */}
           {openProjectSummary ? (
             <div className="edit-left">
-              <FilesPanel onOpenFile={onOpenFile} onError={(message) => setError(message)} />
+              <FilesPanel onOpenFile={onOpenFile} onRemoved={onFileRemoved} onError={(message) => setError(message)} />
               {outline}
             </div>
           ) : (
@@ -2572,7 +2596,7 @@ export default function App() {
                     key={activeId}
                     ontologyId={activeId}
                     name={isShapesDoc(projectDoc) ? `${openProjectSummary.name} shapes` : openProjectSummary.name}
-                    revision={isShapesDoc(projectDoc) ? (shapesRevisionOf(projectDocuments) ?? 0) : modelRevision}
+                    revision={isShapesDoc(projectDoc) ? (shapesRevisionOf(projectDocuments, revisionShift) ?? 0) : modelRevision}
                     ownBase={openProjectSummary.baseIri}
                     shapesDoc={isShapesDoc(projectDoc)}
                     projectId={openProjectSummary.id}

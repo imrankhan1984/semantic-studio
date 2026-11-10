@@ -151,6 +151,10 @@ export interface ProjectSnapshot {
   /** What the open's folder index found, dropped and skipped (5.2), said
    *  once at the top of the Files panel until dismissed. */
   fileNotice: IndexNotice | null;
+  /** The server's shift (5.3 item 7): added to every sum of the files'
+   *  revisions so it grows when a file is added, moved or removed. Taken
+   *  from the server's answers, never counted here. */
+  revisionShift: number;
   saving: boolean;
   displayLanguage: string | null;
   recovery: { draftTime: string } | null;
@@ -258,6 +262,7 @@ const EMPTY: ProjectSnapshot = {
   editDoc: "model",
   folders: [],
   fileNotice: null,
+  revisionShift: 0,
   saving: false,
   displayLanguage: null,
   recovery: null,
@@ -447,15 +452,22 @@ export function shapesDocId(documents: ProjectDocumentState[]): ProjectDocName {
 }
 
 /** The sum of the ontology and vocabulary files' revisions, or of every
- *  file's (5.3 item 7): what the server keys a whole-project answer on. */
-export function projectRevision(documents: ProjectDocumentState[], modelOnly = true): number {
-  return documents.reduce((sum, d) => (modelOnly && isShapesDoc(d) ? sum : sum + d.revision), 0);
+ *  file's, and the server's shift (5.3 item 7): what the server keys a
+ *  whole-project answer on. A sum alone stays put or comes round again
+ *  when a file is removed; with the shift it only grows. */
+export function projectRevision(
+  documents: ProjectDocumentState[],
+  modelOnly = true,
+  shift: number = snapshot.revisionShift,
+): number {
+  return documents.reduce((sum, d) => (modelOnly && isShapesDoc(d) ? sum : sum + d.revision), shift);
 }
 
-/** The sum of the shapes files' revisions, null while there is none. */
-export function shapesRevision(documents: ProjectDocumentState[]): number | null {
+/** The sum of the shapes files' revisions and the shift, null while there
+ *  is none. */
+export function shapesRevision(documents: ProjectDocumentState[], shift: number = snapshot.revisionShift): number | null {
   const shapes = documents.filter(isShapesDoc);
-  return shapes.length ? shapes.reduce((sum, d) => sum + d.revision, 0) : null;
+  return shapes.length ? shapes.reduce((sum, d) => sum + d.revision, shift) : null;
 }
 
 /** The id commands made outside a file's own view run on. */
@@ -553,6 +565,7 @@ export const projectStore = {
       activeDoc: primary.doc,
       editDoc: primary.doc,
       folders: opened.folders ?? [],
+      revisionShift: opened.revisionShift ?? 0,
       fileNotice:
         notice.found.length || notice.missing.length || notice.skipped.length || notice.wroteModel ? notice : null,
       displayLanguage: opened.project.primaryLanguage,
@@ -634,7 +647,10 @@ export const projectStore = {
     const project = requireProject();
     const made = await addProjectFile(project.id, role, name, folder);
     if (snapshot.project?.id !== project.id) return made.document;
-    set({ documents: [...snapshot.documents, made.document], folders: made.folders, project: made.project ?? snapshot.project });
+    set({
+      documents: [...snapshot.documents, made.document], folders: made.folders,
+      project: made.project ?? snapshot.project, revisionShift: made.revisionShift ?? snapshot.revisionShift,
+    });
     announce(`Created ${made.entry.file}.`);
     return made.document;
   },
@@ -644,18 +660,18 @@ export const projectStore = {
     const project = requireProject();
     const moved = await moveProjectFile(project.id, doc, change);
     if (snapshot.project?.id !== project.id) return moved.document;
-    set({ documents: withDocument(moved.document), folders: moved.folders });
+    set({ documents: withDocument(moved.document), folders: moved.folders, revisionShift: moved.revisionShift ?? snapshot.revisionShift });
     announce(`${change.name === undefined ? "Moved" : "Renamed"} to ${moved.entry.file}.`);
     return moved.document;
   },
 
   /** Remove (5.5 item 7): to the project's trash. The active file falls
    *  back to the project's first ontology file. */
-  async removeFile(doc: ProjectDocName): Promise<void> {
+  async removeFile(doc: ProjectDocName): Promise<ProjectDocumentState | null> {
     const project = requireProject();
     const gone = snapshot.documents.find((d) => d.doc === doc);
     const result = await removeProjectFile(project.id, doc);
-    if (snapshot.project?.id !== project.id) return;
+    if (snapshot.project?.id !== project.id) return null;
     const documents = snapshot.documents.filter((d) => d.doc !== doc);
     const primary = primaryDocument(documents);
     const activeDoc = snapshot.activeDoc === doc ? (primary?.doc ?? "model") : snapshot.activeDoc;
@@ -663,8 +679,11 @@ export const projectStore = {
     set({
       documents, folders: result.folders, activeDoc, editDoc,
       editorDraft: snapshot.activeDoc === doc ? null : snapshot.editorDraft,
+      revisionShift: result.revisionShift ?? snapshot.revisionShift,
     });
     announce(`Moved ${gone?.file ?? "the file"} to the project's trash.`);
+    // What the views go to when the removed file was the one shown.
+    return documents.find((d) => d.doc === activeDoc) ?? null;
   },
 
   async createFolder(path: string): Promise<string[]> {
@@ -691,7 +710,10 @@ export const projectStore = {
   async reload(): Promise<void> {
     const project = requireProject();
     const opened = await openProject(project.id);
-    set({ project: opened.project, documents: opened.documents, folders: opened.folders ?? snapshot.folders });
+    set({
+      project: opened.project, documents: opened.documents, folders: opened.folders ?? snapshot.folders,
+      revisionShift: opened.revisionShift ?? snapshot.revisionShift,
+    });
   },
 
   async undo(): Promise<void> {
@@ -736,7 +758,10 @@ export const projectStore = {
       // The first shape command made shapes.ttl (shacl-authoring 8): track
       // it from a fresh open, as Add shapes.ttl does.
       const opened = await openProject(project.id);
-      set({ project: opened.project, documents: opened.documents, folders: opened.folders ?? snapshot.folders });
+      set({
+        project: opened.project, documents: opened.documents, folders: opened.folders ?? snapshot.folders,
+        revisionShift: opened.revisionShift ?? snapshot.revisionShift,
+      });
     }
     if (announcement) {
       set({ documents: changedDocuments(result) });

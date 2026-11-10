@@ -1079,6 +1079,20 @@ class ProjectStore:
                     what = "folder" if child.is_dir() else "file"
                     raise PathRefused(f"There is already a {what} called {child.name} in this folder.", "name")
 
+    @staticmethod
+    def _root_name(under: str, name: str, role: str) -> None:
+        """At the project folder, model.ttl is kept for an ontology or
+        vocabulary file and shapes.ttl for a shapes file: the first shape
+        command makes shapes.ttl there, and a project left with no ontology
+        file gets model.ttl, each by that name."""
+        if under:
+            return
+        folded = name.casefold()
+        if folded == DOCUMENTS["shapes"] and role != "shapes":
+            raise PathRefused("At the project folder, shapes.ttl is kept for a shapes file.", "name")
+        if folded == DOCUMENTS["model"] and not is_model_role(role):
+            raise PathRefused("At the project folder, model.ttl is kept for an ontology or vocabulary file.", "name")
+
     def _existing_folder(self, pid: str, under: str) -> Path:
         """A folder the project has, held to 8.3 and resolved inside it."""
         folder_parts(under)
@@ -1101,6 +1115,7 @@ class ProjectStore:
             manifest = self.manifest(pid)
             listed = entries(manifest)
             self._room(listed, folder, under, name)
+            self._root_name(under, name, role)
             file = f"{under}/{name}" if under else name
             path = self.inside(pid, file)
             if role == "shapes":
@@ -1131,6 +1146,7 @@ class ProjectStore:
             new_under = (under or "") if under is not None else file_folder(entry["file"])
             self._existing_folder(pid, new_under)
             self._room(listed, folder, new_under, new_name, moving=entry["file"])
+            self._root_name(new_under, new_name, entry["role"])
             file = f"{new_under}/{new_name}" if new_under else new_name
             if file == entry["file"]:
                 return entry
@@ -1170,9 +1186,33 @@ class ProjectStore:
                 shutil.move(str(layout), str(trash / f"{stamp}-{doc}.layout.json"))
             self._layouts.pop(layout, None)
             manifest["documents"] = [e for e in listed if e["id"] != doc]
+            self._move_queries(pid, folder, doc, manifest["documents"])
             manifest["updatedAt"] = _now()
             self.write_manifest(pid, manifest)
         return f"{TRASH_DIR}/{target.name}"
+
+    @staticmethod
+    def _move_queries(pid: str, folder: Path, doc: str, remaining: list[dict]) -> None:
+        """A removed file's saved queries go to the project's first ontology
+        or vocabulary file left, the one the Query page and the Checks
+        report read them on: removing model.ttl must not lose them."""
+        to = next((e["id"] for e in remaining if e["id"] == "model"), None) or next(
+            (e["id"] for e in remaining if is_model_role(e["role"])), None
+        )
+        queries = folder / "queries"
+        if to is None or not queries.is_dir():
+            return
+        old, new = f"{pid}-{doc}", f"{pid}-{to}"
+        for path in sorted(queries.glob("q-*.json")):
+            try:
+                entry = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if entry.get("ontologyId") == old:
+                entry["ontologyId"] = new
+                tmp = path.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
+                tmp.replace(path)
 
     def folders(self, pid: str) -> list[str]:
         """The project's folders, by path, sorted: what the index walks."""
@@ -1270,16 +1310,19 @@ class ProjectStore:
             manifest = self.manifest(pid)
             listed = entries(manifest)
             files, folders, skipped = self._walk(folder)
-            on_disk = {f.casefold(): f for f in files}
+            # A file matches its entry exactly, and without case only where
+            # the filesystem itself ignores case (os.path.normcase folds on
+            # Windows alone): on Linux Core.ttl and core.ttl are two files.
+            on_disk = {os.path.normcase(f): f for f in files}
             kept, missing = [], []
             for entry in listed:
-                found = on_disk.pop(entry["file"].casefold(), None)
+                found = on_disk.pop(os.path.normcase(entry["file"]), None)
                 if found is None:
                     missing.append(entry["file"])
                     continue
                 kept.append(entry)
             found_files = []
-            for file in sorted(on_disk.values(), key=str.casefold):
+            for file in sorted(on_disk.values(), key=lambda f: (f.casefold(), f)):
                 if len(kept) >= MAX_FILES:
                     skipped.append({"path": file, "reason": (
                         f"{file} was not read: a project holds at most {MAX_FILES} files."
@@ -1300,11 +1343,18 @@ class ProjectStore:
             wrote_model = False
             if not any(is_model_role(e["role"]) for e in kept):
                 # Never empty (Section 6): a project with no ontology or
-                # vocabulary file left gets an empty model.ttl, and says so.
-                path = folder / DOCUMENTS["model"]
-                if not path.exists():
-                    path.write_text(_model_text(manifest, "model.ttl", "model"), encoding="utf-8")
-                kept.insert(0, {"id": "model", "file": "model.ttl", "role": "model"})
+                # vocabulary file left gets an empty one, and says so. Never
+                # on a file that is there -- a model.ttl found as shapes, or
+                # one that could not be read -- so the name moves on until it
+                # is free, and only model.ttl itself takes the id `model`.
+                name, n = DOCUMENTS["model"], 2
+                taken = {e["file"].casefold() for e in kept}
+                while (folder / name).exists() or name.casefold() in taken:
+                    name, n = f"model {n}.ttl", n + 1
+                doc = "model" if name == DOCUMENTS["model"] and all(e["id"] != "model" for e in kept) else _mint_id(kept)
+                with open(folder / name, "x", encoding="utf-8", newline="\n") as handle:
+                    handle.write(_model_text(manifest, name, "model"))
+                kept.insert(0, {"id": doc, "file": name, "role": "model"})
                 wrote_model = True
             if found_files or missing or wrote_model:
                 manifest["documents"] = kept

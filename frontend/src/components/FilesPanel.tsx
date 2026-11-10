@@ -60,7 +60,7 @@ import {
   type TreeRow,
 } from "../files/tree";
 import { projectStore, useProjectSelector } from "../state/projectStore";
-import type { FileRole } from "../types";
+import type { FileRole, ProjectDocumentState } from "../types";
 import ConfirmDialog from "./ConfirmDialog";
 import { RowMenu } from "./HierarchyActions";
 import NewFileDialog from "./NewFileDialog";
@@ -68,6 +68,8 @@ import { useDialogTrap } from "./useDialogTrap";
 
 interface Props {
   onOpenFile: (doc: string) => void;
+  /** A file removed: its id, and the file the store moved to. */
+  onRemoved?: (doc: string, next: ProjectDocumentState | null) => void;
   onError: (message: string) => void;
 }
 
@@ -82,7 +84,7 @@ type Dialog =
 type FileAction = "rename" | "move" | "remove";
 type FolderAction = "newFile" | "removeFolder";
 
-export default function FilesPanel({ onOpenFile, onError }: Props) {
+export default function FilesPanel({ onOpenFile, onRemoved, onError }: Props) {
   const documents = useProjectSelector((s) => s.documents);
   const folders = useProjectSelector((s) => s.folders);
   const activeDoc = useProjectSelector((s) => s.activeDoc);
@@ -433,7 +435,8 @@ export default function FilesPanel({ onOpenFile, onError }: Props) {
             const at = rows.findIndex((r) => r.key === row.key);
             const after = rows[at + 1] ?? rows[at - 1];
             void run(async () => {
-              await projectStore.removeFile(row.doc);
+              const next = await projectStore.removeFile(row.doc);
+              onRemoved?.(row.doc, next);
               if (after) focusRow(after.key);
             });
           }}
@@ -441,7 +444,10 @@ export default function FilesPanel({ onOpenFile, onError }: Props) {
           <p>
             {removeQuestion(
               documents.find((d) => d.doc === dialog.row.doc)?.triples ?? 0,
-              dialog.row.dirty,
+              // Text not yet applied in the editor goes too: said with the
+              // unsaved changes, read once as the question opens.
+              dialog.row.dirty ||
+                (projectStore.getSnapshot().activeDoc === dialog.row.doc && projectStore.getSnapshot().editorDraft !== null),
             )}
           </p>
         </ConfirmDialog>
