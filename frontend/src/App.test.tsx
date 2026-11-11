@@ -3530,6 +3530,72 @@ describe("App Files panel (multi-file-projects 5.5 item 3, AC-24)", () => {
   });
 });
 
+describe("App file tabs (multi-file-projects 5.9, AC-25, AC-26)", () => {
+  const CORE_OID = "prj-0123456789ab-f00000001";
+  const files = () => ({
+    project: PROJECT,
+    documents: [
+      { ...docState(), file: "model.ttl", role: "ontology" as const },
+      { ...docState(), doc: "f00000001", ontologyId: CORE_OID, file: "vocab/core.ttl", role: "vocabulary" as const },
+    ],
+    recovery: { available: false, draftTime: null },
+    folders: ["vocab"],
+  });
+
+  async function openEdit() {
+    listProjects.mockResolvedValue([PROJECT]);
+    openProject.mockResolvedValue(files());
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open Invoices" }));
+    });
+    await act(async () => {
+      fireEvent.click(tab("Edit"));
+    });
+  }
+
+  it("shows a tab per open file on the Edit page, and none for a library ontology", async () => {
+    await renderAppOpened();
+    await act(async () => {
+      fireEvent.click(tab("Edit"));
+    });
+    expect(screen.queryByRole("tablist", { name: "Open files" })).toBeNull();
+    cleanup();
+    projectStore._reset();
+    await openEdit();
+    const strip = screen.getByRole("tablist", { name: "Open files" });
+    expect(within(strip).getAllByRole("tab").map((t) => t.getAttribute("aria-label"))).toEqual(["model.ttl"]);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("treeitem", { name: /^core\.ttl/ }));
+    });
+    expect(within(screen.getByRole("tablist", { name: "Open files" })).getAllByRole("tab")
+      .map((t) => t.getAttribute("aria-label"))).toEqual(["model.ttl", "core.ttl, in vocab"]);
+  });
+
+  it("moves the page to the tab chosen, and to the file left when a tab closes", async () => {
+    await openEdit();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("treeitem", { name: /^core\.ttl/ }));
+    });
+    expect(projectStore.getSnapshot().activeDoc).toBe("f00000001");
+    fetchHierarchy.mockClear();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "model.ttl" }));
+    });
+    expect(projectStore.getSnapshot().activeDoc).toBe("model");
+    expect(fetchHierarchy.mock.calls.some((call) => call[0] === OID)).toBe(true);
+    // Closing the tab the page is showing moves it to the file left, and
+    // discards nothing: the file is still in Files.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Close model.ttl" }));
+    });
+    expect(projectStore.getSnapshot().activeDoc).toBe("f00000001");
+    expect(projectStore.getSnapshot().documents).toHaveLength(2);
+    expect(screen.getByRole("treeitem", { name: /^model\.ttl/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Close/ })).toBeNull();
+  });
+});
+
 describe("App Shapes view (shacl-authoring Stage A)", () => {
   const SHAPES_OID = "prj-0123456789ab-shapes";
   const withShapes = () => ({

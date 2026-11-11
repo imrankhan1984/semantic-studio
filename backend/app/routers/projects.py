@@ -18,8 +18,8 @@ SUMMARY
     document's vocabularies and Add a vocabulary's inspect
     (vocabularies-and-ontologies 5.2, 5.3, D-128); and a project's files
     and folders (multi-file-projects 8.2, D-131): New file, a file's rename
-    or move (PATCH) and removal (DELETE), and a folder's creation and
-    removal.
+    or move (PATCH) and removal (DELETE), and a folder's creation, rename
+    (PATCH, 5.10) and removal.
 
 BASIC IDEA
     Thin, like the other routers: shape the request, call projects.py or
@@ -158,6 +158,14 @@ class MoveDocument(BaseModel):
 
 class FolderPath(BaseModel):
     path: str = Field(max_length=400)
+
+
+class RenameFolder(BaseModel):
+    """A folder's rename (5.10 item 1): which folder, and its new name.
+    Both are held to 8.3 in projects.py, where the sentence and the field
+    it concerns come from."""
+    path: str = Field(max_length=400)
+    name: str = Field(max_length=200)
 
 
 # The body of a file's rename or move, and of a folder's create or remove:
@@ -401,6 +409,24 @@ async def create_folder(pid: str, request: Request) -> dict:
         # Off the event loop: it waits on the project store's lock, which
         # an open's folder index holds while it reads found files.
         return await run_in_threadpool(editing_service.create_folder, pid, body.path)
+
+
+@router.patch("/{pid}/folders")
+async def rename_folder(pid: str, request: Request) -> dict:
+    """Rename a folder (5.10 item 1): the paths in the manifest, in one
+    write. The project is checked before the body is read, as every other
+    file route checks its id first."""
+    with _errors():
+        project_store.folder(pid)
+    payload = await ontologies.read_json_capped(request, SMALL_BODY_MAX_BYTES, SMALL_BODY_TOO_LARGE)
+    try:
+        body = RenameFolder.model_validate(payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="The body is {path, name}.") from exc
+    with _errors():
+        # Off the event loop: it waits on every open file's lock, which a
+        # command or an apply holds while it writes.
+        return await run_in_threadpool(editing_service.rename_folder, pid, body.path, body.name)
 
 
 @router.delete("/{pid}/folders")

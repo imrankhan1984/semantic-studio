@@ -289,8 +289,9 @@ frontend/src/
                      status and source, its use, its menu, the dialog's tabs
   files/             Pure Files panel logic (multi-file-projects, D-131): the
                      name rule (names.ts, with names.table.json, the one
-                     table both sides test) and the tree's order and words
-                     (tree.ts)
+                     table both sides test), the tree's order and words
+                     (tree.ts), and the tab strip's rows and the remembered
+                     tabs (tabs.ts, D-132)
   connectionWords.ts Settings → Network's Connection words: the system proxy,
                      the trust, the file, and what a Save sends (D-123)
   referenceWords.ts  The Turtle editor's line for a reference term it does
@@ -567,6 +568,10 @@ leaves one behind.
 - A change to a term another file defines is refused twice: by `SUBJECT_ARGS` before the handler, and by `_cross_file_change` on the delta after it; a new command that changes a term names its subject argument there. [Multi-file projects]
 - Drafts are `.draft/<id>` in the project folder, never beside a nested file; recovery parses every draft before it changes any file, all or none. [Multi-file projects]
 - Export and duplicate never follow a link: `os.walk(followlinks=False)` and a copy that skips links. [Multi-file projects]
+- A folder's rename changes paths only, in one manifest write: every file under it keeps its id, and so its statements, undo history, unsaved changes and layout; each open file is told its new path under every lock. [Tabs and a folder's rename]
+- A tab is a file the person opened (`openDocs`), never the project's file list; closing one discards nothing, and the last tab keeps no close button while the page shows a file. [Tabs and a folder's rename]
+- Only the active file's unapplied editor text is `editorDraft`; every other file's is `editorTexts`, and the two are moved between in `switchDocument` alone, never on a keystroke (the editor's text must not re-render App). Leaving the page or the project asks about every tab's text. [Tabs and a folder's rename]
+- A Files row is two lines and its name is never cut: no ellipsis on `.files-name`. [Tabs and a folder's rename]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

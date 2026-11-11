@@ -259,6 +259,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   removeProjectFile: () => api.removeProjectFile("prj-1", "f0123abcd"),
   createProjectFolder: () => api.createProjectFolder("prj-1", "vocab"),
   removeProjectFolder: () => api.removeProjectFolder("prj-1", "vocab"),
+  renameProjectFolder: () => api.renameProjectFolder("prj-1", "vocab", "kit"),
   pathRefusal: async () => api.pathRefusal(null),
 };
 
@@ -293,12 +294,11 @@ describe("api client header (S-6)", () => {
     // Settings → Naming one PUT (design-checks 5.1); a read-aloud tick one
     // PUT (design-checks 5.8); Add a vocabulary's inspect two POSTs, JSON
     // and a file (vocabularies-and-ontologies 5.3); the Files panel two
-    // POSTs, a PATCH and two DELETEs (multi-file-projects 8.2).
+    // POSTs, two PATCHes (a file's rename or move, a folder's rename) and
+    // two DELETEs (multi-file-projects 8.2).
     const expected = [
       ...Array(9).fill("DELETE"),
-      "PATCH",
-      "PATCH",
-      "PATCH",
+      ...Array(4).fill("PATCH"),
       ...Array(37).fill("POST"),
       ...Array(8).fill("PUT"),
     ];

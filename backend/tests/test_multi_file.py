@@ -4,8 +4,9 @@ FILE: backend/tests/test_multi_file.py
 ================================================================================
 
 SUMMARY
-    Multi-file projects (E-16, PR 1, D-131): a project made before E-16
+    Multi-file projects (E-16, D-131): a project made before E-16
     opening unchanged, files and folders added, renamed, moved and removed,
+    a folder's rename with the files under it (PR 2, 5.10 item 1),
     the folder index, the path rules of 8.3, what each file sees of the
     others, the whole project read by Query, Checks, validation and
     reasoning, undo per file, drafts by id, the lock order, and the
@@ -25,8 +26,8 @@ INPUTS / INPUT SOURCES
       generated, never committed).
 
 EXPECTED OUTPUT
-    - Pass/fail for AC-1 to AC-22 as the server sees them, and the three
-      budgets of Section 10.
+    - Pass/fail for AC-1 to AC-22 and AC-29 as the server sees them, and
+      the three budgets of Section 10.
 ================================================================================
 """
 
@@ -820,6 +821,152 @@ def test_ac20_commands_in_two_files_that_read_each_other_never_wait_forever(plan
     assert len(editing_service.document(pid, equipment).undo) == 100
 
 
+# --- AC-29: a folder's rename (5.10 item 1, PR 2) -----------------------------------------------
+
+
+def rename_folder(pid: str, path: str, name: str):
+    return client.patch(f"/api/projects/{pid}/folders", json={"path": path, "name": name})
+
+
+@pytest.fixture
+def nested():
+    """vocab/equipment.ttl with an unsaved change and a layout, and
+    vocab/parts/bolt.ttl under it: a folder with files at two levels."""
+    pid = new_project()
+    folder(pid, "vocab")
+    folder(pid, "vocab/parts")
+    equipment = add_file(pid, "equipment", folder="vocab")["entry"]["id"]
+    bolt = add_file(pid, "bolt", folder="vocab/parts")["entry"]["id"]
+    ok(pid, equipment, "CreateClass", label="Pump")
+    layout = {"positions": {EX + "Pump": [3.0, 4.0]}, "shown": None, "viewport": None, "placed": []}
+    assert client.put(f"/api/projects/{pid}/documents/{equipment}/layout", json=layout).status_code == 200
+    return pid, equipment, bolt
+
+
+def test_ac29_a_folder_rename_moves_the_paths_and_nothing_else(nested):
+    pid, equipment, bolt = nested
+    graph = set(editing_service.document(pid, equipment).graph)
+    before = editing_service.document(pid, equipment).ontology.revision
+    shift = client.post(f"/api/projects/{pid}/open").json()["revisionShift"]
+    renamed = rename_folder(pid, "vocab", "kit")
+    assert renamed.status_code == 200, renamed.text
+    body = renamed.json()
+    assert body["folders"] == ["kit", "kit/parts"]
+    assert {f["id"]: f["file"] for f in body["files"]} == {
+        equipment: "kit/equipment.ttl", bolt: "kit/parts/bolt.ttl",
+    }
+    assert {d["doc"]: d["file"] for d in body["documents"]} == {
+        equipment: "kit/equipment.ttl", bolt: "kit/parts/bolt.ttl",
+    }
+    # On disk and in the manifest, in one write; the ids are the same.
+    assert [p for p in inside(pid) if not p.startswith(".draft")] == sorted(
+        [f"{equipment}.layout.json", "kit", "kit/equipment.ttl", "kit/parts",
+         "kit/parts/bolt.ttl", "model.ttl", "project.json"]
+    )
+    assert {d["id"]: d["file"] for d in project_store.manifest(pid)["documents"]} == {
+        "model": "model.ttl", equipment: "kit/equipment.ttl", bolt: "kit/parts/bolt.ttl",
+    }
+    # Statements, undo history, the unsaved change and the layout all stay.
+    document = editing_service.document(pid, equipment)
+    assert set(document.graph) == graph and document.ontology.revision == before
+    assert document.dirty and document.undo and document.undo[-1].label == "Created class Pump"
+    assert client.get(f"/api/projects/{pid}/documents/{equipment}/layout").json()["positions"] == {
+        EX + "Pump": [3.0, 4.0]
+    }
+    # The whole-project revision moved, so every file's views refetch (the
+    # one write counts once, whatever the rename moved).
+    assert body["revisionShift"] == shift + 1
+    # A save after the rename writes the new path, not the old one.
+    assert client.post(f"/api/projects/{pid}/documents/{equipment}/save").status_code == 200
+    assert (project_store.folder(pid) / "kit" / "equipment.ttl").read_text(encoding="utf-8").find("Pump") > 0
+    assert not (project_store.folder(pid) / "vocab").exists()
+    # And it is still there, under its id, when the project is opened again.
+    client.post(f"/api/projects/{pid}/close", json={"discard": True})
+    opened = client.post(f"/api/projects/{pid}/open").json()
+    assert {d["doc"]: d["file"] for d in opened["documents"]}[equipment] == "kit/equipment.ttl"
+    assert opened["found"] == [] and opened["missing"] == []
+
+
+def test_ac29_a_rename_to_only_another_case_is_allowed(nested):
+    pid, equipment, bolt = nested
+    renamed = rename_folder(pid, "vocab", "Vocab")
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["folders"] == ["Vocab", "Vocab/parts"]
+    assert editing_service.document(pid, equipment).file == "Vocab/equipment.ttl"
+    assert [p.name for p in project_store.folder(pid).iterdir() if p.is_dir() and p.name != ".draft"] == ["Vocab"]
+
+
+@pytest.mark.parametrize(
+    "name,field",
+    [
+        ("..", "name"),
+        ("../out", "name"),
+        ("/abs", "name"),
+        ("a\b", "name"),
+        ("C:", "name"),
+        ("CON", "name"),
+        ("spare.", "name"),
+        ("queries", "name"),
+        ("", "name"),
+        ("parts/deep", "name"),
+    ],
+)
+def test_ac29_a_refused_name_changes_nothing(nested, name, field):
+    pid, equipment, bolt = nested
+    outside = disk(pid)
+    refused = rename_folder(pid, "vocab", name)
+    assert refused.status_code == 422, (name, refused.text)
+    assert refused.json()["detail"]["field"] == field
+    assert isinstance(refused.json()["detail"]["message"], str)
+    assert editing_service.document(pid, equipment).file == "vocab/equipment.ttl"
+    assert (project_store.folder(pid) / "vocab" / "equipment.ttl").is_file()
+    assert disk(pid) == outside
+
+
+def test_ac29_a_name_a_sibling_holds_is_refused_without_case(nested):
+    pid, equipment, bolt = nested
+    folder(pid, "spare")
+    clash = rename_folder(pid, "vocab", "SPARE")
+    assert clash.status_code == 422
+    assert clash.json()["detail"] == {
+        "code": "path", "field": "name",
+        "message": "There is already a folder called spare in this folder.",
+    }
+    # A file's name at the same level clashes too.
+    add_file(pid, "notes")
+    assert rename_folder(pid, "vocab", "notes.ttl").status_code == 422
+    assert editing_service.document(pid, equipment).file == "vocab/equipment.ttl"
+
+
+def test_ac29_the_folder_must_be_one_the_project_has(nested):
+    pid, equipment, bolt = nested
+    missing = rename_folder(pid, "nowhere", "kit")
+    assert missing.status_code == 422 and missing.json()["detail"]["field"] == "folder"
+    assert rename_folder(pid, "", "kit").json()["detail"]["message"] == (
+        "The project folder itself cannot be renamed."
+    )
+    assert client.patch("/api/projects/prj-000000000000/folders", json={"path": "vocab", "name": "kit"}).status_code == 404
+    assert rename_folder(pid, "vocab", 7).status_code == 422
+
+
+def test_ac29_a_folder_that_is_a_link_out_is_refused(tmp_path, nested):
+    """A folder reached through a link leads out of the project (5.2 item 4):
+    refused before anything is renamed, as every other path is."""
+    pid, equipment, bolt = nested
+    away = tmp_path / "away"
+    away.mkdir()
+    (away / "sneak.ttl").write_text("# nothing", encoding="utf-8")
+    link = project_store.folder(pid) / "linked"
+    try:
+        link.symlink_to(away, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this platform does not allow a symbolic link here")
+    refused = rename_folder(pid, "linked", "kit")
+    assert refused.status_code == 422
+    assert refused.json()["detail"]["message"] == "That path leads outside the project folder."
+    assert (away / "sneak.ttl").is_file() and away.name == "away"
+
+
 # --- AC-22: every new route needs the client header ---------------------------------------------
 
 
@@ -831,6 +978,7 @@ def test_ac22_the_new_routes_refuse_a_request_without_the_client_header(plant):
         ("PATCH", f"/api/projects/{pid}/documents/{core}", {"name": "y"}),
         ("DELETE", f"/api/projects/{pid}/documents/{core}", None),
         ("POST", f"/api/projects/{pid}/folders", {"path": "z"}),
+        ("PATCH", f"/api/projects/{pid}/folders", {"path": "vocab", "name": "kit"}),
         ("DELETE", f"/api/projects/{pid}/folders", {"path": "vocab"}),
     ]:
         assert bare.request(method, path, json=body).status_code == 403, (method, path)

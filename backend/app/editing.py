@@ -22,7 +22,9 @@ BASIC IDEA
     holds its own file's lock never reads another file mid-change. Whole-
     project reads -- validation, reasoning, the Checks report -- take the
     files together, keyed on the sum of their revisions and an epoch that
-    moves when a file is added, moved or removed.
+    moves when a file is added, moved or removed. A folder's rename moves
+    the paths of the files under it and nothing else (5.10 item 1): each
+    open file keeps its id, graph, undo history and unsaved changes.
     Every change goes through one path: work out a delta (triples to add,
     triples to remove, both restricted to what would really change), apply it,
     bump the revision -- which is what every cached view is keyed on -- and push
@@ -3914,6 +3916,35 @@ class EditingService:
 
     def create_folder(self, pid: str, path: str) -> dict:
         return {"folders": self.projects.create_folder(pid, path)}
+
+    def rename_folder(self, pid: str, path: str, name: str) -> dict:
+        """Rename a folder (5.10 item 1). Every open file under it is told
+        its new path under every lock, so a save never writes the old one;
+        its id, graph, undo history, unsaved changes and layout stay, as a
+        file's own rename leaves them. The epoch moves once, for the one
+        write, so every file's views take the new paths in."""
+        with self._all_locks(pid):
+            result = self.projects.rename_folder(pid, path, name)
+            manifest = self.projects.manifest(pid)
+            states = []
+            for entry in result["files"]:
+                document = self._open.get(pid, {}).get(entry["id"])
+                if document is None:
+                    continue
+                document.file = entry["file"]
+                document.path = self.projects.document_path(pid, entry["id"], manifest)
+                document.ontology.data_path = document.path
+                document.ontology.name = f"{manifest['name']} ({entry['file']})"
+                states.append(document.state())
+            if result["files"]:
+                self._epoch[pid] = self._epoch.get(pid, 0) + 1
+                self._shifted(pid, 1)
+        return {
+            "folders": result["folders"],
+            "files": result["files"],
+            "documents": states,
+            "revisionShift": self._shift.get(pid, 0),
+        }
 
     def remove_folder(self, pid: str, path: str) -> dict:
         return {"folders": self.projects.remove_folder(pid, path)}

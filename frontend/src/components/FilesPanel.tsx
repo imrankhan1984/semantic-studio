@@ -28,8 +28,14 @@ BASIC IDEA
     opened the dialog, useDialogTrap's rule. A refusal is its sentence in
     the dialog, beside the field it concerns.
 
-    Rename on a folder is not offered: Section 8.2 gives no route for it
-    (said in the pull request).
+    A folder's Rename (5.10 item 1) is the same shape: the name is held to
+    8.3 here and again on the server, which moves the paths of every file
+    under it in one write and keeps their ids, so nothing those files hold
+    is touched. Focus goes to the renamed row.
+
+    A file row shows its name on its own line, with its role and *unsaved*
+    smaller under it (5.10 item 2), so the name has the column's whole
+    width and a long one wraps rather than being cut.
 
 INPUTS / INPUT SOURCES
     - The project store: documents, folders, the active file, the notice the
@@ -79,10 +85,11 @@ type Dialog =
   | { kind: "rename"; row: FileRowData }
   | { kind: "move"; row: FileRowData }
   | { kind: "remove"; row: FileRowData }
+  | { kind: "renameFolder"; row: FolderRowData }
   | { kind: "removeFolder"; row: FolderRowData };
 
 type FileAction = "rename" | "move" | "remove";
-type FolderAction = "newFile" | "removeFolder";
+type FolderAction = "newFile" | "renameFolder" | "removeFolder";
 
 export default function FilesPanel({ onOpenFile, onRemoved, onError }: Props) {
   const documents = useProjectSelector((s) => s.documents);
@@ -174,7 +181,7 @@ export default function FilesPanel({ onOpenFile, onRemoved, onError }: Props) {
         }
       }
     } else if (e.key === "Enter") choose(row);
-    else if (e.key === "F2" && row.kind === "file") setDialog({ kind: "rename", row });
+    else if (e.key === "F2") setDialog(row.kind === "file" ? { kind: "rename", row } : { kind: "renameFolder", row });
     else if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") openMenu(row, e.currentTarget);
     else return;
     e.preventDefault();
@@ -198,6 +205,7 @@ export default function FilesPanel({ onOpenFile, onRemoved, onError }: Props) {
     const refusal = folderRemoveRefusal(row);
     return [
       { action: "newFile" as FolderAction, label: "New file here…" },
+      { action: "renameFolder" as FolderAction, label: "Rename…" },
       { action: "removeFolder" as FolderAction, label: "Remove…", ...(refusal ? { disabled: refusal } : {}) },
     ];
   };
@@ -298,15 +306,19 @@ export default function FilesPanel({ onOpenFile, onRemoved, onError }: Props) {
                       {row.empty && <span className="files-meta">Empty folder</span>}
                     </>
                   ) : (
-                    <>
+                    <span className="files-text">
+                      {/* The name on its own line, in full (5.10 item 2);
+                          its role and unsaved state smaller, under it. */}
                       <span className="files-name">{row.name}</span>
-                      <span className="files-meta">{roleWord(row.role)}</span>
-                      {row.dirty && (
-                        <span className="files-unsaved">
-                          <span className="files-dot" aria-hidden="true">●</span> unsaved
-                        </span>
-                      )}
-                    </>
+                      <span className="files-second">
+                        <span className="files-meta">{roleWord(row.role)}</span>
+                        {row.dirty && (
+                          <span className="files-unsaved">
+                            <span className="files-dot" aria-hidden="true">●</span> unsaved
+                          </span>
+                        )}
+                      </span>
+                    </span>
                   )}
                   <button
                     type="button"
@@ -351,7 +363,7 @@ export default function FilesPanel({ onOpenFile, onRemoved, onError }: Props) {
           onChoose={(action) => {
             const row = menu.row as FolderRowData;
             setMenu(null);
-            setDialog(action === "newFile" ? { kind: "newFile", folder: row.path } : { kind: "removeFolder", row });
+            setDialog(action === "newFile" ? { kind: "newFile", folder: row.path } : { kind: action, row });
           }}
         />
       )}
@@ -403,6 +415,23 @@ export default function FilesPanel({ onOpenFile, onRemoved, onError }: Props) {
             await projectStore.moveFile(row.doc, { name });
             setDialog(null);
             focusRow(row.key);
+          }}
+        />
+      )}
+      {dialog?.kind === "renameFolder" && (
+        <NameDialog
+          title={`Rename the folder ${dialog.row.name}`}
+          label="New name"
+          initial={dialog.row.name}
+          check={(name) => segmentError(name.trim())}
+          onCancel={() => setDialog(null)}
+          onSave={async (name) => {
+            const row = dialog.row;
+            const under = row.path.slice(0, Math.max(0, row.path.lastIndexOf("/")));
+            await projectStore.renameFolder(row.path, name.trim());
+            setDialog(null);
+            // The row's key is its path, which the rename has moved.
+            focusRow(`d:${under ? `${under}/${name.trim()}` : name.trim()}`);
           }}
         />
       )}
