@@ -61,6 +61,9 @@ EXPECTED OUTPUT
     - domain_of(graph, prop) -> DomainReading(form, classes, node): the one
       reader of a property's domain (attribute-reuse 5.3, D-116), and
       domains(graph) the same for every property that has one.
+    - class_uses(graph, targets) -> every range and rule filler naming one
+      of those classes, for the hierarchy-move warning (links-between-files
+      5.6): the one reader of a range or a filler that warning uses.
     - covers(reading, ancestors) and class_properties(view, cls, name):
       which properties a class has, and how (own, shared, both, through).
     - reuse_plan(view, own, prop, cls, name) -> the case of 5.2 for using a
@@ -802,6 +805,86 @@ def _descendants(g: Graph, cls) -> set:
 
 ancestors = _ancestors
 descendants = _descendants
+
+
+# How far up from a restriction's blank node the owner class is looked for:
+# a defining form's restriction sits in an intersection list, two cells and
+# an owl:Class node below its class. A list is attacker-shaped (see
+# UNION_MAX), so the walk is bounded.
+_OWNER_STEPS = 16
+
+
+def _rule_owners(g: Graph, node) -> set:
+    """The named classes whose rdfs:subClassOf or owl:equivalentClass reaches
+    `node` through blank nodes alone (a list cell, an intersection)."""
+    owners: set = set()
+    queue, seen = [(node, 0)], set()
+    while queue:
+        current, steps = queue.pop()
+        if current in seen or steps > _OWNER_STEPS:
+            continue
+        seen.add(current)
+        for s, p, _ in g.triples((None, None, current)):
+            if isinstance(s, URIRef) and p in (RDFS.subClassOf, OWL.equivalentClass):
+                owners.add(s)
+            elif isinstance(s, BNode):
+                queue.append((s, steps + 1))
+    return owners
+
+
+# How far up a named owner is looked for; a file can nest anything.
+_NAMED_OWNER_DEPTH = 64
+
+
+def named_owner(g: Graph, node) -> Optional[URIRef]:
+    """The named term a statement belongs to: its subject, or for a blank
+    node the first IRI found walking up what points to it, nearest first and
+    in IRI order, so the same graph always gives the same name. The delete
+    dialog's samples and DC-30's findings both name a statement by it."""
+    if isinstance(node, URIRef):
+        return node
+    seen, frontier = set(), [node]
+    for _ in range(_NAMED_OWNER_DEPTH):
+        if not frontier:
+            return None
+        nxt = []
+        for current in frontier:
+            if current in seen:
+                continue
+            seen.add(current)
+            referrers = sorted(set(g.subjects(None, current)), key=str)
+            named = [r for r in referrers if isinstance(r, URIRef)]
+            if named:
+                return named[0]
+            nxt += [r for r in referrers if isinstance(r, BNode)]
+        frontier = nxt
+    return None
+
+
+def class_uses(g: Graph, targets) -> list[tuple]:
+    """Every range and every rule filler naming one of `targets` (classes),
+    as (how, holder, property, target): how is "range" (holder the property
+    itself) or "filler" (holder the class whose rule it is, 5.8's subset as
+    `contents` reads it: some, only and a qualified count's owl:onClass).
+    Index lookups from each target, never a scan of every class: the
+    hierarchy-move warning (links-between-files 5.6) asks this for the few
+    classes a move put a term under or took it from."""
+    out: set = set()
+    for target in targets:
+        if not isinstance(target, URIRef):
+            continue
+        for prop in g.subjects(RDFS.range, target):
+            if isinstance(prop, URIRef):
+                out.add(("range", prop, prop, target))
+        nodes = set()
+        for predicate in (OWL.someValuesFrom, OWL.allValuesFrom, OWL.onClass):
+            nodes |= {n for n in g.subjects(predicate, target) if isinstance(n, BNode)}
+        for node in nodes:
+            for cls in _rule_owners(g, node):
+                for _, _, content in contents(g, cls):
+                    if content.kind != "value" and content.filler == target:
+                        out.add(("filler", cls, content.property, target))
+    return sorted(out, key=lambda row: tuple(str(x) for x in row))
 
 
 def covers(reading: DomainReading, lineage) -> bool:

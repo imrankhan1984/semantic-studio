@@ -36,6 +36,12 @@ BASIC IDEA
     relationship's two halves are the group of two D-127 called a pair.
     DeleteEntity's plan and Turtle Apply name the uses other files hold,
     `uses`, and change none of them; Deprecate is the safe alternative.
+    PR 2 adds MoveToFile, an entity's own statements and the blank nodes
+    only they reach from its file to another, one grouped step whose
+    prefixes go through Change.declare; the hierarchy-move warning, asked of
+    modeling_checks before and after the four hierarchy commands and a
+    Turtle Apply; and each file's graph, imports and switched-on snapshots
+    handed to the Checks report for DC-30 and DC-31.
 
     Every change goes through one path: work out a delta (triples to add,
     triples to remove, both restricted to what would really change), apply it,
@@ -223,6 +229,7 @@ from .graph_builder import (
     prefixed,
 )
 from .projects import (
+    DOC_ID,
     DRAFT_DIR,
     ProjectStore,
     UnknownDocument,
@@ -664,6 +671,10 @@ class Step:
     group: Optional[str] = None
     members: dict = field(default_factory=dict)
     by_role: bool = False
+    # MoveToFile's source half (links-between-files 5.8): the box's place it
+    # took off this file's canvas, (iri, position, shown), put back on undo
+    # and taken off again on redo.
+    dropped: Optional[tuple] = None
 
 
 @dataclass
@@ -3515,34 +3526,11 @@ def _whole_groups(drafts: dict) -> tuple[set, list]:
 
 # A delete names at most three statements per file (5.3 item 1, 8.3).
 USES_SAMPLE = 3
-# How far up a blank node's referrers a sample looks for its named term:
-# a restriction's class is one step, a list cell a few. A cycle of blank
-# nodes, which Turtle can write, ends at the cap rather than looping.
-_OWNER_DEPTH = 64
 
 
-def _named_owner(graph: Graph, node) -> Optional[URIRef]:
-    """The named term a statement belongs to: its subject, or for a blank
-    node the first IRI found walking up what points to it, nearest first and
-    in IRI order, so the same graph always gives the same name."""
-    if isinstance(node, URIRef):
-        return node
-    seen, frontier = set(), [node]
-    for _ in range(_OWNER_DEPTH):
-        if not frontier:
-            return None
-        nxt = []
-        for current in frontier:
-            if current in seen:
-                continue
-            seen.add(current)
-            referrers = sorted(set(graph.subjects(None, current)), key=str)
-            named = [r for r in referrers if isinstance(r, URIRef)]
-            if named:
-                return named[0]
-            nxt += [r for r in referrers if isinstance(r, BNode)]
-        frontier = nxt
-    return None
+# The named term a statement belongs to: axioms' one walk, which DC-30
+# names its findings by too.
+_named_owner = axioms.named_owner
 
 
 def uses_phrase(rows: list[dict]) -> str:
@@ -3600,6 +3588,7 @@ SUBJECT_ARGS = {
     )},
     "RenameIri": "old",
     "Deprecate": "iri",
+    "MoveToFile": "iri",
     **{n: "child" for n in ("AddSubClassOf", "RemoveSubClassOf", "AddSubPropertyOf", "RemoveSubPropertyOf")},
     **{n: "property" for n in (
         "SetDomain", "SetRange", "SwapEnds", "SetEnds", "ClearDomain", "ClearRange", "ShareDomain",
@@ -4394,6 +4383,62 @@ class EditingService:
             "revision": document.ontology.revision,
         }
 
+    def _project_name(self, pid: str) -> Callable[[URIRef], str]:
+        """A term's name read across the project's ontology and vocabulary
+        files: a warning about a move names terms another file defines."""
+        manifest = self.projects.manifest(pid)
+        languages = [manifest.get("primaryLanguage", "en"), *manifest.get("languages", [])]
+        view = self.project_graph(pid)
+        return lambda iri: pick_label_in(view, iri, languages)[0]
+
+    def _hierarchy_before(self, pid: str, name: str, args: dict, ctx: Context) -> Optional[tuple]:
+        """(term, predicate, where it sits now) for one of the four
+        hierarchy commands (5.6), else None: read before the change."""
+        move = modeling_checks.HIERARCHY_MOVES.get(name)
+        if move is None:
+            return None
+        key, predicate, _ = move
+        try:
+            term = ctx.iri(args.get(key))
+        except CommandError:
+            return None
+        graphs = [d.graph for d in self.model_docs(pid)]
+        return term, predicate, modeling_checks.lineage(graphs, term, predicate)
+
+    def _hierarchy_after(self, pid: str, moving: Optional[tuple]) -> list[dict]:
+        """The hierarchy-move warnings (5.6): where the term sits after the
+        change, against where it sat, over every file's rules. The caller
+        holds every lock and has applied the change."""
+        if moving is None:
+            return []
+        term, predicate, before = moving
+        graphs = [d.graph for d in self.model_docs(pid)]
+        after = modeling_checks.lineage(graphs, term, predicate)
+        if after == before:
+            return []
+        return modeling_checks.move_warnings(
+            graphs, [d.graph for d in self.shapes_docs(pid)], term, predicate, before, after, self._project_name(pid),
+        )
+
+    def _moves_in(self, pid: str, document: OpenDocument, change: Change, parsed: Graph) -> list[tuple]:
+        """Turtle Apply's moves (5.6 item 4): each term whose parent links the
+        Apply changed and that the project types before and after it -- in
+        this file or another, since this file may state another file's
+        term's parent -- with where it sits now. A term the text brings or
+        takes away is not moved."""
+        graphs = [d.graph for d in self.model_docs(pid)]
+        others = [d.graph for d in self.model_docs(pid) if d is not document]
+        found: dict = {}
+        for s, p, o in [*change.added, *change.removed]:
+            if p == SKOS.narrower:
+                s, o, p = o, s, SKOS.broader
+            if p in (RDFS.subClassOf, SKOS.broader) and isinstance(s, URIRef) and isinstance(o, URIRef):
+                before = any((s, RDF.type, None) in g for g in graphs)
+                after = (s, RDF.type, None) in parsed or any((s, RDF.type, None) in g for g in others)
+                if before and after:
+                    found.setdefault((s, p), None)
+        return [(term, p, modeling_checks.lineage(graphs, term, p)) for term, p in sorted(found, key=str)]
+
     def _gone_but_used(self, document: OpenDocument, gone: dict) -> list[dict]:
         """Turtle Apply's second warning (5.5): each term the file typed
         before and no longer types -- removed, or readdressed, which the app
@@ -4502,6 +4547,17 @@ class EditingService:
         if document is None:
             raise NotOpen(pid)
         primary = self.primary(pid).ontology.id
+        if not document.is_shapes:
+            # DC-30 reads each file's imports: built here, before the locks,
+            # as command() warms the reference index, so a first parse of an
+            # import never holds every file's lock (cached by revision, so
+            # the read under the locks below is the cached view).
+            for d in self.model_docs(pid):
+                if load_state(d.ontology):
+                    try:
+                        imports_service.merged(d.ontology)
+                    except Exception:  # read again under the locks, where its failure is the report's
+                        log.debug("Warming the imports of %s for Checks failed", d.ontology.id, exc_info=True)
         # Built under every lock: a view reads each file's subjects as it is
         # made, and no change may run meanwhile.
         with self._all_locks(pid):
@@ -4510,8 +4566,18 @@ class EditingService:
                 graph = shapes[0].graph if len(shapes) == 1 else MergedView([d.graph for d in shapes])
                 return {"kind": "shapes", "graph": graph, "primary": primary,
                         "revision": self.shapes_revision(pid, shapes)}
+            # DC-30 and DC-31 ask which file holds a statement (links-between-
+            # files 5.7): each file's own graph, every role, and what is said
+            # beside them -- each file's resolved imports and the switched-on
+            # data snapshots -- read under the same locks.
+            files = [(d.doc, d.file, d.graph) for d in self._open.get(pid, {}).values()]  # manifest order
+            outside = [
+                g for d in self.model_docs(pid) if load_state(d.ontology)
+                for g in getattr(imports_service.merged(d.ontology)["graph"], "graphs", [None])[1:]
+            ]
+            outside += [g for g, _ in self.snapshots.active(pid)[1]]
             return {"kind": "model", "graph": self.project_graph(pid), "primary": primary,
-                    "revision": self.project_revision(pid)}
+                    "revision": self.project_revision(pid), "files": files, "outside": outside}
 
     def project_graph(self, pid: str) -> Graph:
         """The ontology and vocabulary files together, without imports: what
@@ -4559,6 +4625,13 @@ class EditingService:
             if document.is_shapes:
                 raise CommandError("A branch relationship is created in an ontology or vocabulary file.")
             return self._create_branch_relationship(pid, document, args)
+        if name == "MoveToFile":
+            # An entity's own statements from one file to another, as one
+            # grouped step (links-between-files 5.8): it writes two files, so
+            # it is the service's, as the branch relationship is.
+            if dry_run:
+                raise CommandError(DRY_RUNS)
+            return self._move_to_file(pid, self.document(pid, doc), args)
         handler = COMMANDS.get(name)
         if handler is None:
             raise CommandError(f"There is no command called {name}.")
@@ -4614,6 +4687,9 @@ class EditingService:
                     raise CommandError(DRY_RUNS)
                 change = handler(ctx, args)
                 impact = None
+            # A move in a hierarchy (5.6): where the term sat, read before
+            # the change, in every file, to compare with where it sits after.
+            moving = None if document.is_shapes else self._hierarchy_before(pid, name, args, ctx)
             if not change.added and not change.removed and not change.declare and not change.undeclare:
                 raise CommandError("That would change nothing.")
             if name not in ("DeleteEntity", "RenameIri"):  # checked above, before it could pair
@@ -4636,6 +4712,11 @@ class EditingService:
             }
             if impact is not None:
                 result["impact"] = impact
+            # What the move changed in a rule of any file: said, never a
+            # refusal; the change above stands (5.6 items 1 and 2).
+            warnings = self._hierarchy_after(pid, moving)
+            if warnings:
+                result["warnings"] = warnings
             if change.created is not None:
                 result["created"] = str(change.created)
             if class_type is not None:
@@ -4830,6 +4911,10 @@ class EditingService:
             }
             old, new = set(graph), set(parsed)
             change = Change("Applied Turtle edits", list(new - old), list(old - new))
+            # A term the text moves in its hierarchy, where it sits now (5.6
+            # item 4): its warnings stand under the editor, as the command's
+            # stand under the block.
+            moving = [] if document.is_shapes else self._moves_in(pid, document, change, parsed)
             for prefix, namespace in parsed.namespaces():
                 graph.bind(prefix, namespace, override=True, replace=True)
             before = document.editor_state()
@@ -4849,6 +4934,7 @@ class EditingService:
             # A term gone from this file that other files still use (5.5):
             # applied all the same, and said under the editor.
             result["usedElsewhere"] = self._gone_but_used(document, gone)
+            result["hierarchyWarnings"] = [w for move in moving for w in self._hierarchy_after(pid, move)]
         # Outside the lock: the first check of a QUDT project builds its
         # index, and the text has applied already (5.7: information, not a
         # refusal). `parsed` is this request's own graph.
@@ -4885,19 +4971,21 @@ class EditingService:
         document.redo.clear()
 
     @staticmethod
-    def _push_group(parts: list, *, by_role: bool = False) -> list[Step]:
+    def _push_group(parts: list, *, by_role: bool = False, labelled: bool = False) -> list[Step]:
         """A change across files, one grouped undo step (5.1, D-133): an
         ordinary step in each touched file's history, all sharing a token and
         holding each other by identity, so undo or redo of any member applies
         every member and recovery keeps the group whole. `parts` is
         [(document, change, before)], the change already applied. Each
         member's label names the other files (5.1 item 2), except a branch
-        relationship's pair, whose labels are D-127's as they were."""
+        relationship's pair, whose labels are D-127's as they were, and a
+        change whose own labels already name the other file (`labelled`:
+        MoveToFile's *Moved Pump to equipment.ttl* and *... from core.ttl*)."""
         token = uuid.uuid4().hex
         steps = []
         for document, change, before in parts:
             label = change.label
-            if not by_role:
+            if not by_role and not labelled:
                 others = [file_basename(d.file) for d, _, _ in parts if d is not document]
                 label = f"{change.label} (also in {', '.join(others)})"
             steps.append(Step(
@@ -4939,6 +5027,118 @@ class EditingService:
             "created": str(change.created),
             "documents": self._documents_json([d for d, _ in parts]),
         }
+
+    def _move_to_file(self, pid: str, document: OpenDocument, args: dict) -> dict:
+        """MoveToFile {iri, target} (5.8): the entity's own statements -- every
+        statement with it as subject, and the blank nodes they alone reach:
+        its restrictions, a union's list, the D-116 shared domain -- leave
+        this file for the target, as one grouped step. Statements anywhere
+        that point to it are not touched: the address does not change, so
+        no link breaks. The prefixes the moved statements need and the
+        target lacks are declared there through Change.declare, as
+        AddVocabulary's are, so undo restores both files' text byte for byte."""
+        if document.is_shapes:
+            raise CommandError("An entity is moved from an ontology or vocabulary file.")
+        with self._all_locks(pid):
+            ctx = self._context(document)
+            # Started only where the entity is defined (5.8 item 1, 5.3 item 3).
+            self._cross_file(document, "MoveToFile", args, ctx)
+            iri = ctx.iri(args.get("iri"), "entity")
+            target_id = args.get("target")
+            # A file id matched in full (D-131), never a path.
+            target = (
+                self._open.get(pid, {}).get(target_id)
+                if isinstance(target_id, str) and DOC_ID.fullmatch(target_id) else None
+            )
+            if target is None:
+                raise CommandError("There is no such file in this project.")
+            name = ctx.name(iri)
+            # The three refusals of 5.8 item 2, in its order.
+            if target.is_shapes:
+                raise CommandError("Shapes live in a shapes file; move the class, then its shapes follow its address.")
+            if target is document or (iri, RDF.type, None) in target.graph:
+                raise CommandError(f"{name} is already defined in {file_basename(target.file)}.")
+            own = set(document.graph.triples((iri, None, None)))
+            if not own:
+                raise CommandError(f"{name} has no statements of its own in {file_basename(document.file)} to move.")
+            if (iri, RDF.type, OWL.Ontology) in document.graph:
+                raise CommandError("A file's header stays in its file.")
+            moving = own | _bnode_closure(document.graph, [o for _, _, o in own], own)
+            # A blank node another statement points to too (a restriction
+            # written once for two classes in Turtle) cannot go with one of
+            # them: its description would stay here and the moved statement
+            # point at nothing there.
+            described = {s for s, _, _ in moving}
+            if any(isinstance(o, BNode) and o not in described for _, _, o in own):
+                raise CommandError(
+                    f"{name} shares a rule with another term, written in Turtle; "
+                    "move it in Turtle, or give each term its own rule first."
+                )
+            here, there = file_basename(document.file), file_basename(target.file)
+            leave = Change(f"Moved {name} to {there}", [], list(moving))
+            arrive = Change(f"Moved {name} from {here}", list(moving), [])
+            arrive.declare = self._prefixes_needed(document, target, moving) or None
+            parts = [(document, leave), (target, arrive)]
+            befores = [d.editor_state() for d, _ in parts]
+            for d, c in parts:
+                self._apply(d, c, origin="command")
+            self._declare(target, arrive)
+            steps = self._push_group([(d, c, b) for (d, c), b in zip(parts, befores)], labelled=True)
+            # Its box leaves this file's canvas; the target's layout places it
+            # as any new term (5.8 item 4, D-087). Undo puts its place back.
+            steps[0].dropped = self._drop_layout(document, str(iri))
+            return {
+                "revision": document.ontology.revision,
+                "label": steps[0].label,
+                "delta": _delta_json(leave),
+                "state": document.state(),
+                "moved": {"doc": target.doc, "file": target.file},
+                "documents": self._documents_json([d for d, _ in parts]),
+            }
+
+    @staticmethod
+    def _prefixes_needed(source: OpenDocument, target: OpenDocument, triples: set) -> dict:
+        """The prefixes the source declares for a namespace the moved
+        statements use and the target does not declare, under the same
+        name when the target has not given that name to another namespace."""
+        terms = {str(t) for triple in triples for t in triple if isinstance(t, URIRef)}
+        terms |= {str(t.datatype) for triple in triples for t in triple if isinstance(t, Literal) and t.datatype}
+        theirs = target.declared()
+        bound = set(theirs.values())
+        out: dict = {}
+        for prefix, namespace in sorted(source.declared().items()):
+            if not namespace or namespace in bound or prefix in theirs or prefix in out:
+                continue
+            if any(term.startswith(namespace) for term in terms):
+                out[prefix] = namespace
+                bound.add(namespace)
+        return out
+
+    def _drop_layout(self, document: OpenDocument, iri: str) -> tuple:
+        """A moved entity's position leaves the file it left. Returns (iri,
+        position or None, whether it was in the shown set), which undo puts
+        back so an undone move finds its box's place, as an undone delete
+        does."""
+        layout = self.projects.read_layout(document.pid, document.doc)
+        position = layout["positions"].pop(iri, None)
+        shown = bool(layout["shown"]) and iri in layout["shown"]
+        if shown:
+            layout["shown"] = [i for i in layout["shown"] if i != iri]
+        if position is not None or shown:
+            self.projects.write_layout(document.pid, document.doc, layout)
+        return iri, position, shown
+
+    def _restore_layout(self, document: OpenDocument, dropped: tuple) -> None:
+        """Undo of a move: the box's place, as it was before it."""
+        iri, position, shown = dropped
+        if position is None and not shown:
+            return
+        layout = self.projects.read_layout(document.pid, document.doc)
+        if position is not None:
+            layout["positions"][iri] = position
+        if shown and layout["shown"] is not None and iri not in layout["shown"]:
+            layout["shown"] = [*layout["shown"], iri]
+        self.projects.write_layout(document.pid, document.doc, layout)
 
     @staticmethod
     def _documents_json(documents: list) -> list[dict]:
@@ -5077,6 +5277,8 @@ class EditingService:
         document.restore_state(step.before)
         if step.renamed:
             self._move_layout(document, step.renamed[1], step.renamed[0])
+        if step.dropped:
+            self._restore_layout(document, step.dropped)
         document.redo.append(step)
         self._settle(document)
 
@@ -5100,6 +5302,8 @@ class EditingService:
         document.restore_state(step.after)
         if step.renamed:
             self._move_layout(document, *step.renamed)
+        if step.dropped:
+            step.dropped = self._drop_layout(document, step.dropped[0])
         document.undo.append(step)
         self._settle(document)
 

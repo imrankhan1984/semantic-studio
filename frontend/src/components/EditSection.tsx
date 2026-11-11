@@ -76,6 +76,12 @@ INPUTS / INPUT SOURCES (props)
     line is shown; one without is made at once. *Deprecate {name}…* beside
     *Delete {name}…* opens DeleteDialog's Deprecate step (5.4 item 3).
 
+    *Move {name} to file…* beside them (links-between-files 5.8) opens
+    MoveToFileDialog: the entity's own statements to another ontology or
+    vocabulary file of the project, as one grouped step. It is the visual
+    door (D-078): the canvas has no cross-file drag. It is absent in a
+    project of one such file, where there is nowhere to move to.
+
 EXPECTED OUTPUT
     - Commands through the project store; the section's markup.
 ================================================================================
@@ -88,10 +94,11 @@ import { entityModel, structureOf, type Annotation, type EntityModel } from "../
 import { examplesOf } from "../modeling/examples";
 import { renameLine } from "../modeling/usesWords";
 import { describeValue, typeOfValue, valueProblem, toValue } from "../modeling/values";
-import { projectStore } from "../state/projectStore";
+import { isShapesDoc, projectStore, useProjectSelector } from "../state/projectStore";
 import type { CanvasSet, NodeDetails, ProjectKind } from "../types";
 import AnnotationAdder, { ValueInput } from "./AnnotationAdder";
 import DeleteDialog from "./DeleteDialog";
+import MoveToFileDialog from "./MoveToFileDialog";
 import { Block, InlineText, useCopy, useReturnFocus, useRunner, type Runner } from "./EditParts";
 import EditStructure from "./EditStructure";
 import ExampleForm from "./ExampleForm";
@@ -204,6 +211,22 @@ export default function EditSection({
   const [deleting, setDeleting] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [deprecating, setDeprecating] = useState(false);
+  const [moving, setMoving] = useState(false);
+  // Somewhere to move to (5.8 item 5): another ontology or vocabulary file.
+  const canMove = useProjectSelector((s) => s.documents.filter((d) => !isShapesDoc(d)).length > 1);
+  // After a move the form is read-only here, and the Move button the dialog
+  // hands focus back to is gone, which left focus on the page (found in the
+  // browser). Once the panel says *Defined in …*, its *Open file* takes the
+  // focus, the next step 5.8 item 6 offers; the panel's heading without it.
+  const moved = useRef(false);
+  useEffect(() => {
+    if (!moved.current || !details.fromFile) return;
+    moved.current = false;
+    const panel = document.querySelector(".detail-panel");
+    const next =
+      panel?.querySelector<HTMLElement>(".detail-file .link-btn") ?? panel?.querySelector<HTMLElement>("h2[tabindex='-1']");
+    next?.focus();
+  }, [details.fromFile]);
   // RenameIri's dry run for the value now in the field (5.2 item 2): the
   // line it gives (null: nothing else holds the address), or a refusal.
   const [count, setCount] = useState<{
@@ -617,10 +640,28 @@ export default function EditSection({
             Deprecate {name}…
           </button>
         )}
+        {canMove && (
+          // Another file of the project for it (5.8 item 5); never a canvas
+          // drag (D-078).
+          <button type="button" className="ghost" onClick={() => setMoving(true)}>
+            Move {name} to file…
+          </button>
+        )}
         <button type="button" className="ghost danger" onClick={() => setDeleting(true)}>
           Delete {name}…
         </button>
       </div>
+      {moving && (
+        <MoveToFileDialog
+          iri={iri}
+          label={name}
+          runner={runner}
+          onDone={(done) => {
+            moved.current = done;
+            setMoving(false);
+          }}
+        />
+      )}
       {deprecating && (
         <DeleteDialog
           iri={iri}

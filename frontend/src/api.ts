@@ -829,6 +829,11 @@ export interface CheckFinding {
   sentence: string;
   block?: "label" | "definition" | "header";
   level?: CheckLevel;
+  /** The project file the finding's statement is in (DC-30, DC-31,
+   *  links-between-files 5.7): its *open* goes to that file. */
+  doc?: ProjectDocName;
+  file?: string;
+  files?: string[];
 }
 
 export interface CheckGroup {

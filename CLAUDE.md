@@ -56,8 +56,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 2402 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 2261 tests, vitest
+cd backend  && python -m pytest tests    # 2419 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 2272 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -69,7 +69,7 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Fifty-two backend tests carry
+**Timing budgets are separated, not deleted.** Fifty-three backend tests carry
 `@pytest.mark.perf`; twelve frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
@@ -199,8 +199,10 @@ backend/app/
   editing.py         The only mutator of a project document: commands, undo,
                      Turtle apply, save rule, autosave, recovery; every file
                      of a project, the lock order, the cross-file refusal;
-                     grouped steps across files, a term's uses (D-133)
-  modeling_checks.py The 5.9 checks: refusals and warnings, in plain words
+                     grouped steps across files, a term's uses (D-133),
+                     Move to file
+  modeling_checks.py The 5.9 checks: refusals and warnings, in plain words;
+                     the hierarchy-move warning across files (E-17)
   templates/         The three New project templates, Turtle with placeholders
   graph_builder.py   RDF -> visualization nodes and edges, labels, node kinds
   query_schema.py    Class-level schema powering the visual query builder
@@ -238,7 +240,7 @@ backend/app/
                      standard-vocabulary list, ss:own and ss:term, the runner,
                      the sentences, the measures and the level; the hints,
                      the review aids (read aloud, definitions, questions)
-  checks/            The 29 pinned SELECT files, the 12 hints' (H1 to H12)
+  checks/            The 31 pinned SELECT files, the 12 hints' (H1 to H12)
                      and manifest.json
   standard_terms.py  The standard-term catalogue's one reader (D-126): a
                      home-made copy of a standard axiom matched by name and
@@ -582,6 +584,9 @@ leaves one behind.
 - A delete and a Turtle Apply name other files' `uses` and change none of them; a rename names the data snapshots and counts the saved queries that use the old address, changing neither. [Links between files]
 - A draft's sidecar names its unsaved groups and the siblings each needs; a save refreshes the other drafts' claims, so a member already on disk needs no draft. Recovery restores a group or none. [Links between files]
 - With uses elsewhere, *Deprecate instead* is the delete dialog's first button and holds the focus (ConfirmDialog's `focus`): Enter never deletes. [Links between files]
+- A hierarchy move compares where the term sits before and after, in every file; branch rules are read only through `shapes_form.branch_under`, ranges and fillers only through `axioms.class_uses`. The warning is the command's answer (`warnings`, `block`, `about`), kept as the store's `moveWarnings` and said there, so every door warns alike; it never refuses. [Links between files, PR 2]
+- DC-30 and DC-31 are `_COMPUTED`: which file holds a statement comes from `whole`'s `files` and `outside`, never the merged graph; a finding carries `doc`, and the opener goes to that file. [Links between files, PR 2]
+- MoveToFile is the service's, under every lock: `_cross_file` refuses it outside the defining file, the target's half is never held to `_cross_file_change`, its prefixes go through `Change.declare`, and undo restores both texts byte for byte. Its only door is the edit section's button (D-078). [Links between files, PR 2]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

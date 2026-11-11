@@ -1560,13 +1560,19 @@ export default function App() {
       guardEditor(() => {
         setSourceTarget(null);
         setProjectChecking(false);
-        if (to === "shapes") {
+        // A finding that names its file (DC-30, DC-31, links-between-files
+        // 5.7 item 4) opens there, whatever its address looks like: a shapes
+        // file's statement in Shapes, any other in Edit -- an address under
+        // a pattern project's shapes or data base would read as Explore's.
+        const snapNow = projectStore.getSnapshot();
+        const named = finding.doc ? snapNow.documents.find((d) => d.doc === finding.doc) : undefined;
+        if (to === "shapes" || (named && isShapesDoc(named))) {
           setMode("shapes");
           return;
         }
         if (!iri) return;
-        if (to === "edit") {
-          const snap = projectStore.getSnapshot();
+        if (to === "edit" || named) {
+          const snap = snapNow;
           const shown = snap.documents.find((d) => d.doc === snap.editDoc) ?? primaryDocument(snap.documents);
           if (!shown) return;
           const block = finding.block;
@@ -1581,6 +1587,10 @@ export default function App() {
               selectAndFocus(iri, true);
             }
           };
+          if (named) {
+            open(named);
+            return;
+          }
           // The term in its own file (multi-file-projects 5.3 item 6): the
           // file Edit shows knows, by fromFile, when another one defines it.
           if (snap.documents.filter((d) => !isShapesDoc(d)).length < 2) {

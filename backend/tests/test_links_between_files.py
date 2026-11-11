@@ -7,6 +7,8 @@ SUMMARY
     Links between files, PR 1 (links-between-files 5.1 to 5.5, D-133): the
     grouped step, RenameIri across every project file, DeleteEntity's uses,
     Deprecate, and Turtle Apply's warning for a term other files still use.
+    PR 2 (5.6 to 5.8): the hierarchy-move warning by command and by Apply,
+    DC-30 and DC-31 in the Checks report, and MoveToFile.
 
 BASIC IDEA
     Through the HTTP API, as the frontend drives it, on a small project:
@@ -19,8 +21,9 @@ INPUTS / INPUT SOURCES
       (rdf-fixture: the smallest fixture that proves the point).
 
 EXPECTED OUTPUT
-    - Pass/fail for AC-1 to AC-11 as the server sees them, and Section 10's
-      two rename budgets (`perf`); its checks ratio belongs to PR 2.
+    - Pass/fail for AC-1 to AC-11 and AC-15 to AC-22 as the server sees
+      them, and Section 10's three budgets (`perf`): the two rename timings
+      and the checks ratio.
 ================================================================================
 """
 
@@ -436,3 +439,362 @@ def test_budget_rename_and_undo(ten_files):
         gc.enable()
     assert sorted(renames)[2] < limit_ms(500), f"rename {sorted(renames)[2]:.1f} ms"
     assert sorted(undos)[2] < limit_ms(500), f"undo {sorted(undos)[2]:.1f} ms"
+
+
+# =====================================================================================
+# PR 2 (links-between-files 5.6 to 5.8, AC-15 to AC-24)
+# =====================================================================================
+
+SKOS_NS = "http://www.w3.org/2004/02/skos/core#"
+
+
+def new_file(pid: str, name: str, role: str = "ontology") -> str:
+    made = client.post(f"/api/projects/{pid}/documents", json={"role": role, "name": name, "folder": ""})
+    assert made.status_code == 200, made.text
+    return made.json()["entry"]["id"]
+
+
+def apply(pid: str, doc: str, text: str) -> dict:
+    applied = client.put(f"/api/projects/{pid}/documents/{doc}/source", json={"text": text})
+    assert applied.status_code == 200, applied.text
+    return applied.json()
+
+
+# --- 5.6: the hierarchy-move warning -------------------------------------------------
+
+
+@pytest.fixture
+def branch():
+    """AC-15's project: Pump in model.ttl with a branch relationship *has
+    valve type* to Valve types, a concept of vocab.ttl, Gate valve under it;
+    the rule in shapes.ttl; two examples in data.ttl with Gate valve."""
+    response = client.post("/api/projects", json={"name": "Valves", "template": "empty", "baseIri": EX, "prefix": "plant"})
+    pid = response.json()["id"]
+    assert client.post(f"/api/projects/{pid}/open").status_code == 200
+    vocab = new_file(pid, "vocab", "vocabulary")
+    ok(pid, vocab, "CreateConcept", prefLabel="Valve types")
+    ok(pid, vocab, "CreateConcept", prefLabel="Gate valve", broader=EX + "ValveTypes")
+    ok(pid, "model", "CreateClass", label="Pump")
+    made = ok(pid, "model", "CreateBranchRelationship", label="has valve type", domain=EX + "Pump", branch=EX + "ValveTypes")
+    data = new_file(pid, "data")
+    apply(pid, data, (
+        f"<{EX}p1> a <{EX}Pump> ; <{made['created']}> <{EX}GateValve> .\n"
+        f"<{EX}p2> a <{EX}Pump> ; <{made['created']}> <{EX}GateValve> .\n"
+    ))
+    return pid, vocab
+
+
+def test_ac15_branch_move_warns(branch):
+    pid, vocab = branch
+    result = ok(pid, vocab, "RemoveBroader", concept=EX + "GateValve", broader=EX + "ValveTypes")
+    assert result["warnings"] == [{
+        "text": "Gate valve is no longer under Valve types, so Pump's has valve type no longer allows it. "
+                "2 examples use it.",
+        "block": "broader",
+        "about": EX + "GateValve",
+    }]
+    # The way back is a move too, said the other way round.
+    back = ok(pid, vocab, "AddBroader", concept=EX + "GateValve", broader=EX + "ValveTypes")
+    assert back["warnings"][0]["text"].startswith("Gate valve is now under Valve types, so Pump's has valve type now allows it.")
+
+
+@pytest.fixture
+def ranged():
+    """AC-16's: Motor under Pump in core.ttl; drives in equipment.ttl with
+    range Pump; Car in equipment.ttl with the rule *every has part some
+    Pump*; Gear, under nothing a range or a rule names."""
+    response = client.post("/api/projects", json={"name": "Drives", "template": "empty", "baseIri": EX, "prefix": "plant"})
+    pid = response.json()["id"]
+    assert client.post(f"/api/projects/{pid}/open").status_code == 200
+    core, equipment = new_file(pid, "core"), new_file(pid, "equipment")
+    ok(pid, core, "CreateClass", label="Pump")
+    ok(pid, core, "CreateClass", label="Motor", parent=EX + "Pump")
+    ok(pid, core, "CreateClass", label="Gear")
+    ok(pid, core, "CreateClass", label="Part")
+    ok(pid, core, "AddSubClassOf", child=EX + "Gear", parent=EX + "Part")
+    ok(pid, equipment, "CreateObjectProperty", label="drives", range=EX + "Pump")
+    ok(pid, equipment, "CreateObjectProperty", label="has part")
+    ok(pid, equipment, "CreateClass", label="Car")
+    ok(pid, equipment, "AddRestriction", **{"class": EX + "Car"}, form="every", property=EX + "hasPart",
+       kind="some", filler=EX + "Pump")
+    return pid, core, equipment
+
+
+def test_ac16_range_move_warns(ranged):
+    pid, core, equipment = ranged
+    result = ok(pid, core, "RemoveSubClassOf", child=EX + "Motor", parent=EX + "Pump")
+    assert [w["text"] for w in result["warnings"]] == [
+        "Motor is no longer under Pump, so Car's rule on has part no longer expects it.",
+        "Motor is no longer under Pump, so drives no longer expects it.",
+    ]
+    assert {w["block"] for w in result["warnings"]} == {"parents"}
+    assert {w["about"] for w in result["warnings"]} == {EX + "Motor"}
+
+
+def test_ac16_the_text_door_warns_alike(ranged):
+    pid, core, equipment = ranged
+    text = source(pid, core).replace("rdfs:subClassOf plant:Pump", "rdfs:comment \"no longer a pump\"@en")
+    assert "no longer a pump" in text
+    applied = apply(pid, core, text)
+    assert [w["text"] for w in applied["hierarchyWarnings"]] == [
+        "Motor is no longer under Pump, so Car's rule on has part no longer expects it.",
+        "Motor is no longer under Pump, so drives no longer expects it.",
+    ]
+
+
+def test_the_text_door_warns_of_another_files_term_moved_here(ranged):
+    # equipment.ttl states the parent of core.ttl's Gear: taking it away by
+    # Turtle in equipment.ttl moves Gear, a term this file does not type.
+    pid, core, equipment = ranged
+    ok(pid, core, "RemoveSubClassOf", child=EX + "Gear", parent=EX + "Part")
+    before = source(pid, equipment)
+    apply(pid, equipment, before + f"\n<{EX}Gear> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <{EX}Pump> .\n")
+    applied = apply(pid, equipment, before)
+    assert [w["text"] for w in applied["hierarchyWarnings"]] == [
+        "Gear is no longer under Pump, so Car's rule on has part no longer expects it.",
+        "Gear is no longer under Pump, so drives no longer expects it.",
+    ]
+
+
+def test_ac17_warning_never_blocks_and_a_move_changing_no_rule_says_nothing(ranged):
+    pid, core, equipment = ranged
+    result = ok(pid, core, "RemoveSubClassOf", child=EX + "Motor", parent=EX + "Pump")
+    assert result["warnings"]
+    assert (URIRef(EX + "Motor"), URIRef("http://www.w3.org/2000/01/rdf-schema#subClassOf"), PUMP) not in graph(pid, core)
+    quiet = ok(pid, core, "RemoveSubClassOf", child=EX + "Gear", parent=EX + "Part")
+    assert "warnings" not in quiet
+    assert apply(pid, core, source(pid, core) + "\n")["hierarchyWarnings"] == []
+
+
+# --- 5.7: DC-30 and DC-31 ------------------------------------------------------------
+
+
+def checks_of(pid: str, doc: str) -> dict:
+    report = client.get(f"/api/ontologies/{pid}/checks?doc={doc}")
+    assert report.status_code == 200, report.text
+    return {g["id"]: g for g in report.json()["groups"]}
+
+
+def test_ac18_dc30_lists_each_statement_with_its_file(linked):
+    pid, core, equipment = linked
+    assert checks_of(pid, core)["DC-30"]["findings"] == []
+    ok(pid, core, "DeleteEntity", iri=EX + "Pump")
+    group = checks_of(pid, equipment)["DC-30"]
+    assert group["level"] == "Problem" and group["total"] == len(group["findings"])
+    by_file = {}
+    for finding in group["findings"]:
+        by_file.setdefault(finding["file"], []).append(finding)
+    motor = [f for f in by_file["equipment.ttl"] if f["iri"] == EX + "Motor"]
+    assert [f["sentence"] for f in motor] == ["equipment.ttl: Motor is a kind of Pump, which no file defines."]
+    assert motor[0]["doc"] == equipment
+    assert [f["sentence"] for f in by_file["equipment.ttl"] if f["iri"] == EX + "drives"] == [
+        "equipment.ttl: drives has range Pump, which no file defines.",
+    ]
+    # The shape's target is a statement too, named by its shape, in its file.
+    assert [f["doc"] for f in by_file["shapes.ttl"]] == ["shapes"]
+
+
+def test_dc30_counts_an_import_and_a_switched_on_snapshot_as_saying_it(linked):
+    pid, core, equipment = linked
+    ok(pid, equipment, "AddAnnotation", iri=EX + "Motor", property="rdfs:seeAlso", value={"kind": "link", "value": EX + "row1"})
+    assert [f["iri"] for f in checks_of(pid, core)["DC-30"]["findings"]] == [EX + "Motor"]
+    data = Graph()
+    data.add((URIRef(EX + "row1"), RDF.type, PUMP))
+    meta = {"id": "rows-abc123", "source": "rows.csv", "importedAt": "2026-11-11T00:00:00Z",
+            "rows": {"kept": 1, "total": 1}, "enabled": True}
+    editing_service.snapshots._loaded[pid] = {"rows-abc123": Loaded(meta, data)}
+    try:
+        assert checks_of(pid, core)["DC-30"]["findings"] == []
+        editing_service.snapshots._loaded[pid]["rows-abc123"].meta["enabled"] = False
+        assert len(checks_of(pid, core)["DC-30"]["findings"]) == 1
+    finally:
+        editing_service.snapshots._loaded[pid] = {}
+
+
+def test_ac19_dc31_lists_a_term_typed_in_two_files(linked):
+    pid, core, equipment = linked
+    assert checks_of(pid, core)["DC-31"]["findings"] == []
+    applied = apply(pid, equipment, source(pid, equipment) + f"\n<{EX}Pump> a <http://www.w3.org/2002/07/owl#Class> .\n")
+    assert applied["definedElsewhere"]
+    group = checks_of(pid, core)["DC-31"]
+    assert group["level"] == "Worth a look"
+    assert [(f["iri"], f["sentence"], f["files"]) for f in group["findings"]] == [
+        (EX + "Pump", "Pump is defined in core.ttl and equipment.ttl.", ["core.ttl", "equipment.ttl"]),
+    ]
+    assert group["findings"][0]["doc"] == core
+
+
+def test_dc30_and_dc31_are_pinned_select_files():
+    from app import checks, sparql_exec
+
+    for cid in ("DC-30", "DC-31"):
+        entry = next(e for e in checks.manifest() if e["id"] == cid)
+        path = Path(checks.CHECKS_DIR) / entry["file"]
+        import hashlib
+
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == entry["sha256"]
+        sparql_exec.prepare_select(entry["query"])  # a SELECT the runner accepts
+        assert cid in checks._COMPUTED
+
+
+# --- 5.8: Move to file ---------------------------------------------------------------
+
+
+@pytest.fixture
+def movable(linked):
+    """AC-20's: Pump in core.ttl with a rule (every drives some Motor) and an
+    address under a prefix only core.ttl declares (AC-22)."""
+    pid, core, equipment = linked
+    ok(pid, core, "CreateClass", label="Motor housing")
+    ok(pid, core, "AddRestriction", **{"class": EX + "Pump"}, form="every", property=EX + "drives",
+       kind="some", filler=EX + "MotorHousing")
+    text = source(pid, core)
+    text = "@prefix spare: <http://example.org/spare#> .\n" + text + "\nplant:Pump rdfs:seeAlso spare:Catalogue .\n"
+    apply(pid, core, text)
+    return pid, core, equipment
+
+
+def test_ac20_move_to_file_one_step_no_link_breaks(movable):
+    pid, core, equipment = movable
+    own = {t for t in graph(pid, core) if t[0] == PUMP}
+    assert len(own) >= 4
+    pointing = {d: {t for t in graph(pid, d) if t[2] == PUMP} for d in (equipment, "shapes")}
+    result = ok(pid, core, "MoveToFile", iri=EX + "Pump", target=equipment)
+    assert result["label"] == "Moved Pump to equipment.ttl"
+    assert result["moved"] == {"doc": equipment, "file": "equipment.ttl"}
+    assert {d["doc"] for d in result["documents"]} == {core, equipment}
+    assert (PUMP, None, None) not in graph(pid, core)
+    for t in own:
+        if isinstance(t[2], URIRef):
+            assert t in graph(pid, equipment)
+    # The rule's blank nodes went whole: no restriction is left in core.ttl.
+    assert not [t for t in graph(pid, core) if t[1] == OWL.onProperty]
+    assert [t for t in graph(pid, equipment) if t[1] == OWL.someValuesFrom][0][2] == URIRef(EX + "MotorHousing")
+    for d, kept in pointing.items():
+        assert {t for t in graph(pid, d) if t[2] == PUMP} == kept, d
+    assert "spare: <http://example.org/spare#>" in source(pid, equipment)
+    # One undo step in each file, sharing a group.
+    a, b = editing_service.document(pid, core).undo[-1], editing_service.document(pid, equipment).undo[-1]
+    assert a.group == b.group and a.members == {equipment: b} and b.label == "Moved Pump from core.ttl"
+    assert checks_of(pid, core)["DC-30"]["findings"] == []
+
+
+def test_ac21_move_refusals(movable):
+    pid, core, equipment = movable
+    revisions = {d.doc: d.ontology.revision for d in editing_service._open[pid].values()}
+    refusals = [
+        (core, {"iri": EX + "Pump", "target": "shapes"},
+         "Shapes live in a shapes file; move the class, then its shapes follow its address."),
+        (core, {"iri": EX + "Pump", "target": core}, "Pump is already defined in core.ttl."),
+        (equipment, {"iri": EX + "Pump", "target": equipment}, "Pump is defined in core.ttl. Open that file to change it."),
+        (core, {"iri": EX + "Nothing", "target": equipment}, "Nothing has no statements of its own in core.ttl to move."),
+        (core, {"iri": EX + "Pump", "target": "../model"}, "There is no such file in this project."),
+    ]
+    for doc, args, sentence in refusals:
+        refused = run(pid, doc, "MoveToFile", **args)
+        assert refused.status_code == 422, args
+        assert refused.json()["detail"] == sentence
+    assert {d.doc: d.ontology.revision for d in editing_service._open[pid].values()} == revisions
+    # A target that already defines it: a term typed in two files (Turtle).
+    apply(pid, equipment, source(pid, equipment) + f"\n<{EX}Pump> a <http://www.w3.org/2002/07/owl#Class> .\n")
+    texts = {d: source(pid, d) for d in (core, equipment)}
+    refused = run(pid, core, "MoveToFile", iri=EX + "Pump", target=equipment)
+    assert refused.json()["detail"] == "Pump is already defined in equipment.ttl."
+    assert {d: source(pid, d) for d in (core, equipment)} == texts
+
+
+def test_ac22_move_undo_byte_for_byte(movable):
+    pid, core, equipment = movable
+    # Once with the target's text as written, once after a command has
+    # cleared it: both read back the same, prefixes included.
+    for prepare in (None, lambda: ok(pid, equipment, "CreateClass", label="Gear")):
+        if prepare:
+            prepare()
+        before = {d: source(pid, d) for d in (core, equipment)}
+        for asked in (core, equipment):
+            ok(pid, core, "MoveToFile", iri=EX + "Pump", target=equipment)
+            assert source(pid, equipment) != before[equipment]
+            assert client.post(f"/api/projects/{pid}/documents/{asked}/undo").status_code == 200
+            assert {d: source(pid, d) for d in (core, equipment)} == before, asked
+        moved = ok(pid, core, "MoveToFile", iri=EX + "Pump", target=equipment)
+        after = {d: source(pid, d) for d in (core, equipment)}
+        client.post(f"/api/projects/{pid}/documents/{equipment}/undo")
+        client.post(f"/api/projects/{pid}/documents/{core}/redo")
+        assert {d: source(pid, d) for d in (core, equipment)} == after
+        client.post(f"/api/projects/{pid}/documents/{core}/undo")
+        assert moved["label"]
+
+
+def test_move_drops_the_box_from_the_files_canvas_and_undo_puts_it_back(movable):
+    pid, core, equipment = movable
+    layout = project_store.read_layout(pid, core)
+    layout["positions"][EX + "Pump"] = [3.0, 4.0]
+    project_store.write_layout(pid, core, layout)
+    ok(pid, core, "MoveToFile", iri=EX + "Pump", target=equipment)
+    assert EX + "Pump" not in project_store.read_layout(pid, core)["positions"]
+    # An undone move finds its box's place, as an undone delete does.
+    client.post(f"/api/projects/{pid}/documents/{equipment}/undo")
+    assert project_store.read_layout(pid, core)["positions"][EX + "Pump"] == [3.0, 4.0]
+    client.post(f"/api/projects/{pid}/documents/{core}/redo")
+    assert EX + "Pump" not in project_store.read_layout(pid, core)["positions"]
+
+
+def test_a_blank_node_two_terms_share_is_not_split(linked):
+    # A restriction written once for two classes (Turtle can): moving one
+    # class would leave the other pointing at a description in another
+    # file, so the move is refused and nothing changes.
+    pid, core, equipment = linked
+    text = source(pid, core) + (
+        f"\n<{EX}Valve> a <http://www.w3.org/2002/07/owl#Class> .\n"
+        f"_:r a <http://www.w3.org/2002/07/owl#Restriction> ; "
+        f"<http://www.w3.org/2002/07/owl#onProperty> <{EX}drives> ; "
+        f"<http://www.w3.org/2002/07/owl#someValuesFrom> <{EX}Valve> .\n"
+        f"<{EX}Pump> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:r .\n"
+        f"<{EX}Valve> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:r .\n"
+    )
+    apply(pid, core, text)
+    texts = {d: source(pid, d) for d in (core, equipment)}
+    refused = run(pid, core, "MoveToFile", iri=EX + "Pump", target=equipment)
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == (
+        "Pump shares a rule with another term, written in Turtle; move it in Turtle, or give each term its own rule first."
+    )
+    assert {d: source(pid, d) for d in (core, equipment)} == texts
+
+
+# --- Section 10: the checks ratio (AC-24) ---------------------------------------------
+
+
+@pytest.mark.perf
+def test_budget_checks_ratio(ten_files, monkeypatch):
+    """DC-30 and DC-31 keep the Checks report within 10% of its time without
+    them (Section 10): the same report, the same statements, with and
+    without the two entries -- without them it is main's report. A ratio,
+    so never scaled. Every check runs on both sides, H9 included: its pair
+    query reached the 30 s timeout on this project (37.1 s for the whole
+    report on 037ff50), and since it reads one row per class it finishes
+    in tens of milliseconds, so the report holds no fixed timeout that
+    would hide a ratio. The report is asserted to hold no error."""
+    from app import checks
+
+    pid = ten_files
+    path = f"/api/ontologies/{pid}/checks?doc=model"
+    full = list(checks.manifest())
+    without = [e for e in full if e["id"] not in ("DC-30", "DC-31")]
+    monkeypatch.setattr(checks, "manifest", lambda: full)
+    report = client.get(path).json()  # warm: parsed queries, views
+    assert "overCap" not in report and {"DC-30", "DC-31", "H9"} <= {g["id"] for g in report["groups"]}
+    assert not [g["id"] for g in report["groups"] if "error" in g]
+    times = {"with": [], "without": []}
+    gc.disable()
+    try:
+        for _ in range(5):
+            for side, entries in (("with", full), ("without", without)):
+                monkeypatch.setattr(checks, "manifest", lambda entries=entries: entries)
+                start = time.perf_counter()
+                assert client.get(path).status_code == 200
+                times[side].append((time.perf_counter() - start) * 1000)
+    finally:
+        gc.enable()
+    with_ms, without_ms = sorted(times["with"])[2], sorted(times["without"])[2]
+    assert with_ms / without_ms < 1.10, f"with {with_ms:.0f} ms, without {without_ms:.0f} ms"

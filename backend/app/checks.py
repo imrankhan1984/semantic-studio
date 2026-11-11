@@ -62,6 +62,13 @@ BASIC IDEA
     H3 says in its group that there is no run to read. H3, H10 and H11 are
     computed in Python, their queries being what *Open as a query* shows.
 
+    DC-30 (addresses used but defined nowhere) and DC-31 (terms defined in
+    two files) are computed too (links-between-files 5.7): which file holds
+    a statement is not in the merged graph, so they read the project's
+    files one by one, with its imports and switched-on snapshots, from the
+    router's `whole`; each finding names its file. Outside a project they
+    have no files to ask and report nothing.
+
     prepare() warms what the first report used to pay for, the parsed
     queries and the reference index; main.py calls it in the lifespan.
 
@@ -407,6 +414,13 @@ class Run:
     # when there is no current result.
     depths: dict = field(default_factory=dict)
     inferred: Optional[list] = None
+    # A project's files one by one, as (doc, file, graph), every ontology,
+    # vocabulary and shapes file, and the graphs said beside them -- its
+    # imports and switched-on data snapshots (links-between-files 5.7):
+    # which file holds a statement is not in the merged graph. None outside
+    # a project, which has no files to ask.
+    files: Optional[list] = None
+    outside: list = field(default_factory=list)
     _domains: Optional[dict] = None
 
     def domains(self) -> dict:
@@ -1255,12 +1269,98 @@ def _dc13_computed(entry, run):
     return _dc13(entry, run, run.depths)
 
 
+# DC-30's words for the links a statement most often makes; any other
+# property is said by its name (*drives has range Pump*).
+_LINK_WORDS = {
+    RDFS.subClassOf: "is a kind of",
+    SKOS.broader: "is narrower than",
+    SKOS.narrower: "is broader than",
+    RDF.type: "is typed as",
+}
+
+def _file_name(path: str) -> str:
+    return path.rsplit("/", 1)[-1]
+
+
+def _dc30(entry, run) -> list[dict]:
+    """An own address a statement uses as its property or its value that no
+    project file, import or switched-on snapshot says anything about
+    (links-between-files 5.7 item 1): one finding per statement, naming its
+    file, opening its subject there. One scan of each file, every address
+    judged once."""
+    if not run.files:
+        return []
+    graphs = [g for _, _, g in run.files] + list(run.outside)
+    judged: dict = {}
+
+    def missing(term) -> bool:
+        if not isinstance(term, URIRef):
+            return False
+        if term not in judged:
+            judged[term] = is_own(term, run.rule) and not any((term, None, None) in g for g in graphs)
+        return judged[term]
+
+    sentences = entry["sentences"]
+    out = []
+    for doc, file, graph in run.files:
+        found = []
+        for s, p, o in graph:
+            for term, as_property in ((p, True), (o, False)):
+                if not missing(term):
+                    continue
+                # A statement about a blank node is named by the term it
+                # belongs to (a restriction's class, a property shape's
+                # shape), the delete dialog's rule.
+                owner = axioms.named_owner(graph, s)
+                subject = run.name(owner) if owner is not None else "A statement"
+                values = {"file": _file_name(file), "subject": subject, "target": run.name(term)}
+                if as_property:
+                    sentence = sentences["property"].format(**values)
+                else:
+                    link = _LINK_WORDS.get(p) or f"has {run.name(p)}"
+                    sentence = sentences["row"].format(link=link, **values)
+                found.append((str(owner) if owner is not None else "", sentence, owner))
+        for _, sentence, owner in sorted(found, key=lambda row: (row[0], row[1])):
+            finding = _finding(owner, sentence)
+            finding["doc"], finding["file"] = doc, file
+            out.append(finding)
+    return out
+
+
+def _dc31(entry, run) -> list[dict]:
+    """An own term typed in two or more project files (links-between-files
+    5.7 item 2), the files named in the manifest's order; its opener goes to
+    the first."""
+    if not run.files:
+        return []
+    typed: dict = {}
+    for doc, file, graph in run.files:
+        for subject in set(graph.subjects(RDF.type, None)):
+            if isinstance(subject, URIRef) and is_own(subject, run.rule):
+                typed.setdefault(subject, []).append((doc, file))
+    template = entry["sentences"]["row"]
+    out = []
+    for term in sorted((t for t, where in typed.items() if len(where) > 1), key=str):
+        where = typed[term]
+        finding = _finding(term, template.format(
+            name=run.name(term), files=_joined([_file_name(file) for _, file in where]),
+        ))
+        finding["doc"], finding["file"] = where[0]
+        finding["files"] = [file for _, file in where]
+        out.append(finding)
+    return out
+
+
 # The checks computed in Python alone, their query never run by the report:
 # it is what *Open as a query* shows. DC-13 counts the longest path, which a
 # query cannot; H3 reads the reasoning result, which no query sees; H10 asks
 # a name before it reads a value, and H11's query joins every value with
 # every label: in Python each is one short scan, within Section 10's budget.
-_COMPUTED: dict[str, Callable] = {"DC-13": _dc13_computed, "H3": _h3, "H10": _h10, "H11": _h11}
+# DC-30 and DC-31 ask which file holds a statement, which the merged graph
+# the queries run on cannot say (links-between-files 5.7 item 3).
+_COMPUTED: dict[str, Callable] = {
+    "DC-13": _dc13_computed, "H3": _h3, "H10": _h10, "H11": _h11, "DC-30": _dc30, "DC-31": _dc31,
+}
 
 
 def _worst(levels) -> str:
@@ -1569,7 +1669,11 @@ def run(
             has_imports = any(True for _ in graph.objects(None, OWL.imports))
             shapes_named = any(True for s in graph.subjects(RDF.type, SH_NODE_SHAPE) if is_own(s, rule))
         depths = measured.pop("depths")
-        run_ctx = Run(graph, rule, namespace, project, {}, depths=depths, inferred=inferred)
+        run_ctx = Run(
+            graph, rule, namespace, project, {}, depths=depths, inferred=inferred,
+            files=whole.get("files") if whole is not None else None,
+            outside=whole.get("outside", []) if whole is not None else [],
+        )
         empty = not (measured["documentation"]["terms"] or shapes_named)
         groups: list[dict] = []
         skipped: list[str] = []

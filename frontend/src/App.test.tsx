@@ -3528,6 +3528,49 @@ describe("App Files panel (multi-file-projects 5.5 item 3, AC-24)", () => {
     expect(fetchHierarchy.mock.calls.some((call) => call[0] === OID)).toBe(true);
     expect(fetchHierarchy.mock.calls.some((call) => call[0] === CORE_OID)).toBe(false);
   });
+  it("opens a DC-30 finding's subject in the file the finding names (links-between-files 5.7 item 4, AC-18)", async () => {
+    listProjects.mockResolvedValue([PROJECT]);
+    openProject.mockResolvedValue(threeFiles());
+    // An address outside the project's base (a pattern project's data or
+    // shapes base reads as Explore's by its address): the finding's file wins.
+    const motor = "https://w3id.org/acme/data/plant/Motor";
+    getChecks.mockResolvedValue({
+      revision: 0, generation: 0, ran_ms: 10, empty: false, emptySentence: null, measures: null,
+      groups: [{
+        id: "DC-30", level: "Problem", heading: "Addresses used but defined nowhere", fix: "Create it.", total: 1,
+        findings: [{
+          iri: motor, sentence: "core.ttl: Motor is a kind of Pump, which no file defines.",
+          doc: "f00000001", file: "vocab/core.ttl",
+        }],
+      }],
+      skipped: [], notes: [], namespace: null,
+    });
+    listChecks.mockResolvedValue([]);
+    getDocumentSource.mockResolvedValue({ text: "@prefix : <x#> .\n", revision: 0, fromEditor: true });
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open Invoices" }));
+    });
+    await act(async () => {
+      fireEvent.click(tab("View"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Checks" }));
+    });
+    getNodeDetails.mockClear();
+    fetchHierarchy.mockClear();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open: core.ttl: Motor is a kind of Pump, which no file defines." }));
+    });
+    expect(tab("Edit").getAttribute("aria-selected")).toBe("true");
+    expect(projectStore.getSnapshot().activeDoc).toBe("f00000001");
+    expect(fetchHierarchy.mock.calls.some((call) => call[0] === CORE_OID)).toBe(true);
+    // The finding says the file: no lookup of who defines Motor first.
+    expect(getNodeDetails.mock.calls.some((call) => call[0] === OID && call[1] === motor)).toBe(false);
+    // Opening core.ttl remembered it as a tab (D-132); the next project of
+    // this id starts with model.ttl alone.
+    localStorage.removeItem(`semantic-studio-tabs-${PROJECT.id}`);
+  });
 });
 
 describe("App file tabs (multi-file-projects 5.9, AC-25, AC-26)", () => {

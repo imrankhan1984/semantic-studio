@@ -1,0 +1,23 @@
+# Own addresses a statement uses, as its property or its value, that nothing
+# says anything about (links-between-files 5.7). Which file holds each
+# statement is not in the merged graph, so the report computes this in
+# Python, asking each project file, its imports and the switched-on data
+# snapshots; this query, over the graph it is opened on, is what *Open as a
+# query* shows.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX dc: <http://purl.org/dc/elements/1.1/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ss: <urn:semantic-studio:check:>
+SELECT DISTINCT ?subject ?property ?iri WHERE {
+  { ?subject ?property ?iri . FILTER(isIRI(?iri)) }
+  UNION
+  { ?subject ?iri ?value . BIND(?iri AS ?property) }
+  FILTER(ss:own(?iri))
+  FILTER NOT EXISTS { ?iri ?anything ?said . }
+}
+ORDER BY ?iri ?subject
