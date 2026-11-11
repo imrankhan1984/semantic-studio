@@ -1157,14 +1157,21 @@ def _h9(entry, run, rows):
             signatures[cls] = frozenset(by_class.get(cls, set()) | rules)
         return signatures[cls]
 
-    groups: dict = {}
+    # The query gives one row per class, parent and kind; a sibling is
+    # another own class of the same kind under the same parent. Pairing them
+    # here, not in SPARQL, is what keeps a wide parent linear: rdflib joined
+    # every child with every other and never finished 200 of them in 30 s.
+    kin: dict = {}
     for r in rows:
-        parent = _cell(r["parent"])
-        for key in ("iri", "other"):
-            cls = URIRef(_cell(r[key]))
-            sig = signature(cls)
+        kin.setdefault((_cell(r["parent"]), _cell(r["type"])), set()).add(_cell(r["iri"]))
+    groups: dict = {}
+    for (parent, _), siblings in kin.items():
+        if len(siblings) < 2:
+            continue
+        for iri in siblings:
+            sig = signature(URIRef(iri))
             if sig:
-                groups.setdefault((parent, sig), set()).add(str(cls))
+                groups.setdefault((parent, sig), set()).add(iri)
     out = []
     for (parent, _), members in sorted(groups.items(), key=lambda kv: (kv[0][0], sorted(kv[1]))):
         if len(members) < 2:

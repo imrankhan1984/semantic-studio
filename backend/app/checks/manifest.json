@@ -515,7 +515,7 @@
     {
       "id": "H9",
       "file": "H9.rq",
-      "sha256": "b09b265a452a7be4cd3cb07ea878c03c8e6fdd9c845ff6b813a3892e3960e318",
+      "sha256": "2d31fe08e7e6ccbc63c99cb6e88d32944b0229ff20fc3c6382f56c43e4d5710e",
       "level": "Hint",
       "heading": "Sibling classes that say the same",
       "fix": "Merge them, or give each what sets it apart.",

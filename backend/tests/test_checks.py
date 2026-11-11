@@ -1004,6 +1004,98 @@ def test_budget_the_largest_document_under_the_cap():
     assert _median_ms(lambda: run(graph)) <= limit_ms(UNDER_CAP_LIMIT_MS)
 
 
+def _wide_graph(children: int, ruled: int) -> Graph:
+    """H9's worst case under the cap: one parent with every class under it,
+    the first `ruled` of them saying the same rule, so they are one group of
+    siblings that say the same."""
+    b = "http://example.org/w#"
+    lines = [
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .",
+        "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .",
+        f"<{b}Parent> a owl:Class .",
+        f"<{b}part> a owl:ObjectProperty .",
+    ]
+    for c in range(children):
+        rule = f" ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty <{b}part> ; owl:someValuesFrom <{b}Parent> ]" if c < ruled else ""
+        lines.append(f'<{b}C{c}> a owl:Class ; rdfs:label "Class {c}"@en ; rdfs:subClassOf <{b}Parent>{rule} .')
+    return Graph().parse(data="\n".join(lines), format="turtle")
+
+
+def test_h9_reads_one_row_per_class_not_per_pair(monkeypatch):
+    """A count, so it blocks: H9's query gives a parent's 2,000 children as
+    2,000 rows. It gave every pair of them, 1,999,000, and on a parent with
+    200 children (links-between-files Section 10's project) rdflib reached
+    the 30 s limit before the first row."""
+    graph = _wide_graph(2_000, 300)
+    seen = {}
+    real = sparql_exec.execute_select
+
+    def counting(g, query, **kwargs):
+        result = real(g, query, **kwargs)
+        if query == next(e["query"] for e in checks.manifest() if e["id"] == "H9"):
+            seen["H9"] = result["total"]
+        return result
+
+    monkeypatch.setattr(sparql_exec, "execute_select", counting)
+    groups = by_id(run(graph))
+    assert seen["H9"] == 2_000
+    assert "error" not in groups["H9"]
+    assert groups["H9"]["total"] == 1
+    assert groups["H9"]["findings"][0]["iri"] == "http://example.org/w#C0"
+
+
+def test_h9_siblings_are_of_one_kind():
+    """The pair query paired two classes only when both were owl:Class or
+    both rdfs:Class; read per class, the kind is still part of what a
+    sibling is. An RDFS class saying the same as two OWL siblings is not
+    named with them, and a lone OWL class beside RDFS ones is no group."""
+    b = "http://example.org/k#"
+    rule = f"rdfs:subClassOf [ a owl:Restriction ; owl:onProperty <{b}part> ; owl:someValuesFrom <{b}P> ]"
+    graph = Graph().parse(data=f"""
+        @prefix owl: <http://www.w3.org/2002/07/owl#> .
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        <{b}P> a owl:Class . <{b}Q> a owl:Class . <{b}part> a owl:ObjectProperty .
+        <{b}A> a owl:Class ; rdfs:label "A"@en ; rdfs:subClassOf <{b}P> ; {rule} .
+        <{b}B> a owl:Class ; rdfs:label "B"@en ; rdfs:subClassOf <{b}P> ; {rule} .
+        <{b}C> a rdfs:Class ; rdfs:label "C"@en ; rdfs:subClassOf <{b}P> ; {rule} .
+        <{b}D> a owl:Class ; rdfs:label "D"@en ; rdfs:subClassOf <{b}Q> ; {rule} .
+        <{b}E> a rdfs:Class ; rdfs:label "E"@en ; rdfs:subClassOf <{b}Q> ; {rule} .
+    """, format="turtle")
+    h9 = by_id(run(graph))["H9"]
+    assert [f["sentence"] for f in h9["findings"]] == [
+        "Are A and B different enough to be separate classes? Under P they have the same properties and rules."
+    ]
+
+
+# H9 on its worst case near the cap: its query and its sentences, as the
+# report runs them (the row cap, the rule of the run). Measured at about
+# 385 ms; the pair query on Section 10's 200 children reached the 30 s limit.
+# The whole report on this graph is about 9.5 s, every check near 0.5 s: 2,200
+# classes cost rdflib that in every query, which is not H9's to answer.
+H9_WIDE_LIMIT_MS = 1_000
+
+
+@pytest.mark.perf
+def test_budget_h9_on_a_wide_hierarchy_under_the_cap():
+    graph = _wide_graph(2_200, 700)
+    assert checks.CHECKS_MAX_STATEMENTS - 1_000 < len(graph) <= checks.CHECKS_MAX_STATEMENTS
+    entry = next(e for e in checks.manifest() if e["id"] == "H9")
+    rule = checks.own_rule(graph)
+
+    def h9():
+        token = checks._rule.set(rule)
+        try:
+            result = sparql_exec.execute_select(
+                graph, entry["query"], max_rows=checks.MAX_ROWS, timeout=checks.TIMEOUT_SECONDS,
+            )
+            return checks._h9(entry, checks.Run(graph, rule, None, None, {}), checks._rows(result))
+        finally:
+            checks._rule.reset(token)
+
+    assert len(h9()) == 1
+    assert _median_ms(h9) <= limit_ms(H9_WIDE_LIMIT_MS)
+
+
 def test_ac12a_over_the_cap(monkeypatch):
     """The count-based QUDT test: QUDT has more statements than the cap, so
     the report runs no query (a count, not a timing: it stays in the blocking

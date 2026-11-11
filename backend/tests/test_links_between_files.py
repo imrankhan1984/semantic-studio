@@ -770,19 +770,21 @@ def test_budget_checks_ratio(ten_files, monkeypatch):
     """DC-30 and DC-31 keep the Checks report within 10% of its time without
     them (Section 10): the same report, the same statements, with and
     without the two entries -- without them it is main's report. A ratio,
-    so never scaled. H9 is left out of both sides: on this project it
-    reaches its 30 s timeout on main already (measured on 037ff50, 37.1 s
-    for the whole report), and a fixed timeout in both would hide any
-    ratio."""
+    so never scaled. Every check runs on both sides, H9 included: its pair
+    query reached the 30 s timeout on this project (37.1 s for the whole
+    report on 037ff50), and since it reads one row per class it finishes
+    in tens of milliseconds, so the report holds no fixed timeout that
+    would hide a ratio. The report is asserted to hold no error."""
     from app import checks
 
     pid = ten_files
     path = f"/api/ontologies/{pid}/checks?doc=model"
-    full = [e for e in checks.manifest() if e["id"] != "H9"]
+    full = list(checks.manifest())
     without = [e for e in full if e["id"] not in ("DC-30", "DC-31")]
     monkeypatch.setattr(checks, "manifest", lambda: full)
-    report = client.get(path).json()  # warm: parsed queries, views; without H9's 30 s
-    assert "overCap" not in report and {"DC-30", "DC-31"} <= {g["id"] for g in report["groups"]}
+    report = client.get(path).json()  # warm: parsed queries, views
+    assert "overCap" not in report and {"DC-30", "DC-31", "H9"} <= {g["id"] for g in report["groups"]}
+    assert not [g["id"] for g in report["groups"] if "error" in g]
     times = {"with": [], "without": []}
     gc.disable()
     try:
