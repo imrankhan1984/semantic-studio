@@ -56,7 +56,7 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 2419 tests (+2 marked `network`, deselected)
+cd backend  && python -m pytest tests    # 2425 tests (+2 marked `network`, deselected)
 cd frontend && npm run test              # 2272 tests, vitest
 ```
 
@@ -583,6 +583,7 @@ leaves one behind.
 - RenameIri starts only in the file that defines the term; `_cross_file_change` is not loosened. The other files' rewrite is the service's, inside the same command and locks, never a command run in those files. [Links between files]
 - A delete and a Turtle Apply name other files' `uses` and change none of them; a rename names the data snapshots and counts the saved queries that use the old address, changing neither. [Links between files]
 - A draft's sidecar names its unsaved groups and the siblings each needs; a save refreshes the other drafts' claims, so a member already on disk needs no draft. Recovery restores a group or none. [Links between files]
+- A draft and its sidecar are each written to a temporary name and `os.replace`d, the sidecar carrying the draft's SHA-256; recovery drops a draft whose sidecar is missing, unreadable or for another text, never restores it alone, and trusts one with no hash (written before CF-14). A test's `_crash` joins a running timer. [Draft and sidecar]
 - With uses elsewhere, *Deprecate instead* is the delete dialog's first button and holds the focus (ConfirmDialog's `focus`): Enter never deletes. [Links between files]
 - A hierarchy move compares where the term sits before and after, in every file; branch rules are read only through `shapes_form.branch_under`, ranges and fillers only through `axioms.class_uses`. The warning is the command's answer (`warnings`, `block`, `about`), kept as the store's `moveWarnings` and said there, so every door warns alike; it never refuses. [Links between files, PR 2]
 - DC-30 and DC-31 are `_COMPUTED`: which file holds a statement comes from `whole`'s `files` and `outside`, never the merged graph; a finding carries `doc`, and the opener goes to that file. [Links between files, PR 2]

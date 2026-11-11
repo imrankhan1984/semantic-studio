@@ -152,7 +152,10 @@ BASIC IDEA
     its lock and writes .draft/<id>.ttl in the project folder outside it. Recovery reads that draft
     back as unsaved content: the undo history is not recovered, which is simpler
     than replaying a journal and survives blank nodes, which a triple journal
-    would not.
+    would not. The draft and its sidecar (.json, the group claims) are each
+    written whole, to a temporary name and replaced into place, and the
+    sidecar names the draft's SHA-256: a draft whose sidecar is missing or
+    names another text is dropped, never restored alone (CF-14).
 
     A reference ontology (FOAF, QUDT; reference-ontologies 5.6, D-121) is in
     use while the document declares a prefix bound to its namespace. Each
@@ -206,6 +209,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import hashlib
 import json
 import logging
 import re
@@ -232,6 +236,7 @@ from .projects import (
     DOC_ID,
     DRAFT_DIR,
     ProjectStore,
+    _replace as _replace_file,
     UnknownDocument,
     document_id,
     DESCRIPTION_MAX,
@@ -3496,20 +3501,22 @@ def _and(words: list[str]) -> str:
     return words[0] if len(words) == 1 else f"{', '.join(words[:-1])} and {words[-1]}"
 
 
-def _whole_groups(drafts: dict) -> tuple[set, list]:
+def _whole_groups(drafts: dict, unmatched: Iterable = ()) -> tuple[set, list]:
     """Which drafts recovery restores (5.1 item 5): each one whose groups
     have every sibling they need among the drafts kept, dropping until
     nothing more drops, since one draft dropped can leave another's group
     short. A draft written before D-133 carries a pair token instead, kept
-    as before: with one other draft holding it. Returns (kept docs, dropped
-    docs in manifest order)."""
+    as before: with one other draft holding it. A draft in `unmatched`, its
+    sidecar missing or for another text (CF-14), is dropped from the start,
+    and its siblings with it. Returns (kept docs, dropped docs in manifest
+    order)."""
     claims = {}
     for doc, (_, _, meta) in drafts.items():
         groups = meta.get("groups")
         if groups is None and meta.get("pair") is not None:
             groups = {meta["pair"]: {"needs": None}}
         claims[doc] = groups if isinstance(groups, dict) else {}
-    kept = set(drafts)
+    kept = set(drafts) - set(unmatched)
     changed = True
     while changed:
         changed = False
@@ -3786,6 +3793,30 @@ def _draft_paths(document: OpenDocument) -> tuple[Path, Path]:
     a draft written before E-16 has (5.4 item 3, AC-21)."""
     folder = (document.root or document.path.parent) / DRAFT_DIR
     return folder / f"{document.doc}.ttl", folder / f"{document.doc}.json"
+
+
+def _write_whole(path: Path, data: bytes) -> None:
+    """A draft or a sidecar is written whole or not at all: to a temporary
+    name, then os.replace, so a crash or a reader in between finds the old
+    file or the new one, never half of one (CF-14)."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    _replace_file(tmp, path)
+
+
+def _draft_sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _matched(meta: Optional[dict], data: bytes) -> bool:
+    """Whether a sidecar speaks for this draft text (CF-14). None, a sidecar
+    missing or unreadable, never does: its group claims are unknown, so the
+    draft cannot be restored alone. One written before CF-14 carries no
+    hash and is trusted as it always was."""
+    if meta is None:
+        return False
+    sha = meta.get("sha256")
+    return sha is None or sha == _draft_sha(data)
 
 
 class EditingService:
@@ -5434,8 +5465,15 @@ class EditingService:
             meta["groups"] = self._claims(document)
             draft, sidecar = _draft_paths(document)
             draft.parent.mkdir(exist_ok=True)
-            draft.write_text(text, encoding="utf-8")
-            sidecar.write_text(json.dumps(meta), encoding="utf-8")
+            # The text first, then the sidecar naming its hash: a crash
+            # between the two leaves an old sidecar whose hash does not match,
+            # or none, and recovery drops that draft rather than read it as
+            # claiming no group (CF-14). The bytes are written as they are, so
+            # the hash is of what is on disk, on Windows too.
+            data = text.encode("utf-8")
+            meta["sha256"] = _draft_sha(data)
+            _write_whole(draft, data)
+            _write_whole(sidecar, json.dumps(meta).encode("utf-8"))
             self.drafts_written += 1
 
     @contextlib.contextmanager
@@ -5503,12 +5541,13 @@ class EditingService:
                 fresh = {token: now.get(token, claim) for token, claim in held.items()}
                 if fresh != held:
                     meta["groups"] = fresh
-                    sidecar.write_text(json.dumps(meta), encoding="utf-8")
+                    _write_whole(sidecar, json.dumps(meta).encode("utf-8"))
 
     @staticmethod
     def _remove_draft(document: OpenDocument) -> None:
         for path in _draft_paths(document):
             path.unlink(missing_ok=True)
+            path.with_name(path.name + ".tmp").unlink(missing_ok=True)
 
     def recover(self, pid: str, action: str, timeout: Optional[float]) -> dict:
         documents = self._open.get(pid)
@@ -5521,31 +5560,44 @@ class EditingService:
         # 5, D-133) can be matched across files: a draft whose group lacks a
         # sibling it needs is dropped, and recovery restores a group or none.
         drafts: dict = {}
+        unmatched = set()
         for document in documents.values():
             draft, sidecar = _draft_paths(document)
-            if not draft.exists():
+            try:
+                data = draft.read_bytes()
+            except FileNotFoundError:
                 continue
             try:
                 meta = json.loads(sidecar.read_text(encoding="utf-8"))
+                if not isinstance(meta, dict):
+                    meta = None
             except (OSError, ValueError):
-                meta = {}
-            drafts[document.doc] = (document, draft, meta)
-        kept, dropped = _whole_groups(drafts)
+                meta = None
+            # A sidecar missing, unreadable or for another text: what groups
+            # this draft holds is unknown, so it is never restored alone; it
+            # is dropped with the others' sentence, and a sibling needing it
+            # goes too (CF-14).
+            if not _matched(meta, data):
+                unmatched.add(document.doc)
+            # As read_text read it: universal newlines, so a draft written
+            # before CF-14 with CRLF reads as it always did.
+            text = data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+            drafts[document.doc] = (document, draft, meta or {}, text)
+        kept, dropped = _whole_groups({doc: d[:3] for doc, d in drafts.items()}, unmatched)
         base = self.projects.manifest(pid)["baseIri"]
         with self._all_locks(pid):
             if action == "discard":
-                for document, _, _ in drafts.values():
+                for document, _, _, _ in drafts.values():
                     self._remove_draft(document)
                 return {"documents": [d.state() for d in documents.values()]}
             # Every draft is read and parsed before any file changes, so
             # recovery restores all of them or none (5.4 item 4).
             restoring = []
-            for doc, (document, draft, meta) in drafts.items():
+            for doc, (document, draft, meta, text) in drafts.items():
                 if doc not in kept:
                     # A member without a sibling it needs: dropped, said below.
                     self._remove_draft(document)
                     continue
-                text = draft.read_text(encoding="utf-8")
                 restoring.append((document, meta, text, parse_turtle(text, timeout, base)))
             for document, meta, text, parsed in restoring:
                 graph = document.graph
