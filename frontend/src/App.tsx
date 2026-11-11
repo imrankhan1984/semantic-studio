@@ -207,9 +207,11 @@ import {
   projectStore,
   revisionOf,
   shapesRevision as shapesRevisionOf,
+  unappliedText,
   useProjectSelector,
 } from "./state/projectStore";
 import FilesPanel from "./components/FilesPanel";
+import FileTabs from "./components/FileTabs";
 import { filePath } from "./files/tree";
 import AboutPanel from "./components/AboutPanel";
 import DetailPanel from "./components/DetailPanel";
@@ -1103,8 +1105,11 @@ export default function App() {
   // Unapplied text in the Turtle editor: ask before whatever would unmount it.
   // Read from the store at the moment of asking, not subscribed to: App has no
   // other reason to re-render while the user types.
+  // Every tab's text, not only the file shown: with tabs each file keeps
+  // its own unapplied text (5.9 item 4), and leaving the project or the page
+  // would otherwise drop another tab's without asking.
   const guardEditor = useCallback((then: () => void) => {
-    if (projectStore.getSnapshot().editorDraft !== null) setLeaveEditor(() => then);
+    if (unappliedText(projectStore.getSnapshot())) setLeaveEditor(() => then);
     else then();
   }, []);
 
@@ -1897,25 +1902,25 @@ export default function App() {
   // Choosing a file in Files (multi-file-projects 5.5 item 3): an ontology
   // or vocabulary file opens on the Edit page, a shapes file on the Shapes
   // page; with `iri`, Open file from another file's term selects it there.
+  // No question before the switch: each file keeps its own unapplied editor
+  // text now (5.9 item 4), so there is nothing to lose by moving.
   const onOpenFile = (doc: ProjectDocName, iri?: string) => {
-    guardEditor(() => {
-      const target = projectStore.getSnapshot().documents.find((d) => d.doc === doc);
-      if (!target) return;
-      shapesInView.current = false;
-      setSourceTarget(null);
-      projectStore.switchDocument(doc);
-      if (isShapesDoc(target)) {
-        setMode("shapes");
-        return;
-      }
-      setMode("hierarchy");
-      if (activeId !== target.ontologyId) {
-        if (iri) pendingSelection.current = iri;
-        setActiveId(target.ontologyId);
-      } else if (iri) {
-        selectAndFocus(iri, true);
-      }
-    });
+    const target = projectStore.getSnapshot().documents.find((d) => d.doc === doc);
+    if (!target) return;
+    shapesInView.current = false;
+    setSourceTarget(null);
+    projectStore.switchDocument(doc);
+    if (isShapesDoc(target)) {
+      setMode("shapes");
+      return;
+    }
+    setMode("hierarchy");
+    if (activeId !== target.ontologyId) {
+      if (iri) pendingSelection.current = iri;
+      setActiveId(target.ontologyId);
+    } else if (iri) {
+      selectAndFocus(iri, true);
+    }
   };
 
   // A file removed in Files (5.5 item 7): when it was the one shown, the
@@ -1928,14 +1933,18 @@ export default function App() {
     if (to) setActiveId(to.ontologyId);
   };
 
+  // A tab closed while it was the one shown (5.9 item 3): the page moves to
+  // the file the store answered with, by its role. Nothing was discarded.
+  const onTabClosed = (next: ProjectDocumentState | null) => {
+    if (next) onOpenFile(next.doc);
+  };
+
   const onSwitchDocument = (doc: ProjectDocName) => {
-    guardEditor(() => {
-      const target = projectStore.getSnapshot().documents.find((d) => d.doc === doc);
-      if (!target) return;
-      shapesInView.current = false;
-      projectStore.switchDocument(doc);
-      setActiveId(target.ontologyId);
-    });
+    const target = projectStore.getSnapshot().documents.find((d) => d.doc === doc);
+    if (!target) return;
+    shapesInView.current = false;
+    projectStore.switchDocument(doc);
+    setActiveId(target.ontologyId);
   };
 
   const onCloseProject = () =>
@@ -1962,18 +1971,21 @@ export default function App() {
     if (answer === "apply") {
       setPromptBusy(true);
       try {
-        await projectStore.applyEditor();
+        await projectStore.applyEditors();
       } catch (e: unknown) {
         // Invalid Turtle: nothing changed and nothing is lost. Stay, and let
-        // the editor's own error say where.
+        // the editor's own error say where. The store has made the file the
+        // text was in the active one, so the views follow it: otherwise the
+        // editor would show one file and Explore another (5.9 item 4).
         setPromptBusy(false);
         setLeaveEditor(null);
+        onSwitchDocument(projectStore.getSnapshot().activeDoc);
         failed(e);
         return;
       }
       setPromptBusy(false);
     } else {
-      projectStore.setEditorDraft(null);
+      projectStore.discardEditors();
     }
     setLeaveEditor(null);
     then();
@@ -2367,11 +2379,13 @@ export default function App() {
           }}
         />
       ) : mode === "shapes" && openProjectSummary ? (
-        <main className="main shapes-page">
+        <main className="main shapes-page with-tabs">
           {/* Files above the page's own list (multi-file-projects 5.5, D-132). */}
           <div className="files-column">
             <FilesPanel onOpenFile={onOpenFile} onRemoved={onFileRemoved} onError={(message) => setError(message)} />
           </div>
+          {/* The open files, above the main panel (5.9, D-132). */}
+          <FileTabs onOpenFile={onOpenFile} onClosed={onTabClosed} />
           <ShapesView
             // Another project is a new list: its arrival selects its own first shape.
             key={openProjectSummary.id}
@@ -2403,17 +2417,24 @@ export default function App() {
         // details fill the space beside the outline (5.9).
         <main
           className={
-            !editingModel ? "main edit-page library" : showCanvas ? "main edit-page with-canvas" : "main edit-page no-canvas"
+            (!editingModel ? "main edit-page library" : showCanvas ? "main edit-page with-canvas" : "main edit-page no-canvas") +
+            // The tab strip takes the top of the page's own row (5.9).
+            (openProjectSummary ? " with-tabs" : "")
           }
         >
           {/* Files above Outline, each its own section (multi-file-projects
               5.5 item 1, D-132), for a project only: a library ontology is
               one file and has no Files. */}
           {openProjectSummary ? (
-            <div className="edit-left">
-              <FilesPanel onOpenFile={onOpenFile} onRemoved={onFileRemoved} onError={(message) => setError(message)} />
-              {outline}
-            </div>
+            <>
+              <div className="edit-left">
+                <FilesPanel onOpenFile={onOpenFile} onRemoved={onFileRemoved} onError={(message) => setError(message)} />
+                {outline}
+              </div>
+              {/* The open files, above the canvas and the side panel (5.9,
+                  D-132): one tab each, in the order opened. */}
+              <FileTabs onOpenFile={onOpenFile} onClosed={onTabClosed} />
+            </>
           ) : (
             outline
           )}

@@ -83,10 +83,19 @@ BASIC IDEA
     vocabulary file the Edit page last showed, which the commands made
     outside a file's own view (Add a vocabulary, the data wizard, a draft)
     run on, as they ran on model.ttl before. The Files panel's actions --
-    New file, New folder, Rename, Move, Remove -- are here, each replacing
-    the list from the server's answer. The views key on the sum of every
-    file's revision (projectRevision), so a change in one file refreshes
-    the others' views (5.3 item 7).
+    New file, New folder, Rename, Move, Remove, and a folder's rename
+    (5.10 item 1) -- are here, each replacing the list from the server's
+    answer. The views key on the sum of every file's revision
+    (projectRevision), so a change in one file refreshes the others' views
+    (5.3 item 7).
+
+    The open files are tabs (5.9, D-132): `openDocs` in the order opened,
+    remembered per project in the browser in try/catch, and kept to the ids
+    the project still holds. Closing a tab discards nothing -- unsaved
+    changes are the open file's, and text typed and not applied stays here
+    under `editorTexts`, which holds every file's unapplied text but the
+    active one's, whose text is `editorDraft` as before. The two are moved
+    between only when the active file changes, never on a keystroke.
 
 INPUTS / INPUT SOURCES
     - api.ts, for every project call.
@@ -105,6 +114,7 @@ import {
   closeProject,
   createProjectFolder,
   listData,
+  renameProjectFolder,
   moveProjectFile,
   removeProjectFile,
   removeProjectFolder,
@@ -120,6 +130,7 @@ import {
   updateProject,
   validateProject,
 } from "../api";
+import { keptTabs, tabsKey } from "../files/tabs";
 import { validationSummary } from "../modeling/shapeSentences";
 import { failureReason } from "../networkWords";
 import { finishedLine, isStale, staleLine, type ReasoningNow } from "../reasoning/reasonSentences";
@@ -148,6 +159,9 @@ export interface ProjectSnapshot {
   editDoc: ProjectDocName;
   /** The project's folders, by path from the project folder, sorted. */
   folders: string[];
+  /** The open files, one tab each, in the order opened (5.9 item 1). The
+   *  active file is always one of them. */
+  openDocs: ProjectDocName[];
   /** What the open's folder index found, dropped and skipped (5.2), said
    *  once at the top of the Files panel until dismissed. */
   fileNotice: IndexNotice | null;
@@ -161,8 +175,14 @@ export interface ProjectSnapshot {
   /** A save is waiting on the one-time comments question (5.6). */
   commentsWarning: { doc: ProjectDocName; backup: string } | null;
   /** The Turtle editor's text while it differs from the document; null when
-   *  there is nothing unapplied. */
+   *  there is nothing unapplied. The ACTIVE file's: every other file's is
+   *  in `editorTexts`, so switching tabs keeps each one's (5.9 item 4). */
   editorDraft: string | null;
+  /** The unapplied editor text of every file that is not the active one,
+   *  by id. Written when the active file changes, never on a keystroke:
+   *  App reads the store by selector, and the editor's text must not
+   *  re-render anything else (the load-bearing rule). */
+  editorTexts: Record<ProjectDocName, string>;
   /** What the polite live region says, e.g. "Created class Invoice. Unsaved
    *  changes." A counter beside it so the same sentence twice is announced
    *  twice. */
@@ -261,6 +281,7 @@ const EMPTY: ProjectSnapshot = {
   activeDoc: "model",
   editDoc: "model",
   folders: [],
+  openDocs: [],
   fileNotice: null,
   revisionShift: 0,
   saving: false,
@@ -268,6 +289,7 @@ const EMPTY: ProjectSnapshot = {
   recovery: null,
   commentsWarning: null,
   editorDraft: null,
+  editorTexts: {},
   announcement: { text: "", id: 0 },
   validation: null,
   validating: false,
@@ -501,6 +523,41 @@ function announce(text: string): void {
   set({ announcement: { text, id: snapshot.announcement.id + 1 } });
 }
 
+/** Whether anything typed in the Turtle editor is unapplied, in the file
+ *  shown or in another tab: what App asks about before any exit. */
+export function unappliedText(
+  state: Pick<ProjectSnapshot, "editorDraft" | "editorTexts"> = snapshot,
+): boolean {
+  return state.editorDraft !== null || Object.keys(state.editorTexts).length > 0;
+}
+
+/** Remember this project's open tabs (5.9 item 5). A browser convenience,
+ *  so a window that refuses storage changes nothing: the project then opens
+ *  on its first file next time. */
+function rememberTabs(): void {
+  const project = snapshot.project;
+  if (!project) return;
+  try {
+    localStorage.setItem(tabsKey(project.id), JSON.stringify(snapshot.openDocs));
+  } catch {
+    // A private window, blocked site data: nothing to do and nothing lost.
+  }
+}
+
+/** The tabs to open with: the ones remembered, kept to the ids the project
+ *  still holds, and the file the page shows among them. */
+function openingTabs(pid: string, documents: ProjectDocumentState[], active: ProjectDocName): ProjectDocName[] {
+  let stored: unknown = null;
+  try {
+    const raw = localStorage.getItem(tabsKey(pid));
+    stored = raw === null ? null : JSON.parse(raw);
+  } catch {
+    stored = null;
+  }
+  const kept = keptTabs(stored, documents);
+  return kept.includes(active) ? kept : [...kept, active];
+}
+
 function withDocument(next: ProjectDocumentState): ProjectDocumentState[] {
   return snapshot.documents.map((d) => (d.doc === next.doc ? next : d));
 }
@@ -564,6 +621,7 @@ export const projectStore = {
       documents: opened.documents,
       activeDoc: primary.doc,
       editDoc: primary.doc,
+      openDocs: openingTabs(pid, opened.documents, primary.doc),
       folders: opened.folders ?? [],
       revisionShift: opened.revisionShift ?? 0,
       fileNotice:
@@ -629,11 +687,44 @@ export const projectStore = {
     set({ ...EMPTY, announcement: snapshot.announcement });
   },
 
+  /** Make a file the active one, opening its tab or moving to it (5.9 item
+   *  1). Each file keeps its unapplied editor text across the switch (item
+   *  4): the file being left has its text put by, the file arrived at has
+   *  its taken up again. */
   switchDocument(doc: ProjectDocName): void {
     const next = snapshot.documents.find((d) => d.doc === doc);
     // An ontology or vocabulary file becomes the one Edit shows.
     const editDoc = next && !isShapesDoc(next) ? doc : snapshot.editDoc;
-    set({ activeDoc: doc, editDoc, editorDraft: null });
+    const texts = { ...snapshot.editorTexts };
+    // The map holds the files that are not active; the active one's text is
+    // `editorDraft`, put by here as it stops being active.
+    delete texts[doc];
+    if (doc !== snapshot.activeDoc && snapshot.editorDraft !== null) texts[snapshot.activeDoc] = snapshot.editorDraft;
+    const editorDraft = doc === snapshot.activeDoc ? snapshot.editorDraft : snapshot.editorTexts[doc] ?? null;
+    const openDocs = snapshot.openDocs.includes(doc) ? snapshot.openDocs : [...snapshot.openDocs, doc];
+    set({ activeDoc: doc, editDoc, openDocs, editorDraft, editorTexts: texts });
+    rememberTabs();
+  },
+
+  /** Close a tab (5.9 item 3): nothing is discarded. Unsaved changes are
+   *  the open file's, and the Files panel still marks it; text typed in the
+   *  editor and not applied is kept here, so reopening the file shows it
+   *  again. The last tab stays. Answers the file the page should show when
+   *  the closed tab was the one it was showing, else null. */
+  closeTab(doc: ProjectDocName): ProjectDocumentState | null {
+    if (!snapshot.openDocs.includes(doc) || snapshot.openDocs.length <= 1) return null;
+    const at = snapshot.openDocs.indexOf(doc);
+    const openDocs = snapshot.openDocs.filter((d) => d !== doc);
+    const texts = { ...snapshot.editorTexts };
+    if (doc === snapshot.activeDoc && snapshot.editorDraft !== null) texts[doc] = snapshot.editorDraft;
+    set({ openDocs, editorTexts: texts });
+    rememberTabs();
+    const name = snapshot.documents.find((d) => d.doc === doc)?.file ?? "the file";
+    announce(`Closed the tab for ${name}. Nothing was discarded.`);
+    if (doc !== snapshot.activeDoc) return null;
+    // The tab that stood where it did, or the last one.
+    const to = openDocs[Math.min(at, openDocs.length - 1)];
+    return snapshot.documents.find((d) => d.doc === to) ?? null;
   },
 
   dismissFileNotice(): void {
@@ -676,11 +767,24 @@ export const projectStore = {
     const primary = primaryDocument(documents);
     const activeDoc = snapshot.activeDoc === doc ? (primary?.doc ?? "model") : snapshot.activeDoc;
     const editDoc = snapshot.editDoc === doc ? (primary?.doc ?? "model") : snapshot.editDoc;
+    const texts = { ...snapshot.editorTexts };
+    delete texts[doc];
+    // The map holds the files that are not active, so the file the views
+    // fall back to takes its text up as `editorDraft` and leaves the map.
+    const taken = snapshot.activeDoc === doc ? (texts[activeDoc] ?? null) : snapshot.editorDraft;
+    delete texts[activeDoc];
+    // The file is gone, so its tab and its unapplied text go with it; the
+    // file the views fall back to is a tab, whether or not it was one (its
+    // tab may have been closed while another file was shown).
+    const left = snapshot.openDocs.filter((d) => d !== doc);
     set({
       documents, folders: result.folders, activeDoc, editDoc,
-      editorDraft: snapshot.activeDoc === doc ? null : snapshot.editorDraft,
+      openDocs: left.includes(activeDoc) ? left : [...left, activeDoc],
+      editorDraft: taken,
+      editorTexts: texts,
       revisionShift: result.revisionShift ?? snapshot.revisionShift,
     });
+    rememberTabs();
     announce(`Moved ${gone?.file ?? "the file"} to the project's trash.`);
     // What the views go to when the removed file was the one shown.
     return documents.find((d) => d.doc === activeDoc) ?? null;
@@ -693,6 +797,30 @@ export const projectStore = {
       set({ folders: result.folders });
       announce(`Created the folder ${path}.`);
     }
+    return result.folders;
+  },
+
+  /** Rename a folder (5.10 item 1): the paths of the files inside it, and
+   *  nothing else. Each file keeps its id, so its statements, undo history,
+   *  unsaved changes and layout stay; the server's answer carries their new
+   *  paths and the shift every view keys on. */
+  async renameFolder(path: string, name: string): Promise<string[]> {
+    const project = requireProject();
+    const result = await renameProjectFolder(project.id, path, name);
+    if (snapshot.project?.id !== project.id) return result.folders;
+    const states = new Map((result.documents ?? []).map((d) => [d.doc, d]));
+    const paths = new Map(result.files.map((f) => [f.id, f.file]));
+    const documents = snapshot.documents.map((d) => {
+      const state = states.get(d.doc);
+      if (state) return state;
+      const file = paths.get(d.doc);
+      return file === undefined ? d : { ...d, file };
+    });
+    set({
+      documents, folders: result.folders,
+      revisionShift: result.revisionShift ?? snapshot.revisionShift,
+    });
+    announce(`Renamed the folder to ${name}.`);
     return result.folders;
   },
 
@@ -1024,6 +1152,33 @@ export const projectStore = {
     set({ editorDraft: null });
     afterChange(result, "");
     return result;
+  },
+
+  /** Apply the text of every tab that holds some, the file shown first
+   *  (5.9 item 4): the leave question's *Apply*, which now has more than
+   *  one file's text to answer for. Turtle that will not parse makes its
+   *  file the active one, so the editor shows that text and the error, and
+   *  the server's refusal is thrown on. */
+  async applyEditors(): Promise<void> {
+    const project = requireProject();
+    await projectStore.applyEditor();
+    for (const doc of Object.keys(snapshot.editorTexts)) {
+      const text = snapshot.editorTexts[doc];
+      try {
+        const result = await applyDocumentSource(project.id, doc, text);
+        const texts = { ...snapshot.editorTexts };
+        delete texts[doc];
+        set({ editorTexts: texts, documents: changedDocuments(result) });
+      } catch (e) {
+        projectStore.switchDocument(doc);
+        throw e;
+      }
+    }
+  },
+
+  /** Drop every tab's unapplied text: the leave question's *Discard*. */
+  discardEditors(): void {
+    set({ editorDraft: null, editorTexts: {} });
   },
 
   /** Save a document, the current one unless named. Resolves "warning" when

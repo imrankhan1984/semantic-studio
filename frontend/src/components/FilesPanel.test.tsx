@@ -9,7 +9,8 @@ SUMMARY
     aria-current, the keyboard (Up, Down, Right, Left, Home, End, Enter, F2,
     Shift+F10 and the context-menu key), and focus after Create, Rename and
     Remove; Remove refused on the last ontology file, aria-disabled with its
-    reason; the folder index's notice.
+    reason; the folder index's notice; a folder's rename from its menu and
+    with F2 (5.10 item 1, AC-29); and a file row's two lines (5.10 item 2).
 
 BASIC IDEA
     api.ts is mocked and the real project store is opened on a fixed
@@ -31,16 +32,19 @@ EXPECTED OUTPUT
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { openProject, addProjectFile, moveProjectFile, removeProjectFile, createProjectFolder, removeProjectFolder, listData } =
-  vi.hoisted(() => ({
-    openProject: vi.fn(),
-    addProjectFile: vi.fn(),
-    moveProjectFile: vi.fn(),
-    removeProjectFile: vi.fn(),
-    createProjectFolder: vi.fn(),
-    removeProjectFolder: vi.fn(),
-    listData: vi.fn(),
-  }));
+const {
+  openProject, addProjectFile, moveProjectFile, removeProjectFile, createProjectFolder, removeProjectFolder,
+  renameProjectFolder, listData,
+} = vi.hoisted(() => ({
+  openProject: vi.fn(),
+  addProjectFile: vi.fn(),
+  moveProjectFile: vi.fn(),
+  removeProjectFile: vi.fn(),
+  createProjectFolder: vi.fn(),
+  removeProjectFolder: vi.fn(),
+  renameProjectFolder: vi.fn(),
+  listData: vi.fn(),
+}));
 
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
@@ -50,6 +54,7 @@ vi.mock("../api", async (importOriginal) => ({
   removeProjectFile,
   createProjectFolder,
   removeProjectFolder,
+  renameProjectFolder,
   listData,
 }));
 
@@ -187,7 +192,7 @@ describe("the keyboard (Section 6)", () => {
     expect(document.activeElement).toBe(row(/^model\.ttl/));
     fireEvent.keyDown(row(/^vocab, folder/), { key: "ContextMenu" });
     expect(within(screen.getByRole("menu")).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
-      "New file here…", "Remove…",
+      "New file here…", "Rename…", "Remove…",
     ]);
     // Not empty: Remove is there, aria-disabled with its reason.
     const remove = within(screen.getByRole("menu")).getByRole("menuitem", { name: "Remove…" });
@@ -303,6 +308,72 @@ describe("New file, Rename, Remove (5.5 items 5 to 7)", () => {
     });
     expect(createProjectFolder).toHaveBeenCalledWith(PID, "spare");
     expect(document.activeElement).toBe(row("spare, folder, empty, expanded"));
+  });
+
+  it("renames a folder from its menu, and focus lands on the renamed row", async () => {
+    await open();
+    renameProjectFolder.mockResolvedValue({
+      folders: ["kit"],
+      files: [{ id: "f00000001", file: "kit/equipment.ttl", role: "vocabulary" }],
+      documents: [state("f00000001", "kit/equipment.ttl", "vocabulary", { dirty: true })],
+      revisionShift: 3,
+    });
+    fireEvent.keyDown(row(/^vocab, folder/), { key: "F10", shiftKey: true });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename…" }));
+    const dialog = screen.getByRole("dialog", { name: "Rename the folder vocab" });
+    const field = within(dialog).getByLabelText("New name") as HTMLInputElement;
+    expect(field.value).toBe("vocab");
+    fireEvent.change(field, { target: { value: "kit" } });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
+    });
+    expect(renameProjectFolder).toHaveBeenCalledWith(PID, "vocab", "kit");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(row("kit, folder, 1 file, expanded"));
+    // The file inside kept its unsaved state and moved with the folder.
+    expect(row("equipment.ttl, vocabulary file, unsaved, in kit")).toBeTruthy();
+  });
+
+  it("renames a folder with F2 too, and says a refused name beside its field", async () => {
+    await open();
+    fireEvent.keyDown(row(/^vocab, folder/), { key: "F2" });
+    const dialog = screen.getByRole("dialog", { name: "Rename the folder vocab" });
+    const field = within(dialog).getByLabelText("New name");
+    fireEvent.change(field, { target: { value: "NUL" } });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
+    });
+    expect(renameProjectFolder).not.toHaveBeenCalled();
+    expect(document.getElementById(field.getAttribute("aria-describedby")!)?.textContent).toBe(
+      "NUL is a name Windows keeps for a device.",
+    );
+    // The server's own refusal lands in the same place, and nothing moved.
+    renameProjectFolder.mockRejectedValue(
+      new ApiError("There is already a folder called spare in this folder.", 422, {
+        code: "path", field: "name", message: "There is already a folder called spare in this folder.",
+      }),
+    );
+    fireEvent.change(field, { target: { value: "spare" } });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
+    });
+    expect(document.getElementById(field.getAttribute("aria-describedby")!)?.textContent).toBe(
+      "There is already a folder called spare in this folder.",
+    );
+    expect(row(/^vocab, folder/)).toBeTruthy();
+  });
+
+  it("shows a long file name in full, its role and unsaved state under it (5.10 item 2)", async () => {
+    const long = "equipment-and-instrumentation-register.ttl"; // 42 characters
+    await open([state("model", "model.ttl", "ontology"), state("f00000003", `vocab/${long}`, "vocabulary", { dirty: true })]);
+    const file = row(new RegExp(`^${long.replace(/[.-]/g, "\$&")}`));
+    const name = file.querySelector(".files-name")!;
+    expect(name.textContent).toBe(long);
+    // Nothing clips or ellipsises the name; the role and unsaved state are
+    // on the row's second line.
+    expect(getComputedStyle(name).textOverflow).not.toBe("ellipsis");
+    const second = file.querySelector(".files-second")!;
+    expect(second.textContent).toBe("vocabulary● unsaved");
   });
 
   it("collapses the whole section with its own button", async () => {

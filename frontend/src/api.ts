@@ -75,6 +75,7 @@ import type {
   LanguageReport,
   OpenedProject,
   FileChange,
+  FolderRename,
   FileRole,
   ProjectDocName,
   ProjectNaming,
@@ -1203,6 +1204,16 @@ export function createProjectFolder(pid: string, path: string): Promise<{ folder
     headers: JSON_WRITE,
     body: JSON.stringify({ path }),
   }).then((r) => handle<{ folders: string[] }>(r));
+}
+
+/** Rename a folder (5.10 item 1): the paths of the files under it change
+ *  and nothing else. */
+export function renameProjectFolder(pid: string, path: string, name: string): Promise<FolderRename> {
+  return send(projectUrl(pid, "/folders"), {
+    method: "PATCH",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ path, name }),
+  }).then((r) => handle<FolderRename>(r));
 }
 
 /** An empty folder only. */

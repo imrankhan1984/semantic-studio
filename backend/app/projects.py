@@ -35,7 +35,9 @@ BASIC IDEA
     path found is held to 8.3 segment by segment (`segment_error`,
     `folder_parts`), then resolved inside the folder by `inside`, which also
     refuses a link or a junction on the way. New file, Move, Remove and the
-    folders are here; a removed file goes to the project's own .trash/.
+    folders are here, a folder's rename among them, which changes the paths
+    in the manifest and nothing else (5.10 item 1); a removed file goes to
+    the project's own .trash/.
 
     Templates are Turtle with {{base}}, {{prefix}}, {{ontology}}, {{name}} and
     {{lang}} placeholders, substituted before parsing. The name is the one
@@ -1229,6 +1231,46 @@ class ProjectStore:
             self._room(entries(self.manifest(pid)), folder, under, parts[-1], moving="")
             self.inside(pid, path).mkdir()
         return self.folders(pid)
+
+    def rename_folder(self, pid: str, path: str, name: str) -> dict:
+        """Rename a folder (5.10 item 1): the paths in the manifest change
+        and nothing else -- every file under it keeps its id, and so its
+        layout (<id>.layout.json), its drafts, its undo history and its
+        unsaved changes, which are the open document's, not the file's.
+        One manifest write for all of them. Returns {folders, files}, the
+        entries that moved, each with its new path."""
+        parts = folder_parts(path)
+        if not parts:
+            raise PathRefused("The project folder itself cannot be renamed.", "folder")
+        reason = segment_error(name)
+        if reason is not None:
+            raise PathRefused(reason, "name")
+        folder = self.folder(pid)
+        with self._lock:
+            source = self._existing_folder(pid, path)
+            under = "/".join(parts[:-1])
+            manifest = self.manifest(pid)
+            listed = entries(manifest)
+            # `moving` is the folder itself, which never clashes with its own
+            # name: a rename that changes only the letter case is allowed.
+            self._room(listed, folder, under, name, moving=path)
+            new_path = f"{under}/{name}" if under else name
+            if new_path == path:
+                return {"folders": self.folders(pid), "files": []}
+            # A change of case alone is a rename like any other: Windows
+            # takes it, since the name it would clash with is this folder's
+            # own (test_ac29_a_rename_to_only_another_case_is_allowed runs
+            # on both CI platforms).
+            source.rename(self.inside(pid, new_path))
+            moved = []
+            for entry in listed:
+                if entry["file"] == path or entry["file"].startswith(f"{path}/"):
+                    entry["file"] = new_path + entry["file"][len(path):]
+                    moved.append(dict(entry))
+            manifest["documents"] = listed
+            manifest["updatedAt"] = _now()
+            self.write_manifest(pid, manifest)
+        return {"folders": self.folders(pid), "files": moved}
 
     def remove_folder(self, pid: str, path: str) -> list[str]:
         """An empty folder only (5.5 item 4): nothing in it at all, so no

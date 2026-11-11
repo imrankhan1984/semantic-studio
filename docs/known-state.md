@@ -3296,3 +3296,79 @@ EXPECTED OUTPUT
   view's key: `test_ac13` red. Drafts beside the file again: `test_ac17`
   red. `aria-current` off the Files row, or `.ttl` no longer added in
   `files/names.ts`: seven vitest tests red.
+
+### Tabs and a folder's rename (E-16 PR 2, D-131, D-132)
+
+- **Built** 2026-11-11, spec `multi-file-projects` v1.2, PR 2 (Sections 5.9
+  and 5.10, AC-25 to AC-30), on `feature/multi-file-tabs`.
+
+  **A tab is a file the person opened.** `openDocs` in the project store is
+  the order of opening, not the project's file list: an id the project no
+  longer holds simply drops out of `files/tabs.ts`'s rows, so removing a
+  file removes its tab without any bookkeeping of its own. Two open files
+  of the same name show their folders, and only then; the accessible name
+  carries the folder whenever there is one, as a Files row does, and the
+  word *unsaved* beside the dot.
+
+  **Closing a tab discards nothing.** Unsaved changes are the open
+  document's, server-side, and the Files panel still marks the file. Text
+  typed in the editor and not applied is kept in the store under
+  `editorTexts`, so opening the file again shows it. The last tab has no
+  close button while the page is showing a file: closing it would leave the
+  page with nothing. `projectStore.closeTab` answers the file the page
+  should move to when the tab closed was the one it was showing, and App
+  opens that file by its role, as Files does.
+
+  **One text per file, moved only on a switch.** `editorDraft` is still the
+  active file's unapplied text, and `editorTexts` holds every other file's.
+  The two are moved between in `switchDocument` alone -- never on a
+  keystroke -- because App reads the store by selector and the editor's text
+  must not re-render anything else (the load-bearing rule). Switching files
+  therefore no longer asks *Apply, discard, or stay?*: nothing is lost by
+  moving. Leaving the page or the project still asks, now about every tab's
+  text (`unappliedText`), and *Apply* applies them all, the file shown
+  first; Turtle that will not parse makes its own file the active one so
+  the editor shows that text with the error.
+
+  **Where the strip sits.** The Edit and Shapes pages become two-row grids
+  under `.with-tabs`: the left column spans both rows, the strip takes the
+  top of the second column across to the right edge, and everything else is
+  row 2. A library ontology has no project, so no `.with-tabs` and the old
+  one-row grid, byte for byte.
+
+  **No `aria-controls` on a tab.** What a tab shows is the whole page under
+  it -- outline, canvas and side panel, three regions -- not one panel the
+  strip could name. Naming an element that is not a `tabpanel` would say
+  something untrue, so each tab says its file and the strip says what it
+  is. Measured in Chrome at 1280x720: the tablist is *Open files*, each tab
+  carries its file's words, Tab from the focused tab reaches *Close
+  <file>*, the arrow keys move without choosing, and Enter chooses.
+
+  **A folder's rename is paths only.** `projects.rename_folder` renames the
+  directory and rewrites every manifest entry under it in one write; ids
+  are untouched, so statements, undo history, unsaved changes and layouts
+  (`<id>.layout.json`, named by id, at the project folder) all stay where
+  they are. `editing.rename_folder` holds every file's lock in the 8.4
+  order while it tells each open file its new path, so a save after the
+  rename never writes the old one, and shifts the whole-project revision by
+  one -- once for the one write, whatever it moved. The new name goes
+  through the same `segment_error` and `_room` (without case) as a file's,
+  and `inside` refuses a path that leads out through a link. A rename that
+  changes only the letter case is an ordinary rename: the name it would
+  clash with is the folder's own, and Windows takes it -- measured, after
+  a two-step rename through a spare name was written for a problem that
+  turned out not to exist and was taken out again.
+
+  **A name in full.** A Files row is two lines -- the name, then its role
+  and *unsaved* smaller under it -- so a 40-character name has the column's
+  whole width and wraps rather than being cut (`overflow-wrap: anywhere`,
+  no ellipsis). Measured in Chrome at 1280x720: 40 characters on two lines,
+  `scrollWidth` within `clientWidth`, the second line reading
+  *vocabulary ● unsaved*.
+
+  **Removal checks.** The text taken up again out of `switchDocument`:
+  three red, two store and one in FileTabs. The last tab's close button
+  rendered always: two red, one in FileTabs and one in App. The
+  `.with-tabs` rows out of `index.css`: the strip overlaps the canvas in
+  the browser (nothing in jsdom, which has no layout -- the live run is the
+  check). `_room` out of `rename_folder`: the sibling-clash test red.

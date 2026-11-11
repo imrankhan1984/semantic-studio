@@ -1111,6 +1111,16 @@ export interface FileChange {
   revisionShift?: number;
 }
 
+/** A folder's rename answered (5.10 item 1): the project's folders as they
+ *  now are, the entries that moved with their new paths, and the state of
+ *  each one that is open. */
+export interface FolderRename {
+  folders: string[];
+  files: { id: ProjectDocName; file: string; role: string }[];
+  documents?: ProjectDocumentState[];
+  revisionShift?: number;
+}
+
 export type ProjectKind = "ontology" | "taxonomy";
 
 /** What a draft makes (edit-page-rework 5.5): a box on the canvas for the
