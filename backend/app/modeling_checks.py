@@ -55,6 +55,13 @@ BASIC IDEA
     Disjointness is owl:disjointWith or a shared owl:AllDisjointClasses,
     read alike (axioms.disjoint_pairs).
 
+    links-between-files 5.6 adds the hierarchy-move warning: after a
+    command or an Apply moves a concept or a class, what it changed in the
+    rules that depend on a hierarchy, in every project file -- a branch
+    rule's branch (read through shapes_form.branch_under alone), a range or
+    a rule's filler (axioms.class_uses alone) -- compared before and after,
+    so only a warning the move brings is said, and never a refusal.
+
     This is not an OWL 2 DL profile check; that is V-7's reasoner.
 
 INPUTS / INPUT SOURCES
@@ -67,6 +74,10 @@ EXPECTED OUTPUT
     - never_members(graph, cls, name) -> [{"text", "disjoint"?}] for one class.
     - reasoner_marks(graph, prop) -> {"domain"?, "range"?}, each
       {"reasoner": "unused", "reason"}.
+    - lineage(graphs, term, predicate) and move_warnings(...) -> the
+      hierarchy-move warning (links-between-files 5.6): [{"text", "block",
+      "about"}], what a move in a hierarchy changes in the branch rules,
+      ranges and rule fillers of every project file.
 ================================================================================
 """
 
@@ -78,8 +89,8 @@ from typing import Callable, Iterable, Optional
 from rdflib import BNode, Graph, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS
 
-from . import standard_terms
-from .axioms import class_type, defined, disjoint_pairs, disjoint_with, domain_of, named_pairs, unused_by_reasoner
+from . import shapes_form, standard_terms
+from .axioms import class_type, class_uses, defined, disjoint_pairs, disjoint_with, domain_of, named_pairs, unused_by_reasoner
 from .sentences import article, verb
 
 Name = Callable[[URIRef], str]
@@ -624,3 +635,132 @@ def domain_warning(view: Graph, own: Graph, prop: URIRef, name: Name) -> Optiona
             "label": "Share it", "needs": "parentName",
         }
     return warning
+
+
+# --- the hierarchy-move warning (links-between-files 5.6) ---------------------
+
+# The four commands that move a term in its hierarchy: the argument naming
+# the term moved, the predicate it moves along, and the form block the
+# warning stands under -- *Is a kind of* for a class, *Broader concepts* for
+# a concept. Every door that changes a parent (the form, the tree, the
+# canvas's line) sends one of these, so each warns alike (5.6 item 5).
+HIERARCHY_MOVES: dict[str, tuple[str, URIRef, str]] = {
+    "AddSubClassOf": ("child", RDFS.subClassOf, "parents"),
+    "RemoveSubClassOf": ("child", RDFS.subClassOf, "parents"),
+    "AddBroader": ("concept", SKOS.broader, "broader"),
+    "RemoveBroader": ("concept", SKOS.broader, "broader"),
+}
+
+# A lineage walk stops here: a hierarchy is attacker-shaped input (a file
+# can hold any loop or depth), and the warning is information, never worth
+# an unbounded walk inside every file's lock.
+LINEAGE_MAX = 10_000
+
+
+def lineage(graphs: Iterable[Graph], term: URIRef, predicate: URIRef) -> set:
+    """Every named term `term` sits under along `predicate`, itself
+    included, read across every project file (a parent may live in another
+    file). skos:broader is read with its inverse skos:narrower, as the tree
+    and the commands read it. One lookup per node per file; a loop is
+    walked once."""
+    graphs = list(graphs)
+    found = {term}
+    queue = [term]
+    while queue and len(found) < LINEAGE_MAX:
+        current = queue.pop()
+        for g in graphs:
+            ups = set(g.objects(current, predicate))
+            if predicate == SKOS.broader:
+                ups |= set(g.subjects(SKOS.narrower, current))
+            for up in ups:
+                if isinstance(up, URIRef) and up not in found:
+                    found.add(up)
+                    queue.append(up)
+    return found
+
+
+def _examples(graphs: Iterable[Graph], prop: URIRef, term: URIRef) -> str:
+    """The sentence's " 2 examples use it.": the individuals across the project's files
+    that have the moved term as a value of the property (5.6 item 3). None
+    is not said."""
+    users = set()
+    for g in graphs:
+        users |= {s for s in g.subjects(prop, term)}
+    n = len(users)
+    if n == 0:
+        return ""
+    return f" {n} example uses it." if n == 1 else f" {n} examples use it."
+
+
+def _branch_rules(shapes_graphs: Iterable[Graph]) -> list[tuple]:
+    """(property, branch concept, the class the rule's shape targets or
+    None) for every branch rule (D-127) in every shapes file, read only
+    through shapes_form.branch_under, the one reader of that shape."""
+    rules = []
+    for sg in shapes_graphs:
+        for node, pshape in sg.subject_objects(shapes_form.SH.property):
+            if not isinstance(pshape, BNode):
+                continue
+            branch = shapes_form.branch_under(sg, pshape)
+            if branch is None:
+                continue
+            path = shapes_form.path_of(sg, sg.value(pshape, shapes_form.SH.path))
+            if path is None or len(path) != 1:
+                continue
+            target = _named(sg.objects(node, shapes_form.SH.targetClass))
+            rules.append((path[0], branch, target))
+    return rules
+
+
+def move_warnings(
+    model_graphs: list[Graph],
+    shapes_graphs: list[Graph],
+    term: URIRef,
+    predicate: URIRef,
+    before: set,
+    after: set,
+    name: Name,
+) -> list[dict]:
+    """What a move in the hierarchy changes in the rules of every project
+    file (5.6): compared before and after, so only what this move brings is
+    said, and never a refusal -- the change has been made. `before` and
+    `after` are lineage() on each side. A concept leaving or joining a
+    branch rule's branch; a class leaving or joining the subclasses of a
+    class a property's range or a rule's filler names (read through
+    axioms.class_uses alone). Each warning carries the block it stands
+    under and `about`, the moved term, as the chaining rule's do."""
+    left, joined = before - after, after - before
+    if not left and not joined:
+        return []
+    block = "broader" if predicate == SKOS.broader else "parents"
+    moved = name(term)
+    out: list[dict] = []
+
+    def say(under: URIRef, rest_left: str, rest_joined: str, prop: URIRef) -> None:
+        was = under in left
+        head = f"{moved} is no longer under {name(under)}" if was else f"{moved} is now under {name(under)}"
+        out.append({
+            "text": f"{head}, so {rest_left if was else rest_joined}.{_examples(model_graphs, prop, term)}",
+            "block": block,
+            "about": str(term),
+        })
+
+    if predicate == SKOS.broader:
+        for prop, branch, target in _branch_rules(shapes_graphs):
+            if branch in left or branch in joined:
+                owner = f"{name(target)}'s {name(prop)}" if target is not None else name(prop)
+                say(branch, f"{owner} no longer allows it", f"{owner} now allows it", prop)
+        return out
+    changed = left | joined
+    seen: set = set()
+    for g in model_graphs:
+        for how, holder, prop, under in class_uses(g, changed):
+            if (how, holder, prop, under) in seen or under == term:
+                continue
+            seen.add((how, holder, prop, under))
+            if how == "range":
+                say(under, f"{name(prop)} no longer expects it", f"{name(prop)} now expects it", prop)
+            else:
+                rule = f"{name(holder)}'s rule on {name(prop)}"
+                say(under, f"{rule} no longer expects it", f"{rule} now expects it", prop)
+    return out

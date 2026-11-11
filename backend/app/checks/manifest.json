@@ -354,6 +354,29 @@
       "block": "label"
     },
     {
+      "id": "DC-30",
+      "file": "DC-30.rq",
+      "sha256": "5e2de5f924bea93a028c168b184df2b658526e0892dbe704747b2b36973300cb",
+      "level": "Problem",
+      "heading": "Addresses used but defined nowhere",
+      "fix": "Create it, change the statement to an address that exists, or remove the statement.",
+      "sentences": {
+        "row": "{file}: {subject} {link} {target}, which no file defines.",
+        "property": "{file}: {subject} uses {target} as a property, which no file defines."
+      }
+    },
+    {
+      "id": "DC-31",
+      "file": "DC-31.rq",
+      "sha256": "1012ebd3982b01ef8f654430724518b7a382c8b2b7345a8fd83c96bd1f04829f",
+      "level": "Worth a look",
+      "heading": "Terms defined in two files",
+      "fix": "Keep it in one file; move what the other file says with Move to file.",
+      "sentences": {
+        "row": "{name} is defined in {files}."
+      }
+    },
+    {
       "id": "H1",
       "file": "H1.rq",
       "sha256": "7acdd9fd3caf3cd5b72b84208de8d8805bf4c360b259f5142c5bb987e70774ee",

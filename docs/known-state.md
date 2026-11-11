@@ -3467,3 +3467,96 @@ EXPECTED OUTPUT
   AC-2 red. The members' apply out of `_apply_group`: AC-2 red. The uses out
   of the delete plan: AC-8 red. `focus` out of DeleteDialog: two red. The
   store's `documents` out of `changedDocuments`: one red.
+
+### Links between files, PR 2 (E-17, links-between-files 5.6 to 5.8, D-133)
+
+  **The hierarchy-move warning compares before and after, in every file.**
+  The four hierarchy commands (`modeling_checks.HIERARCHY_MOVES`) read where
+  the moved term sits -- `lineage`, every named term above it along
+  `rdfs:subClassOf` or `skos:broader` (with `skos:narrower` read the other
+  way), across every ontology and vocabulary file -- before the change and
+  after it. Only the terms in the difference are looked up, so a move that
+  changes nothing above the term costs two short walks and no rule scan.
+  Branch rules are read through `shapes_form.branch_under` alone, ranges
+  and rule fillers through `axioms.class_uses` alone (index lookups from
+  each class, owners found up through blank nodes, then confirmed by
+  `contents`, the one reader of 5.8's shapes). The warning is never a
+  refusal: the change has been made when it is computed. A Turtle Apply
+  runs the same comparison for each term whose parent links the text
+  changed and that the project types before and after -- in this file or
+  another, since a file may state another file's term's parent (the code
+  review found the first version missed that) -- (`hierarchyWarnings`,
+  under the editor for that Apply), and leaves a term the text brings or
+  removes alone: a new term is not moved.
+
+  **The warning travels with the command, not the node route.** Unlike the
+  chaining rule's, it describes a change, not a state, so the node route
+  cannot recompute it. The command answers `warnings`, each with `block`
+  (`parents` or `broader`) and `about`; `projectStore.command` keeps the
+  last as `moveWarnings` and says it after the change's own sentence, and
+  `EditStructure` shows it with the chaining rule's `Warnings` under *Is a
+  kind of* or *Broader concepts* on the moved term. Saying it in the store,
+  not with `useWarningAnnouncer`, is what makes the canvas's line and the
+  tree warn alike when the form is not on the moved term (5.6 item 5); the
+  next change, an undo, a redo or an Apply clears it.
+
+  **DC-30 and DC-31 ask each file.** The merged graph the queries run on
+  cannot say which file holds a statement, so both are `_COMPUTED`: the
+  router's `whole` now carries `files`, every file of every role in
+  manifest order, and `outside`, each file's resolved imports and the
+  switched-on snapshots. DC-30 judges each own address once (said about
+  anywhere, or not) and walks each file once; a statement about a blank node
+  is named by the term it belongs to. Outside a project there are no files
+  to ask and both report nothing. Their `.rq` files are what *Open as a
+  query* shows, pinned like every check. A finding carries `doc` and
+  `file`, and App's opener goes straight to that file -- Shapes for a
+  shapes file -- without asking the node route who defines the term, and
+  before the address is judged: a pattern project's shapes or data address
+  would otherwise read as Explore's. Each file's imports are warmed before
+  the locks are taken, as `command()` warms the reference index, so a first
+  parse never holds every file's lock. A statement about a blank node is
+  named by `axioms.named_owner`, the delete dialog's walk, now the one.
+
+  **MoveToFile is the service's, like the branch relationship.** It writes
+  two files, so `command()` hands it to `_move_to_file` before the handler
+  table, under every lock. `_cross_file` still refuses it outside the
+  defining file; `_cross_file_change` is not run on the target's half,
+  which adds statements about a term the target does not yet type -- that
+  is the point. The moved set is the term's own statements and
+  `_bnode_closure` of their objects, the delete's rule for blank nodes only
+  they reach. Prefixes go through `Change.declare` on the target only for
+  namespaces the moved statements use and the target lacks, under the same
+  name when it is free, so undo restores both texts byte for byte, whether
+  the target's text was as written or rebuilt after a command (both tested).
+  `_push_group(labelled=True)` keeps the two labels as written, *Moved Pump
+  to equipment.ttl* and *Moved Pump from core.ttl*, which already name the
+  other file. A blank node the entity's statement shares with another
+  statement (a restriction written once for two classes in Turtle) is
+  refused rather than split across two files. The box's place leaves the
+  source's layout and the source step keeps it (`Step.dropped`): undo puts
+  it back, as an undone delete finds its place, and redo takes it off
+  again.
+
+  **After a move, focus goes to *Open file*.** Found in the browser, not by
+  the suite: the dialog hands focus back to *Move Pump to file…*, which is
+  gone once the refetch makes the form read-only, so focus fell to the
+  page. `EditSection` remembers a successful move and, when the details
+  first say `fromFile`, focuses the panel's *Open file* (the panel's heading
+  without one).
+
+  **Section 10's ratio leaves H9 out of both sides.** On the 10-file,
+  9,991-statement project H9 reaches its 30 s timeout on `main` already
+  (the whole report took 37.1 s on `037ff50`), and a fixed 30 s on both
+  sides would hide any ratio. Without H9 the report takes about 7 s, and
+  DC-30 and DC-31 add 15 ms to it (11 ms and 3 ms).
+
+  **Removal checks.** DC-30 out of `_COMPUTED`: AC-18 red. The warnings out
+  of the command's answer: AC-15 and AC-16 red. The branch rules out of the
+  comparison: AC-15 red. The blank nodes out of a move: AC-20 red. The
+  prefixes out of a move: AC-20 and AC-22 red. The shapes-file refusal out:
+  AC-21 red. The Warnings out from under *Is a kind of*: the EditSection
+  test red. The finding's own file out of the opener: the App test red. The
+  focus after a move out: its EditSection test red. From the code review:
+  the Apply's other-file moves, the shared blank node's refusal, the box's
+  place on undo and the finding's file before its address, each red without
+  its fix.

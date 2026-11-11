@@ -182,7 +182,7 @@ describe("the Checks report (design-checks 5.4)", () => {
     let answer!: (r: ChecksReport) => void;
     getChecks.mockReturnValue(new Promise<ChecksReport>((r) => (answer = r)));
     await show();
-    expect(screen.getByRole("status").textContent).toBe("Checking… (28 checks, 12 hints)");
+    expect(screen.getByRole("status").textContent).toBe("Checking… (31 checks, 12 hints)");
     expect(document.querySelector(".checks-view")!.getAttribute("aria-busy")).toBe("true");
     expect(screen.getByRole("button", { name: "Run again" }).getAttribute("aria-disabled")).toBe("true");
     await act(async () => answer(report(GROUPS)));

@@ -140,6 +140,8 @@ import type {
   CreatingKind,
   FileRole,
   IndexNotice,
+  ModelWarning,
+  MoveWarning,
   ProjectDocName,
   ProjectDocumentState,
   ProjectSummary,
@@ -243,6 +245,12 @@ export interface ProjectSnapshot {
   /** The last thing a draft made, for the canvas to place it and App to
    *  select it; its token is the draft's. */
   created: { iri: string; kind: CreatingKind; token: number; parent: string | null } | null;
+  /** The last command's hierarchy-move warnings (links-between-files 5.6):
+   *  what moving a term changed in a rule of some file. Each stands under
+   *  its block on the moved term's form until the next change; said once,
+   *  with the change, whichever door made it (the form, the tree, the
+   *  canvas's line). */
+  moveWarnings: { about: string; warnings: ModelWarning[] } | null;
 }
 
 export interface Creating {
@@ -310,6 +318,7 @@ const EMPTY: ProjectSnapshot = {
   creatingBusy: false,
   creatingError: null,
   created: null,
+  moveWarnings: null,
 };
 
 let snapshot: ProjectSnapshot = EMPTY;
@@ -573,10 +582,18 @@ function changedDocuments(result: ChangeResult): ProjectDocumentState[] {
   return snapshot.documents.map((d) => states.find((s) => s.doc === d.doc) ?? d);
 }
 
-function afterChange(result: ChangeResult, verb: string): void {
+function afterChange(result: ChangeResult, verb: string, warned = ""): void {
   set({ documents: changedDocuments(result) });
   const status = STATUS_WORDS[saveStatus(snapshot)];
-  announce(`${verb}${result.label}. ${status}.`);
+  announce(`${verb}${result.label}. ${status}.${warned}`);
+}
+
+/** " Warning: …" for the hierarchy-move warnings a command brought (5.6
+ *  item 2), said after what changed; "" when it brought none. Only a
+ *  warning the change brings is said: the server compares before and
+ *  after, so every one here is new. */
+function moveWords(warnings: MoveWarning[] | undefined): string {
+  return warnings?.length ? ` Warning: ${warnings.map((w) => w.text).join(" ")}` : "";
 }
 
 /** An undo or redo: a paired half whose partner is gone is dropped and its
@@ -852,12 +869,14 @@ export const projectStore = {
     // The editor's unapplied text is not touched here: the header asks
     // "Apply, discard, or stay?" before an undo, as every other exit does.
     const result = await undoChange(project.id, snapshot.activeDoc);
+    set({ moveWarnings: null });
     applyUndoRedo(result, "Undid: ");
   },
 
   async redo(): Promise<void> {
     const project = requireProject();
     const result = await redoChange(project.id, snapshot.activeDoc);
+    set({ moveWarnings: null });
     applyUndoRedo(result, "Redid: ");
   },
 
@@ -894,11 +913,15 @@ export const projectStore = {
         revisionShift: opened.revisionShift ?? snapshot.revisionShift,
       });
     }
+    // A move's warnings stand under the moved term's block until the next
+    // change replaces them (links-between-files 5.6).
+    const warnings = result.warnings ?? [];
+    set({ moveWarnings: warnings.length ? { about: warnings[0].about, warnings } : null });
     if (announcement) {
       set({ documents: changedDocuments(result) });
-      announce(announcement(result));
+      announce(announcement(result) + moveWords(warnings));
     } else {
-      afterChange(result, "");
+      afterChange(result, "", moveWords(warnings));
     }
     return result;
   },
@@ -1152,7 +1175,8 @@ export const projectStore = {
     const text = snapshot.editorDraft;
     if (text === null) return null;
     const result = await applyDocumentSource(project.id, snapshot.activeDoc, text);
-    set({ editorDraft: null });
+    // An Apply's moves are said under the editor (5.6 item 4), not here.
+    set({ editorDraft: null, moveWarnings: null });
     afterChange(result, "");
     return result;
   },

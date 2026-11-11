@@ -140,6 +140,11 @@ EXPECTED = {
     # DC-29 (standard-terms 5.7): the general faults fixture has no home-made
     # copy of a standard term, so it reports none; AC-7 below uses its own probe.
     "DC-29": [],
+    # DC-30 and DC-31 (links-between-files 5.7) ask which project file holds
+    # a statement: a document outside a project has no files to ask, so they
+    # report nothing here; test_links_between_files.py plants their cases.
+    "DC-30": [],
+    "DC-31": [],
 }
 
 
@@ -151,8 +156,8 @@ def faults() -> dict:
 HINTS = [f"H{n}" for n in range(1, 13)]
 
 
-def test_the_catalogue_has_the_29_checks_then_the_12_hints():
-    assert [e["id"] for e in checks.manifest()] == [f"DC-{n:02d}" for n in range(1, 30)] + HINTS
+def test_the_catalogue_has_the_31_checks_then_the_12_hints():
+    assert [e["id"] for e in checks.manifest()] == [f"DC-{n:02d}" for n in range(1, 32)] + HINTS
     assert set(EXPECTED) == {e["id"] for e in checks.manifest() if e["id"].startswith("DC-")}
     assert {e["level"] for e in checks.manifest() if e["id"] in HINTS} == {"Hint"}
 
@@ -175,7 +180,7 @@ def test_ac3_each_check_reports_exactly_its_planted_finding(faults, cid):
 
 def test_ac3_the_clean_fixture_trips_nothing():
     report = run(parse(FIXTURES / "design-clean.ttl"), namespace="acme")
-    assert len(report["groups"]) == 41
+    assert len(report["groups"]) == 43
     # No hint either: the clean fixture asks no question.
     assert {g["id"]: g["total"] for g in report["groups"] if g["total"]} == {}
     assert report["measures"]["level"]["step"] == 6
@@ -488,7 +493,7 @@ def test_the_standard_list_lives_in_checks_py_alone():
     ]
     assert copies == []
     queries = list((APP / "checks").glob("*.rq"))
-    assert len(queries) == 41
+    assert len(queries) == 43
     for path in queries:
         text = path.read_text(encoding="utf-8")
         assert not any(ns in text for ns in rare if ns not in ("http://purl.org/dc/terms/", "http://purl.org/dc/elements/1.1/")), path.name
@@ -540,14 +545,14 @@ def test_the_report_runs_every_query_through_the_gate(monkeypatch):
     # reasoning result, H10's and H11's short scans; their queries are Open as
     # a query's.
     assert sorted(seen) == sorted(e["query"] for e in checks.manifest() if e["id"] not in checks._COMPUTED)
-    assert set(checks._COMPUTED) == {"DC-13", "H3", "H10", "H11"}
+    assert set(checks._COMPUTED) == {"DC-13", "H3", "H10", "H11", "DC-30", "DC-31"}
 
 
 def test_ac6_open_as_a_query_is_exactly_the_file():
     response = client.get("/api/checks")
     assert response.status_code == 200
     listed = response.json()
-    assert len(listed) == 41
+    assert len(listed) == 43
     for item in listed:
         assert item["query"] == (APP / "checks" / f"{item['id']}.rq").read_text(encoding="utf-8")
         assert set(item) == {"id", "level", "heading", "fix", "query"}
@@ -772,7 +777,7 @@ def test_a_shapes_document_runs_three_checks(project):
     body = client.get(f"/api/ontologies/{project}-shapes/checks").json()
     assert [g["id"] for g in body["groups"]] == ["DC-01", "DC-03", "DC-08"]
     # The other 26 checks and every hint (5.11).
-    assert len(body["skipped"]) == 38
+    assert len(body["skipped"]) == 40
     assert checks.SHAPES_NOTE in body["notes"]
 
 
@@ -1022,7 +1027,7 @@ def test_ac12a_a_document_under_the_cap_runs_every_check():
     report = run(parse(FIXTURES / "design-clean.ttl"), namespace="acme")
     assert "overCap" not in report
     assert report["measures"] is not None
-    assert len(report["groups"]) == 41
+    assert len(report["groups"]) == 43
 
 
 def test_ac12a_the_route_answers_over_the_cap():

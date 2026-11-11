@@ -45,7 +45,7 @@ export const LEVEL_ORDER: CheckLevel[] = ["Problem", "Worth a look", "Hint"];
 export const LEVEL_MARK: Record<CheckLevel, string> = { Problem: "▲", "Worth a look": "●", Hint: "?" };
 export const PASSED_MARK = "✓";
 
-export const RUNNING = "Checking… (28 checks, 12 hints)";
+export const RUNNING = "Checking… (31 checks, 12 hints)";
 export const STALE = "The model has changed since these checks ran.";
 export const FAILED = "The checks could not run.";
 

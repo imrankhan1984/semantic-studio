@@ -46,6 +46,12 @@ INPUTS / INPUT SOURCES (props)
     A closed form gives focus back to the button that opened it (5.8 item
     2). *Add relationship* waits for a range, as 5.1 says (item 10).
 
+    A move in the hierarchy that changed what a rule in some file allows
+    (links-between-files 5.6) is warned of under *Is a kind of* or *Broader
+    concepts* of the term moved, from the project store's moveWarnings,
+    with the chaining rule's Warnings: the store said it once with the
+    change, whichever door made it.
+
 EXPECTED OUTPUT
     - Commands through the runner; the block's markup, a property's form, or
       nothing for a kind with no structure to edit.
@@ -64,7 +70,7 @@ import ConceptRelations from "./ConceptRelations";
 import { Block, type Runner } from "./EditParts";
 import EntityPicker from "./EntityPicker";
 import NewEntityForm, { NewClassForm } from "./NewEntityForm";
-import RelationshipForm from "./RelationshipForm";
+import RelationshipForm, { Warnings } from "./RelationshipForm";
 import ReusePlan from "./ReusePlan";
 import RulesBlock from "./RulesBlock";
 
@@ -202,6 +208,8 @@ function PropertyGroups({
   );
 }
 
+const NO_WARNINGS: ModelWarning[] = [];
+
 export default function EditStructure({
   ontologyId,
   iri,
@@ -233,6 +241,9 @@ export default function EditStructure({
   const lists = useRef<Record<string, HTMLHeadingElement | null>>({});
   const pid = useProjectSelector((s) => s.project?.id ?? null);
   const shape = structureOf(model.kind);
+  // The last move's warnings, when this is the term it moved (5.6).
+  const lastMove = useProjectSelector((s) => s.moveWarnings);
+  const moved = lastMove?.about === iri ? lastMove.warnings : NO_WARNINGS;
 
   // Another entity: nothing of this one's reuse stays open. Before the
   // draft's effect, which runs after it on the same mount and must win.
@@ -410,6 +421,7 @@ export default function EditStructure({
     return (
       <Block title="Structure">
         <h5>Is a kind of</h5>
+        <Warnings warnings={moved} block="parents" runner={runner} />
         <Links
           refs={model.parents}
           empty="No parent: a top-level class."
@@ -566,6 +578,7 @@ export default function EditStructure({
   return (
     <Block title="Structure">
       <h5>Broader concepts</h5>
+      <Warnings warnings={moved} block="broader" runner={runner} />
       <Links
         refs={model.broader}
         empty="No broader concept: a top concept."
