@@ -34,16 +34,17 @@ import { projectStore } from "../state/projectStore";
 import type { NodeDetails, TermRef } from "../types";
 import EditSection from "./EditSection";
 
-const { openProject, runCommand, previewDelete, searchNodes, getAnnotationProperties } = vi.hoisted(() => ({
+const { openProject, runCommand, previewDelete, previewRename, searchNodes, getAnnotationProperties } = vi.hoisted(() => ({
   openProject: vi.fn(),
   runCommand: vi.fn(),
+  previewRename: vi.fn(),
   previewDelete: vi.fn(),
   searchNodes: vi.fn(),
   getAnnotationProperties: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, openProject, runCommand, previewDelete, searchNodes, getAnnotationProperties };
+  return { ...actual, openProject, runCommand, previewDelete, previewRename, searchNodes, getAnnotationProperties };
 });
 
 const EX = "http://example.org/shop#";
@@ -138,9 +139,10 @@ function changed(label: string, created?: string) {
 
 beforeEach(async () => {
   projectStore._reset();
-  for (const mock of [openProject, runCommand, previewDelete, searchNodes, getAnnotationProperties, onSelect, onDeleted]) {
+  for (const mock of [openProject, runCommand, previewDelete, previewRename, searchNodes, getAnnotationProperties, onSelect, onDeleted]) {
     mock.mockReset();
   }
+  previewRename.mockResolvedValue({ dryRun: true, revision: 2, uses: [], snapshots: [], queries: 0 });
   openProject.mockResolvedValue({
     project: {
       id: PID,
@@ -413,17 +415,108 @@ describe("Structure (AC-1, AC-3)", () => {
 });
 
 describe("Identifier", () => {
-  it("says other files will not follow, then renames and selects the new IRI", async () => {
+  it("with no uses elsewhere, renames at once and selects the new IRI, no line shown", async () => {
     runCommand.mockResolvedValueOnce(changed("Renamed", EX + "Bill"));
     await renderForm(invoice());
     fireEvent.click(screen.getByRole("button", { name: "Change identifier…" }));
-    expect(screen.getByText("Other files that use the old identifier will not follow the change.")).toBeTruthy();
+    // Today's sentence is gone: a rename now changes every file (5.2 item 1).
+    expect(screen.queryByText(/will not follow/)).toBeNull();
     fireEvent.change(screen.getByRole("textbox", { name: "New identifier" }), { target: { value: "shop:Bill" } });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Change identifier" }));
     });
+    expect(previewRename).toHaveBeenCalledWith(PID, "model", EX + "Invoice", "shop:Bill");
     expect(lastCommand()).toEqual(["RenameIri", { old: EX + "Invoice", new: "shop:Bill" }]);
     expect(onSelect).toHaveBeenCalledWith(EX + "Bill");
+  });
+
+  it("shows the uses line on blur, read with the field, aria-disabled while counting (AC-12)", async () => {
+    let answer: (value: unknown) => void = () => {};
+    previewRename.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    runCommand.mockResolvedValueOnce(changed("Renamed", EX + "Bill"));
+    await renderForm(invoice());
+    fireEvent.click(screen.getByRole("button", { name: "Change identifier…" }));
+    const field = screen.getByRole("textbox", { name: "New identifier" });
+    fireEvent.change(field, { target: { value: "shop:Bill" } });
+    fireEvent.blur(field);
+    const button = screen.getByRole("button", { name: "Change identifier" });
+    expect(screen.getByText("Counting uses in other files…")).toBeTruthy();
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => {
+      answer({
+        dryRun: true, revision: 2, snapshots: [], queries: 0,
+        uses: [{ doc: "f1", file: "equipment.ttl", count: 3 }, { doc: "shapes", file: "shapes.ttl", count: 1 }],
+      });
+    });
+    const line = screen.getByText("Also changes 3 statements in equipment.ttl and 1 in shapes.ttl.");
+    expect(field.getAttribute("aria-describedby")).toBe(line.id);
+    expect(button.getAttribute("aria-disabled")).toBe("false");
+    expect(previewRename).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(lastCommand()).toEqual(["RenameIri", { old: EX + "Invoice", new: "shop:Bill" }]);
+  });
+
+  it("with uses elsewhere, a press shows the line first and the next press renames", async () => {
+    previewRename.mockResolvedValueOnce({
+      dryRun: true, revision: 2, snapshots: [], queries: 1, uses: [{ doc: "f1", file: "equipment.ttl", count: 2 }],
+    });
+    runCommand.mockResolvedValueOnce(changed("Renamed", EX + "Bill"));
+    await renderForm(invoice());
+    fireEvent.click(screen.getByRole("button", { name: "Change identifier…" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "New identifier" }), { target: { value: "shop:Bill" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Change identifier" }));
+    });
+    expect(screen.getByText("Also changes 2 statements in equipment.ttl, and 1 saved query mentions it.")).toBeTruthy();
+    expect(runCommand).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Change identifier" }));
+    });
+    expect(lastCommand()).toEqual(["RenameIri", { old: EX + "Invoice", new: "shop:Bill" }]);
+  });
+
+  it("says when the count fails, keeps the button aria-disabled and renames nothing", async () => {
+    previewRename.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await renderForm(invoice());
+    fireEvent.click(screen.getByRole("button", { name: "Change identifier…" }));
+    const field = screen.getByRole("textbox", { name: "New identifier" });
+    fireEvent.change(field, { target: { value: "shop:Bill" } });
+    await act(async () => {
+      fireEvent.blur(field);
+    });
+    expect(screen.getByText("Could not count the uses in other files. Try again.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Change identifier" }).getAttribute("aria-disabled")).toBe("true");
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe("Deprecate (links-between-files 5.4)", () => {
+  it("offers Deprecate beside Delete, reached by Tab order, and runs Deprecate", async () => {
+    runCommand.mockResolvedValueOnce(changed("Deprecated Invoice"));
+    await renderForm(invoice());
+    const deprecate = screen.getByRole("button", { name: "Deprecate Invoice…" });
+    const remove = screen.getByRole("button", { name: "Delete Invoice…" });
+    // Document order is Tab order: Deprecate comes first.
+    expect(deprecate.compareDocumentPosition(remove) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(deprecate);
+    const dialog = screen.getByRole("dialog", { name: "Deprecate Invoice?" });
+    expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Deprecate" }));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Deprecate" }));
+    });
+    expect(lastCommand()).toEqual(["Deprecate", { iri: EX + "Invoice" }]);
+    expect(previewDelete).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("is absent for a term already deprecated", async () => {
+    const d = invoice();
+    d.outgoing.push({ predicate: uri("http://www.w3.org/2002/07/owl#deprecated"), object: lit("true", undefined, "xsd:boolean") });
+    await renderForm(d);
+    expect(screen.queryByRole("button", { name: "Deprecate Invoice…" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Delete Invoice…" })).toBeTruthy();
   });
 });
 

@@ -1186,10 +1186,32 @@ export interface ChangeResult {
   // (skos-and-owl 5.3.3): the other document's state, so both documents'
   // revision, dirty flag and undo labels refresh together.
   partner?: { doc: ProjectDocName; revision: number; state: ProjectDocumentState };
-  // An undo or redo of a paired half whose partner is gone (trimmed, or a
-  // dropped redo branch): the orphan is dropped and this sentence says why,
-  // rather than applying half a change (5.3.3).
+  // A change across files, one grouped step (links-between-files 5.1,
+  // D-133): every touched file's new state, so each tab refreshes.
+  documents?: { doc: ProjectDocName; revision: number; state: ProjectDocumentState }[];
+  // A Turtle apply: each term the file no longer defines that other files
+  // still use (links-between-files 5.5), warned, applied.
+  usedElsewhere?: { iri: string; label: string; uses: FileUses[]; message: string }[];
+  // An undo or redo of a grouped member whose siblings cannot all be
+  // applied (a file removed, a member trimmed or its redo branch dropped):
+  // the member is dropped and this sentence says why (5.1, 5.3.3).
   dropped?: string;
+}
+
+/** The statements one other project file holds that name an address
+ *  (links-between-files 5.2, 5.3): a delete's plan names up to three. */
+export interface FileUses {
+  doc: ProjectDocName;
+  file: string;
+  count: number;
+  sample?: { subject: string; label: string }[];
+}
+
+/** RenameIri's dry run (links-between-files 5.2 items 2, 8, 9). */
+export interface RenameUses {
+  uses: FileUses[];
+  snapshots: { id: string; label: string }[];
+  queries: number;
 }
 
 /** The Turtle editor's check on Apply: at most five named, the rest counted. */
@@ -1320,6 +1342,9 @@ export interface DeleteImpact {
   properties: { iri: string; label: string; role: "domain" | "range"; kind?: string }[];
   individuals: { iri: string; label: string }[];
   importMentions: number;
+  // The other project files' statements that use it (links-between-files
+  // 5.3): named, never changed by the delete.
+  uses?: FileUses[];
 }
 
 export type SaveResult =

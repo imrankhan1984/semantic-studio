@@ -64,6 +64,8 @@ EXPECTED OUTPUT
     - data/<sid>/ folders (source.xlsx too for a workbook); the manifest's
       `data` list for the project card.
     - active(pid) -> (generation, [(graph, info)]) for the views.
+    - using(pid, iri, mentions) -> the snapshots a rename names, for its
+      dry run (links-between-files 5.2 item 8); nothing here changes.
     - JSON for the wizard: preview rows, the identifier check, the fields
       and suggestions, the report with its links to no row.
     - SnapshotError (422, a sentence) and UnknownSnapshot (404).
@@ -568,6 +570,25 @@ class SnapshotService:
                 if s.meta.get("enabled", True):
                     for iri, row in s.meta.get("subjects", {}).items():
                         out.setdefault(iri, (sid, row))
+        return out
+
+    def using(self, pid: str, iri, mentions: Callable[[str], bool]) -> list[dict]:
+        """The snapshots whose statements or mapping use an address, switched
+        on or off (links-between-files 5.2 item 8): a rename names them and
+        changes nothing here (D-073). `mentions` reads a mapping's text, the
+        caller's one rule for an address written whole or prefixed."""
+        out = []
+        with self._lock(pid):
+            for sid, s in sorted(self._loaded.get(pid, {}).items()):
+                g = s.graph
+                used = (iri, None, None) in g or (None, iri, None) in g or (None, None, iri) in g
+                if not used:
+                    try:
+                        used = mentions(self.mapping_text(pid, sid))
+                    except (OSError, ValueError):
+                        used = False  # a mapping not readable is not counted, and fails nothing
+                if used:
+                    out.append({"id": sid, "label": s.meta.get("source") or sid})
         return out
 
     def _metas(self, pid: str) -> list[dict]:

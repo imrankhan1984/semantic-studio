@@ -253,6 +253,10 @@ COMMAND_CASES = [
     ("RenameIri", {"old": "shop:total", "new": "shop:amount"},
      [(U("amount"), RDF.type, OWL.DatatypeProperty), (U("amount"), RDFS.domain, U("Invoice"))],
      [(U("total"), RDF.type, OWL.DatatypeProperty)], "Renamed shop:total to shop:amount"),
+    # links-between-files 5.4: the safe alternative to a delete.
+    ("Deprecate", {"iri": "shop:amount", "replacedBy": "shop:Invoice"},
+     [(U("amount"), OWL.deprecated, Literal(True)), (U("amount"), DCTERMS.isReplacedBy, U("Invoice"))], [],
+     "Deprecated total"),
     ("DeleteEntity", {"iri": "shop:amount", "strategy": "orphan"},
      [], [(U("amount"), RDF.type, OWL.DatatypeProperty)], "Deleted datatype property total"),
     # shacl-authoring Stage B (5.8): an example of a class, filled in. The

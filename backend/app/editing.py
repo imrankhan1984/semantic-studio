@@ -25,6 +25,18 @@ BASIC IDEA
     moves when a file is added, moved or removed. A folder's rename moves
     the paths of the files under it and nothing else (5.10 item 1): each
     open file keeps its id, graph, undo history and unsaved changes.
+
+    Links between files (links-between-files, D-133): a change that writes
+    into several files is one grouped step, a Step in each touched file's
+    history sharing a `group` token, its siblings held by identity. Undo
+    or redo of any member applies every member under every lock, refused
+    while one is not on top of its own history; recovery restores a group
+    or none of it. RenameIri, which starts only in the file that defines
+    the term, rewrites every use in every project file as one; a branch
+    relationship's two halves are the group of two D-127 called a pair.
+    DeleteEntity's plan and Turtle Apply name the uses other files hold,
+    `uses`, and change none of them; Deprecate is the safe alternative.
+
     Every change goes through one path: work out a delta (triples to add,
     triples to remove, both restricted to what would really change), apply it,
     bump the revision -- which is what every cached view is keyed on -- and push
@@ -237,6 +249,7 @@ log = logging.getLogger(__name__)
 Triple = tuple
 
 UNDO_LIMIT = 200
+DRY_RUNS = "Only DeleteEntity, RenameIri, ShareDomain and SetClassType have a dry run."
 # Read at arm time, so a test can shorten it without re-importing.
 AUTOSAVE_DELAY = 2.0
 
@@ -639,17 +652,18 @@ class Step:
     after: tuple = (None, True)
     # (old, new) for a RenameIri: undo and redo move the layout entry too.
     renamed: Optional[tuple] = None
-    # A branch relationship changes the model and the shapes document as one
-    # paired step (skos-and-owl 5.3.3): `partner` is the other document's step,
-    # held by identity, and `partner_doc` is the role it lives in. Undo or redo
-    # of either half applies both, under the shapes lock then the model lock,
-    # and refuses when the partner is no longer on top of its own history.
-    # `pair` is a token both halves share, written to each draft's sidecar so
-    # recovery restores a pair or neither (a half without its partner is
-    # dropped).
-    partner: Optional["Step"] = None
-    partner_doc: Optional[str] = None
-    pair: Optional[str] = None
+    # A change across files is one grouped step (D-133, generalizing D-127's
+    # pair): one Step in each touched file's history, all sharing `group`, a
+    # token written to each draft's sidecar so recovery restores a group or
+    # none of it. `members` maps each other file's id to its step, held by
+    # identity, never by label or delta: undo or redo of any member applies
+    # every member, under every file's lock, and refuses while one is not on
+    # top of its own history. A branch relationship (skos-and-owl 5.3.3) is
+    # a group of two with `by_role`: its refusals keep D-127's words, which
+    # name *the model* and *the shapes*, so it behaves exactly as before.
+    group: Optional[str] = None
+    members: dict = field(default_factory=dict)
+    by_role: bool = False
 
 
 @dataclass
@@ -685,8 +699,13 @@ class Context:
         model: Optional[Callable[[], Graph]] = None,
         imported_from: Optional[Callable[[], dict]] = None,
         declared: Optional[Callable[[], dict]] = None,
+        siblings: tuple = (),
     ):
         self.graph = graph
+        # The project's other files' graphs (D-131): read beside the imports
+        # in `imported`, but not imports. A delete counts their statements as
+        # uses (links-between-files 5.3), never as import mentions.
+        self.siblings = siblings
         self.manifest = manifest
         self.primary = manifest.get("primaryLanguage", "en")
         self.languages = [self.primary, *manifest.get("languages", [])]
@@ -1926,6 +1945,36 @@ def cmd_rename_iri(ctx: Context, a: dict) -> Change:
     return change
 
 
+def _deprecated(graph: Graph, iri: URIRef) -> bool:
+    """owl:deprecated true, however it is written: DC-10 and DC-11 read
+    "true" and "1" alike, so a term flagged either way is deprecated."""
+    return any(str(flag) in ("true", "1") for flag in graph.objects(iri, OWL.deprecated))
+
+
+def cmd_deprecate(ctx: Context, a: dict) -> Change:
+    """Deprecate (links-between-files 5.4): owl:deprecated true and, when
+    given, dcterms:isReplacedBy the replacement, as one step in the file
+    that defines the term -- the safe alternative to a delete that other
+    files' statements would be left pointing past (5.3). dcterms:isReplacedBy
+    is the first replacement DC-10 accepts, so a deprecation naming one
+    passes it, and DC-11 lists the uses that remain."""
+    iri = ctx.iri(a.get("iri"), "entity")
+    if (iri, RDF.type, None) not in ctx.graph:
+        raise CommandError(f"There is no {ctx.short(iri)} in this document to deprecate.")
+    name = ctx.name(iri)
+    if _deprecated(ctx.graph, iri):
+        raise CommandError(f"{name} is already deprecated.")
+    adds = [(iri, OWL.deprecated, Literal(True))]
+    replacement = a.get("replacedBy")
+    if replacement not in (None, ""):
+        target = ctx.iri(replacement, "replacement")
+        if target == iri:
+            raise CommandError(f"{name} cannot be replaced by itself.")
+        ctx.require(target, "term")
+        adds.append((iri, DCTERMS.isReplacedBy, target))
+    return _change(ctx.graph, f"Deprecated {name}", adds)
+
+
 # --- delete, with its impact summary (5.5) -----------------------------------
 
 _HIERARCHY = {
@@ -2065,6 +2114,8 @@ def delete_plan(ctx: Context, a: dict) -> tuple[Change, dict]:
     if ctx.imported is not None:
         own = set()
         for graph in getattr(ctx.imported, "graphs", [])[1:]:
+            if any(graph is sibling for sibling in ctx.siblings):
+                continue  # another project file: its statements are `uses`, said apart
             own |= set(graph.triples((iri, None, None))) | set(graph.triples((None, None, iri)))
         import_mentions = len(own)
 
@@ -3421,6 +3472,122 @@ SHAPE_COMMANDS = {
 }
 
 
+# --- uses in other files (links-between-files 5.2 to 5.5) ---------------------
+
+
+def _typed(graph: Graph) -> set:
+    """The named terms a graph types: what a file defines (5.3 item 3)."""
+    return {s for s in graph.subjects(RDF.type, None) if isinstance(s, URIRef)}
+
+
+def _and(words: list[str]) -> str:
+    """*a, b and c*."""
+    return words[0] if len(words) == 1 else f"{', '.join(words[:-1])} and {words[-1]}"
+
+
+def _whole_groups(drafts: dict) -> tuple[set, list]:
+    """Which drafts recovery restores (5.1 item 5): each one whose groups
+    have every sibling they need among the drafts kept, dropping until
+    nothing more drops, since one draft dropped can leave another's group
+    short. A draft written before D-133 carries a pair token instead, kept
+    as before: with one other draft holding it. Returns (kept docs, dropped
+    docs in manifest order)."""
+    claims = {}
+    for doc, (_, _, meta) in drafts.items():
+        groups = meta.get("groups")
+        if groups is None and meta.get("pair") is not None:
+            groups = {meta["pair"]: {"needs": None}}
+        claims[doc] = groups if isinstance(groups, dict) else {}
+    kept = set(drafts)
+    changed = True
+    while changed:
+        changed = False
+        for doc in [d for d in drafts if d in kept]:
+            for token, claim in claims[doc].items():
+                holders = {d for d in kept if token in claims[d]}
+                needs = claim.get("needs") if isinstance(claim, dict) else None
+                whole = len(holders) >= 2 if needs is None else all(n in holders for n in needs)
+                if not whole:
+                    kept.discard(doc)
+                    changed = True
+                    break
+    return kept, [d for d in drafts if d not in kept]
+
+# A delete names at most three statements per file (5.3 item 1, 8.3).
+USES_SAMPLE = 3
+# How far up a blank node's referrers a sample looks for its named term:
+# a restriction's class is one step, a list cell a few. A cycle of blank
+# nodes, which Turtle can write, ends at the cap rather than looping.
+_OWNER_DEPTH = 64
+
+
+def _named_owner(graph: Graph, node) -> Optional[URIRef]:
+    """The named term a statement belongs to: its subject, or for a blank
+    node the first IRI found walking up what points to it, nearest first and
+    in IRI order, so the same graph always gives the same name."""
+    if isinstance(node, URIRef):
+        return node
+    seen, frontier = set(), [node]
+    for _ in range(_OWNER_DEPTH):
+        if not frontier:
+            return None
+        nxt = []
+        for current in frontier:
+            if current in seen:
+                continue
+            seen.add(current)
+            referrers = sorted(set(graph.subjects(None, current)), key=str)
+            named = [r for r in referrers if isinstance(r, URIRef)]
+            if named:
+                return named[0]
+            nxt += [r for r in referrers if isinstance(r, BNode)]
+        frontier = nxt
+    return None
+
+
+def uses_phrase(rows: list[dict]) -> str:
+    """*3 statements in equipment.ttl and 1 in shapes.ttl*: the counts by
+    file, the noun said once, as the edit section's rename line says them
+    (modeling/usesWords.ts holds the same words for the browser)."""
+    parts = []
+    for i, row in enumerate(rows):
+        count, name = row["count"], file_basename(row["file"])
+        if i == 0:
+            parts.append(f"{count} {'statement' if count == 1 else 'statements'} in {name}")
+        else:
+            parts.append(f"{count} in {name}")
+    if len(parts) <= 1:
+        return "".join(parts)
+    return f"{', '.join(parts[:-1])} and {parts[-1]}"
+
+
+# PREFIX lines in SPARQL and @prefix lines in Turtle: a saved query or a
+# mapping may name the address by a prefix of its own.
+_PREFIX_DECL = re.compile(r"(?i)(?:@prefix|\bprefix)\s+([A-Za-z][\w.-]*)?:\s*<([^>\s]*)>")
+
+
+def text_mentions(text: str, iri: URIRef, prefixes: dict) -> bool:
+    """Whether a text -- a saved query, a snapshot's mapping -- names the
+    address, written whole (<...>) or as a prefixed name under a prefix the
+    text declares or, failing that, one of `prefixes` (5.2 item 9). Only
+    counted, never rewritten. The pattern is the address escaped, bounded
+    on both sides, so Pump never matches PumpStation."""
+    whole = str(iri)
+    if not text:
+        return False
+    if f"<{whole}>" in text:
+        return True
+    declared = dict(prefixes)
+    declared.update({p or "": ns for p, ns in _PREFIX_DECL.findall(text)})
+    for prefix, namespace in declared.items():
+        if namespace and whole.startswith(namespace) and len(whole) > len(namespace):
+            local = whole[len(namespace):]
+            pattern = rf"(?<![\w.:-]){re.escape(prefix)}:{re.escape(local)}(?![\w-])"
+            if re.search(pattern, text):
+                return True
+    return False
+
+
 # The argument naming the term a command changes (multi-file-projects 5.3
 # item 3): one another file defines is refused before the command reads
 # anything, with the sentence that says where it lives. A command's other
@@ -3432,6 +3599,7 @@ SUBJECT_ARGS = {
         "SetExampleValue", "AddExampleValue", "RemoveExampleValue",
     )},
     "RenameIri": "old",
+    "Deprecate": "iri",
     **{n: "child" for n in ("AddSubClassOf", "RemoveSubClassOf", "AddSubPropertyOf", "RemoveSubPropertyOf")},
     **{n: "property" for n in (
         "SetDomain", "SetRange", "SwapEnds", "SetEnds", "ClearDomain", "ClearRange", "ShareDomain",
@@ -3477,6 +3645,7 @@ COMMANDS: dict[str, Callable[[Context, dict], Change]] = {
     "AddMapping": cmd_add_mapping,
     "RemoveMapping": cmd_remove_mapping,
     "RenameIri": cmd_rename_iri,
+    "Deprecate": cmd_deprecate,
     "DeleteEntity": cmd_delete_entity,
     "CreateExample": cmd_create_example,
     "SetExampleValue": cmd_set_example_value,
@@ -4055,6 +4224,7 @@ class EditingService:
         return Context(
             document.graph, manifest, imported, document.kind, model, imported_from,
             lambda: self.declared(document),
+            tuple(d.graph for d in self.model_docs(document.pid) if d is not document) if siblings else (),
         )
 
     def _elsewhere(self, document: OpenDocument, iri) -> Optional[OpenDocument]:
@@ -4126,6 +4296,124 @@ class EditingService:
                         "message": f"{label} is already defined in {file_basename(other.file)}.",
                     })
                     break
+        return out
+
+    # --- links between files (links-between-files 5.2 to 5.5, D-133) ------------
+
+    def uses(
+        self, pid: str, iri: URIRef, exclude: Optional[OpenDocument], *, every_subject: bool = False,
+    ) -> list[tuple[OpenDocument, set]]:
+        """Every other project file's statements that name `iri` (8.1), in
+        manifest order, ontology, vocabulary and shapes files alike: as
+        predicate or object anywhere, and as subject in a file that does not
+        define it -- one that types it too says the term itself, which is
+        not a use of another file's term. A rename rewrites every statement
+        holding the address, so it asks `every_subject`. At most the
+        project's 100 files are read, three lookups each (8.3)."""
+        out = []
+        for other in list(self._open.get(pid, {}).values()):
+            if other is exclude:
+                continue
+            g = other.graph
+            found = set(g.triples((None, iri, None))) | set(g.triples((None, None, iri)))
+            if every_subject or (iri, RDF.type, None) not in g:
+                found |= set(g.triples((iri, None, None)))
+            if found:
+                out.append((other, found))
+        return out
+
+    def _uses_json(self, found: list[tuple[OpenDocument, set]], iri: URIRef, sample: bool = False) -> list[dict]:
+        """The `uses` of a dry run and of the Apply warning: each file, its
+        count, and for a delete at most three named statements, the subject
+        or the named term a blank node belongs to (a restriction's class, a
+        property shape's node shape)."""
+        out = []
+        for document, triples in found:
+            row = {"doc": document.doc, "file": document.file, "count": len(triples)}
+            if sample:
+                named: dict = {}
+                for s, _, _ in triples:
+                    owner = _named_owner(document.graph, s)
+                    if owner is not None and owner != iri and str(owner) not in named:
+                        named[str(owner)] = self._label_in(document, owner)
+                ordered = sorted(named.items(), key=lambda kv: (kv[1].casefold(), kv[0]))
+                row["sample"] = [{"subject": s, "label": label} for s, label in ordered[:USES_SAMPLE]]
+            out.append(row)
+        return out
+
+    def _rename_elsewhere(self, document: OpenDocument, change: Change) -> list[tuple[OpenDocument, Change]]:
+        """RenameIri's rewrite in every other project file (5.2 item 3):
+        each statement holding the old address, subject, predicate or object,
+        swapped for the new. The new address is checked against the whole
+        project first (item 5): one another file already uses would merge two
+        terms, so it is refused, as require_new refuses it in this file."""
+        old, new = (URIRef(i) for i in change.renamed)
+        for other in list(self._open.get(document.pid, {}).values()):
+            if other is document:
+                continue
+            g = other.graph
+            if (new, None, None) in g or (None, new, None) in g or (None, None, new) in g:
+                raise CommandError(
+                    f"{prefixed(document.graph, new)} is already used in {file_basename(other.file)}; "
+                    "choose another IRI."
+                )
+        swap = lambda term: new if term == old else term  # noqa: E731
+        out = []
+        for other, touched in self.uses(document.pid, old, document, every_subject=True):
+            adds = [(swap(s), swap(p), swap(o)) for s, p, o in touched]
+            moved = _change(other.graph, change.label, adds, touched)
+            moved.renamed = change.renamed
+            out.append((other, moved))
+        return out
+
+    def _rename_answer(self, document: OpenDocument, change: Change) -> dict:
+        """RenameIri's dry run (5.2 items 2, 8, 9): the statements each other
+        file holds with the old address, the data snapshots that use it, and
+        how many saved queries mention it. Nothing changes, and neither a
+        snapshot nor a query ever will (D-073, Section 4)."""
+        old = URIRef(change.renamed[0])
+        pid = document.pid
+        found = self.uses(pid, old, document, every_subject=True)
+        prefixes = {**WELL_KNOWN, **document.declared()}
+        queries = 0
+        # A dry run writes nothing: the store makes its folder when built,
+        # so a project with no saved queries is not asked at all.
+        if (self.projects.folder(pid) / "queries").is_dir():
+            try:
+                queries = sum(
+                    1 for entry in self.projects.queries(pid).list()
+                    if text_mentions(entry.get("sparql") or "", old, prefixes)
+                )
+            except OSError:
+                queries = 0
+        return {
+            "dryRun": True,
+            "uses": self._uses_json(found, old),
+            "snapshots": self.snapshots.using(pid, old, lambda text: text_mentions(text, old, prefixes)),
+            "queries": queries,
+            "revision": document.ontology.revision,
+        }
+
+    def _gone_but_used(self, document: OpenDocument, gone: dict) -> list[dict]:
+        """Turtle Apply's second warning (5.5): each term the file typed
+        before and no longer types -- removed, or readdressed, which the app
+        cannot tell from a removal -- that other files still use. Under the
+        editor for that Apply only, as definedElsewhere is; never a refusal."""
+        out = []
+        for iri, label in sorted(gone.items(), key=lambda kv: str(kv[0])):
+            found = self.uses(document.pid, iri, document)
+            if not found:
+                continue
+            rows = self._uses_json(found, iri)
+            total = sum(r["count"] for r in rows)
+            out.append({
+                "iri": str(iri), "label": label, "uses": rows,
+                "message": (
+                    f"{label} is gone from this file, and {uses_phrase(rows)} still "
+                    f"{'uses' if total == 1 else 'use'} it. To rename an address everywhere, "
+                    "use Change identifier in the edit section."
+                ),
+            })
         return out
 
     def declared(self, document: OpenDocument) -> dict:
@@ -4266,7 +4554,7 @@ class EditingService:
             # step (skos-and-owl 5.3, 5.3.3): handled on its own, since it is the
             # one command that writes two documents at once.
             if dry_run:
-                raise CommandError("Only DeleteEntity, ShareDomain and SetClassType have a dry run.")
+                raise CommandError(DRY_RUNS)
             document = self.document(pid, doc)
             if document.is_shapes:
                 raise CommandError("A branch relationship is created in an ontology or vocabulary file.")
@@ -4293,9 +4581,14 @@ class EditingService:
             ctx = self._context(document)
             # A command on a term another file defines (5.3 item 3).
             self._cross_file(document, name, args, ctx)
+            others: list = []
             if name == "DeleteEntity":
                 change, impact = delete_plan(ctx, args)
                 if dry_run:
+                    # The uses other files hold (5.3 item 1): named, never
+                    # touched by the delete that follows.
+                    iri = URIRef(impact["iri"])
+                    impact["uses"] = self._uses_json(self.uses(pid, iri, document), iri, sample=True)
                     return {"dryRun": True, "impact": impact, "revision": document.ontology.revision}
                 self._cross_file_change(document, change)
                 paired = self._delete_branch_rules(document, shapes_doc, change)
@@ -4307,15 +4600,27 @@ class EditingService:
             elif name == "SetClassType" and dry_run:
                 # What goes, before anything does (attribute-reuse 5.7).
                 return {"dryRun": True, "plan": class_type_plan(ctx, args), "revision": document.ontology.revision}
+            elif name == "RenameIri":
+                # Every refusal first (5.2 item 5), then every other file's
+                # rewrite, which refuses an address another file uses.
+                change = handler(ctx, args)
+                impact = None
+                self._cross_file_change(document, change)
+                others = self._rename_elsewhere(document, change)
+                if dry_run:
+                    return self._rename_answer(document, change)
             else:
                 if dry_run:
-                    raise CommandError("Only DeleteEntity, ShareDomain and SetClassType have a dry run.")
+                    raise CommandError(DRY_RUNS)
                 change = handler(ctx, args)
                 impact = None
             if not change.added and not change.removed and not change.declare and not change.undeclare:
                 raise CommandError("That would change nothing.")
-            if name != "DeleteEntity":  # checked above, before it could pair
+            if name not in ("DeleteEntity", "RenameIri"):  # checked above, before it could pair
                 self._cross_file_change(document, change)
+            if others:
+                # A rename the other files follow: one grouped step (5.2 item 3).
+                return self._rename_group(document, change, others)
             before = document.editor_state()
             self._apply(document, change, origin="command")
             self._declare(document, change)
@@ -4397,7 +4702,7 @@ class EditingService:
         file behind, and the file is made under the service lock, so two
         first commands at once make it once (both found in review)."""
         if dry_run:
-            raise CommandError("Only DeleteEntity, ShareDomain and SetClassType have a dry run.")
+            raise CommandError(DRY_RUNS)
         manifest = self.projects.manifest(pid)
         with self._all_locks(pid):
             probe = Context(Graph(), manifest, lambda: None, "shapes", lambda: self._project_model(pid))
@@ -4459,6 +4764,7 @@ class EditingService:
                     "delta": _delta_json(shapes_change),
                     "state": shapes_doc.state(),
                 },
+                "documents": self._documents_json([model_doc, shapes_doc]),
             }
 
     def _delete_branch_rules(self, model_doc: OpenDocument, shapes_doc, change: Change):
@@ -4493,6 +4799,7 @@ class EditingService:
                 "delta": _delta_json(shapes_change),
                 "state": shapes_doc.state(),
             },
+            "documents": self._documents_json([model_doc, shapes_doc]),
         }
 
     def apply_text(self, pid: str, doc: str, text: str, timeout: Optional[float]) -> dict:
@@ -4516,6 +4823,11 @@ class EditingService:
                     "Use the standard term itself.",
                     copies,
                 )
+            # The terms this file typed that the text no longer types, named
+            # before it replaces them: one other files use is warned of (5.5).
+            gone = {} if document.is_shapes else {
+                s: self._label_in(document, s) for s in _typed(graph) - _typed(parsed)
+            }
             old, new = set(graph), set(parsed)
             change = Change("Applied Turtle edits", list(new - old), list(old - new))
             for prefix, namespace in parsed.namespaces():
@@ -4534,6 +4846,9 @@ class EditingService:
             # A term another file defines too: applied, and said under the
             # editor (5.3 item 4); E-17 turns it into a check finding.
             result["definedElsewhere"] = self.defined_elsewhere(document, parsed)
+            # A term gone from this file that other files still use (5.5):
+            # applied all the same, and said under the editor.
+            result["usedElsewhere"] = self._gone_but_used(document, gone)
         # Outside the lock: the first check of a QUDT project builds its
         # index, and the text has applied already (5.7: information, not a
         # refusal). `parsed` is this request's own graph.
@@ -4570,30 +4885,66 @@ class EditingService:
         document.redo.clear()
 
     @staticmethod
+    def _push_group(parts: list, *, by_role: bool = False) -> list[Step]:
+        """A change across files, one grouped undo step (5.1, D-133): an
+        ordinary step in each touched file's history, all sharing a token and
+        holding each other by identity, so undo or redo of any member applies
+        every member and recovery keeps the group whole. `parts` is
+        [(document, change, before)], the change already applied. Each
+        member's label names the other files (5.1 item 2), except a branch
+        relationship's pair, whose labels are D-127's as they were."""
+        token = uuid.uuid4().hex
+        steps = []
+        for document, change, before in parts:
+            label = change.label
+            if not by_role:
+                others = [file_basename(d.file) for d, _, _ in parts if d is not document]
+                label = f"{change.label} (also in {', '.join(others)})"
+            steps.append(Step(
+                label, change.added, change.removed, before, document.editor_state(), change.renamed,
+                group=token, by_role=by_role,
+            ))
+        for step, (document, _, _) in zip(steps, parts):
+            step.members = {d.doc: s for s, (d, _, _) in zip(steps, parts) if s is not step}
+        for step, (document, _, _) in zip(steps, parts):
+            EditingService._push_step(document, step)
+        return steps
+
     def _push_pair(
+        self,
         first: OpenDocument, first_change: Change, first_before: tuple,
         second: OpenDocument, second_change: Change, second_before: tuple,
     ) -> None:
-        """Two halves of a branch relationship, one paired undo step across two
-        documents (5.3.3). Each half is an ordinary step in its own document's
-        history; the two are linked by `partner` (identity) so undo or redo of
-        either applies both, and they share a `pair` token so recovery keeps
-        them together."""
-        token = uuid.uuid4().hex
-        first_step = Step(
-            first_change.label, first_change.added, first_change.removed,
-            first_before, first.editor_state(), first_change.renamed,
-            partner_doc=second.doc, pair=token,
-        )
-        second_step = Step(
-            second_change.label, second_change.added, second_change.removed,
-            second_before, second.editor_state(), second_change.renamed,
-            partner_doc=first.doc, pair=token,
-        )
-        first_step.partner = second_step
-        second_step.partner = first_step
-        EditingService._push_step(first, first_step)
-        EditingService._push_step(second, second_step)
+        """A branch relationship's two halves (skos-and-owl 5.3.3): the group
+        of two D-127 called a pair, its words by role."""
+        self._push_group([(first, first_change, first_before), (second, second_change, second_before)], by_role=True)
+
+    def _rename_group(self, document: OpenDocument, change: Change, others: list) -> dict:
+        """RenameIri across files (5.2 item 3): the defining file's change and
+        every other file's rewrite applied under the locks the caller holds,
+        pushed as one grouped step; each file's layout entry follows the
+        address, as one file's always has (5.2 item 3, D-087)."""
+        parts = [(document, change)] + others
+        befores = [d.editor_state() for d, _ in parts]
+        for d, c in parts:
+            self._apply(d, c, origin="command")
+        steps = self._push_group([(d, c, b) for (d, c), b in zip(parts, befores)])
+        for d, c in parts:
+            self._move_layout(d, *c.renamed)
+        return {
+            "revision": document.ontology.revision,
+            "label": steps[0].label,
+            "delta": _delta_json(change),
+            "state": document.state(),
+            "created": str(change.created),
+            "documents": self._documents_json([d for d, _ in parts]),
+        }
+
+    @staticmethod
+    def _documents_json(documents: list) -> list[dict]:
+        """Every touched file's new revision and state (8.2), so the browser
+        refreshes each tab, not only the one the change was asked in."""
+        return [{"doc": d.doc, "revision": d.ontology.revision, "state": d.state()} for d in documents]
 
     def _settle(self, document: OpenDocument) -> None:
         """After an undo or redo: back at the save point, the document is what
@@ -4606,76 +4957,119 @@ class EditingService:
         self._cancel(document)
         self._remove_draft(document)
 
-    @contextlib.contextmanager
-    def _both_locks(self, pid: str):
-        """An undo or a redo of a paired step applies its two halves under
-        both files' locks (5.3.3): every file's, in the 8.4 order, the shapes
-        files first as the documented order always had them."""
-        with self._all_locks(pid):
-            yield
-
     @staticmethod
-    def _partner_present(partner: Optional[OpenDocument], step: Step) -> bool:
-        """The partner half is still somewhere in the other document's history
-        (buried), rather than gone for good (trimmed past UNDO_LIMIT, dropped
-        with a redo branch, or its file removed). Compared by identity (5.3.3)."""
-        if partner is None:
-            return False
-        return any(s is step for s in partner.undo) or any(s is step for s in partner.redo)
+    def _present(other: OpenDocument, step: Step) -> bool:
+        """A member still somewhere in its file's history (buried), rather
+        than gone for good (trimmed past UNDO_LIMIT, or dropped with a redo
+        branch). Compared by identity (5.1 item 3)."""
+        return any(s is step for s in other.undo) or any(s is step for s in other.redo)
 
-    def _other(self, pid: str, step: Step) -> str:
-        """The paired step's other file in words: today's two phrases for
-        model and shapes, the file's name for any other."""
-        if step.partner_doc in ("shapes", "model"):
-            return f"the {step.partner_doc}"
-        partner = self._open.get(pid, {}).get(step.partner_doc)
-        return file_basename(partner.file) if partner is not None else "another file"
+    def _member_words(self, pid: str, step: Step, doc: str) -> str:
+        """A member's file in words: for a branch pair today's two phrases,
+        *the model* and *the shapes*, else the file's name."""
+        if step.by_role and doc in ("shapes", "model"):
+            return f"the {doc}"
+        other = self._open.get(pid, {}).get(doc)
+        return file_basename(other.file) if other is not None else "another file"
 
-    def _drop_orphan(self, document: OpenDocument, step: Step, stack: list, verb: str) -> dict:
-        """A paired step whose partner is gone cannot be applied on its own
-        (5.3.3): drop this half from its history and say why, rather than give
-        the impossible instruction to undo or redo the vanished partner. The
-        graph does not change; the document's state refreshes so the undo and
-        redo labels follow."""
+    def _drop_orphan(self, document: OpenDocument, step: Step, stack: list, sentence: str) -> dict:
+        """A member whose siblings cannot all be applied any more is never
+        applied alone (5.1 items 3 and 6): it leaves its history with a
+        sentence saying why, rather than the impossible instruction to undo
+        what is gone. Nothing in the graph changes; the state refreshes so
+        the undo and redo labels follow."""
         stack.pop()  # the orphan is the top of its own stack
         if document.save_point is step:
             document.save_point = None
-        other = self._other(document.pid, step)
         return {
             "revision": document.ontology.revision,
             "label": step.label,
             "state": document.state(),
-            "dropped": f"This step also changed {other}, which has changed since, so it can no longer be {verb}.",
+            "dropped": sentence,
         }
 
-    def _paired_result(self, document: OpenDocument, partner: OpenDocument, label: str) -> dict:
-        return {
+    def _group_result(self, document: OpenDocument, members: list, label: str) -> dict:
+        """An undo or redo of a group: this file's answer, every member's new
+        state (`documents`), and for a pair its other half as `partner`, the
+        answer D-127's pair has always had."""
+        result = {
             "revision": document.ontology.revision,
             "label": label,
             "state": document.state(),
-            "partner": {"doc": partner.doc, "revision": partner.ontology.revision, "state": partner.state()},
+            "documents": self._documents_json([document, *members]),
         }
+        if len(members) == 1:
+            partner = members[0]
+            result["partner"] = {"doc": partner.doc, "revision": partner.ontology.revision, "state": partner.state()}
+        return result
+
+    def _apply_group(self, pid: str, document: OpenDocument, step: Step, verb: str) -> dict:
+        """Undo (`verb` "undo") or redo of a grouped step, under every lock
+        the caller holds (5.1 item 3). Every member must be on top of its own
+        file's stack, or nothing changes: a member buried under a later
+        change refuses, naming that file; a member gone for good (its file
+        removed, trimmed, or dropped with a redo branch) means the group can
+        never be whole again, so this member is dropped with a sentence."""
+        undoing = verb == "undo"
+        stack = (lambda d: d.undo) if undoing else (lambda d: d.redo)
+        done = "undone" if undoing else "redone"
+        open_now = self._open.get(pid, {})
+        members, buried = [], None
+        for doc, member in step.members.items():
+            other = open_now.get(doc)
+            if other is None:
+                # Its file was removed (5.1 item 6).
+                return self._drop_orphan(
+                    document, step, stack(document), "Part of this change was in a file that was removed.",
+                )
+            if stack(other) and stack(other)[-1] is member:
+                members.append(other)
+            elif self._present(other, member):
+                buried = buried or doc
+            else:
+                words = self._member_words(pid, step, doc)
+                return self._drop_orphan(
+                    document, step, stack(document),
+                    f"This step also changed {words}, which has changed since, so it can no longer be {done}.",
+                )
+        if buried is not None:
+            words = self._member_words(pid, step, buried)
+            Verb = "Undo" if undoing else "Redo"
+            if step.by_role:
+                # D-127's sentence, kept for the pair (AC-7).
+                raise CommandError(f"This also changed {words}, and they have changed since. {Verb} {words} first.")
+            later = "the later change" if undoing else "the other change"
+            raise CommandError(f"{Verb} {later} in {words} first.")
+        apply = self._undo_step if undoing else self._redo_step
+        apply(document, step)
+        for other in members:
+            apply(other, step.members[other.doc])
+        return self._group_result(document, members, step.label)
 
     def undo(self, pid: str, doc: str) -> dict:
         document = self.document(pid, doc)
-        with self._both_locks(pid):
+        with self._all_locks(pid):
             if not document.undo:
                 raise CommandError("There is nothing to undo.")
             step = document.undo[-1]
-            if step.partner is not None:
-                partner = self._open[pid].get(step.partner_doc)
-                if partner is not None and partner.undo and partner.undo[-1] is step.partner:
-                    for half in ((document, step), (partner, step.partner)):
-                        self._undo_step(*half)
-                    return self._paired_result(document, partner, step.label)
-                other = self._other(pid, step)
-                if self._partner_present(partner, step.partner):
-                    # Still there, only not on top: undo the other document first.
-                    raise CommandError(f"This also changed {other}, and they have changed since. Undo {other} first.")
-                return self._drop_orphan(document, step, document.undo, "undone")
-            self._undo_step(document, step)
+            if step.group is not None:
+                result = self._apply_group(pid, document, step, "undo")
+            else:
+                self._undo_step(document, step)
+                result = {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
+        self._settle_group_imports(document, step, result)
+        return result
+
+    def _settle_group_imports(self, document: OpenDocument, step: Step, result: dict) -> None:
+        """After an undo or redo, outside the locks: each touched file's
+        imports resolved again when the step moved an owl:imports (D-128)."""
+        if "dropped" in result:
+            return
         self._settle_imports(document, step.added + step.removed)
-        return {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
+        for doc, member in step.members.items():
+            other = self._open.get(document.pid, {}).get(doc)
+            if other is not None:
+                self._settle_imports(other, member.added + member.removed)
 
     def _undo_step(self, document: OpenDocument, step: Step) -> None:
         document.undo.pop()
@@ -4688,23 +5082,17 @@ class EditingService:
 
     def redo(self, pid: str, doc: str) -> dict:
         document = self.document(pid, doc)
-        with self._both_locks(pid):
+        with self._all_locks(pid):
             if not document.redo:
                 raise CommandError("There is nothing to redo.")
             step = document.redo[-1]
-            if step.partner is not None:
-                partner = self._open[pid].get(step.partner_doc)
-                if partner is not None and partner.redo and partner.redo[-1] is step.partner:
-                    for half in ((document, step), (partner, step.partner)):
-                        self._redo_step(*half)
-                    return self._paired_result(document, partner, step.label)
-                other = self._other(pid, step)
-                if self._partner_present(partner, step.partner):
-                    raise CommandError(f"This also changed {other}, and they have changed since. Redo {other} first.")
-                return self._drop_orphan(document, step, document.redo, "redone")
-            self._redo_step(document, step)
-        self._settle_imports(document, step.added + step.removed)
-        return {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
+            if step.group is not None:
+                result = self._apply_group(pid, document, step, "redo")
+            else:
+                self._redo_step(document, step)
+                result = {"revision": document.ontology.revision, "label": step.label, "state": document.state()}
+        self._settle_group_imports(document, step, result)
+        return result
 
     def _redo_step(self, document: OpenDocument, step: Step) -> None:
         document.redo.pop()
@@ -4773,7 +5161,9 @@ class EditingService:
                         totals[key] = totals.get(key, 0) + value
                 manifest["counts"] = totals
             self.projects.write_manifest(pid, manifest)
-            return {"savedAt": saved_at, "state": document.state()}
+            result = {"savedAt": saved_at, "state": document.state()}
+        self._refresh_claims(pid)
+        return result
 
     def copy_text(self, pid: str, doc: str) -> str:
         """Save a copy as Turtle: the same format rule, the project untouched."""
@@ -4815,16 +5205,11 @@ class EditingService:
                     snapshot.add(t)
                 text = None
             declared = document.declared()
-            top = document.undo[-1] if document.undo else None
             meta = {
                 "revision": document.ontology.revision,
                 "fromEditor": document.last_text is not None,
                 "visualSinceSave": document.visual_since_save,
                 "writtenAt": _now(),
-                # A branch relationship's pair token (5.3.3) when this
-                # document's latest change is a half of one: recovery then
-                # keeps the pair or neither.
-                "pair": top.pair if top is not None and top.partner is not None else None,
             }
         if text is None:
             # As clean() writes it: recovery reads its declarations from
@@ -4833,15 +5218,88 @@ class EditingService:
         # Serialising ran outside the lock, so a save, a discard or a newer
         # change may have happened meanwhile: each moves the generation, and
         # a draft written now would be offered for recovery after the user
-        # saved or discarded it (found in review).
-        with document.lock:
+        # saved or discarded it (found in review). Every file's lock here,
+        # not only this one's: the group claims read the other files' save
+        # points, and a save elsewhere then waits for this write to finish
+        # before it refreshes them.
+        with self._locks_for(document):
             if generation != document.generation or not document.dirty:
                 return
+            # The groups this draft holds a member of (5.1 item 5, D-133):
+            # recovery restores it only with every sibling it needs.
+            meta["groups"] = self._claims(document)
             draft, sidecar = _draft_paths(document)
             draft.parent.mkdir(exist_ok=True)
             draft.write_text(text, encoding="utf-8")
             sidecar.write_text(json.dumps(meta), encoding="utf-8")
             self.drafts_written += 1
+
+    @contextlib.contextmanager
+    def _locks_for(self, document: OpenDocument):
+        """Every file's lock while the document's project is open, in the
+        8.4 order; the document's own once it is closed, when no change can
+        run beside the timer and there are no others to read."""
+        if any(d is document for d in list(self._open.get(document.pid, {}).values())):
+            with self._all_locks(document.pid):
+                yield
+        else:
+            with document.lock:
+                yield
+
+    @staticmethod
+    def _unsaved(document: OpenDocument) -> list:
+        """The steps between the file on disk and the document now: above
+        the save point on the undo stack, or, when undo went below it, the
+        undone steps down to it on the redo stack. All of the undo stack
+        when the save point cannot be reached, since then nothing on disk
+        is known to hold any of them."""
+        point = document.save_point
+        if point is BASE:
+            return list(document.undo)
+        for i, step in enumerate(document.undo):
+            if step is point:
+                return document.undo[i + 1:]
+        for i, step in enumerate(document.redo):
+            if step is point:
+                return document.redo[i:]
+        return list(document.undo)
+
+    def _claims(self, document: OpenDocument) -> dict:
+        """token -> {label, needs}: each group with an unsaved member here,
+        and the other files whose members are unsaved too -- those must be
+        recovered with this one. A sibling already saved is on disk and
+        needs no draft. Read under every lock."""
+        open_now = self._open.get(document.pid, {})
+        out = {}
+        for step in self._unsaved(document):
+            if step.group is None:
+                continue
+            needs = sorted(
+                doc for doc, member in step.members.items()
+                if doc in open_now and any(member is s for s in self._unsaved(open_now[doc]))
+            )
+            out[step.group] = {"label": step.label, "needs": needs}
+        return out
+
+    def _refresh_claims(self, pid: str) -> None:
+        """After a save: the other drafts' claims read again, so a member
+        now on disk is no longer needed from a draft (5.1 items 4 and 5).
+        Only the sidecar moves; a draft's text is its own timer's."""
+        with self._all_locks(pid):
+            for other in list(self._open.get(pid, {}).values()):
+                draft, sidecar = _draft_paths(other)
+                if not draft.exists():
+                    continue
+                try:
+                    meta = json.loads(sidecar.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                held = meta.get("groups") or {}
+                now = self._claims(other)
+                fresh = {token: now.get(token, claim) for token, claim in held.items()}
+                if fresh != held:
+                    meta["groups"] = fresh
+                    sidecar.write_text(json.dumps(meta), encoding="utf-8")
 
     @staticmethod
     def _remove_draft(document: OpenDocument) -> None:
@@ -4855,9 +5313,9 @@ class EditingService:
             raise NotOpen(pid)
         if action not in ("recover", "discard"):
             raise CommandError("Choose recover or discard.")
-        # Read every draft's sidecar first, so a branch relationship's pair
-        # token (5.3.3) can be matched across documents: a half whose partner
-        # is not journaled is dropped, and recovery restores a pair or neither.
+        # Read every draft's sidecar first, so each group's token (5.1 item
+        # 5, D-133) can be matched across files: a draft whose group lacks a
+        # sibling it needs is dropped, and recovery restores a group or none.
         drafts: dict = {}
         for document in documents.values():
             draft, sidecar = _draft_paths(document)
@@ -4868,7 +5326,7 @@ class EditingService:
             except (OSError, ValueError):
                 meta = {}
             drafts[document.doc] = (document, draft, meta)
-        present = [m.get("pair") for _, _, m in drafts.values() if m.get("pair") is not None]
+        kept, dropped = _whole_groups(drafts)
         base = self.projects.manifest(pid)["baseIri"]
         with self._all_locks(pid):
             if action == "discard":
@@ -4878,10 +5336,9 @@ class EditingService:
             # Every draft is read and parsed before any file changes, so
             # recovery restores all of them or none (5.4 item 4).
             restoring = []
-            for document, draft, meta in drafts.values():
-                token = meta.get("pair")
-                if token is not None and present.count(token) < 2:
-                    # An orphan half (5.3.3): dropped, with the existing notice.
+            for doc, (document, draft, meta) in drafts.items():
+                if doc not in kept:
+                    # A member without a sibling it needs: dropped, said below.
                     self._remove_draft(document)
                     continue
                 text = draft.read_text(encoding="utf-8")
@@ -4905,7 +5362,14 @@ class EditingService:
                 # The draft's declarations, whichever text the editor shows.
                 document._declared = (None, references.declared_prefixes(text))
                 document.visual_since_save = bool(meta.get("visualSinceSave", not meta.get("fromEditor")))
-            return {"documents": [d.state() for d in documents.values()]}
+            result = {"documents": [d.state() for d in documents.values()]}
+            if dropped:
+                files = _and([file_basename(drafts[doc][0].file) for doc in dropped])
+                result["dropped"] = (
+                    f"The unsaved changes in {files} were not recovered: they changed other files too, "
+                    "and those files' unsaved changes were not kept."
+                )
+            return result
 
     # --- the modeling canvas (visual-modeling 5.4 to 5.6) ---------------------------
 
