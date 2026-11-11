@@ -44,8 +44,10 @@ EXPECTED OUTPUT
 from __future__ import annotations
 
 import gc
+import hashlib
 import json
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -838,11 +840,37 @@ def test_autosave_waits_for_the_last_change(pid, monkeypatch):
 
 
 def _crash(pid: str) -> None:
-    """What a killed server leaves: files on disk, nothing in memory."""
+    """What a killed server leaves: files on disk, nothing in memory. A timer
+    already writing is waited for, not only cancelled: cancel() stops one
+    that has not fired, and one past its wait would write after the test
+    has arranged the drafts (CF-14, where Windows refused to delete a
+    shapes.ttl the timer still held, or it came back after the delete)."""
     documents = editing_service._open.pop(pid)
     for document in documents.values():
+        timer = document.timer
         editing_service._cancel(document)
+        if timer is not None:
+            timer.join(5)
         editing_service.store.unregister_document(document.ontology.id)
+
+
+def _drafts_settled(pid: str, docs: tuple = ("model",)) -> bool:
+    """Every named document's draft and sidecar are on disk and no timer has
+    written since three autosave delays: what a test arranging the drafts
+    after a crash needs, not only the first file to appear."""
+    folder = project_store.folder(pid) / ".draft"
+    if not _wait_for(lambda: all((folder / f"{d}.{x}").exists() for d in docs for x in ("ttl", "json"))):
+        return False
+    quiet = 3 * editing.AUTOSAVE_DELAY
+    written, since = editing_service.drafts_written, time.monotonic()
+    deadline = since + 5
+    while time.monotonic() < deadline:
+        time.sleep(0.02)
+        if editing_service.drafts_written != written:
+            written, since = editing_service.drafts_written, time.monotonic()
+        elif time.monotonic() - since >= quiet:
+            return True
+    return False
 
 
 def test_recovery_restores_the_draft_as_unsaved_content(pid, monkeypatch):
@@ -2120,8 +2148,7 @@ def test_recovery_drops_a_branch_half_without_its_partner(pid, monkeypatch):
     _branch_setup(pid)
     ok(pid, "CreateBranchRelationship", label="motor type",
        domain="shop:Motor", branch="shop:MotorTypes")
-    model_draft = project_store.folder(pid) / ".draft" / "model.ttl"
-    assert _wait_for(model_draft.exists)
+    assert _drafts_settled(pid, ("model", "shapes"))
     _crash(pid)
     # Only the model half is journaled: the shapes draft is gone.
     for name in ("shapes.ttl", "shapes.json"):
@@ -2130,6 +2157,76 @@ def test_recovery_drops_a_branch_half_without_its_partner(pid, monkeypatch):
     client.post(f"/api/projects/{pid}/recover", json={"action": "recover"})
     # A pair or neither (5.3.3): the orphan model half is dropped.
     assert (U("motorType"), RDF.type, OWL.ObjectProperty) not in doc(pid).graph
+
+
+DROPPED_MODEL = (
+    "The unsaved changes in model.ttl were not recovered: they changed other files too, "
+    "and those files' unsaved changes were not kept."
+)
+
+
+def _crashed_with_a_draft(pid: str, monkeypatch) -> Path:
+    monkeypatch.setattr(editing, "AUTOSAVE_DELAY", 0.05)
+    ok(pid, "CreateClass", label="Survivor")
+    assert _drafts_settled(pid)
+    _crash(pid)
+    return project_store.folder(pid) / ".draft"
+
+
+@pytest.mark.parametrize("how", ["missing", "unreadable", "another text"])
+def test_recovery_never_restores_a_draft_its_sidecar_does_not_speak_for(pid, monkeypatch, how):
+    """CF-14 (a): the sidecar carries the group claims, so a draft without
+    one that matches its text -- a crash between the two writes, or a
+    sidecar from the draft before -- is dropped with the sentence, never
+    read as claiming no group and restored alone."""
+    folder = _crashed_with_a_draft(pid, monkeypatch)
+    if how == "missing":
+        (folder / "model.json").unlink()
+    elif how == "unreadable":
+        (folder / "model.json").write_text('{"groups": ', encoding="utf-8")
+    else:
+        (folder / "model.ttl").write_bytes((folder / "model.ttl").read_bytes() + b"# a newer text\n")
+    assert client.post(f"/api/projects/{pid}/open").json()["recovery"]["available"] is True
+    recovered = client.post(f"/api/projects/{pid}/recover", json={"action": "recover"}).json()
+    assert recovered["dropped"] == DROPPED_MODEL
+    assert (U("Survivor"), RDF.type, OWL.Class) not in doc(pid).graph
+    assert not (folder / "model.ttl").exists() and not (folder / "model.json").exists()
+
+
+def test_recovery_drops_the_sibling_of_a_draft_its_sidecar_does_not_speak_for(pid, monkeypatch):
+    """A pair where the model's sidecar is gone: the shapes half needs the
+    model half, so neither is restored (a group or none)."""
+    monkeypatch.setattr(editing, "AUTOSAVE_DELAY", 0.05)
+    _branch_setup(pid)
+    ok(pid, "CreateBranchRelationship", label="motor type", domain="shop:Motor", branch="shop:MotorTypes")
+    assert _drafts_settled(pid, ("model", "shapes"))
+    _crash(pid)
+    (project_store.folder(pid) / ".draft" / "model.json").unlink()
+    client.post(f"/api/projects/{pid}/open")
+    recovered = client.post(f"/api/projects/{pid}/recover", json={"action": "recover"}).json()
+    assert "model.ttl" in recovered["dropped"] and "shapes.ttl" in recovered["dropped"]
+    assert (U("motorType"), RDF.type, OWL.ObjectProperty) not in doc(pid).graph
+    assert _branch_value(pid, U("motorType")) is None
+
+
+def test_a_draft_from_before_cf14_without_a_hash_is_restored_as_before(pid, monkeypatch):
+    folder = _crashed_with_a_draft(pid, monkeypatch)
+    meta = json.loads((folder / "model.json").read_text(encoding="utf-8"))
+    del meta["sha256"]
+    (folder / "model.json").write_text(json.dumps(meta), encoding="utf-8")
+    client.post(f"/api/projects/{pid}/open")
+    recovered = client.post(f"/api/projects/{pid}/recover", json={"action": "recover"}).json()
+    assert "dropped" not in recovered
+    assert (U("Survivor"), RDF.type, OWL.Class) in doc(pid).graph
+
+
+def test_a_draft_and_its_sidecar_are_written_whole(pid, monkeypatch):
+    """Each goes to a temporary name and is replaced into place: nothing is
+    left under the temporary name, and the sidecar names the text's hash."""
+    folder = _crashed_with_a_draft(pid, monkeypatch)
+    assert sorted(p.name for p in folder.iterdir()) == ["model.json", "model.ttl"]
+    meta = json.loads((folder / "model.json").read_text(encoding="utf-8"))
+    assert meta["sha256"] == hashlib.sha256((folder / "model.ttl").read_bytes()).hexdigest()
 
 
 def test_set_clear_and_delete_branch(pid):

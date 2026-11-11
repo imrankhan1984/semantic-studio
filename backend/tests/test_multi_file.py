@@ -706,6 +706,19 @@ def test_ac16_remove_moves_to_the_trash_and_the_last_model_file_stays(plant):
 # --- AC-17: drafts by id, recovery all or none --------------------------------------------
 
 
+def _rewrite_draft(folder: Path, doc: str, text: str) -> None:
+    """A draft's text changed by hand, its sidecar's hash with it: recovery
+    drops a draft whose sidecar names another text (CF-14), and this is a
+    draft the sidecar speaks for that does not parse."""
+    import hashlib
+
+    data = text.encode("utf-8")
+    (folder / f"{doc}.ttl").write_bytes(data)
+    meta = json.loads((folder / f"{doc}.json").read_text(encoding="utf-8"))
+    meta["sha256"] = hashlib.sha256(data).hexdigest()
+    (folder / f"{doc}.json").write_text(json.dumps(meta), encoding="utf-8")
+
+
 def test_ac17_a_nested_file_drafts_by_id_and_recovery_is_all_or_none(plant, monkeypatch):
     from app import editing
 
@@ -715,9 +728,10 @@ def test_ac17_a_nested_file_drafts_by_id_and_recovery_is_all_or_none(plant, monk
     ok(pid, core, "CreateClass", label="Valve")
     draft = project_store.folder(pid) / ".draft"
     deadline = time.time() + 5
-    while time.time() < deadline and not all((draft / f"{d}.ttl").exists() for d in (core, equipment)):
+    written = lambda: all((draft / f"{d}.{x}").exists() for d in (core, equipment) for x in ("ttl", "json"))  # noqa: E731
+    while time.time() < deadline and not written():
         time.sleep(0.02)
-    assert all((draft / f"{d}.ttl").exists() for d in (core, equipment))
+    assert written()
     assert not (project_store.folder(pid) / "vocab" / ".draft").exists()
     # The server stops: nothing saved, the open documents forgotten.
     for document in editing_service._open.pop(pid).values():
@@ -725,11 +739,11 @@ def test_ac17_a_nested_file_drafts_by_id_and_recovery_is_all_or_none(plant, monk
     opened = client.post(f"/api/projects/{pid}/open").json()
     assert opened["recovery"]["available"] is True
     # One draft broken: nothing is restored.
-    (draft / f"{equipment}.ttl").write_text("this is not turtle", encoding="utf-8")
+    _rewrite_draft(draft, equipment, "this is not turtle")
     assert client.post(f"/api/projects/{pid}/recover", json={"action": "recover"}).status_code == 422
     assert (URIRef(EX + "Valve"), None, None) not in editing_service.document(pid, core).graph
     assert all(not d.dirty for d in editing_service._open[pid].values())
-    (draft / f"{equipment}.ttl").write_text(f"<{EX}Motor> a <http://www.w3.org/2002/07/owl#Class> .\n", encoding="utf-8")
+    _rewrite_draft(draft, equipment, f"<{EX}Motor> a <http://www.w3.org/2002/07/owl#Class> .\n")
     restored = client.post(f"/api/projects/{pid}/recover", json={"action": "recover"}).json()
     assert {d["doc"] for d in restored["documents"] if d["dirty"]} == {core, equipment}
     assert (URIRef(EX + "Valve"), None, None) in editing_service.document(pid, core).graph
