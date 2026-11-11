@@ -56,8 +56,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 2379 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 2244 tests, vitest
+cd backend  && python -m pytest tests    # 2399 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 2261 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -69,7 +69,7 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Forty-nine backend tests carry
+**Timing budgets are separated, not deleted.** Fifty-one backend tests carry
 `@pytest.mark.perf`; twelve frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
@@ -198,7 +198,8 @@ backend/app/
                      path rules of 8.3, New file, Move, Remove, folders
   editing.py         The only mutator of a project document: commands, undo,
                      Turtle apply, save rule, autosave, recovery; every file
-                     of a project, the lock order, the cross-file refusal
+                     of a project, the lock order, the cross-file refusal;
+                     grouped steps across files, a term's uses (D-133)
   modeling_checks.py The 5.9 checks: refusals and warnings, in plain words
   templates/         The three New project templates, Turtle with placeholders
   graph_builder.py   RDF -> visualization nodes and edges, labels, node kinds
@@ -269,6 +270,7 @@ frontend/src/
   modeling/          Pure editing-form logic: an entity's blocks read out of
                      its statements, annotation value types and checks, and
                      the sentences a relationship reads as (sentences.ts),
+                     the words for uses in other files (usesWords.ts),
                      and the data wizard's words and choices
                      (dataSentences.ts, dataChoices.ts)
   links.ts           linkTarget: the one gate an IRI passes to become a link
@@ -436,7 +438,7 @@ leaves one behind.
 - The tree lists every property only for a project document, and only the document's own (`own`), never an import's. [Relationships and project kinds]
 - A kind change writes the manifest only and decides which tools show first; nothing is read-only by kind (D-127). [Relationships and project kinds]
 - The first concept in a document without a scheme brings one, in the same undo step (D-127). [SKOS and OWL together]
-- A branch relationship's two halves are one paired step: undo of either takes the shapes lock then the model's and applies both, or refuses (D-127). [SKOS and OWL together]
+- A branch relationship's two halves are a grouped step of two (D-127, D-133): undo of either takes every lock, shapes first, and applies both, or refuses in D-127's words (`by_role`). [SKOS and OWL together, Links between files]
 - A branch rule is read only in its exact shape; any other `sh:node` stays read-only (D-127). [SKOS and OWL together]
 - A project's Turtle is parsed with its base IRI, relative IRIs written onto it, never resolved against the server's folder (CF-8). [Stage B]
 - The modeling checks read a hierarchy in one predicate scan, never one store lookup per node. [Stage B]
@@ -572,6 +574,13 @@ leaves one behind.
 - A tab is a file the person opened (`openDocs`), never the project's file list; closing one discards nothing, and the last tab keeps no close button while the page shows a file. [Tabs and a folder's rename]
 - Only the active file's unapplied editor text is `editorDraft`; every other file's is `editorTexts`, and the two are moved between in `switchDocument` alone, never on a keystroke (the editor's text must not re-render App). Leaving the page or the project asks about every tab's text. [Tabs and a folder's rename]
 - A Files row is two lines and its name is never cut: no ellipsis on `.files-name`. [Tabs and a folder's rename]
+
+**Links between files**
+- A change across files is one grouped step (D-133): a `Step` in each touched file sharing `group`, its `members` held by identity; undo or redo of any applies every member under every lock, refuses while one is not on top of its own history, and drops a member whose sibling is gone for good. [Links between files]
+- RenameIri starts only in the file that defines the term; `_cross_file_change` is not loosened. The other files' rewrite is the service's, inside the same command and locks, never a command run in those files. [Links between files]
+- A delete and a Turtle Apply name other files' `uses` and change none of them; a rename names the data snapshots and counts the saved queries that use the old address, changing neither. [Links between files]
+- A draft's sidecar names its unsaved groups and the siblings each needs; a save refreshes the other drafts' claims, so a member already on disk needs no draft. Recovery restores a group or none. [Links between files]
+- With uses elsewhere, *Deprecate instead* is the delete dialog's first button and holds the focus (ConfirmDialog's `focus`): Enter never deletes. [Links between files]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

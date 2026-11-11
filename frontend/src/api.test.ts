@@ -208,6 +208,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   getShapeSuggestions: () => api.getShapeSuggestions("prj-1", "http://example.org/A", "http://example.org/S"),
   validateProject: () => api.validateProject("prj-1"),
   previewDelete: () => api.previewDelete("prj-1", "model", "http://example.org/A"),
+  previewRename: () => api.previewRename("prj-1", "model", "http://example.org/A", "http://example.org/B"),
   // attribute-reuse 5.2: ShareDomain's dry run, the reuse plan.
   planShare: () => api.planShare("prj-1", "http://example.org/p", "http://example.org/A"),
   // attribute-reuse 5.7: SetClassType's dry run, what goes.
@@ -295,11 +296,12 @@ describe("api client header (S-6)", () => {
     // PUT (design-checks 5.8); Add a vocabulary's inspect two POSTs, JSON
     // and a file (vocabularies-and-ontologies 5.3); the Files panel two
     // POSTs, two PATCHes (a file's rename or move, a folder's rename) and
-    // two DELETEs (multi-file-projects 8.2).
+    // two DELETEs (multi-file-projects 8.2); a rename's dry run one POST
+    // (links-between-files 5.2).
     const expected = [
       ...Array(9).fill("DELETE"),
       ...Array(4).fill("PATCH"),
-      ...Array(37).fill("POST"),
+      ...Array(38).fill("POST"),
       ...Array(8).fill("PUT"),
     ];
     expect(mutating.map((r) => r.method).sort()).toEqual(expected);

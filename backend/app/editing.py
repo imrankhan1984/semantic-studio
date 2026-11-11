@@ -4375,13 +4375,17 @@ class EditingService:
         pid = document.pid
         found = self.uses(pid, old, document, every_subject=True)
         prefixes = {**WELL_KNOWN, **document.declared()}
-        try:
-            queries = sum(
-                1 for entry in self.projects.queries(pid).list()
-                if text_mentions(entry.get("sparql") or "", old, prefixes)
-            )
-        except OSError:
-            queries = 0
+        queries = 0
+        # A dry run writes nothing: the store makes its folder when built,
+        # so a project with no saved queries is not asked at all.
+        if (self.projects.folder(pid) / "queries").is_dir():
+            try:
+                queries = sum(
+                    1 for entry in self.projects.queries(pid).list()
+                    if text_mentions(entry.get("sparql") or "", old, prefixes)
+                )
+            except OSError:
+                queries = 0
         return {
             "dryRun": True,
             "uses": self._uses_json(found, old),

@@ -152,6 +152,8 @@ def test_ac5_dry_run_counts_uses_by_file(linked):
     ]
     assert answer["queries"] == 0 and answer["snapshots"] == []
     assert {d.doc: d.ontology.revision for d in editing_service._open[pid].values()} == revisions
+    # A dry run writes nothing, not even the saved-query store's folder.
+    assert not (project_store.folder(pid) / "queries").exists()
 
 
 def test_ac8_delete_plan_lists_uses_and_ac9_delete_leaves_them(linked):

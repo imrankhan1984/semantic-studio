@@ -3372,3 +3372,98 @@ EXPECTED OUTPUT
   `.with-tabs` rows out of `index.css`: the strip overlaps the canvas in
   the browser (nothing in jsdom, which has no layout -- the live run is the
   check). `_room` out of `rename_folder`: the sibling-clash test red.
+
+### Links between files (E-17 PR 1, D-133)
+
+  **A change across files is one grouped step.** `Step` lost D-127's
+  `partner`, `partner_doc` and `pair` for `group` (a token), `members` (each
+  other file's step by id, held by identity) and `by_role`. A branch
+  relationship is now a group of two built by `_push_pair`, which keeps
+  D-127's labels and refusal words (*Undo the shapes first*) through
+  `by_role`, so `test_editing.py`'s six pair tests and `test_multi_file.py`'s
+  AC-14 pass unchanged; AC-7 names a `test_skos_and_owl.py` that has never
+  existed -- those are the tests it means. Any other group names its files:
+  each member's label adds *(also in equipment.ttl, shapes.ttl)*, and a
+  member buried under a later change refuses with *Undo the later change in
+  equipment.ttl first.* A member whose sibling is gone for good -- its file
+  removed (*Part of this change was in a file that was removed.*), trimmed
+  past UNDO_LIMIT, or dropped with a redo branch -- leaves its history with a
+  sentence instead of being applied alone. The spec says such a member
+  *refuses*; refusing for ever would leave that file's undo stuck behind a
+  step that can never apply, so it is dropped, as D-127's orphan half always
+  was, and nothing in the graph changes.
+
+  **Recovery restores a group or none.** The pair token named only the top
+  step, so a later change in either file hid the pair from recovery. A
+  draft's sidecar now carries `groups`: every group with a member among the
+  unsaved steps (above the save point, or the redo steps down to it after
+  undoing past a save), and for each the siblings whose members are unsaved
+  too. `_whole_groups` keeps a draft only while every sibling it needs is
+  kept, dropping until nothing more drops, and the answer's `dropped`
+  sentence names the files not recovered. A save refreshes the other
+  drafts' claims (`_refresh_claims`), after its own lock is let go -- taking
+  every lock while holding one would break the 8.4 order -- so a sibling
+  already on disk is never needed from a draft. The draft's second phase
+  now holds every lock (`_locks_for`) to read the other files' save points;
+  a sidecar written before D-133 with `pair` is still read as a pair.
+
+  **RenameIri starts only where the term is defined, and rewrites every
+  file.** `_cross_file` still refuses it elsewhere with today's sentence.
+  After the defining file's own checks, `_rename_elsewhere` refuses a new
+  address another file already mentions (two terms would merge; the
+  existing check saw only this file and other files' *types*), then swaps
+  the old address in every statement of every other file -- ontology,
+  vocabulary and shapes alike -- and `_rename_group` applies all of them as
+  one group under the command's locks. Each member's step carries
+  `renamed`, so every file's layout entry follows on rename, undo and redo.
+  `_cross_file_change` runs on the defining file's change only: the other
+  files' rewrite is not a command in those files, and a statement there
+  whose subject is the renamed term itself is rewritten too (it is the same
+  address) and counted.
+
+  **The dry run counts, and changes nothing anywhere.** RenameIri's dry run
+  answers `uses` by file, `snapshots` (statements or mapping text naming the
+  address, switched on or off, `SnapshotService.using`) and `queries`, the
+  project's saved queries whose text names it whole or by a prefix the text
+  or the document declares (`text_mentions`, the address escaped and bounded
+  so *Pump* never matches *PumpStation*). DeleteEntity's dry run adds `uses`
+  with up to three named samples per file, a blank node named by the first
+  IRI walking up what points to it (`_named_owner`, capped). Its
+  `importMentions` no longer counts the project's other files: since E-16
+  they sat in `ctx.imported` beside the imports, so the dialog would have
+  said the same statements twice, once as *read-only imports*.
+
+  **Turtle Apply warns of a term gone that others use.** The comparison is
+  the file's typed terms before and the parsed text's, computed before the
+  apply so names are read only for the terms gone, never for every term
+  (the Apply budgets). `usedElsewhere` stands under the editor beside
+  `definedElsewhere`, for that Apply only.
+
+  **Deprecate.** `owl:deprecated true` and, when given, `dcterms:isReplacedBy`
+  (which DC-10 accepts first), in one step in the defining file; refused
+  elsewhere by `SUBJECT_ARGS`, refused when the flag is already there
+  (written `true` or `1`, as DC-10 and DC-11 read it). `ctx.require` holds
+  the replacement to a term the project or its imports knows.
+
+  **The delete dialog's safe answer holds the focus.** `ConfirmDialog` takes
+  `focus`, an action id it focuses after the trap gives the heading focus,
+  and again when the actions change -- the dry run answers after the dialog
+  opens. With uses, *Deprecate instead* is first, primary and focused, and
+  opens the Deprecate step with *Deprecate* focused, so Enter, Enter
+  deprecates (5.3 item 4 makes it a step; one Enter alone would deprecate
+  with no chance to name a replacement). Measured in the running app, real
+  keys: Enter on the dialog opened the step, Enter again wrote
+  `owl:deprecated true` to core.ttl, and nothing was deleted.
+
+  **The rename line.** Asked on the field's blur and on Enter, once per
+  value. A press while the count is unknown counts first; with no uses
+  elsewhere it renames in the same press, with uses it shows the line and
+  waits for a second press, so the line is seen before the rename. A
+  refusal from the dry run is the server's sentence under the field; any
+  other failure is *Could not count the uses in other files. Try again.*
+  and keeps the button `aria-disabled`.
+
+  **Removal checks.** The other files' rewrite out of `command()`: AC-1 and
+  AC-2 red. The members' apply out of `_apply_group`: AC-2 red. The uses out
+  of the delete plan: AC-8 red. `focus` out of DeleteDialog: two red. The
+  store's `documents` out of `changedDocuments`: one red.

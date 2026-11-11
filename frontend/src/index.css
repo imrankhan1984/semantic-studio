@@ -5092,6 +5092,24 @@ button.legend-row:hover {
 
 .edit-delete {
   margin-top: 12px;
+  /* Deprecate {name}… beside Delete {name}… (links-between-files 5.4). */
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The rename line under New identifier (links-between-files 5.2): what else
+   the rename changes, read with the field through aria-describedby. */
+.edit-rename-uses {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+/* The delete dialog's uses in other files (5.3): a list read in order. */
+.delete-uses ul {
+  margin: 4px 0;
+  padding-left: 20px;
 }
 
 .edit-field-label {
