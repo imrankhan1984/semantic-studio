@@ -1,4 +1,4 @@
-# Sibling classes, under one parent, so the report can compare what each says (its properties and its rules): two siblings that say the same are perhaps one class.
+# Classes under one parent, one row per class, parent and kind (owl:Class or rdfs:Class), so the report can compare what siblings of one kind say (their properties and their rules): two siblings that say the same are perhaps one class. One row per class, never per pair: a parent with 200 children is 200 rows here, and was 19,900 pairs that rdflib could not finish in 30 seconds.
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -8,10 +8,9 @@ PREFIX dcterms: <http://purl.org/dc/terms/>
 PREFIX dc: <http://purl.org/dc/elements/1.1/>
 PREFIX sh: <http://www.w3.org/ns/shacl#>
 PREFIX ss: <urn:semantic-studio:check:>
-SELECT DISTINCT ?iri ?other ?parent WHERE {
+SELECT DISTINCT ?iri ?type ?parent WHERE {
   VALUES ?type { owl:Class rdfs:Class }
   ?iri a ?type ; rdfs:subClassOf ?parent .
-  ?other a ?type ; rdfs:subClassOf ?parent .
-  FILTER(isIRI(?iri) && isIRI(?other) && isIRI(?parent) && STR(?iri) < STR(?other) && ss:own(?iri) && ss:own(?other))
+  FILTER(isIRI(?iri) && isIRI(?parent) && ss:own(?iri))
 }
-ORDER BY ?parent ?iri ?other
+ORDER BY ?parent ?type ?iri

@@ -3467,3 +3467,32 @@ EXPECTED OUTPUT
   AC-2 red. The members' apply out of `_apply_group`: AC-2 red. The uses out
   of the delete plan: AC-8 red. `focus` out of DeleteDialog: two red. The
   store's `documents` out of `changedDocuments`: one red.
+
+### H9 reads one row per class
+
+- **What broke.** H9, *Sibling classes that say the same*, joined every own
+  class under a parent with every other one of the same kind, in SPARQL, and
+  shaped the pairs in Python. On links-between-files Section 10's project
+  (10 files, 9,991 statements, 200 classes under one parent: 19,900 pairs)
+  rdflib reached the 30 s check limit before giving a row, and the whole
+  Checks report took 37.1 s against its 3 s, under D-125's 10,000-statement
+  cap. Measured alone on that graph: over 120 s.
+- **The rule.** `H9.rq` gives one row per own class, parent and kind
+  (`owl:Class` or `rdfs:Class`); `_h9` groups them by parent and kind and
+  keeps a class only when its group has another member, which is what the
+  pair query's join meant. Then, as before, siblings whose properties and
+  rules are the same and not none are one question under their parent. The
+  kind stays part of a sibling: an RDFS class saying the same as two OWL
+  siblings is not named with them (`test_h9_siblings_are_of_one_kind`).
+- **Numbers.** Section 10's project: H9's query 53 ms. A 2,200-child parent
+  at 9,402 statements: H9 about 385 ms, budgeted at 1 s
+  (`test_budget_h9_on_a_wide_hierarchy_under_the_cap`). A parent's 2,000
+  children are 2,000 rows, not 1,999,000 pairs
+  (`test_h9_reads_one_row_per_class_not_per_pair`, a count, blocking).
+- **Not answered here.** The whole report on that 2,200-class graph is about
+  9.5 s: every check costs rdflib about 0.5 s there, none of them H9's. And
+  H9's rows are cut at the report's 1,000, like every check's; one row per
+  class leaves 1,000 classes with a parent, where pairs left far fewer.
+- **Removal checks.** The kind out of the grouping: the kind test red. The
+  pair query back (its hash with it): the row count red, after the 30 s
+  limit.

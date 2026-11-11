@@ -56,7 +56,7 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 2399 tests (+2 marked `network`, deselected)
+cd backend  && python -m pytest tests    # 2402 tests (+2 marked `network`, deselected)
 cd frontend && npm run test              # 2261 tests, vitest
 ```
 
@@ -69,7 +69,7 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Fifty-one backend tests carry
+**Timing budgets are separated, not deleted.** Fifty-two backend tests carry
 `@pytest.mark.perf`; twelve frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
@@ -543,6 +543,7 @@ leaves one behind.
 - Only own terms are checked: `STANDARD_NAMESPACES` in `checks.py` alone, asked through `ss:own`; a project owns its model, shapes and data bases; `test_checks.py` scans for another list. [Design checks]
 - The report runs only when Checks is chosen: `ChecksView` mounts on the switch, never before; zero `/checks` requests otherwise. [Design checks]
 - A FILTER's order buys nothing in rdflib; a nested group or a one-row subquery is what cuts rows first. [Design checks]
+- A check that compares terms with each other reads one row per term and pairs them in Python, never a SPARQL join of a term with its siblings: H9's pairs never finished 200 children in 30 s. [H9 reads one row per class]
 - One address rule: `naming.py` and `naming/address.ts`, tested with one table (`naming/address.table.json`). [Design checks]
 - The namespace never renames an existing IRI: read at each New project only; a project keeps the parts it was made with. [Design checks]
 - Shapes and examples mint at their own base only when the manifest names `shapesBaseIri` and `dataBaseIri`; without them the templates render byte for byte as before. [Design checks]
