@@ -169,7 +169,13 @@ export default function TurtleEditor({ projectId, doc, revision, onSelectEntity 
       const result = await projectStore.applyEditor();
       // A term another file defines too: applied, and said here (multi-
       // file-projects 5.3 item 4).
-      setNotes([...(result?.definedElsewhere ?? []).map((w) => w.message), ...unknownTermLines(result?.references)]);
+      setNotes([
+        ...(result?.definedElsewhere ?? []).map((w) => w.message),
+        // A term gone from this file that other files still use
+        // (links-between-files 5.5): applied, and said here for this Apply.
+        ...(result?.usedElsewhere ?? []).map((w) => w.message),
+        ...unknownTermLines(result?.references),
+      ]);
       // What the server now holds as the editor's text, so the box does not
       // flash back to the old text while the refetch is in flight.
       setBase(applied);

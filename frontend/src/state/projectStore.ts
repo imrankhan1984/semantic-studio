@@ -562,11 +562,14 @@ function withDocument(next: ProjectDocumentState): ProjectDocumentState[] {
   return snapshot.documents.map((d) => (d.doc === next.doc ? next : d));
 }
 
-/** A command's new document states: the changed document, and for a branch
- *  relationship's paired step (skos-and-owl 5.3.3) its partner too, so both
- *  documents' revision, dirty flag and undo labels refresh together. */
+/** A command's new document states: the changed document, and for a change
+ *  across files (a grouped step, links-between-files 5.1; a branch
+ *  relationship's pair, skos-and-owl 5.3.3) every other touched file too,
+ *  so each one's revision, dirty flag and undo labels refresh together. */
 function changedDocuments(result: ChangeResult): ProjectDocumentState[] {
-  const states = result.partner ? [result.state, result.partner.state] : [result.state];
+  const states = [result.state];
+  if (result.partner) states.push(result.partner.state);
+  for (const d of result.documents ?? []) states.push(d.state);
   return snapshot.documents.map((d) => states.find((s) => s.doc === d.doc) ?? d);
 }
 
@@ -1223,11 +1226,10 @@ export const projectStore = {
     const project = requireProject();
     const result = await recoverProject(project.id, action);
     set({ documents: result.documents, recovery: null, editorDraft: null });
-    announce(
-      action === "recover"
-        ? "Recovered the unsaved changes. Unsaved changes."
-        : "Discarded the unsaved changes.",
-    );
+    // A group missing a member is recovered in no file (5.1 item 5): said.
+    const words =
+      action === "recover" ? "Recovered the unsaved changes. Unsaved changes." : "Discarded the unsaved changes.";
+    announce(result.dropped ? `${words} ${result.dropped}` : words);
   },
 
   /** Escape on the recovery question: decide later. The draft stays on disk

@@ -240,3 +240,23 @@ describe("the open tabs (5.9 items 1, 3 and 5)", () => {
     expect(projectStore.getSnapshot().editorTexts).toEqual({});
   });
 });
+
+describe("a change across files (links-between-files 5.1, 8.2)", () => {
+  it("an undo of a grouped step refreshes every touched file, not only the one asked", async () => {
+    await open();
+    const moved = (doc: string, file: string, role: "ontology" | "vocabulary" | "shapes") =>
+      state(doc, file, role, { revision: 5, dirty: true, undoLabel: null, canUndo: false });
+    undoChange.mockResolvedValue({
+      revision: 5, label: "Renamed x:Pump to x:Pumpe (also in equipment.ttl, shapes.ttl)",
+      state: moved("model", "model.ttl", "ontology"),
+      documents: [
+        { doc: "model", revision: 5, state: moved("model", "model.ttl", "ontology") },
+        { doc: "f00000001", revision: 5, state: moved("f00000001", "vocab/equipment.ttl", "vocabulary") },
+        { doc: "shapes", revision: 5, state: moved("shapes", "shapes.ttl", "shapes") },
+      ],
+    });
+    await projectStore.undo();
+    expect(projectStore.getSnapshot().documents.map((d) => d.revision)).toEqual([5, 5, 5]);
+    expect(projectStore.getSnapshot().announcement.text).toContain("Undid: Renamed x:Pump to x:Pumpe");
+  });
+});

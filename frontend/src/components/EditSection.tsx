@@ -66,16 +66,29 @@ INPUTS / INPUT SOURCES (props)
     *Copy* that says *Copied*; and a link value that is a link only when it is
     http or https, with *Copy* when it is not (D-088).
 
+    *Change identifier…* renames the term in every project file as one
+    grouped step (links-between-files 5.2, D-133). Before the person
+    confirms, RenameIri's dry run, asked on the field's blur and on Enter,
+    says under the field what else changes (*Also changes 3 statements in
+    equipment.ttl and 1 in shapes.ttl.*), tied to the field by
+    aria-describedby; the button is aria-disabled while it counts. A
+    rename with uses elsewhere is confirmed by a second press once the
+    line is shown; one without is made at once. *Deprecate {name}…* beside
+    *Delete {name}…* opens DeleteDialog's Deprecate step (5.4 item 3).
+
 EXPECTED OUTPUT
     - Commands through the project store; the section's markup.
 ================================================================================
 */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ApiError, previewRename } from "../api";
 import { linkTarget } from "../links";
 import { entityModel, structureOf, type Annotation, type EntityModel } from "../modeling/entity";
 import { examplesOf } from "../modeling/examples";
+import { renameLine } from "../modeling/usesWords";
 import { describeValue, typeOfValue, valueProblem, toValue } from "../modeling/values";
+import { projectStore } from "../state/projectStore";
 import type { CanvasSet, NodeDetails, ProjectKind } from "../types";
 import AnnotationAdder, { ValueInput } from "./AnnotationAdder";
 import DeleteDialog from "./DeleteDialog";
@@ -84,6 +97,8 @@ import EditStructure from "./EditStructure";
 import ExampleForm from "./ExampleForm";
 import NewEntityForm, { NewClassForm } from "./NewEntityForm";
 import { PropertyHead } from "./RelationshipForm";
+
+const OWL_DEPRECATED = "http://www.w3.org/2002/07/owl#deprecated";
 
 interface Props {
   ontologyId: string;
@@ -188,10 +203,59 @@ export default function EditSection({
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [deprecating, setDeprecating] = useState(false);
+  // RenameIri's dry run for the value now in the field (5.2 item 2): the
+  // line it gives (null: nothing else holds the address), or a refusal.
+  const [count, setCount] = useState<{
+    value: string;
+    state: "counting" | "done" | "failed" | "refused";
+    line: string | null;
+  } | null>(null);
+  const counting = useRef<{ value: string; promise: Promise<string | null | undefined> } | null>(null);
   const [subclassOfImport, setSubclassOfImport] = useState(false);
   const [addingExample, setAddingExample] = useState(false);
   const iri = details.iri;
   const name = details.label;
+
+  /** Count the uses of the old address elsewhere for `value`, once per
+   *  value: the line, null for none, or undefined when the rename was
+   *  refused or the count failed (each shown under the field). */
+  const countUses = (value: string): Promise<string | null | undefined> => {
+    if (counting.current?.value === value) return counting.current.promise;
+    const state = projectStore.getSnapshot();
+    if (!state.project) return Promise.resolve(null);
+    setCount({ value, state: "counting", line: null });
+    const promise = previewRename(state.project.id, state.activeDoc, iri, value).then(
+      (answer) => {
+        const line = renameLine(answer, name);
+        if (alive()) setCount((c) => (c?.value === value ? { value, state: "done", line } : c));
+        return line;
+      },
+      (e: unknown) => {
+        // A refusal is the server's sentence about the new address; any
+        // other failure may pass, so it can be asked again.
+        const refused = e instanceof ApiError && e.status < 500;
+        counting.current = null;
+        if (alive())
+          setCount((c) =>
+            c?.value === value
+              ? { value, state: refused ? "refused" : "failed", line: refused ? (e as Error).message : null }
+              : c,
+          );
+        return undefined;
+      },
+    );
+    counting.current = { value, promise };
+    return promise;
+  };
+  // The line stands while counting, after a failure or refusal, and when
+  // the count found something; with no uses elsewhere there is none (5.2).
+  // Already deprecated: the annotations block shows it and takes it away
+  // (RemoveAnnotation, 5.4 item 4); Deprecate would be refused.
+  const deprecated = model.annotations.some(
+    (a) => a.property.iri === OWL_DEPRECATED && (a.value.value === "true" || a.value.value === "1"),
+  );
+  const usesShown = count !== null && count.value === renaming?.trim() && (count.state !== "done" || count.line !== null);
 
   // Nothing is read-only by the project's kind any more (D-127): a concept in
   // an ontology, or a class in a taxonomy, is edited here like any own entity.
@@ -466,8 +530,15 @@ export default function EditSection({
             className="edit-rename"
             onSubmit={async (e) => {
               e.preventDefault();
-              if (busy || !renaming.trim()) return;
-              const result = await run("identifier", "RenameIri", { old: iri, new: renaming.trim() });
+              const value = renaming.trim();
+              if (busy || !value) return;
+              // The line first (5.2 items 1, 2): a rename with uses elsewhere
+              // is confirmed once the person has seen what else it changes.
+              if (!(count?.value === value && count.state === "done")) {
+                const line = await countUses(value);
+                if (line !== null) return;
+              }
+              const result = await run("identifier", "RenameIri", { old: iri, new: value });
               if (result) {
                 setRenaming(null);
                 follow(result.created ?? renaming.trim());
@@ -482,7 +553,6 @@ export default function EditSection({
               }
             }}
           >
-            <p>Other files that use the old identifier will not follow the change.</p>
             <label className="edit-field-label" htmlFor="edit-new-iri">
               New identifier
             </label>
@@ -491,12 +561,38 @@ export default function EditSection({
               autoFocus
               value={renaming}
               readOnly={busy}
-              aria-invalid={errors.identifier ? true : undefined}
-              onChange={(e) => setRenaming(e.target.value)}
+              aria-invalid={errors.identifier || count?.state === "refused" ? true : undefined}
+              aria-describedby={usesShown ? "edit-rename-uses" : undefined}
+              onChange={(e) => {
+                setRenaming(e.target.value);
+                if (counting.current?.value !== e.target.value.trim()) {
+                  counting.current = null;
+                  setCount(null);
+                }
+              }}
+              onBlur={() => {
+                const value = renaming.trim();
+                if (value && value !== iri && !busy) void countUses(value);
+              }}
             />
+            {usesShown && (
+              <p id="edit-rename-uses" className={count?.state === "refused" ? "edit-error" : "edit-rename-uses"}>
+                {count?.state === "counting"
+                  ? "Counting uses in other files…"
+                  : count?.state === "failed"
+                    ? "Could not count the uses in other files. Try again."
+                    : count?.line}
+              </p>
+            )}
             {errors.identifier && <p className="edit-error">{errors.identifier}</p>}
             <div className="edit-actions">
-              <button type="submit" className="primary" aria-disabled={busy || !renaming.trim()}>
+              <button
+                type="submit"
+                className="primary"
+                aria-disabled={
+                  busy || !renaming.trim() || count?.state === "counting" || count?.state === "failed" || count?.state === "refused"
+                }
+              >
                 Change identifier
               </button>
               <button
@@ -515,10 +611,26 @@ export default function EditSection({
       </Block>
 
       <div className="edit-delete">
+        {!deprecated && (
+          // The safe alternative to a delete, beside it (5.4 item 3).
+          <button type="button" className="ghost" onClick={() => setDeprecating(true)}>
+            Deprecate {name}…
+          </button>
+        )}
         <button type="button" className="ghost danger" onClick={() => setDeleting(true)}>
           Delete {name}…
         </button>
       </div>
+      {deprecating && (
+        <DeleteDialog
+          iri={iri}
+          label={name}
+          runner={runner}
+          start="deprecate"
+          kind={model.kind}
+          onDone={() => setDeprecating(false)}
+        />
+      )}
       {deleting && (
         <DeleteDialog
           iri={iri}

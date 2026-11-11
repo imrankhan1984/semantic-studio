@@ -70,6 +70,7 @@ import type {
   ApprovalRequest,
   ChangeResult,
   DeleteImpact,
+  RenameUses,
   SearchKind,
   Hierarchy,
   LanguageReport,
@@ -1253,6 +1254,21 @@ export function previewDelete(
   }).then((r) => handle<{ dryRun: true; impact: DeleteImpact; revision: number }>(r));
 }
 
+// RenameIri's dry run (links-between-files 5.2): the uses in the project's
+// other files, the data snapshots and the saved queries, nothing changed.
+export function previewRename(
+  pid: string,
+  doc: ProjectDocName,
+  old: string,
+  next: string,
+): Promise<RenameUses & { dryRun: true; revision: number }> {
+  return send(documentUrl(pid, doc, "/commands"), {
+    method: "POST",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ command: "RenameIri", args: { old, new: next }, dryRun: true }),
+  }).then((r) => handle<RenameUses & { dryRun: true; revision: number }>(r));
+}
+
 // ShareDomain's dry run: the reuse plan, with nothing changed
 // (attribute-reuse 5.2). With no class, the 5.4 Fix's plan.
 export function planShare(
@@ -1432,12 +1448,12 @@ export function downloadDocumentCopy(
 export function recoverProject(
   pid: string,
   action: "recover" | "discard",
-): Promise<{ documents: OpenedProject["documents"] }> {
+): Promise<{ documents: OpenedProject["documents"]; dropped?: string }> {
   return send(projectUrl(pid, "/recover"), {
     method: "POST",
     headers: JSON_WRITE,
     body: JSON.stringify({ action }),
-  }).then((r) => handle<{ documents: OpenedProject["documents"] }>(r));
+  }).then((r) => handle<{ documents: OpenedProject["documents"]; dropped?: string }>(r));
 }
 
 // How many entities lack a name in each project language.

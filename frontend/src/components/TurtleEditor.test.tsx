@@ -314,3 +314,22 @@ describe("TurtleEditor, reference terms on Apply (reference-ontologies 5.7, AC-8
     ]);
   });
 });
+
+describe("TurtleEditor, a term other files still use (links-between-files 5.5, AC-11)", () => {
+  it("says the warning under the editor, and the text still applies", async () => {
+    const message =
+      "Pump is gone from this file, and 2 statements in equipment.ttl still use it. To rename an address everywhere, use Change identifier in the edit section.";
+    applyDocumentSource.mockResolvedValueOnce({
+      revision: 1, label: "Applied Turtle edits", state: state(1),
+      usedElsewhere: [{ iri: "http://example.org/plant#Pump", label: "Pump", uses: [], message }],
+    });
+    await renderEditor();
+    fireEvent.change(editor(), { target: { value: EDITED } });
+    await act(async () => {
+      fireEvent.click(applyButton());
+    });
+    expect(document.querySelector(".turtle-notes")!.textContent).toBe(message);
+    expect(projectStore.getSnapshot().editorDraft).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});

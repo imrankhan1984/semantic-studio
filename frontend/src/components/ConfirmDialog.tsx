@@ -24,13 +24,16 @@ INPUTS / INPUT SOURCES (props)
     - actions: the answers, in reading order, one marked primary.
     - onAnswer: called with the chosen action's id; `escape` names the id
       Escape and the backdrop give.
+    - focus: an action that takes the focus once it is drawn, in place of
+      the heading -- the safe choice a learner's Enter should reach
+      (links-between-files 7: *Deprecate instead*).
 
 EXPECTED OUTPUT
     - The dialog, and one onAnswer call per answer.
 ================================================================================
 */
 
-import { useCallback, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { useDialogTrap } from "./useDialogTrap";
 
 export interface DialogAction {
@@ -47,15 +50,24 @@ interface Props {
   escape: string;
   busy?: boolean;
   onAnswer: (id: string) => void;
+  focus?: string;
 }
 
-export default function ConfirmDialog({ title, children, actions, escape, busy = false, onAnswer }: Props) {
+export default function ConfirmDialog({ title, children, actions, escape, busy = false, onAnswer, focus }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const onEscape = useCallback(() => {
     if (!busy) onAnswer(escape);
   }, [busy, escape, onAnswer]);
   useDialogTrap(panelRef, headingRef, onEscape);
+  // After the trap's own effect, which gives the heading focus on open; and
+  // again whenever the focused action changes, as a dialog's actions can
+  // arrive after it opens (a dry run's answer).
+  const hasFocusAction = focus !== undefined && actions.some((a) => a.id === focus);
+  useEffect(() => {
+    if (!hasFocusAction) return;
+    panelRef.current?.querySelector<HTMLButtonElement>(`button[data-action="${focus}"]`)?.focus();
+  }, [focus, hasFocusAction]);
 
   return (
     <>
@@ -76,6 +88,7 @@ export default function ConfirmDialog({ title, children, actions, escape, busy =
           {actions.map((action) => (
             <button
               key={action.id}
+              data-action={action.id}
               className={action.primary ? "primary" : action.danger ? "ghost danger" : "ghost"}
               // aria-disabled rather than disabled while an answer is being
               // carried out: a disabled button drops the focus it holds.
