@@ -3560,3 +3560,41 @@ EXPECTED OUTPUT
   the Apply's other-file moves, the shared blank node's refusal, the box's
   place on undo and the finding's file before its address, each red without
   its fix.
+
+### Draft and sidecar (CF-14)
+
+- **What failed.** `test_recovery_drops_a_branch_half_without_its_partner`
+  failed on `backend-windows` twice in a row on PR #88 and passed on Linux.
+  Reproduced on Windows: 3 failures in 150 runs. Each time the logged
+  `.draft` folder at `recover()` told which race. Both failures with a log were
+  the **test's own race** (b): the shapes document's timer, already past its
+  wait when `_crash()` cancelled it, still held `shapes.ttl`, so the test's
+  delete raised `WinError 32` (Windows refuses to delete an open file; Linux
+  does not), or it wrote `shapes.ttl` and `shapes.json` again after the
+  delete, so the pair was whole and the model half was restored. The
+  product race (a) was never caught in a run: `model.json` was always whole
+  when `recover()` read it.
+- **The product race all the same.** `_write_draft` wrote the draft, then
+  its sidecar, each with `write_text`. A crash between the two, or a sidecar
+  cut short, left recovery reading the claims as none (`meta = {}`) and
+  restoring a member of a D-133 group alone. Now each file goes to
+  `<name>.tmp` and is replaced into place (`projects._replace`, retried on
+  Windows's transient refusal), and the sidecar carries `sha256`, the hash
+  of the draft's bytes as written. Recovery drops a draft whose sidecar is
+  missing, unreadable or names another text, with the existing *were not
+  recovered* sentence, and its siblings go with it (`_whole_groups`'
+  `unmatched`). A sidecar with no `sha256`, written before CF-14, is
+  trusted as it always was. The draft's bytes are written as they are (no
+  newline translation), so the hash is of what is on disk; recovery reads
+  them with universal newlines, as `read_text` did.
+- **The test's race.** `_crash()` joins a running timer, not only cancels
+  it, and the test waits (`_drafts_settled`) until both drafts and both
+  sidecars exist and `drafts_written` has not moved for three autosave
+  delays before it crashes.
+- **Numbers.** Before: 49 of 50, then 98 of 100. After: 50 of 50.
+- **Touched with it.** `test_multi_file.py`'s all-or-none test writes a
+  broken draft by hand. It now writes the matching hash too
+  (`_rewrite_draft`), or the draft would be dropped before it is parsed and
+  the test would no longer reach the parse.
+- **Removal checks.** `editing.py` stashed: the five new recovery tests red,
+  and the sixth, the pre-CF-14 one, red for want of a hash to remove.
