@@ -862,8 +862,10 @@ export interface ModelWarning {
   text: string;
   // The block it concerns, where the form shows it: "characteristics" (What
   // else is true, How many values), "inverse" (The other way round) or
-  // "domain" (Belongs to, From: two domain lines, attribute-reuse 5.4).
-  block?: "characteristics" | "inverse" | "domain";
+  // "domain" (Belongs to, From: two domain lines, attribute-reuse 5.4);
+  // "parents" (Is a kind of) or "broader" (Broader concepts): the
+  // hierarchy-move warning (links-between-files 5.6).
+  block?: "characteristics" | "inverse" | "domain" | "parents" | "broader";
   code?: string;
   // `needs`: what the form must ask before the fix can run (a shared
   // parent's name).
@@ -1196,6 +1198,21 @@ export interface ChangeResult {
   // applied (a file removed, a member trimmed or its redo branch dropped):
   // the member is dropped and this sentence says why (5.1, 5.3.3).
   dropped?: string;
+  // A move in a hierarchy (AddBroader, RemoveBroader, AddSubClassOf,
+  // RemoveSubClassOf) that changed what a rule in some file allows
+  // (links-between-files 5.6): made all the same; each warning stands under
+  // its block on `about`, the term moved, and is said once.
+  warnings?: MoveWarning[];
+  // A Turtle apply's moves, the same warnings, said under the editor.
+  hierarchyWarnings?: MoveWarning[];
+  // MoveToFile (5.8): the file the entity now lives in.
+  moved?: { doc: ProjectDocName; file: string };
+}
+
+/** A hierarchy-move warning (links-between-files 5.6): the chaining rule's
+ *  shape, with the term it is about. */
+export interface MoveWarning extends ModelWarning {
+  about: string;
 }
 
 /** The statements one other project file holds that name an address

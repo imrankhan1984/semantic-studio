@@ -333,3 +333,22 @@ describe("TurtleEditor, a term other files still use (links-between-files 5.5, A
     expect(screen.queryByRole("alert")).toBeNull();
   });
 });
+
+describe("TurtleEditor, a move in a hierarchy (links-between-files 5.6 item 4)", () => {
+  it("says what the move changed in a rule under the editor, and the text still applies", async () => {
+    const text = "Motor is no longer under Pump, so drives no longer expects it.";
+    applyDocumentSource.mockResolvedValueOnce({
+      revision: 1, label: "Applied Turtle edits", state: state(1),
+      hierarchyWarnings: [{ text, block: "parents", about: "http://example.org/plant#Motor" }],
+    });
+    await renderEditor();
+    fireEvent.change(editor(), { target: { value: EDITED } });
+    await act(async () => {
+      fireEvent.click(applyButton());
+    });
+    expect(document.querySelector(".turtle-notes")!.textContent).toBe(text);
+    expect(projectStore.getSnapshot().editorDraft).toBeNull();
+    // Said under the editor for this Apply, never under a form's block.
+    expect(projectStore.getSnapshot().moveWarnings).toBeNull();
+  });
+});

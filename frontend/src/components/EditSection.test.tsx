@@ -520,6 +520,149 @@ describe("Deprecate (links-between-files 5.4)", () => {
   });
 });
 
+const EQUIPMENT = { ...STATE, doc: "f0123abcd" as const, file: "equipment.ttl", role: "ontology" as const, ontologyId: `${PID}-f0123abcd` };
+const SHAPES = { ...STATE, doc: "shapes" as const, file: "shapes.ttl", role: "shapes" as const, ontologyId: `${PID}-shapes` };
+
+/** The project with model.ttl, equipment.ttl and shapes.ttl. */
+async function openThreeFiles() {
+  projectStore._reset();
+  openProject.mockResolvedValueOnce({
+    project: {
+      id: PID, name: "Shop", createdAt: "", updatedAt: "", baseIri: EX, prefix: "shop",
+      primaryLanguage: "en", languages: ["fr"], counts: {},
+      documents: [{ file: "model.ttl", role: "model" }, { file: "equipment.ttl", role: "ontology" }, { file: "shapes.ttl", role: "shapes" }],
+    },
+    documents: [{ ...STATE, file: "model.ttl", role: "ontology" }, EQUIPMENT, SHAPES],
+    recovery: { available: false, draftTime: null },
+  });
+  await projectStore.open(PID);
+}
+
+describe("Move to file (links-between-files 5.8, AC-23)", () => {
+  it("offers Move beside Deprecate and Delete, in Tab order, and sends MoveToFile to the file picked", async () => {
+    await openThreeFiles();
+    runCommand.mockResolvedValueOnce({ ...changed("Moved Invoice to equipment.ttl"), moved: { doc: EQUIPMENT.doc, file: "equipment.ttl" } });
+    await renderForm(invoice());
+    const deprecate = screen.getByRole("button", { name: "Deprecate Invoice…" });
+    const move = screen.getByRole("button", { name: "Move Invoice to file…" });
+    const remove = screen.getByRole("button", { name: "Delete Invoice…" });
+    // Document order is Tab order: Deprecate, Move, then Delete.
+    expect(deprecate.compareDocumentPosition(move) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(move.compareDocumentPosition(remove) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(move);
+    });
+    const dialog = screen.getByRole("dialog", { name: "Move Invoice to another file?" });
+    const picker = within(dialog).getByRole("combobox", { name: "Move to" });
+    // Neither this file nor a shapes file is offered (5.8 items 2 and 5).
+    expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual(["equipment.ttl"]);
+    await waitFor(() => expect(document.activeElement).toBe(picker));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Move" }));
+    });
+    expect(lastCommand()).toEqual(["MoveToFile", { iri: EX + "Invoice", target: EQUIPMENT.doc }]);
+    expect(projectStore.getSnapshot().announcement.text).toBe("Moved Invoice to equipment.ttl. Undo is available.");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("gives focus to the panel's Open file once the moved term reads Defined in, never the page", async () => {
+    await openThreeFiles();
+    runCommand.mockResolvedValueOnce(changed("Moved Invoice to equipment.ttl"));
+    const panel = (d: NodeDetails) => (
+      <aside className="detail-panel">
+        {d.fromFile && (
+          <p className="detail-file">
+            <button type="button" className="link-btn">Open file</button>
+          </p>
+        )}
+        <EditSection ontologyId={OID} details={d} primaryLanguage="en" languages={["fr"]} onSelect={onSelect} onDeleted={onDeleted} />
+      </aside>
+    );
+    let view: ReturnType<typeof render> | null = null;
+    await act(async () => {
+      view = render(panel(invoice()));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Move Invoice to file…" }));
+    });
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Move" }));
+    });
+    // The panel's refetch: the term is another file's now.
+    await act(async () => {
+      view!.rerender(panel({ ...invoice(), fromFile: { doc: EQUIPMENT.doc, file: "equipment.ttl" } }));
+    });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Open file" }));
+  });
+
+  it("keeps a refusal under the picker, with the dialog open", async () => {
+    await openThreeFiles();
+    runCommand.mockRejectedValueOnce(new Error("Invoice is already defined in equipment.ttl."));
+    await renderForm(invoice());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Move Invoice to file…" }));
+    });
+    const dialog = screen.getByRole("dialog");
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Move" }));
+    });
+    expect(within(dialog).getByRole("alert").textContent).toBe("Invoice is already defined in equipment.ttl.");
+    expect(within(dialog).getByRole("combobox", { name: "Move to" }).getAttribute("aria-describedby")).toBeTruthy();
+  });
+
+  it("is absent in a project of one ontology file, and for another file's term", async () => {
+    await renderForm(invoice()); // beforeEach opened model.ttl alone
+    expect(screen.queryByRole("button", { name: "Move Invoice to file…" })).toBeNull();
+    cleanup();
+    await openThreeFiles();
+    await renderForm(details("Pump", "class", [[P.type, uri(OWL + "Class")]], [], {
+      fromFile: { doc: EQUIPMENT.doc, file: "equipment.ttl" },
+    }));
+    for (const name of ["Move Pump to file…", "Deprecate Pump…", "Delete Pump…"]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+  });
+});
+
+describe("the hierarchy-move warning (links-between-files 5.6)", () => {
+  const warning = {
+    text: "Invoice is no longer under Document, so filed in no longer expects it.",
+    block: "parents" as const,
+    about: EX + "Invoice",
+  };
+
+  it("stands under Is a kind of on the moved class, and is said once with the change", async () => {
+    runCommand.mockResolvedValueOnce({ ...changed("Removed Document as a subclass of Invoice"), warnings: [warning] });
+    await renderForm(invoice());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove Document as a parent of Invoice" }));
+    });
+    expect(lastCommand()).toEqual(["RemoveSubClassOf", { child: EX + "Invoice", parent: EX + "Document" }]);
+    const list = screen.getByRole("list", { name: "Warnings" });
+    expect(within(list).getByText(warning.text)).toBeTruthy();
+    // Under the block: right after its heading, before the parents' list.
+    const heading = screen.getByRole("heading", { name: "Is a kind of" });
+    expect(heading.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(projectStore.getSnapshot().announcement.text).toBe(
+      `Removed Document as a subclass of Invoice. Unsaved changes. Warning: ${warning.text}`,
+    );
+  });
+
+  it("is not shown on another term's form, and the next change takes it away", async () => {
+    runCommand.mockResolvedValueOnce({ ...changed("Removed Document as a subclass of Invoice"), warnings: [{ ...warning, about: EX + "Other" }] });
+    await renderForm(invoice());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove Document as a parent of Invoice" }));
+    });
+    expect(screen.queryByRole("list", { name: "Warnings" })).toBeNull();
+    expect(projectStore.getSnapshot().moveWarnings?.about).toBe(EX + "Other");
+    await act(async () => {
+      await projectStore.command("SetLabel", { iri: EX + "Invoice", value: "Bill", lang: "en" });
+    });
+    expect(projectStore.getSnapshot().moveWarnings).toBeNull();
+  });
+});
+
 describe("read-only cases (AC-4)", () => {
   it("says an imported class is read-only and offers only a subclass here", async () => {
     runCommand.mockResolvedValueOnce(changed("Created class Student", EX + "Student"));

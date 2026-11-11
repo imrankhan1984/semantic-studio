@@ -174,6 +174,9 @@ export default function TurtleEditor({ projectId, doc, revision, onSelectEntity 
         // A term gone from this file that other files still use
         // (links-between-files 5.5): applied, and said here for this Apply.
         ...(result?.usedElsewhere ?? []).map((w) => w.message),
+        // A term the text moved in its hierarchy, and what that changed in
+        // a rule of some file (links-between-files 5.6 item 4).
+        ...(result?.hierarchyWarnings ?? []).map((w) => w.text),
         ...unknownTermLines(result?.references),
       ]);
       // What the server now holds as the editor's text, so the box does not

@@ -1,0 +1,19 @@
+# Own terms and the types given them (links-between-files 5.7). Whether two
+# files type a term is not in the merged graph, so the report computes this
+# in Python, asking each project file which types it; this query, over the
+# graph it is opened on, lists the candidates *Open as a query* shows.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX dc: <http://purl.org/dc/elements/1.1/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ss: <urn:semantic-studio:check:>
+SELECT ?iri (COUNT(DISTINCT ?type) AS ?types) WHERE {
+  ?iri rdf:type ?type .
+  FILTER(isIRI(?iri) && ss:own(?iri))
+}
+GROUP BY ?iri
+ORDER BY ?iri
