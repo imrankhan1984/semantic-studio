@@ -14,6 +14,10 @@ SUMMARY
     AC-4): *Reuse terms from* for a template only, nothing ticked; the
     description prefilled, following the name and the boxes until edited;
     its counter past 2,000; a prefix equal to a ticked reference's.
+    Location (projects-anywhere 5.2, AC-1, AC-15): Semantic Studio's folder
+    by default and nothing sent; *A folder you choose* with no folder is
+    Create's reason; the folder browser's choice is shown, the subfolder
+    sentence says where, and Create sends `location`.
 
 BASIC IDEA
     Rendered alone; onCreate is a spy, so what is asserted is exactly what the
@@ -30,7 +34,7 @@ EXPECTED OUTPUT
 
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import NewProjectDialog, { type NewProjectRequest } from "./NewProjectDialog";
 import { defaultBaseIri, defaultDescription, defaultPrefix, validate } from "../projects/form";
@@ -52,12 +56,32 @@ const REFERENCES: ReferenceOntology[] = [
     sentence: "It reuses QUDT for quantities and units.",
   },
 ];
-const { listReferences, getSettings } = vi.hoisted(() => ({ listReferences: vi.fn(), getSettings: vi.fn() }));
+const { listReferences, getSettings, listFolders } = vi.hoisted(() => ({
+  listReferences: vi.fn(),
+  getSettings: vi.fn(),
+  listFolders: vi.fn(),
+}));
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   listReferences,
   getSettings,
+  listFolders,
 }));
+listFolders.mockResolvedValue({
+  path: "D:\\Work",
+  parts: [
+    { name: "D:", path: "D:\\" },
+    { name: "Work", path: "D:\\Work" },
+  ],
+  parent: "D:\\",
+  places: [],
+  folders: [],
+  total: 0,
+  truncated: false,
+  project: false,
+  choosable: true,
+  reason: null,
+});
 listReferences.mockResolvedValue(REFERENCES);
 // No namespace unless a test sets one (design-checks 5.2).
 const withNamespace = (namespace: string | null) =>
@@ -109,7 +133,10 @@ describe("NewProjectDialog", () => {
   it("asks Ontology or Taxonomy first, each with its sentence, and nothing chosen", () => {
     renderDialog();
     const group = screen.getByRole("group", { name: "What are you making?" });
-    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    // The kind's two, not Location's (projects-anywhere 5.2).
+    const radios = within(screen.getByRole("group", { name: "What are you making?" })).getAllByRole(
+      "radio",
+    ) as HTMLInputElement[];
     expect(radios.map((r) => r.checked)).toEqual([false, false]);
     // The first control of the form, before the name.
     expect(group.compareDocumentPosition(field("Name")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -169,6 +196,65 @@ describe("NewProjectDialog", () => {
     expect(create().getAttribute("aria-disabled")).toBe("true");
   });
 
+  it("starts on Semantic Studio's folder and sends no location (projects-anywhere 5.2)", async () => {
+    const { onCreate } = renderDialog();
+    const group = screen.getByRole("group", { name: "Location" });
+    expect((screen.getByRole("radio", { name: "Semantic Studio's folder" }) as HTMLInputElement).checked).toBe(true);
+    expect(group.textContent).not.toContain("will be made in");
+    fireEvent.change(field("Name"), { target: { value: "Pets" } });
+    kind("Ontology");
+    await act(async () => {
+      fireEvent.click(create());
+    });
+    expect(onCreate.mock.calls[0][0]).not.toHaveProperty("location");
+  });
+
+  it("a folder you choose: Create waits for a folder, says where, and sends it (AC-1)", async () => {
+    const { onCreate } = renderDialog();
+    fireEvent.change(field("Name"), { target: { value: "Motor catalogue" } });
+    kind("Ontology");
+    fireEvent.click(screen.getByRole("radio", { name: "A folder you choose" }));
+    expect(reasonOf(create())).toBe("Choose a folder for the project, or keep Semantic Studio's folder.");
+    const choose = screen.getByRole("button", { name: "Choose a folder…" });
+    choose.focus();
+    await act(async () => {
+      fireEvent.click(choose);
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const browser = screen.getByRole("dialog", { name: "Choose where the project goes" });
+    // The browser's own sentence, before the choice.
+    expect(browser.textContent).toContain("The project will be made in D:\\Work\\Motor catalogue.");
+    // Escape is the browser's while it is open: New project stays.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Choose this folder" }));
+    });
+    expect(screen.queryByRole("dialog", { name: "Choose where the project goes" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "New project" })).toBeTruthy();
+    expect(screen.getByText("The project will be made in D:\\Work\\Motor catalogue.")).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Choose another folder/ }));
+    expect(create().getAttribute("aria-disabled")).toBe("false");
+    await act(async () => {
+      fireEvent.click(create());
+    });
+    expect(onCreate.mock.calls[0][0].location).toEqual({ parent: "D:\\Work" });
+  });
+
+  it("Escape in the folder browser closes it, not New project", async () => {
+    const { onClose } = renderDialog();
+    fireEvent.click(screen.getByRole("radio", { name: "A folder you choose" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Choose a folder…" }));
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Choose where the project goes" })).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("creates from a template with the fields it shows", async () => {
     const { onCreate } = renderDialog();
     fireEvent.change(field("Name"), { target: { value: "Pets" } });
@@ -210,7 +296,10 @@ describe("NewProjectDialog", () => {
     renderDialog();
     kind("Ontology");
     fireEvent.change(field("Start from"), { target: { value: "library:ont-1" } });
-    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    // The kind's two, not Location's (projects-anywhere 5.2).
+    const radios = within(screen.getByRole("group", { name: "What are you making?" })).getAllByRole(
+      "radio",
+    ) as HTMLInputElement[];
     expect(radios.map((r) => r.checked)).toEqual([false, false]);
     const hint = document.getElementById(field("Start from").getAttribute("aria-describedby")!)!;
     expect(hint.textContent).toContain("concepts and no classes make a taxonomy");

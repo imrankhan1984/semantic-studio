@@ -5,9 +5,12 @@ FILE: backend/app/projects.py
 
 SUMMARY
     The user's own work: one folder per project under <data dir>/projects,
-    each with a project.json manifest (D-080). Create from a template or from a
-    library ontology, list at startup, rename, duplicate, move to a recoverable
-    trash, and export as a zip. Also the per-project saved-query store.
+    or in a folder the person chose (projects-anywhere, D-134), each with a
+    project.json manifest (D-080). Create from a template or from a library
+    ontology, here or in a chosen folder; open a project folder from
+    elsewhere, locate a moved one, take one off Home; list at startup,
+    rename, duplicate, move to a recoverable trash, and export as a zip.
+    Also the per-project saved-query store.
 
 BASIC IDEA
     A project is a folder, and the manifest is the only thing listing reads, so
@@ -67,6 +70,42 @@ BASIC IDEA
     Delete never destroys: the folder moves into projects/.trash/, and the
     trash is emptied by hand (open question 3, closed as recommended).
 
+    Projects anywhere (projects-anywhere 5.1 to 5.6, D-134). A project lives
+    in the default folder, <data dir>/projects/<id>, or in a folder the
+    person chose, recorded in <data dir>/project-locations.json as
+    {id: {folder, addedAt, name}}. Only this module reads or writes that
+    file (test_project_locations.py's scan). folder() still fullmatches the
+    id first, then asks the registry; any id it does not hold resolves under
+    the default folder exactly as before, so every caller of folder() and
+    inside() is unchanged and a default-folder project is byte for byte what
+    it was. The registry is read at call time, parsed again only when the
+    file's (mtime, size) moved, and written under the store's lock by
+    os.replace from a temporary file.
+
+    A project's id is where it was found -- its default folder's name or
+    its registry key -- never the manifest's `id`, which is still written
+    for older versions of the app and never read: a folder copied by hand
+    was two cards with one id, and opening either opened the first. A
+    folder opened is a second project with its own id.
+
+    Every folder path from the page goes through folders.py's three gates
+    (the string, the disk, the refused-folder table) before anything here
+    touches it. A project.json the app did not write is untrusted input:
+    read with a 1 MB cap and every field held to the rules create holds it
+    to (check_manifest), before the registry entry is written; at each open
+    of a registered project the manifest is checked again, as a Git pull
+    may have changed it, its document paths left to the folder index,
+    which drops one it cannot use.
+
+    The app never moves, renames or deletes a folder outside its data
+    folder: Delete of a registered project is OwnFolder (409) and Remove
+    from Home takes the registry entry only. The one exception is New
+    project's own subfolder, removed file by file if the registry write
+    after it fails, as it holds only what was written a moment before.
+    Duplicate always copies into the default folder, a chosen folder's .git
+    left behind. New project in a chosen folder writes a .gitignore (.draft/,
+    .trash/, data/); a folder opened never gets one.
+
     A project may hold data snapshots in data/<sid>/ (csv-data-import 5.6),
     which snapshots.py keeps; the manifest's `data` list, written there, is
     the card's line, so listing still opens nothing else. Export and
@@ -104,6 +143,8 @@ INPUTS / INPUT SOURCES
     - The data directory from the ontology store (SEMANTIC_STUDIO_DATA_DIR).
     - Templates in app/templates/.
     - A library ontology's graph, for "Start a project from this".
+    - project-locations.json; a chosen folder's path, held to folders.py;
+      a project.json from a folder the app did not write.
 
 EXPECTED OUTPUT
     - Project folders and manifests on disk, and manifest dicts for the API;
@@ -111,8 +152,10 @@ EXPECTED OUTPUT
     - <doc>.layout.json, read, validated and written atomically.
     - Files and folders made, moved and trashed; the folder index's answer
       (entries, folders, found, missing, skipped).
+    - The registry written; summaries carrying `folder` and `missing`.
     - Raises ProjectError (400, a sentence), PathRefused (422, a sentence and
-      its field), UnknownProject and UnknownDocument (404).
+      its field), UnknownProject and UnknownDocument (404), AlreadyOnHome and
+      OwnFolder (409), NotRegistered (404).
 ================================================================================
 """
 
@@ -136,7 +179,7 @@ from typing import Callable, Optional
 from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import DCTERMS, OWL, RDF, RDFS, SKOS
 
-from . import naming, references, settings, vocabularies
+from . import folders, naming, references, settings, vocabularies
 from .queries_store import SavedQueryStore
 
 # What create() mints. fullmatch, never match: `$` also matches before a
@@ -190,6 +233,17 @@ TEMPLATE_DIR = Path(__file__).parent / "templates"
 MANIFEST = "project.json"
 DRAFT_DIR = ".draft"
 TRASH_DIR = ".trash"
+# The registry of projects in folders the person chose (projects-anywhere
+# 5.1, D-134), in the data folder. Only this module reads or writes it;
+# test_project_locations.py's scan holds every other module to that.
+LOCATIONS_FILE = "project-locations.json"
+# What a project.json from a folder the app did not write may weigh (5.4
+# item 3), read capped before it is parsed.
+MANIFEST_MAX_BYTES = 1024 * 1024
+# Written into a project New project makes in a chosen folder, never into a
+# folder that is opened (5.2 item 4, Section 15 question 3): drafts stay out
+# of Git, and so do data snapshots, which hold real data (D-073).
+GITIGNORE = ".draft/\n.trash/\ndata/\n"
 
 # A base IRI is absolute and ends where a local name can be appended. The
 # character class keeps it from closing the <...> it is written into.
@@ -315,6 +369,24 @@ class UnknownProject(LookupError):
 
 class UnknownDocument(LookupError):
     """A document id the manifest does not hold, or one not created yet."""
+
+
+class AlreadyOnHome(ProjectError):
+    """A folder that is already a project on Home (5.1 item 3): 409, with
+    the id of the card the interface then focuses."""
+
+    def __init__(self, message: str, pid: str):
+        super().__init__(message)
+        self.pid = pid
+
+
+class OwnFolder(ProjectError):
+    """Delete asked of a project in a folder the person chose (5.6 item 2):
+    409, and nothing moves."""
+
+
+class NotRegistered(LookupError):
+    """A location route for a project in the default folder (8.2): 404."""
 
 
 class PathRefused(ProjectError):
@@ -668,6 +740,13 @@ class ProjectStore:
         self.dir = Path(data_dir) / "projects"
         self.dir.mkdir(parents=True, exist_ok=True)
         self.trash = self.dir / TRASH_DIR
+        self.registry_path = Path(data_dir) / LOCATIONS_FILE
+        # The registry as last read, by the file's (mtime, size): read at
+        # call time, but parsed again only when the file moved, so the
+        # folder() every route asks costs one stat (Section 10's open ratio).
+        self._registry_seen: Optional[tuple] = None
+        self._registry_held: dict = {}
+        folders.set_data_dir(Path(data_dir))
         self._lock = threading.Lock()
         # Each layout as last read or written, by file. Opening a file just
         # replaced costs about 130 ms on Windows while a scanner looks at it
@@ -682,13 +761,89 @@ class ProjectStore:
 
         The id is matched in full before it touches the filesystem, so `..`, a
         backslash, a drive letter or an absolute path never becomes a path.
+        Then the registry is asked (5.1 item 2): a project in a folder the
+        person chose is there, any other id resolves under the default
+        folder as it always has. Every caller of folder() and inside()
+        works unchanged, as the root is the only thing that moved.
         """
         if not isinstance(pid, str) or not PROJECT_ID.fullmatch(pid):
             raise UnknownProject(pid)
-        path = self.dir / pid
+        path = self.registered(pid)
+        if path is None:
+            path = self.dir / pid
         if not (path / MANIFEST).is_file():
+            # A registered folder that moved or went is 404 on every route
+            # but the list, which says so (5.5 item 3).
             raise UnknownProject(pid)
         return path
+
+    # --- the registry (5.1, D-134) ---------------------------------------------
+
+    def registry(self) -> dict:
+        """{pid: {folder, addedAt, name}}, read at call time, entries copied
+        one level down: callers change an entry before writing."""
+        return {pid: dict(entry) for pid, entry in self._registry_now().items()}
+
+    def _registry_now(self) -> dict:
+        """The registry as held, never to be changed by the caller: what
+        folder() reads on every route, so no copy is made for it. A damaged
+        file is read as empty rather than refusing every route; an entry
+        whose id or folder breaks the rules is passed over, and a folder is
+        held to folders.path_error again, so a network path written into the
+        file by hand never reaches the disk."""
+        try:
+            seen = os.stat(self.registry_path)
+        except OSError:
+            return {}
+        mark = (seen.st_mtime_ns, seen.st_size)
+        if mark != self._registry_seen:
+            try:
+                data = json.loads(self.registry_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                data = {}
+            held = {}
+            if isinstance(data, dict):
+                for pid, entry in data.items():
+                    if (
+                        isinstance(pid, str) and PROJECT_ID.fullmatch(pid)
+                        and isinstance(entry, dict) and isinstance(entry.get("folder"), str)
+                        and folders.path_error(entry["folder"]) is None
+                    ):
+                        held[pid] = entry
+            self._registry_held, self._registry_seen = held, mark
+        return self._registry_held
+
+    def _write_registry(self, registry: dict) -> None:
+        """Under the store's lock, by the caller: a temporary file replaced
+        into place, as layouts are."""
+        tmp = self.registry_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(registry, ensure_ascii=False, indent=2), encoding="utf-8")
+        _replace(tmp, self.registry_path)
+        # What was written is what is held: two writes in one tick of the
+        # file's mtime, of one size, would otherwise read as no change.
+        self._registry_held = {pid: dict(entry) for pid, entry in registry.items()}
+        seen = os.stat(self.registry_path)
+        self._registry_seen = (seen.st_mtime_ns, seen.st_size)
+
+    def registered(self, pid: str) -> Optional[Path]:
+        """The chosen folder of a registered project, else None."""
+        entry = self._registry_now().get(pid)
+        return folders.normal(entry["folder"]) if entry else None
+
+    def _registered_by_folder(self, path: Path, registry: dict) -> Optional[str]:
+        """The id already naming this folder, compared with normcase (5.1
+        item 3), so a second door to the same folder is refused."""
+        wanted = folders.key(path)
+        for pid, entry in registry.items():
+            if folders.key(folders.normal(entry["folder"])) == wanted:
+                return pid
+        return None
+
+    def _mint(self, registry: dict) -> str:
+        while True:
+            pid = "prj-" + uuid.uuid4().hex[:12]
+            if pid not in registry and not (self.dir / pid).exists():
+                return pid
 
     @staticmethod
     def check_id(doc: str) -> str:
@@ -804,13 +959,29 @@ class ProjectStore:
             self.write_manifest(pid, manifest)
         return manifest
 
+    def summary(self, manifest: dict, pid: str, folder: Optional[Path] = None) -> dict:
+        """The card's data. The id is the caller's -- where the project was
+        found -- never the manifest's `id`, which is written for older
+        versions of the app and never read (5.1 item 4): a folder copied by
+        hand was two cards with one id, and opening either opened the first.
+        The registry is asked once for the project's chosen folder."""
+        entry = self.registry().get(pid)
+        if entry is not None:
+            folder = folders.normal(entry["folder"])
+        return self._summary(manifest, pid, folder, entry.get("addedAt") if entry else None)
+
     @staticmethod
-    def summary(manifest: dict) -> dict:
+    def _summary(manifest: dict, pid: str, folder: Optional[Path], added: Optional[str]) -> dict:
+        """summary() with the registry already read: `folder` is the chosen
+        folder of a registered project, None for the default folder. The
+        list reads the registry once for every card."""
         return {
-            "id": manifest["id"],
+            "id": pid,
             "name": manifest["name"],
-            "createdAt": manifest["createdAt"],
-            "updatedAt": manifest["updatedAt"],
+            # A project.json the app did not write may lack its dates: the
+            # time it came on Home stands in.
+            "createdAt": manifest.get("createdAt") or added or "",
+            "updatedAt": manifest.get("updatedAt") or added or "",
             "baseIri": manifest["baseIri"],
             "prefix": manifest["prefix"],
             "primaryLanguage": manifest.get("primaryLanguage", "en"),
@@ -835,6 +1006,30 @@ class ProjectStore:
             "naming": manifest.get("naming"),
             "shapesBaseIri": manifest.get("shapesBaseIri"),
             "dataBaseIri": manifest.get("dataBaseIri"),
+            # Where a project in a chosen folder lives, for the card's line
+            # (Section 6); None in the default folder. `missing` is the
+            # list's alone (5.5 item 1).
+            "folder": str(folder) if folder is not None else None,
+            "missing": False,
+            # When it came on Home: a project opened from a colleague's
+            # folder is listed first though its own dates are older.
+            "addedAt": added,
+        }
+
+    @staticmethod
+    def _missing(pid: str, entry: dict) -> dict:
+        """A registered project whose folder holds no project.json now (5.5
+        item 1): its last folder and name, and nothing that came from the
+        folder, as nothing there can be read."""
+        added = entry.get("addedAt") or ""
+        name = entry.get("name") if isinstance(entry.get("name"), str) else None
+        return {
+            "id": pid, "name": name or folders.normal(entry["folder"]).name,
+            "createdAt": added, "updatedAt": added, "baseIri": "", "prefix": "",
+            "primaryLanguage": "en", "languages": [], "kind": None, "documents": [],
+            "counts": {}, "data": [], "classType": None, "references": [], "naming": None,
+            "shapesBaseIri": None, "dataBaseIri": None,
+            "folder": str(folders.normal(entry["folder"])), "missing": True, "addedAt": added,
         }
 
     def list(self) -> list[dict]:
@@ -842,6 +1037,9 @@ class ProjectStore:
 
         Reads project.json and nothing else: no Turtle file is opened, which is
         what keeps a hundred projects inside the startup budget (Section 10).
+        The default folder's projects, by folder name, then the registry's,
+        each by its key (5.1 item 4); a registered one whose folder is gone
+        is listed `missing` (5.5 item 1).
         """
         found = []
         for path in self.dir.iterdir():
@@ -849,10 +1047,23 @@ class ProjectStore:
                 continue
             try:
                 manifest = json.loads((path / MANIFEST).read_text(encoding="utf-8"))
-                found.append(self.summary(manifest))
-            except (OSError, ValueError, KeyError):
+                found.append(self._summary(manifest, path.name, None, None))
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 continue  # a damaged folder is skipped, not fatal to the list
-        found.sort(key=lambda m: m["updatedAt"], reverse=True)
+        for pid, entry in self.registry().items():
+            folder = folders.normal(entry["folder"])
+            try:
+                manifest = json.loads((folder / MANIFEST).read_text(encoding="utf-8"))
+                summary = self._summary(manifest, pid, folder, entry.get("addedAt"))
+            except FileNotFoundError:
+                summary = self._missing(pid, entry)
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                # There but unreadable (a merge conflict in project.json, a
+                # folder no longer shared): it cannot be opened, so it reads
+                # as not found, with Locate and Remove from Home.
+                summary = self._missing(pid, entry)
+            found.append(summary)
+        found.sort(key=lambda m: max(m["updatedAt"] or "", m.get("addedAt") or ""), reverse=True)
         return found
 
     # --- create ----------------------------------------------------------------
@@ -871,8 +1082,16 @@ class ProjectStore:
         reference_keys: Optional[list[str]] = None,
         description: Optional[str] = None,
         address: Optional[dict] = None,
+        location: Optional[dict] = None,
     ) -> dict:
         """A new project with model.ttl written, from a template or a library copy.
+
+        `location` is New project's Location group (projects-anywhere 5.2):
+        {parent}, a folder the person chose. The project is then made in a
+        new subfolder of it named from the project's name, refused before
+        anything is written if that subfolder exists, with a .gitignore
+        beside the files a default project holds, and registered. Without
+        it, the default folder, exactly as before.
 
         `source_text` is a library file that was Turtle already, copied
         verbatim so its comments and layout survive; `source_graph` is any
@@ -994,10 +1213,77 @@ class ProjectStore:
 
         copied = copying
         kind = infer_kind(graph) if copied else TEMPLATE_KINDS[template or "empty"]
-        pid = "prj-" + uuid.uuid4().hex[:12]
-        folder = self.dir / pid
-        folder.mkdir()
+        chosen_folder: Optional[Path] = None
+        if location is not None:
+            chosen_folder = self._new_location(location, name)
+        with self._lock:
+            registry = self.registry()
+            pid = self._mint(registry)
+            if chosen_folder is None:
+                folder = self.dir / pid
+                folder.mkdir()
+                return self._write_new(folder, pid, None, name, text, graph, kind, copied, template,
+                                       base_iri, prefix, primary_language, lines, source_name, chosen)
+            already = self._registered_by_folder(chosen_folder, registry)
+            if already is not None:
+                raise AlreadyOnHome("This project is already on Home.", already)
+            try:
+                # exist_ok=False: a folder that appeared since the check is
+                # never written into (5.2 item 3).
+                chosen_folder.mkdir()
+            except FileExistsError as exc:
+                raise ProjectError(f"{chosen_folder} already exists. Choose another name or folder.") from exc
+            except OSError as exc:
+                raise ProjectError(f"Semantic Studio could not make {chosen_folder}.") from exc
+            written: list[Path] = []
+            try:
+                summary = self._write_new(chosen_folder, pid, written, name, text, graph, kind, copied,
+                                          template, base_iri, prefix, primary_language, lines, source_name,
+                                          chosen)
+                gitignore = chosen_folder / ".gitignore"
+                gitignore.write_text(GITIGNORE, encoding="utf-8", newline="\n")
+                written.append(gitignore)
+                registry[pid] = {"folder": str(chosen_folder), "addedAt": _now(), "name": name}
+                self._write_registry(registry)
+            except Exception as exc:
+                # The subfolder was made a moment ago and holds only what was
+                # just written: those files and it go, and nothing else
+                # (5.2 item 4). Never a tree removal.
+                for path in reversed(written):
+                    path.unlink(missing_ok=True)
+                try:
+                    chosen_folder.rmdir()
+                except OSError:
+                    pass
+                if isinstance(exc, ProjectError):
+                    raise
+                raise ProjectError(f"Semantic Studio could not make the project in {chosen_folder}.") from exc
+            return self.summary(self.manifest(pid), pid, chosen_folder)
+
+    def _new_location(self, location: dict, name: str) -> Path:
+        """The subfolder New project will make in a chosen folder, every
+        check of 5.3 repeated here (the browser's listing is a convenience,
+        never the check), and refused if it exists (5.2 item 3)."""
+        parent_raw = location.get("parent") if isinstance(location, dict) else None
+        try:
+            parent = folders.check(parent_raw, "create")
+            target = parent / folders.folder_name(name)
+        except folders.FolderRefused as exc:
+            raise PathRefused(str(exc), "location") from exc
+        except folders.FolderNotFound as exc:
+            raise PathRefused(str(exc), "location") from exc
+        if os.path.lexists(target):
+            raise PathRefused(f"{target} already exists. Choose another name or folder.", "location")
+        return target
+
+    def _write_new(self, folder: Path, pid: str, written: Optional[list], name, text, graph, kind, copied,
+                   template, base_iri, prefix, primary_language, lines, source_name, chosen) -> dict:
+        """What create writes in a new project folder, the same in the
+        default folder and a chosen one. `written` collects each file, so a
+        failure in a chosen folder removes exactly those."""
+        track = written if written is not None else []
         (folder / "model.ttl").write_text(text, encoding="utf-8")
+        track.append(folder / "model.ttl")
         documents = [{"file": "model.ttl", "role": "model"}]
         if not copied and template_shapes(template or "empty") is not None:
             shapes = render_template(
@@ -1006,6 +1292,7 @@ class ProjectStore:
                 shapes_base=lines["shapes"] if lines else None,
             )
             (folder / DOCUMENTS["shapes"]).write_text(shapes, encoding="utf-8")
+            track.append(folder / DOCUMENTS["shapes"])
             documents.append({"file": "shapes.ttl", "role": "shapes"})
         now = _now()
         manifest = {
@@ -1037,7 +1324,95 @@ class ProjectStore:
         (folder / MANIFEST).write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        return self.summary(manifest)
+        track.append(folder / MANIFEST)
+        return self.summary(manifest, pid, None if written is None else folder)
+
+    # --- a project in a folder the person chose (5.4 to 5.6) ---------------------
+
+    def _read_foreign_manifest(self, folder: Path) -> dict:
+        """A project.json the app did not write (5.4 item 3): read with a
+        1 MB cap, a JSON object, every field held to the rules create holds
+        it to. ProjectError naming the field; nothing is registered."""
+        path = folder / MANIFEST
+        try:
+            if path.is_symlink() or folders._is_link(path):
+                raise ProjectError("This project.json is a link, so Semantic Studio does not read it.")
+            with open(path, "rb") as handle:
+                data = handle.read(MANIFEST_MAX_BYTES + 1)
+        except OSError as exc:
+            raise ProjectError("Semantic Studio cannot read this folder's project.json.") from exc
+        if len(data) > MANIFEST_MAX_BYTES:
+            raise ProjectError("This project.json is larger than 1 MB, more than a project's manifest can be.")
+        try:
+            manifest = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise ProjectError("This project.json is not JSON the app can read.") from exc
+        check_manifest(manifest)
+        return manifest
+
+    def _project_folder(self, raw: str) -> Path:
+        try:
+            return folders.check(raw, "open")
+        except (folders.FolderRefused, folders.FolderNotFound) as exc:
+            raise PathRefused(str(exc), "folder") from exc
+
+    def open_location(self, raw: str) -> dict:
+        """Open project folder (5.4): the folder passes every check of 5.3
+        again, its project.json is read as untrusted input, and only then is
+        the registry entry written, under a new id (5.1 item 4). The project
+        is not opened; its first open runs the folder index as any does."""
+        folder = self._project_folder(raw)
+        manifest = self._read_foreign_manifest(folder)
+        with self._lock:
+            registry = self.registry()
+            already = self._registered_by_folder(folder, registry)
+            if already is not None:
+                raise AlreadyOnHome("This project is already on Home.", already)
+            pid = self._mint(registry)
+            registry[pid] = {"folder": str(folder), "addedAt": _now(), "name": manifest["name"].strip()}
+            self._write_registry(registry)
+        return self.summary(manifest, pid, folder)
+
+    def locate(self, pid: str, raw: str) -> dict:
+        """Locate… (5.5 item 2): a registered project's folder replaced,
+        its id kept, so its layouts, the tabs remembered by id and the Home
+        order stay. NotRegistered for a project in the default folder."""
+        if not isinstance(pid, str) or not PROJECT_ID.fullmatch(pid):
+            raise UnknownProject(pid)
+        if pid not in self.registry():
+            raise NotRegistered(pid)
+        folder = self._project_folder(raw)
+        manifest = self._read_foreign_manifest(folder)
+        with self._lock:
+            registry = self.registry()
+            if pid not in registry:
+                raise NotRegistered(pid)
+            already = self._registered_by_folder(folder, registry)
+            if already is not None and already != pid:
+                raise AlreadyOnHome("This project is already on Home.", already)
+            registry[pid] = {**registry[pid], "folder": str(folder), "name": manifest["name"].strip()}
+            self._write_registry(registry)
+        return self.summary(manifest, pid, folder)
+
+    def forget(self, pid: str) -> None:
+        """Remove from Home (5.6 item 1): the registry entry and nothing
+        else. The folder is the person's and stays exactly as it is."""
+        if not isinstance(pid, str) or not PROJECT_ID.fullmatch(pid):
+            raise UnknownProject(pid)
+        with self._lock:
+            registry = self.registry()
+            if pid not in registry:
+                raise NotRegistered(pid)
+            del registry[pid]
+            self._write_registry(registry)
+
+    def check_registered(self, pid: str) -> None:
+        """At open, a registered project's manifest is held to 5.4 item 3
+        again: a Git pull may have changed it since Open project folder
+        read it. Its document paths are left to the folder index, which
+        drops one it cannot use (AC-5)."""
+        if self.registered(pid) is not None:
+            check_manifest(self.manifest(pid), documents=False)
 
     def add_document(self, pid: str, role: str) -> dict:
         """Create shapes.ttl at the root, empty, with the id `shapes`: what
@@ -1058,7 +1433,7 @@ class ProjectStore:
             manifest["documents"] = listed
             manifest["updatedAt"] = _now()
             self.write_manifest(pid, manifest)
-        return self.summary(manifest)
+        return self.summary(manifest, pid)
 
     # --- files and folders (multi-file-projects 5.1, 5.2, 5.5) -------------------
 
@@ -1416,13 +1791,20 @@ class ProjectStore:
         if len(name) > NAME_MAX:
             raise ProjectError(f"A project name can be at most {NAME_MAX} characters.")
         # The name only: the IRIs were minted from it once and never follow it.
-        return self.summary(self.update_manifest(pid, name=name, updatedAt=_now()))
+        summary = self.summary(self.update_manifest(pid, name=name, updatedAt=_now()), pid)
+        with self._lock:
+            # The name a missing card would show (5.5 item 1).
+            registry = self.registry()
+            if pid in registry:
+                registry[pid]["name"] = name
+                self._write_registry(registry)
+        return summary
 
     def set_kind(self, pid: str, kind: str) -> dict:
         """Change the tools, not the model: only the manifest is written."""
         if kind not in KINDS:
             raise ProjectError("A project is an ontology or a taxonomy.")
-        return self.summary(self.update_manifest(pid, kind=kind))
+        return self.summary(self.update_manifest(pid, kind=kind), pid)
 
     def ensure_kind(self, pid: str, graph: Graph) -> None:
         """A project made before kinds gets one the first time it is opened,
@@ -1439,19 +1821,22 @@ class ProjectStore:
                 raise ProjectError(f"{tag!r} is not a well-formed language tag (for example fr or es).")
             if tag.lower() != primary.lower() and tag not in cleaned:
                 cleaned.append(tag)
-        return self.summary(self.update_manifest(pid, languages=cleaned))
+        return self.summary(self.update_manifest(pid, languages=cleaned), pid)
 
     def duplicate(self, pid: str) -> dict:
-        """An independent copy: new id, its own files, no draft, no trash link."""
+        """An independent copy: new id, its own files, no draft, no trash link.
+        Always in the default folder, a registered project's too (5.6 item
+        4): the app never writes a folder beside the person's own."""
         source = self.folder(pid)
-        new_id = "prj-" + uuid.uuid4().hex[:12]
+        new_id = self._mint(self.registry())
         target = self.dir / new_id
         # Every file and folder, ids kept (5.7 item 1); never a link, which
-        # would copy whatever it leads to.
+        # would copy whatever it leads to. Nor a chosen folder's .git, which
+        # is the person's repository, not the project.
         def ignored(where: str, names: list[str]) -> set[str]:
             return {
                 n for n in names
-                if n in (DRAFT_DIR, TRASH_DIR) or os.path.islink(os.path.join(where, n))
+                if n in (DRAFT_DIR, TRASH_DIR, ".git") or os.path.islink(os.path.join(where, n))
                 or _is_junction(Path(where, n))
             }
 
@@ -1472,9 +1857,11 @@ class ProjectStore:
                     path.unlink(missing_ok=True)
                     continue
                 entry["id"] = "q-" + uuid.uuid4().hex[:12]
-                ontology_id = str(entry.get("ontologyId", ""))
-                if ontology_id.startswith(pid + "-"):
-                    entry["ontologyId"] = new_id + ontology_id[len(pid):]
+                # Any project id, not only this one's: a folder opened from a
+                # colleague carries the id it was saved under (5.6 item 5).
+                split = split_document_id(str(entry.get("ontologyId", "")))
+                if split is not None:
+                    entry["ontologyId"] = document_id(new_id, split[1])
                 (queries / f"{entry['id']}.json").write_text(
                     json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8"
                 )
@@ -1482,11 +1869,14 @@ class ProjectStore:
         (target / MANIFEST).write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        return self.summary(manifest)
+        return self.summary(manifest, new_id, None)
 
     def trash_project(self, pid: str) -> str:
         """Move the folder into .trash/ and return where it went, relative to the
-        data directory, for the confirmation to name."""
+        data directory, for the confirmation to name. A project in a folder
+        the person chose is OwnFolder: the app never moves, renames or
+        deletes a folder outside its data folder (5.6 item 2)."""
+        self.refuse_own_folder(pid)
         source = self.folder(pid)
         self.trash.mkdir(exist_ok=True)
         target = self.trash / pid
@@ -1495,6 +1885,10 @@ class ProjectStore:
             target = self.trash / f"{pid}-{uuid.uuid4().hex[:6]}"
         shutil.move(str(source), str(target))
         return f"projects/{TRASH_DIR}/{target.name}"
+
+    def refuse_own_folder(self, pid: str) -> None:
+        if isinstance(pid, str) and PROJECT_ID.fullmatch(pid) and pid in self.registry():
+            raise OwnFolder("This project's folder is yours. Remove it from Home instead.")
 
     def export_zip(self, pid: str) -> bytes:
         """The folder as a zip, without the autosave draft or the snapshots
@@ -1508,7 +1902,7 @@ class ProjectStore:
             here = Path(where)
             dirs[:] = [
                 d for d in dirs
-                if not (here == folder and d in (DRAFT_DIR, TRASH_DIR))
+                if not (here == folder and d in (DRAFT_DIR, TRASH_DIR, ".git"))
                 and not os.path.islink(here / d) and not _is_junction(here / d)
             ]
             found += [here / n for n in names if not os.path.islink(here / n)]
@@ -1521,8 +1915,10 @@ class ProjectStore:
     # --- saved queries -----------------------------------------------------------
 
     def queries(self, pid: str) -> SavedQueryStore:
-        """The project's own saved-query store, in <project>/queries/."""
-        return SavedQueryStore(self.folder(pid))
+        """The project's own saved-query store, in <project>/queries/. Its
+        entries are read as this project's whatever id they were saved under
+        (`owner`): a folder opened from elsewhere has a new id (5.6 item 5)."""
+        return SavedQueryStore(self.folder(pid), owner=pid)
 
     def all_query_stores(self) -> list[SavedQueryStore]:
         stores = []
@@ -1532,6 +1928,108 @@ class ProjectStore:
             except UnknownProject:
                 continue
         return stores
+
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_NAMING_KEYS = {"namespace", "layer", "area", "subject", "type", "dataDomain"}
+_FILE_ROLES = {"model", "shapes", *ROLES}
+LANGUAGES_MAX = 50
+
+
+def check_manifest(manifest, documents: bool = True) -> None:
+    """A project.json from a folder the app did not write (5.4 item 3),
+    held to the rules create holds each field to: ProjectError with one
+    sentence naming the field. Unknown fields are kept and ignored; `id`
+    is never read (5.1 item 4). `documents=False` leaves the document
+    paths to the folder index, which drops an entry it cannot use."""
+
+    def refuse(sentence: str) -> None:
+        raise ProjectError(f"This project.json has {sentence}")
+
+    if not isinstance(manifest, dict):
+        raise ProjectError("This project.json is not a project's manifest: it holds no JSON object.")
+    name = manifest.get("name")
+    if not isinstance(name, str) or not name.strip() or len(name.strip()) > NAME_MAX or _CONTROL.search(name):
+        refuse(f"a name the app cannot use (1 to {NAME_MAX} characters, no control characters).")
+    base = manifest.get("baseIri")
+    if not isinstance(base, str) or not BASE_IRI.fullmatch(base):
+        refuse("a base IRI the app cannot use (an absolute IRI ending in # or /, with no space, < or >).")
+    prefix = manifest.get("prefix")
+    if not isinstance(prefix, str) or not PREFIX.fullmatch(prefix):
+        refuse("a prefix the app cannot use (a letter, then letters, digits, hyphens and underscores).")
+    for field, label in (("shapesBaseIri", "shapes base IRI"), ("dataBaseIri", "data base IRI")):
+        value = manifest.get(field)
+        if value is not None and (not isinstance(value, str) or not BASE_IRI.fullmatch(value)):
+            refuse(f"a {label} the app cannot use (an absolute IRI ending in # or /).")
+    primary = manifest.get("primaryLanguage", "en")
+    if not valid_lang(primary):
+        refuse("a primary language that is not a language tag (for example en or en-US).")
+    languages = manifest.get("languages", [])
+    if not isinstance(languages, list) or len(languages) > LANGUAGES_MAX or not all(valid_lang(t) for t in languages):
+        refuse("a list of languages that are not all language tags.")
+    if manifest.get("kind") is not None and manifest.get("kind") not in KINDS:
+        refuse("a kind the app does not know (an ontology or a taxonomy).")
+    if manifest.get("classType") is not None and manifest.get("classType") not in ("owl", "rdfs"):
+        refuse("a class type the app does not know (owl or rdfs).")
+    naming_parts = manifest.get("naming")
+    if naming_parts is not None:
+        ok = isinstance(naming_parts, dict) and set(naming_parts) <= _NAMING_KEYS
+        if ok:
+            for part, value in naming_parts.items():
+                if part == "namespace":
+                    ok = naming.namespace_error(value) is None
+                elif part == "layer":
+                    ok = value in naming.LAYERS
+                elif part == "type":
+                    ok = value in naming.TYPES
+                elif part == "area" and value in ("", None):
+                    ok = True
+                else:
+                    ok = naming.segment_error(value) is None
+                if not ok:
+                    break
+        if not ok:
+            refuse("an address pattern (naming) the app cannot read.")
+    refs = manifest.get("references", [])
+    if not isinstance(refs, list) or not all(isinstance(k, str) and k in references.keys() for k in refs):
+        refuse("a reference ontology the app does not know.")
+    counts = manifest.get("counts", {})
+    if not isinstance(counts, dict) or not all(
+        isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool) and v >= 0 for k, v in counts.items()
+    ):
+        refuse("counts that are not whole numbers.")
+    for field in ("createdAt", "updatedAt"):
+        if manifest.get(field) is not None and (not isinstance(manifest[field], str) or len(manifest[field]) > 64):
+            refuse(f"a date ({field}) that is not one.")
+    docs = manifest.get("documents")
+    if not isinstance(docs, list) or len(docs) > MAX_FILES:
+        refuse(f"a list of files the app cannot use (at most {MAX_FILES}).")
+    seen_ids: set = set()
+    for entry in docs:
+        if not isinstance(entry, dict) or entry.get("role") not in _FILE_ROLES or not isinstance(entry.get("file"), str):
+            refuse("a file entry the app cannot read.")
+        doc = entry.get("id")
+        if doc is not None and (not isinstance(doc, str) or not DOC_ID.fullmatch(doc)):
+            refuse(f"a file id the app cannot use ({str(doc)[:40]!r}).")
+        if doc is not None:
+            if doc in seen_ids:
+                refuse(f"two files with the id {doc}.")
+            seen_ids.add(doc)
+        if documents:
+            file = entry["file"]
+            try:
+                folder_parts(file_folder(file))
+            except PathRefused:
+                refuse(f"a file path that leads outside the project ({file[:80]!r}).")
+            if segment_error(file_basename(file)) is not None:
+                refuse(f"a file name the app cannot use ({file[:80]!r}).")
+    data = manifest.get("data", [])
+    from .snapshots import SNAPSHOT_ID
+
+    if not isinstance(data, list) or not all(
+        isinstance(d, dict) and isinstance(d.get("id"), str) and SNAPSHOT_ID.fullmatch(d["id"]) for d in data
+    ):
+        refuse("a data snapshot the app cannot use.")
 
 
 def split_document_id(oid: str) -> Optional[tuple[str, str]]:

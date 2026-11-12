@@ -14,6 +14,14 @@ SUMMARY
     switched off), an Open button, and a menu with Rename, Change to
     taxonomy… (or ontology…), Duplicate, Export as zip and Delete.
 
+    A project in a folder the person chose (projects-anywhere Section 6)
+    carries a second line, *In D:\Work\Motors*, wrapped and never cut, and
+    its menu has **Remove from Home** where Delete would be: the app never
+    deletes a folder that is the person's (5.6). One whose folder is gone
+    (`missing`) is dimmed and says *Folder not found: …* in words, with
+    **Locate…** and **Remove from Home** and nothing that came from the
+    folder (no counts, no files, no Open).
+
 BASIC IDEA
     Everything on a card comes from the project list App fetched on mount,
     which the server builds from manifests alone, so a project card, like
@@ -35,7 +43,8 @@ INPUTS / INPUT SOURCES (props)
       disabled: one is running on some project.
     - layout: "card" or "row", as the library around it is laid out.
     - openRef: set on the library's first entry, for Home's start focus.
-    - onOpen, onRename, onChangeKind, onDuplicate, onExport, onDelete.
+    - onOpen, onRename, onChangeKind, onDuplicate, onExport, onDelete,
+      onRemoveFromHome, onLocate.
 
 EXPECTED OUTPUT
     - The card, and one callback per action.
@@ -44,6 +53,7 @@ EXPECTED OUTPUT
 
 import { useEffect, useId, useRef, useState } from "react";
 import { dataLabel } from "../modeling/dataSentences";
+import { folderLine, missingLine } from "../projects/folderWords";
 import type { ProjectSummary } from "../types";
 
 /** What a project card's controls do; App owns every one of them. */
@@ -54,6 +64,10 @@ export interface ProjectActions {
   onDuplicate: (pid: string) => void;
   onExport: (pid: string) => void;
   onDelete: (pid: string) => void;
+  /** A project in a folder the person chose: off Home, the folder kept. */
+  onRemoveFromHome: (pid: string) => void;
+  /** A missing project's folder, found again (5.5 item 2). */
+  onLocate: (pid: string) => void;
 }
 
 interface Props extends ProjectActions {
@@ -88,6 +102,8 @@ export default function ProjectCard({
   onDuplicate,
   onExport,
   onDelete,
+  onRemoveFromHome,
+  onLocate,
 }: Props) {
   const headingId = useId();
   const menuId = useId();
@@ -134,9 +150,53 @@ export default function ProjectCard({
     action(project.id);
   };
 
+  const cardClass = `${layout === "row" ? "onto-card onto-row project-card" : "onto-card project-card"}`;
+
+  if (project.missing) {
+    // Nothing here came from the folder: it cannot be read (5.5 item 1).
+    return (
+      <article
+        className={`${cardClass} missing`}
+        aria-labelledby={headingId}
+        aria-busy={busy}
+        data-project-id={project.id}
+      >
+        <div className="onto-body">
+          <div className="onto-head">
+            <h3 id={headingId} className="onto-name" title={project.name}>
+              {project.name}
+            </h3>
+          </div>
+          <p className="project-missing">{missingLine(project.folder ?? "")}</p>
+          <div className="onto-verbs">
+            <button
+              ref={openRef}
+              className="primary"
+              data-card-start=""
+              aria-disabled={disabled}
+              aria-label={`Locate the folder of ${project.name}`}
+              onClick={() => !disabled && onLocate(project.id)}
+            >
+              {busy ? "Working…" : "Locate…"}
+            </button>
+            <button
+              className="ghost"
+              aria-disabled={disabled}
+              aria-label={`Remove ${project.name} from Home`}
+              onClick={() => !disabled && onRemoveFromHome(project.id)}
+            >
+              Remove from Home
+            </button>
+          </div>
+        </div>
+      </article>
+    );
+  }
+
   return (
     <article
-      className={layout === "row" ? "onto-card onto-row project-card" : "onto-card project-card"}
+      className={cardClass}
+      data-project-id={project.id}
       aria-labelledby={headingId}
       aria-busy={busy}
       onKeyDown={(event) => {
@@ -214,15 +274,22 @@ export default function ProjectCard({
                   )}
                   <button onClick={act(onDuplicate)}>Duplicate</button>
                   <button onClick={act(onExport)}>Export as zip</button>
-                  <button className="danger" onClick={act(onDelete)}>
-                    Delete
-                  </button>
+                  {/* The person's own folder is never deleted (5.6): taking
+                      the project off Home is the most a click does. */}
+                  {project.folder ? (
+                    <button onClick={act(onRemoveFromHome)}>Remove from Home</button>
+                  ) : (
+                    <button className="danger" onClick={act(onDelete)}>
+                      Delete
+                    </button>
+                  )}
                 </>
               )}
             </div>
           </div>
         </div>
         {renameError && <p className="form-error">{renameError}</p>}
+        {project.folder && <p className="project-folder">{folderLine(project.folder)}</p>}
         {project.kind && <p className="project-kind">{project.kind === "ontology" ? "Ontology" : "Taxonomy"}</p>}
         <p className="onto-summary">
           {plural(project.counts.classes, "class", "classes")},{" "}
@@ -243,6 +310,7 @@ export default function ProjectCard({
           <button
             ref={openRef}
             className="primary"
+            data-card-start=""
             aria-disabled={disabled}
             aria-label={`Open ${project.name}`}
             onClick={() => !disabled && onOpen(project.id)}

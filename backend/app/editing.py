@@ -3912,6 +3912,11 @@ class EditingService:
             documents = self._open.get(pid)
             index = None
             if documents is None:
+                # A project in a folder the person chose has its manifest
+                # held to the rules again before anything is read: a Git
+                # pull may have changed it since it came on Home
+                # (projects-anywhere 5.4 item 3).
+                self.projects.check_registered(pid)
                 # The folder is the index (5.2): files added outside the app
                 # are found, files gone are dropped, the manifest written
                 # only when either happened.
@@ -3938,7 +3943,7 @@ class EditingService:
                     self._write_counts(pid)
             manifest = self.projects.manifest(pid)
         result = {
-            "project": self.projects.summary(manifest),
+            "project": self.projects.summary(manifest, pid),
             "documents": [d.state() for d in documents.values()],
             "recovery": self._recovery(documents.values()),
             "folders": self.projects.folders(pid),
@@ -4061,9 +4066,24 @@ class EditingService:
         result = {"entry": entry, "folders": self.projects.folders(pid)}
         if pid in self._open:
             result["document"] = self._install(pid, entry["id"]).state()
-        result["project"] = self.projects.summary(self.projects.manifest(pid))
+        result["project"] = self.projects.summary(self.projects.manifest(pid), pid)
         result["revisionShift"] = self._shift.get(pid, 0)
         return result
+
+    def locate(self, pid: str, folder: str) -> dict:
+        """Locate… (projects-anywhere 5.5 items 2 and 4): a registered
+        project's folder found again, its id kept. Open or not: an open
+        project whose folder went keeps its unsaved changes until it is
+        found, so each open file is told its new root and path under every
+        lock, as a moved file is, and a save then writes where it lives."""
+        with self._all_locks(pid):
+            summary = self.projects.locate(pid, folder)
+            root = self.projects.folder(pid)
+            for document in self._open.get(pid, {}).values():
+                document.root = root
+                document.path = root.joinpath(*document.file.split("/"))
+                document.ontology.data_path = document.path
+        return summary
 
     def move_file(self, pid: str, doc: str, name: Optional[str], folder: Optional[str]) -> dict:
         """Rename or move (5.5 item 6): the path only. The open file keeps

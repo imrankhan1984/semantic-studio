@@ -262,6 +262,12 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   removeProjectFolder: () => api.removeProjectFolder("prj-1", "vocab"),
   renameProjectFolder: () => api.renameProjectFolder("prj-1", "vocab", "kit"),
   pathRefusal: async () => api.pathRefusal(null),
+  // projects-anywhere PR 1: the folder browser, Open project folder,
+  // Locate… and Remove from Home.
+  listFolders: () => api.listFolders("D:\\Work", "create"),
+  openProjectFolder: () => api.openProjectFolder("D:\\Work\\Motors"),
+  locateProject: () => api.locateProject("prj-1", "D:\\Work\\Motors"),
+  removeFromHome: () => api.removeFromHome("prj-1"),
 };
 
 describe("api client header (S-6)", () => {
@@ -297,11 +303,12 @@ describe("api client header (S-6)", () => {
     // and a file (vocabularies-and-ontologies 5.3); the Files panel two
     // POSTs, two PATCHes (a file's rename or move, a folder's rename) and
     // two DELETEs (multi-file-projects 8.2); a rename's dry run one POST
-    // (links-between-files 5.2).
+    // (links-between-files 5.2); projects anywhere one POST (Open project
+    // folder), a PATCH (Locate…) and a DELETE (Remove from Home).
     const expected = [
-      ...Array(9).fill("DELETE"),
-      ...Array(4).fill("PATCH"),
-      ...Array(38).fill("POST"),
+      ...Array(10).fill("DELETE"),
+      ...Array(5).fill("PATCH"),
+      ...Array(39).fill("POST"),
       ...Array(8).fill("PUT"),
     ];
     expect(mutating.map((r) => r.method).sort()).toEqual(expected);
@@ -310,6 +317,13 @@ describe("api client header (S-6)", () => {
         "X-Semantic-Studio": "1",
       });
     }
+  });
+
+  it("sends the header on the folder listing, a GET that reveals folder names", async () => {
+    await api.listFolders("D:\\Work", "open", "Mo");
+    expect(recorded[0].method).toBe("GET");
+    expect(recorded[0].url).toBe("/api/folders?mode=open&path=D%3A%5CWork&filter=Mo");
+    expect(recorded[0].headers).toMatchObject({ "X-Semantic-Studio": "1" });
   });
 
   it("keeps the JSON content type beside the header", async () => {

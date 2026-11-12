@@ -19,7 +19,11 @@ SUMMARY
     (vocabularies-and-ontologies 5.2, 5.3, D-128); and a project's files
     and folders (multi-file-projects 8.2, D-131): New file, a file's rename
     or move (PATCH) and removal (DELETE), and a folder's creation, rename
-    (PATCH, 5.10) and removal.
+    (PATCH, 5.10) and removal; and projects anywhere (projects-anywhere
+    8.2, D-134): a create's `location`, Open project folder (POST
+    /locations), Locate… (PATCH /{pid}/location) and Remove from Home
+    (DELETE /{pid}/location), and Delete refused (409) for a project in a
+    folder the person chose.
 
 BASIC IDEA
     Thin, like the other routers: shape the request, call projects.py or
@@ -90,7 +94,17 @@ from ..editing import (
     editing_service,
     project_store,
 )
-from ..projects import DESCRIPTION_MAX, LAYOUT_MAX_BYTES, PathRefused, ProjectError, UnknownDocument, UnknownProject
+from ..projects import (
+    DESCRIPTION_MAX,
+    LAYOUT_MAX_BYTES,
+    AlreadyOnHome,
+    NotRegistered,
+    OwnFolder,
+    PathRefused,
+    ProjectError,
+    UnknownDocument,
+    UnknownProject,
+)
 from ..store import ParseError, ParseTimeout, detect_format, store
 from . import ontologies
 
@@ -103,6 +117,19 @@ class AddressGroup(BaseModel):
     subject: str = Field(max_length=64)
     type: Literal["ontology", "taxonomy", "vocabulary"]
     dataDomain: str = Field(max_length=64)
+
+
+class Location(BaseModel):
+    """New project's Location group (projects-anywhere 5.2): the folder the
+    person chose, which the project is made inside. Held to every rule of
+    5.3 in folders.py, whatever the browser's listing said."""
+    parent: str = Field(max_length=1024)
+
+
+class FolderChoice(BaseModel):
+    """Open project folder and Locate… (5.4, 5.5): the folder that holds a
+    project.json."""
+    folder: str = Field(max_length=1024)
 
 
 class CreateProject(BaseModel):
@@ -120,6 +147,8 @@ class CreateProject(BaseModel):
     # New project's Address group (design-checks 5.2), sent only with a
     # namespace set; each part is held to naming.py's rule in projects.py.
     address: Optional[AddressGroup] = None
+    # Absent: Semantic Studio's folder, as before (5.2 item 1).
+    location: Optional[Location] = None
 
     @field_validator("references")
     @classmethod
@@ -202,6 +231,16 @@ def _errors():
         yield
     except (UnknownProject, UnknownDocument) as exc:
         raise HTTPException(status_code=404, detail="There is no such project or document.") from exc
+    except NotRegistered as exc:
+        # A location route for a project in the default folder (8.2).
+        raise HTTPException(status_code=404, detail="That project is in Semantic Studio's folder.") from exc
+    except AlreadyOnHome as exc:
+        # The card the interface focuses goes with the sentence (Section 6).
+        raise HTTPException(
+            status_code=409, detail={"code": "already_on_home", "id": exc.pid, "message": str(exc)},
+        ) from exc
+    except OwnFolder as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except PathRefused as exc:
         # A name or a folder outside 8.3, or a limit of 8.5 (multi-file-
         # projects 5.5 item 8): the sentence and the field it belongs beside.
@@ -281,6 +320,7 @@ def create_project(body: CreateProject) -> dict:
                     source_name=source.name, reference_keys=body.references,
                     description=body.description,
                     address=body.address.model_dump() if body.address else None,
+                    location=body.location.model_dump() if body.location else None,
                 )
             return project_store.create(
                 name=body.name, base_iri=body.baseIri, prefix=body.prefix,
@@ -288,13 +328,58 @@ def create_project(body: CreateProject) -> dict:
                 source_name=source.name, reference_keys=body.references,
                 description=body.description,
                 address=body.address.model_dump() if body.address else None,
+                location=body.location.model_dump() if body.location else None,
             )
         return project_store.create(
             name=body.name, base_iri=body.baseIri, prefix=body.prefix,
             primary_language=body.primaryLanguage, template=body.template or "empty",
             reference_keys=body.references, description=body.description,
             address=body.address.model_dump() if body.address else None,
+            location=body.location.model_dump() if body.location else None,
         )
+
+
+@router.post("/locations")
+def open_location(body: FolderChoice) -> dict:
+    """Open project folder (projects-anywhere 5.4): the folder is checked
+    again here and its project.json read as untrusted input before the
+    registry entry is written. The project is put on Home, not opened."""
+    with _errors():
+        return project_store.open_location(body.folder)
+
+
+@router.patch("/{pid}/location")
+async def locate_project(pid: str, request: Request) -> dict:
+    """Locate… (5.5 item 2): a moved folder found again, the id kept. The
+    id is matched against the registry before the body is read, as every
+    route taking {pid} matches it first: one never issued is 404."""
+    with _errors():
+        if project_store.registered(pid) is None:
+            project_store.folder(pid)  # 404 for an id never issued
+            raise NotRegistered(pid)
+    payload = await ontologies.read_json_capped(request, SMALL_BODY_MAX_BYTES, SMALL_BODY_TOO_LARGE)
+    try:
+        body = FolderChoice.model_validate(payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="The body is {folder}.") from exc
+    with _errors():
+        # An open project's files are told their new folder (5.5 item 4).
+        return await run_in_threadpool(editing_service.locate, pid, body.folder)
+
+
+@router.delete("/{pid}/location")
+def remove_from_home(pid: str) -> dict:
+    """Remove from Home (5.6 item 1): the registry entry only; the folder
+    stays exactly as it is. Closed first, as Delete closes, so unsaved
+    changes are 409 and never lost."""
+    with _errors():
+        if project_store.registered(pid) is None:
+            project_store.folder(pid)  # 404 for an id never issued
+            raise NotRegistered(pid)
+        if editing_service.is_open(pid):
+            editing_service.close(pid, discard=False)
+        project_store.forget(pid)
+        return {"removed": pid}
 
 
 @router.patch("/{pid}")
@@ -308,7 +393,7 @@ def patch_project(pid: str, body: PatchProject) -> dict:
         if body.kind is not None:
             summary = project_store.set_kind(pid, body.kind)
         if summary is None:
-            summary = project_store.summary(project_store.manifest(pid))
+            summary = project_store.summary(project_store.manifest(pid), pid)
         editing_service.refresh_manifest(pid)
         return summary
 
@@ -321,8 +406,11 @@ def duplicate_project(pid: str) -> dict:
 
 @router.delete("/{pid}")
 def delete_project(pid: str) -> dict:
-    """Move the folder to projects/.trash/, and say where it went."""
+    """Move the folder to projects/.trash/, and say where it went. A project
+    in a folder the person chose is 409 before anything closes or moves
+    (projects-anywhere 5.6 item 2)."""
     with _errors():
+        project_store.refuse_own_folder(pid)
         project_store.folder(pid)
         editing_service.close(pid, discard=False)
         location = project_store.trash_project(pid)

@@ -1,0 +1,73 @@
+{
+  "description": "projects-anywhere 5.2 item 2, one table for the subfolder New project makes from a project name, read by backend/tests/test_project_locations.py and frontend/src/projects/folderWords.test.ts so the two sides cannot drift. Each row is a name typed and the folder name made, or null when refused.",
+  "names": [
+    [
+      "Motor catalogue",
+      "Motor catalogue"
+    ],
+    [
+      "Motors/Pumps: v2?",
+      "Motors-Pumps- v2-"
+    ],
+    [
+      "  ..Hidden",
+      "Hidden"
+    ],
+    [
+      "Café ☕ 😀 list",
+      "Caf- - - list"
+    ],
+    [
+      "CON",
+      null
+    ],
+    [
+      "nul",
+      null
+    ],
+    [
+      "LPT3.txt",
+      null
+    ],
+    [
+      "com1 ",
+      null
+    ],
+    [
+      "Ends with dot.",
+      "Ends with dot"
+    ],
+    [
+      "...",
+      null
+    ],
+    [
+      "-x-",
+      "x-"
+    ],
+    [
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    ],
+    [
+      "Tab\there",
+      "Tab-here"
+    ],
+    [
+      "Kraków ontology",
+      "Krak-w ontology"
+    ],
+    [
+      "x.y.z",
+      "x.y.z"
+    ],
+    [
+      "aux.ttl",
+      null
+    ],
+    [
+      "Conference",
+      "Conference"
+    ]
+  ]
+}
