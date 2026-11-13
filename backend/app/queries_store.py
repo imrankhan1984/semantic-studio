@@ -26,6 +26,12 @@ BASIC IDEA
     check here is the second line, and it covers get and delete as well,
     which take the id from the URL.
 
+    A project's own store is made with its `owner`, the project's id, and
+    reads every entry as that project's: an entry names its document as
+    <project id>-<doc>, and a folder opened from a colleague, or cut off
+    Home and opened again, has a new id here (projects-anywhere 5.6 item 5).
+    Read only: nothing on disk is rewritten for it.
+
 INPUTS / INPUT SOURCES
     - The data directory (shared with the ontology store).
     - Save requests carrying: name, ontology id/name, mode, builder state (or
@@ -70,9 +76,14 @@ def _with_mode(entry: dict) -> dict:
 class SavedQueryStore:
     """CRUD over saved-query JSON files in <data_dir>/queries."""
 
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, owner: Optional[str] = None) -> None:
         # Queries live beside the ontologies, in their own subfolder.
         self.dir = Path(data_dir) / "queries"
+        # A project's own store reads every entry as that project's: the id
+        # an entry was saved under is a project id that may be another's,
+        # when the folder came from a colleague and has a new id here
+        # (projects-anywhere 5.6 item 5). Read only; nothing is rewritten.
+        self.owner = owner
         self.dir.mkdir(parents=True, exist_ok=True)
         # Serializes writes so concurrent saves cannot interleave.
         self._lock = threading.Lock()
@@ -92,6 +103,7 @@ class SavedQueryStore:
                 entry = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 continue  # skip corrupt files rather than failing the request
+            entry = self._owned(entry)
             # When an ontology id is given, only return that ontology's queries.
             if ontology_id and entry.get("ontologyId") != ontology_id:
                 continue
@@ -109,9 +121,16 @@ class SavedQueryStore:
         if not path.exists():
             return None
         try:
-            return _with_mode(json.loads(path.read_text(encoding="utf-8")))
+            return _with_mode(self._owned(json.loads(path.read_text(encoding="utf-8"))))
         except Exception:
             return None
+
+    def _owned(self, entry: dict) -> dict:
+        if self.owner and isinstance(entry, dict):
+            match = re.fullmatch(r"prj-[0-9a-f]{12}-(model|shapes|f[0-9a-f]{8})", str(entry.get("ontologyId", "")))
+            if match:
+                entry["ontologyId"] = f"{self.owner}-{match.group(1)}"
+        return entry
 
     def save(
         self,

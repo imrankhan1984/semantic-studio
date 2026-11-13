@@ -104,6 +104,9 @@ function projects(list: ProjectSummary[], extra: Partial<HomeProjects> = {}): Ho
     error: null,
     busyId: null,
     onNew: vi.fn(),
+    onOpenFolder: vi.fn(),
+    onRemoveFromHome: vi.fn(),
+    onLocate: vi.fn(),
     onOpen: vi.fn(),
     onRename: vi.fn(async () => undefined),
     onChangeKind: vi.fn(),
@@ -299,8 +302,19 @@ describe("HomeScreen library", () => {
     const row = head.querySelector(".home-actions")!;
     const buttons = [...row.querySelectorAll("button")];
     // In reading order, and they differ by their words, never colour alone.
-    expect(buttons.map((b) => b.textContent)).toEqual(["New project", "Open a file", "Load from a URL"]);
-    for (const b of buttons) expect(b.className.split(" ")).toEqual(["primary", "large"]);
+    // Open project folder… stands beside New project, secondary, so a
+    // learner sees one button more and nothing else new (projects-anywhere
+    // Section 7).
+    expect(buttons.map((b) => b.textContent)).toEqual([
+      "New project",
+      "Open project folder…",
+      "Open a file",
+      "Load from a URL",
+    ]);
+    for (const b of buttons.filter((x) => x.textContent !== "Open project folder…")) {
+      expect(b.className.split(" ")).toEqual(["primary", "large"]);
+    }
+    expect(buttons[1].className).toBe("large");
     // Beside the heading: the heading and the row share the library head.
     expect(head.contains(screen.getByRole("heading", { name: "Your library" }))).toBe(true);
 

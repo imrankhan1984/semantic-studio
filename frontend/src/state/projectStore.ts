@@ -97,6 +97,10 @@ BASIC IDEA
     active one's, whose text is `editorDraft` as before. The two are moved
     between only when the active file changes, never on a keystroke.
 
+    A save answered 404 for a project in a folder the person chose says
+    the folder is gone, in projects-anywhere 5.5 item 4's words; the
+    unsaved text stays here until the folder is found.
+
 INPUTS / INPUT SOURCES
     - api.ts, for every project call.
 
@@ -130,6 +134,7 @@ import {
   updateProject,
   validateProject,
 } from "../api";
+import { goneWhileOpen } from "../projects/folderWords";
 import { keptTabs, tabsKey } from "../files/tabs";
 import { validationSummary } from "../modeling/shapeSentences";
 import { failureReason } from "../networkWords";
@@ -1225,6 +1230,14 @@ export const projectStore = {
       set({ documents: withDocument(result.state) });
       announce(confirmRewrite ? `Saved. The previous file was kept as ${backupName(doc)}.` : "Saved.");
       return "saved";
+    } catch (e: unknown) {
+      // A project in a folder the person chose whose folder went while it
+      // was open (projects-anywhere 5.5 item 4): told by the status, never
+      // the words, and said so; nothing unsaved is dropped from here.
+      if (e instanceof ApiError && e.status === 404 && project.folder) {
+        throw new ApiError(goneWhileOpen(project.name), 404, e.detail);
+      }
+      throw e;
     } finally {
       set({ saving: false });
     }

@@ -179,6 +179,9 @@ import {
   duplicateProject,
   exportProject,
   exportSavedQueries,
+  locateProject,
+  openProjectFolder,
+  removeFromHome,
   getGraph,
   getNeighborhood,
   getNodeDetails,
@@ -194,6 +197,8 @@ import {
 import ConfirmDialog from "./components/ConfirmDialog";
 import RemoveDialog from "./components/RemoveDialog";
 import NewProjectDialog, { type NewProjectRequest } from "./components/NewProjectDialog";
+import FolderBrowser from "./components/FolderBrowser";
+import { addedNotice, copiedNotice, foundNotice, removeQuestion, removedNotice } from "./projects/folderWords";
 import ProjectHeader from "./components/ProjectHeader";
 import TurtleEditor from "./components/TurtleEditor";
 import { triggerDownload } from "./download";
@@ -808,6 +813,11 @@ export default function App() {
   const [projectBusyId, setProjectBusyId] = useState<string | null>(null);
   // The New project form, and the library ontology it starts from, if any.
   const [newProject, setNewProject] = useState<{ source?: string } | null>(null);
+  // The folder browser over Home (projects-anywhere 5.4, 5.5): Open project
+  // folder…, or Locate… for a project whose folder moved.
+  const [folderBrowser, setFolderBrowser] = useState<{ purpose: "open" } | { purpose: "locate"; pid: string } | null>(
+    null,
+  );
   // The two questions an exit can need, each holding what to do on the way
   // out once it is answered.
   const [leaveEditor, setLeaveEditor] = useState<(() => void) | null>(null);
@@ -1864,9 +1874,11 @@ export default function App() {
 
   const onDuplicateProject = (pid: string) => {
     setProjectBusyId(pid);
+    const elsewhere = !!projects.find((p) => p.id === pid)?.folder;
     duplicateProject(pid)
       .then((copy) => {
-        setNotice(`Made an independent copy: ${copy.name}.`);
+        // A copy is always made in Semantic Studio's folder (5.6 item 4).
+        setNotice(elsewhere ? copiedNotice(copy.name) : `Made an independent copy: ${copy.name}.`);
         return refreshProjects();
       })
       .catch(failed)
@@ -1896,6 +1908,74 @@ export default function App() {
         .then((result) => {
           if (projectStore.getSnapshot().project?.id === pid) projectStore.reset();
           setNotice(`Deleted "${name}". Its folder was moved to ${result.location} in your data folder; nothing was destroyed.`);
+          return refreshProjects();
+        })
+        .catch(failed)
+        .finally(() => setProjectBusyId(null));
+    };
+    if (projectStore.getSnapshot().project?.id === pid) {
+      exitProject(() => {
+        setActiveId(null);
+        run();
+      });
+    } else run();
+  };
+
+  // Focus a project's card by its id, once the list holding it has drawn.
+  const focusProjectCard = (pid: string) => {
+    requestAnimationFrame(() =>
+      document.querySelector<HTMLElement>(`[data-project-id="${pid}"] [data-card-start]`)?.focus(),
+    );
+  };
+
+  // Open project folder… and Locate… (projects-anywhere 5.4, 5.5 item 2).
+  // A refusal (a folder the rules refuse, a project.json that fails a
+  // field) keeps the browser open with its sentence: the rejection is
+  // FolderBrowser's to show. A folder already on Home focuses its card.
+  const onFolderChosen = async (path: string) => {
+    if (!folderBrowser) return;
+    if (folderBrowser.purpose === "open") {
+      try {
+        const added = await openProjectFolder(path);
+        setFolderBrowser(null);
+        setNotice(addedNotice(added.name));
+        await refreshProjects();
+        focusProjectCard(added.id);
+      } catch (e: unknown) {
+        const detail = e instanceof ApiError ? (e.detail as { code?: string; id?: string } | undefined) : undefined;
+        if (e instanceof ApiError && e.status === 409 && detail?.code === "already_on_home" && detail.id) {
+          setFolderBrowser(null);
+          setNotice(e.message);
+          focusProjectCard(detail.id);
+          return;
+        }
+        throw e;
+      }
+      return;
+    }
+    const pid = folderBrowser.pid;
+    const was = projects.find((p) => p.id === pid)?.name ?? "";
+    const found = await locateProject(pid, path);
+    setFolderBrowser(null);
+    setNotice(foundNotice(was, found.name));
+    await refreshProjects();
+    focusProjectCard(pid);
+  };
+
+  // Remove from Home (5.6 item 1): the registry entry only, asked first in
+  // one sentence saying the folder stays. Not undoable; Open project folder
+  // brings it back.
+  const onRemoveFromHome = (pid: string) => {
+    const project = projects.find((p) => p.id === pid);
+    if (!project) return;
+    const folder = project.folder ?? "";
+    if (!window.confirm(removeQuestion(project.name, folder))) return;
+    const run = () => {
+      setProjectBusyId(pid);
+      removeFromHome(pid)
+        .then(() => {
+          if (projectStore.getSnapshot().project?.id === pid) projectStore.reset();
+          setNotice(removedNotice(project.name, folder));
           return refreshProjects();
         })
         .catch(failed)
@@ -2386,6 +2466,9 @@ export default function App() {
             onDuplicate: onDuplicateProject,
             onExport: onExportProject,
             onDelete: onDeleteProject,
+            onOpenFolder: () => setFolderBrowser({ purpose: "open" }),
+            onRemoveFromHome,
+            onLocate: (pid) => setFolderBrowser({ purpose: "locate", pid }),
           }}
         />
       ) : mode === "shapes" && openProjectSummary ? (
@@ -2801,6 +2884,15 @@ export default function App() {
           // form, which stays mounted under it (design-checks 5.2).
           onOpenNaming={() => setSettingsTab("naming")}
           covered={settingsTab !== null}
+        />
+      )}
+
+      {folderBrowser && (
+        <FolderBrowser
+          mode="open"
+          title={folderBrowser.purpose === "open" ? "Open a project folder" : "Locate the project's folder"}
+          onChoose={onFolderChosen}
+          onCancel={() => setFolderBrowser(null)}
         />
       )}
 

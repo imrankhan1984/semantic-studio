@@ -10,7 +10,10 @@ SUMMARY
     ontologies (reference-ontologies 5.2) -- as cards,
     headed with the three ways in, *New project*, *Open a file* and *Load
     from a URL*, in one row of primary buttons, and a search box
-    (home-and-settings 5.2).
+    (home-and-settings 5.2). *Open project folder…* stands beside New
+    project, secondary (projects-anywhere 5.4); a project card that goes
+    (Delete, Remove from Home) hands focus to the card now in its place,
+    else New project.
 
 BASIC IDEA
     This is StartScreen's successor. That screen was a list, and three things
@@ -96,6 +99,8 @@ export interface HomeProjects extends ProjectActions {
   /** The project an action is running on, or null. */
   busyId: string | null;
   onNew: () => void;
+  /** Open project folder… (projects-anywhere 5.4). */
+  onOpenFolder: () => void;
 }
 
 /** What the library heading says when a mode was chosen with nothing open. The
@@ -269,6 +274,25 @@ export default function HomeScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ontologies]);
 
+  // A project card gone (Delete, Remove from Home): focus to the card now
+  // in its place, else the one before it, else New project (projects-
+  // anywhere Section 6), so a keyboard user is never left on the page.
+  const shownProjects = useRef((projects?.list ?? []).map((p) => p.id));
+  const gridRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const was = shownProjects.current;
+    const now = (projects?.list ?? []).map((p) => p.id);
+    shownProjects.current = now;
+    const gone = was.findIndex((id) => !now.includes(id));
+    if (gone === -1) return;
+    if (document.activeElement && document.activeElement !== document.body) return;
+    const cards = gridRef.current?.querySelectorAll<HTMLElement>("[data-project-id]") ?? [];
+    const next = cards[Math.min(gone, cards.length - 1)];
+    const target = next?.querySelector<HTMLElement>("[data-card-start]") ?? newProjectRef.current ?? startTarget();
+    target?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects?.list]);
+
   // Generate and download the documentation zip, excluding instance data unless
   // `includeIndividuals` is set (DOC-1 D-038). The screen goes busy so a second
   // action cannot start mid-generation, the progress cycles through the live
@@ -437,6 +461,17 @@ export default function HomeScreen({
                     New project
                   </button>
                 )}
+                {/* Secondary: a learner who never needs it sees one button
+                    more and nothing else new (Section 7). */}
+                {projects && (
+                  <button
+                    className="large"
+                    aria-disabled={projectBusyId !== null}
+                    onClick={() => projectBusyId === null && projects.onOpenFolder()}
+                  >
+                    Open project folder…
+                  </button>
+                )}
                 <button
                   ref={openFileRef}
                   className="primary large"
@@ -504,7 +539,7 @@ export default function HomeScreen({
           ) : matching.length === 0 ? (
             <p className="start-empty">Nothing in your library matches “{query.trim()}”.</p>
           ) : (
-            <div className="onto-grid">
+            <div className="onto-grid" ref={gridRef}>
               {matching.map((entry, i) =>
                 entry.kind === "project" && projects ? (
                   <ProjectCard
@@ -519,6 +554,8 @@ export default function HomeScreen({
                     onDuplicate={projects.onDuplicate}
                     onExport={projects.onExport}
                     onDelete={projects.onDelete}
+                    onRemoveFromHome={projects.onRemoveFromHome}
+                    onLocate={projects.onLocate}
                   />
                 ) : entry.kind === "ontology" ? (
                   <OntologyCard

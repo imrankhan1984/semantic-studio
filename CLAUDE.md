@@ -56,8 +56,8 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 2425 tests (+2 marked `network`, deselected)
-cd frontend && npm run test              # 2272 tests, vitest
+cd backend  && python -m pytest tests    # 2538 tests (+2 marked `network`, deselected)
+cd frontend && npm run test              # 2312 tests, vitest
 ```
 
 Both suites must pass before any change is considered done, and locally both
@@ -69,7 +69,7 @@ run everything, budgets included.
 `vite build`) and `docker` (`docker build .`). `budgets` only reports. A build
 is not done until CI is green on its pull request.
 
-**Timing budgets are separated, not deleted.** Fifty-three backend tests carry
+**Timing budgets are separated, not deleted.** Fifty-six backend tests carry
 `@pytest.mark.perf`; twelve frontend tests have `[budget]` in their title. CI runs
 them only in `budgets` (`-m "perf and not network"`, `npm run test:budgets`).
 A command-line `-m` *replaces* `pytest.ini`'s `-m "not network"`, so always name
@@ -195,7 +195,14 @@ backend/app/
   projects.py        Project folders and manifests: create, list, rename,
                      duplicate, trash, export; per-project saved queries;
                      a project's files (D-131): ids, the folder index, the
-                     path rules of 8.3, New file, Move, Remove, folders
+                     path rules of 8.3, New file, Move, Remove, folders;
+                     projects anywhere (D-134): the registry
+                     project-locations.json, Open project folder, Locate,
+                     Remove from Home, the foreign manifest's check
+  folders.py         The folder browser's listing and the one judge of a
+                     folder path from the page (D-135): network and device
+                     paths refused before any filesystem call, the
+                     refused-folder table, links, roots, near a project
   editing.py         The only mutator of a project document: commands, undo,
                      Turtle apply, save rule, autosave, recovery; every file
                      of a project, the lock order, the cross-file refusal;
@@ -268,7 +275,9 @@ frontend/src/
                      order, your work first and the examples last
                      (libraryOrder.ts)
   projects/          Pure New project form logic: the two kinds, defaults
-                     and validation
+                     and validation; folderWords.ts, projects anywhere's
+                     sentences and the subfolder rule (folderName.table.json,
+                     the one table both sides test)
   modeling/          Pure editing-form logic: an entity's blocks read out of
                      its statements, annotation value types and checks, and
                      the sentences a relationship reads as (sentences.ts),
@@ -588,6 +597,18 @@ leaves one behind.
 - A hierarchy move compares where the term sits before and after, in every file; branch rules are read only through `shapes_form.branch_under`, ranges and fillers only through `axioms.class_uses`. The warning is the command's answer (`warnings`, `block`, `about`), kept as the store's `moveWarnings` and said there, so every door warns alike; it never refuses. [Links between files, PR 2]
 - DC-30 and DC-31 are `_COMPUTED`: which file holds a statement comes from `whole`'s `files` and `outside`, never the merged graph; a finding carries `doc`, and the opener goes to that file. [Links between files, PR 2]
 - MoveToFile is the service's, under every lock: `_cross_file` refuses it outside the defining file, the target's half is never held to `_cross_file_change`, its prefixes go through `Change.declare`, and undo restores both texts byte for byte. Its only door is the edit section's button (D-078). [Links between files, PR 2]
+
+**Projects anywhere**
+- A project's id is its registry key or its default folder's name, never the manifest's `id`; `summary` takes the id from its caller (D-134). [Projects anywhere]
+- Only `projects.py` reads or writes `project-locations.json`; `test_project_locations.py`'s AST scan proves it catches a planted reader first. [Projects anywhere]
+- `folder()` fullmatches the id, then asks the registry; an id it does not hold resolves under the default folder as before, so a default-folder project is byte for byte what it was. [Projects anywhere]
+- A folder path from the page passes `folders.path_error` on the string before any filesystem call: a network or device path would open SMB past the broker; `test_folders.py` records every call. Never `os.path.isabs` (true for `\\server\share`) or `realpath` (turns a mapped drive into one). [Projects anywhere]
+- Every refused root goes through `_long_name`, as the chosen path does: an environment folder named by its 8.3 short name (CI's `TEMP`) never prefixes a long path. [table's roots are expanded]
+- The server checks every door's folder again (`folders.check`); the browser's listing is a convenience, never the check. [Projects anywhere]
+- `GET /api/folders` is a guarded read: `local_guard.GUARDED_READS` and the route itself require the client header and a same-origin Origin. [Projects anywhere]
+- A `project.json` the app did not write is read capped at 1 MB and held to `check_manifest` before the registry entry is written, and again at each open of a registered project (its document paths left to the index). [Projects anywhere]
+- The app never moves, renames or deletes a folder outside its data folder: Delete of a registered project is 409, Remove from Home takes the entry only; New project's own subfolder is removed file by file only when its registry write fails. [Projects anywhere]
+- The folder browser's listbox stays mounted when a folder is empty: it holds the focus, and Backspace with it. [Projects anywhere]
 
 **Screens and focus**
 - One global `:focus-visible` rule; the start-screen marker is the only exception (D-022). [focus is now visible]

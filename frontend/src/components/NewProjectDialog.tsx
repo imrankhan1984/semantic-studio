@@ -6,7 +6,9 @@ FILE: frontend/src/components/NewProjectDialog.tsx
 SUMMARY
     The New project form (authoring-foundations 5.1, relationships 5.1):
     first the kind, Ontology or Taxonomy, each with its sentence; then a
-    name, a description, a starting point (the chosen kind's two templates,
+    name, where the project lives (projects-anywhere 5.2: Semantic
+    Studio's folder, or a folder chosen in the app's own folder browser),
+    a description, a starting point (the chosen kind's two templates,
     or an ontology from the library), for a template the reference
     ontologies to reuse terms from (reference-ontologies 5.4), a base IRI
     and a prefix defaulted from the name, and the primary language.
@@ -56,6 +58,16 @@ BASIC IDEA
     is read once, when the form opens: a Save while it is open changes
     nothing here until the form is opened again (5.11).
 
+    **Location** follows the name: two native radios, *Semantic Studio's
+    folder* checked, and *A folder you choose*, with the chosen folder as
+    text and *Choose…*, which opens the folder browser (FolderBrowser) in
+    its Create mode over this form, whose keys rest until it closes and
+    focus comes back to *Choose…*. Under the group, *The project will be
+    made in D:\Work\Motor catalogue.*, the subfolder from the name by the
+    server's rule (projects/folderWords.ts, one table with folders.py).
+    Choosing the second radio with no folder yet makes Create's reason
+    *Choose a folder…*; the server checks the folder again in any case.
+
     The dialog does not create anything itself; it hands the fields to
     onCreate and shows the server's sentence if that fails.
 
@@ -76,6 +88,8 @@ EXPECTED OUTPUT
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { getSettings, listReferences } from "../api";
+import { CHOOSE_A_FOLDER, folderName, willBeMadeIn } from "../projects/folderWords";
+import FolderBrowser from "./FolderBrowser";
 import { GUIDELINES } from "../naming/words";
 import type { ArtifactType, Layer } from "../naming/address";
 import {
@@ -114,6 +128,8 @@ export interface NewProjectRequest {
   description: string;
   /** The Address group (design-checks 5.2), sent while the pattern applies. */
   address?: Omit<ProjectNaming, "namespace">;
+  /** A folder the person chose (projects-anywhere 5.2); absent, the default. */
+  location?: { parent: string };
 }
 
 interface Props {
@@ -198,11 +214,18 @@ export default function NewProjectDialog({
   const [touched, setTouched] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Location (projects-anywhere 5.2): Semantic Studio's folder unless the
+  // person chooses otherwise.
+  const [where, setWhere] = useState<"default" | "chosen">("default");
+  const [parent, setParent] = useState<string | null>(null);
+  const [browsing, setBrowsing] = useState(false);
+  const chooseRef = useRef<HTMLButtonElement>(null);
 
   const escape = useCallback(() => {
-    if (!busy && !covered) onClose();
-  }, [busy, covered, onClose]);
-  useDialogTrap(panelRef, headingRef, escape, !covered);
+    if (!busy && !covered && !browsing) onClose();
+  }, [busy, covered, browsing, onClose]);
+  // The folder browser over this form holds the keys while it is open.
+  useDialogTrap(panelRef, headingRef, escape, !covered && !browsing);
 
   // Back from Settings: focus returns to the button that opened it.
   const namingLinkRef = useRef<HTMLButtonElement>(null);
@@ -250,7 +273,13 @@ export default function NewProjectDialog({
   const descriptionLength = (fields.description ?? "").trim().length;
   const overLimit = descriptionLength > DESCRIPTION_MAX;
   // The kind first: it is the first question the form asks (Section 6).
-  const reason = source === "" ? CHOOSE_KIND : (firstReason(errors) ?? groupReason);
+  const locationReason =
+    where === "chosen" && !parent
+      ? CHOOSE_A_FOLDER
+      : where === "chosen" && name.trim() && folderName(name) === null
+        ? willBeMadeIn(parent ?? "", name)
+        : null;
+  const reason = source === "" ? CHOOSE_KIND : (firstReason(errors) ?? groupReason ?? locationReason);
   const touch = (field: string) => setTouched((prev) => new Set(prev).add(field));
   const shown = (field: keyof NewProjectFields) => (touched.has(field) ? errors[field] : undefined);
 
@@ -269,6 +298,7 @@ export default function NewProjectDialog({
         primaryLanguage: fields.primaryLanguage.trim(),
         ...(from === "library" ? {} : { references: chosen.map((r) => r.key) }),
         description: (fields.description ?? "").trim(),
+        ...(where === "chosen" && parent ? { location: { parent } } : {}),
         ...(lines?.follows
           ? {
               address: {
@@ -363,6 +393,48 @@ export default function NewProjectDialog({
             ))}
           </fieldset>
           {field("name", "Name", name, setName)}
+          <fieldset className="form-field new-project-location">
+            <legend>Location</legend>
+            <label className="new-project-place">
+              <input
+                type="radio"
+                name="new-project-location"
+                value="default"
+                checked={where === "default"}
+                onChange={() => setWhere("default")}
+              />
+              <span>Semantic Studio&apos;s folder</span>
+            </label>
+            <label className="new-project-place">
+              <input
+                type="radio"
+                name="new-project-location"
+                value="chosen"
+                checked={where === "chosen"}
+                onChange={() => setWhere("chosen")}
+              />
+              <span>A folder you choose</span>
+            </label>
+            {where === "chosen" && (
+              <div className="new-project-location-choice">
+                <p className="new-project-location-path">{parent ?? "No folder chosen yet."}</p>
+                <button
+                  ref={chooseRef}
+                  type="button"
+                  className="ghost"
+                  aria-label={parent ? `Choose another folder (now ${parent})` : "Choose a folder…"}
+                  onClick={() => setBrowsing(true)}
+                >
+                  Choose…
+                </button>
+                {parent && (
+                  <p className="form-hint new-project-location-path" id="new-project-location-made">
+                    {willBeMadeIn(parent, name)}
+                  </p>
+                )}
+              </div>
+            )}
+          </fieldset>
           <div className="form-field">
             <label htmlFor="new-project-description">Description</label>
             <textarea
@@ -523,6 +595,18 @@ export default function NewProjectDialog({
           )}
         </form>
       </div>
+      {browsing && (
+        <FolderBrowser
+          mode="create"
+          title="Choose where the project goes"
+          preview={(path) => willBeMadeIn(path, name)}
+          onChoose={(path) => {
+            setParent(path);
+            setBrowsing(false);
+          }}
+          onCancel={() => setBrowsing(false)}
+        />
+      )}
     </>
   );
 }

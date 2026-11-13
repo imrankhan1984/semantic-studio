@@ -56,12 +56,61 @@ function renderSection(props: Partial<React.ComponentProps<typeof ProjectCard>> 
     onDuplicate: vi.fn(),
     onExport: vi.fn(),
     onDelete: vi.fn(),
+    onRemoveFromHome: vi.fn(),
+    onLocate: vi.fn(),
   };
   render(<ProjectCard project={PROJECT} busy={false} disabled={false} {...handlers} {...props} />);
   return handlers;
 }
 
 afterEach(() => cleanup());
+
+describe("ProjectCard in a chosen folder (projects-anywhere Section 6)", () => {
+  const ELSEWHERE = { ...PROJECT, folder: "D:\\Work\\A very long folder name that a narrow card has to wrap\\Motors" };
+
+  it("shows its folder on a line of its own, whole (AC-16)", () => {
+    renderSection({ project: ELSEWHERE });
+    const line = screen.getByText(`In ${ELSEWHERE.folder}`);
+    expect(line.className).toBe("project-folder");
+    // Whole in the text, and nothing in its class cuts it.
+    expect(line.textContent).toBe(`In ${ELSEWHERE.folder}`);
+  });
+
+  it("offers Remove from Home and no Delete (AC-9, AC-16)", () => {
+    const handlers = renderSection({ project: ELSEWHERE });
+    fireEvent.click(screen.getByRole("button", { name: /More actions/ }));
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    const remove = screen.getByRole("button", { name: "Remove from Home" });
+    fireEvent.click(remove);
+    expect(handlers.onRemoveFromHome).toHaveBeenCalledWith(PROJECT.id);
+    expect(handlers.onDelete).not.toHaveBeenCalled();
+  });
+
+  it("a project in Semantic Studio's folder keeps Delete and has no folder line", () => {
+    renderSection();
+    expect(document.querySelector(".project-folder")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /More actions/ }));
+    expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Remove from Home" })).toBeNull();
+  });
+
+  it("a missing folder says so in words, with Locate… and Remove from Home and no counts (AC-8)", () => {
+    const handlers = renderSection({
+      project: { ...ELSEWHERE, missing: true, counts: {}, documents: [] },
+    });
+    const card = screen.getByRole("article");
+    expect(card.className).toContain("missing");
+    expect(screen.getByText(`Folder not found: ${ELSEWHERE.folder}`)).toBeTruthy();
+    expect(card.textContent).not.toMatch(/class|propert|concept/);
+    expect(screen.queryByRole("button", { name: /^Open/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Locate the folder of Invoices" }));
+    expect(handlers.onLocate).toHaveBeenCalledWith(PROJECT.id);
+    fireEvent.click(screen.getByRole("button", { name: "Remove Invoices from Home" }));
+    expect(handlers.onRemoveFromHome).toHaveBeenCalledWith(PROJECT.id);
+    // Locate… is the card's start control, for Home's focus.
+    expect(screen.getByRole("button", { name: "Locate the folder of Invoices" }).hasAttribute("data-card-start")).toBe(true);
+  });
+});
 
 describe("ProjectCard", () => {
   it("is laid out as a row when the library around it is (home-and-examples 5.5)", () => {
@@ -178,6 +227,8 @@ describe("ProjectCard", () => {
         onChangeKind={vi.fn()}
         onDuplicate={vi.fn()}
         onExport={vi.fn()}
+        onRemoveFromHome={vi.fn()}
+        onLocate={vi.fn()}
         onDelete={vi.fn()}
       />,
     );

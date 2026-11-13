@@ -3627,3 +3627,75 @@ EXPECTED OUTPUT
   the test would no longer reach the parse.
 - **Removal checks.** `editing.py` stashed: the five new recovery tests red,
   and the sixth, the pre-CF-14 one, red for want of a hash to remove.
+
+### Projects anywhere (E-18 PR 1, D-134, D-135)
+
+- **What was measured first.** On `aca4704` a project folder copied by hand
+  into `projects/` listed as two cards with one id, since `list()` reported
+  `manifest["id"]` while `folder()` used the folder name; opening either
+  opened the first. Once a project can be anywhere, copying its folder in
+  Explorer is ordinary, and a trusted manifest id would make one card write
+  into another project. So the id is where the project was found: the
+  default folder's name, or the registry key (`summary(manifest, pid)`).
+  The manifest's `id` is still written, for older versions, and never read.
+- **The registry.** `<data dir>/project-locations.json`,
+  `{id: {folder, addedAt, name}}`. `folder()` fullmatches the id, asks the
+  registry, and resolves anything it does not hold under the default folder
+  as before, so no caller of `folder()` or `inside()` changed and a default
+  project's `project.json` is byte for byte what it was (AC-2). The file is
+  read at call time but parsed again only when its `(mtime, size)` moved:
+  every route asks `folder()`, and a parse per call would show in the open
+  ratio. `registry()` returns entries copied one level down; a deep copy per
+  card made the 100-project list 41 ms against its 25 ms budget, so `list()`
+  reads it once and builds each card with `_summary`.
+- **Why a network path is refused on the string.** On Windows the first
+  filesystem call naming `\server\share` is an SMB connection, and Windows
+  offers the user's credentials (NTLM) to it, outside the broker. So
+  `folders.path_error` refuses it before anything is asked of the disk, and
+  `test_folders.py` wraps `os.stat`, `os.lstat`, `os.scandir`, `os.listdir`,
+  the `os.path` checks (on Windows 3.12+ these are `nt._path_*` and never call
+  `os.stat`), `open`, the `Path` methods and the long-name lookup, asserting
+  none is called. Every `\?\` form is refused, a drive letter after it too
+  (the spec allows `\?\C:\`; nothing makes one). `os.path.realpath` is not
+  used: it turns a mapped drive into the `\server\share` it stands for.
+  8.3 short names are expanded (`GetLongPathNameW`) before the
+  refused-folder table is compared, or `C:\PROGRA~1` would pass as a name
+  the table does not hold.
+- **The table's roots are expanded too.** At first only the chosen path was
+  expanded, and the roots came from the environment as written. GitHub's
+  Windows runner has `TEMP` at `C:\Users\RUNNER~1\AppData\Local\Temp`, so
+  the data folder's root was short, the chosen path long, `is_under` never
+  matched, and a folder inside the data folder was accepted: AC-3's *data*
+  case answered 200 and wrote a project there. Every root of
+  `refused_roots()` and `users_dir()`, and `home()` where it is compared,
+  now goes through `_long_name`, which leaves a root that is not there as
+  it is. Reproduced here with `TEMP` set to a folder's short name;
+  `test_ac12_a_root_named_by_its_short_name_is_refused_too` sets the data
+  folder variable and `ProgramData` to short names, and goes red with the
+  expansion taken out.
+- **Why the listing is a guarded read.** It answers with folder names, which
+  a foreign page must not learn. `local_guard.GUARDED_READS` holds it to the
+  header and Origin rules of a write; the route asks both again.
+- **The tests' home folder.** On Windows pytest's temporary folders are under
+  `AppData`, which is refused. The tests move `folders.home` to a folder of
+  their own, so the AppData and `C:\Users` rules point inside it. The two
+  budgets take their own data folder too (`own_data`): by the time a budget
+  runs in a full suite the shared one holds about 690 projects.
+- **Found in Chrome, not in jsdom.** Entering an empty folder unmounted the
+  listbox for *No folders here.*, focus fell to the page, and Backspace no
+  longer went up. The list stays mounted and the sentence describes it.
+- **Numbers** (this machine, which lists `main`'s 100 default projects in
+  21 to 30 ms where the spec measured 4.8): 100 projects with 50 registered,
+  24 to 29 ms; open of a registered Small project against the same in the
+  default folder, ratio 1.04 to 1.16; `GET /api/folders` on 5,000
+  subfolders, 104 to 113 ms, 1,000 returned with `total` 5,000.
+- **Removal checks** (a scratch copy of `backend/`): the UNC gate written as
+  `os.path.isabs` turned 8 zero-calls tests red (taking out only the UNC
+  branch stays green on Windows, because the drive-letter rule refuses
+  `\server\share` too; on Linux `//server/share` is absolute and the branch
+  is all there is); the listing's guard and route check out, the header
+  test red; the guard alone out, the route's own check held, once it asked
+  the Origin as well (it did not at first); the manifest's `baseIri` check
+  out, 2 red; the id from the manifest, both copied-folder tests red;
+  Delete's refusal out, AC-9 red; the refused-folder table out, 10 red; the
+  link check out, the link test red.

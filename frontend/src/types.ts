@@ -1055,6 +1055,29 @@ export interface ProjectSummary {
   naming?: ProjectNaming | null;
   shapesBaseIri?: string | null;
   dataBaseIri?: string | null;
+  // Where a project in a folder the person chose lives (projects-anywhere
+  // 5.1), for the card's line; null in Semantic Studio's folder.
+  folder?: string | null;
+  // Its folder holds no project.json now (5.5): the card says so and offers
+  // Locate… and Remove from Home, and nothing else on it came from the folder.
+  missing?: boolean;
+  addedAt?: string | null;
+}
+
+/** One folder as the folder browser shows it (projects-anywhere 8.2). */
+export interface FolderListing {
+  path: string;
+  parts: { name: string; path: string }[];
+  parent: string | null;
+  places: { name: string; path: string }[];
+  folders: { name: string; path: string; project: boolean }[];
+  total: number;
+  truncated: boolean;
+  /** This folder itself holds a project.json. */
+  project: boolean;
+  /** Whether the mode's action can use this folder, and why not. */
+  choosable: boolean;
+  reason: string | null;
 }
 
 /** New project's Address group as the manifest records it (5.2). */

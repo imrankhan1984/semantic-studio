@@ -49,7 +49,8 @@ EXPECTED OUTPUT
     - The request passes through unchanged when it comes from the application.
     - HTTP 400 for a Host that is not an allowed name.
     - HTTP 403 for a state-changing request without the header, or with a
-      foreign Origin.
+      foreign Origin; the same for a guarded read (GUARDED_READS: the
+      folder browser's listing).
 ================================================================================
 """
 
@@ -79,6 +80,20 @@ DEV_ORIGINS = frozenset({"http://localhost:5173", "http://127.0.0.1:5173"})
 # Methods that read and change nothing. Everything else must prove it came from
 # the application.
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# Reads guarded as writes are: they answer with something a foreign page
+# must never learn, so they too need the header and a same-origin Origin.
+# The folder browser's listing reveals folder names on this computer
+# (projects-anywhere Section 9, requirement 7; D-135).
+GUARDED_READS = ("/api/folders",)
+
+
+def guarded(method: str, path: str) -> bool:
+    """A request that must prove it came from the application."""
+    if method.upper() not in SAFE_METHODS:
+        return True
+    if method.upper() == "OPTIONS":
+        return False
+    return any(path == p or path.startswith(p + "/") for p in GUARDED_READS)
 
 BAD_HOST_DETAIL = (
     "This request was refused because it did not come from Semantic Studio "
@@ -150,7 +165,7 @@ class LocalOnlyMiddleware:
             await _refuse(send, 400, BAD_HOST_DETAIL)
             return
 
-        if scope["method"].upper() not in SAFE_METHODS:
+        if guarded(scope["method"], scope.get("path", "")):
             if headers.get(CLIENT_HEADER) != CLIENT_HEADER_VALUE:
                 await _refuse(send, 403, FORBIDDEN_DETAIL)
                 return

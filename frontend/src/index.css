@@ -4670,6 +4670,180 @@ button.legend-row:hover {
   width: 520px;
 }
 
+/* The folder browser (projects-anywhere 5.3): over New project or Home,
+   so above the confirm dialog's layer. */
+.folder-browser-backdrop {
+  z-index: 70;
+}
+
+.confirm-dialog.folder-browser {
+  z-index: 71;
+  width: 640px;
+  top: 8vh;
+  max-height: 84vh;
+}
+
+.folder-browser-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+/* A path wraps, never cuts: every level is a button to go back to. */
+.folder-path {
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.folder-path-root {
+  color: var(--text-dim);
+}
+
+.folder-browser-body {
+  display: grid;
+  grid-template-columns: minmax(120px, 160px) 1fr;
+  gap: 16px;
+}
+
+.folder-browser-heading {
+  font-size: var(--fs-sm);
+  margin: 0 0 6px;
+  color: var(--text-dim);
+}
+
+.folder-places {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.folder-place {
+  text-align: left;
+}
+
+.folder-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.folder-filter {
+  width: 150px;
+}
+
+.folder-list {
+  list-style: none;
+  margin: 0;
+  padding: 2px;
+  min-height: 160px;
+  max-height: 44vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.folder-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.folder-row:hover {
+  background: var(--bg-raised);
+}
+
+/* The active row: a fill and an outline, so it shows in forced colours. */
+.folder-row.active {
+  background: var(--accent-soft);
+  outline: 1px solid var(--accent);
+}
+
+.folder-row-project {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.folder-row.active .folder-row-project {
+  color: var(--text);
+}
+
+.folder-empty {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+}
+
+/* The location group reads as the kind group does: no box drawn round it. */
+.new-project-location {
+  border: none;
+  padding: 0;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.folder-preview,
+.folder-reason {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 560px) {
+  .folder-browser-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* New project's Location group (projects-anywhere 5.2). */
+.form-field .new-project-place {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.new-project-location-choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 4px;
+}
+
+.new-project-location-choice .form-hint {
+  flex-basis: 100%;
+}
+
+.new-project-location-path {
+  overflow-wrap: anywhere;
+  margin: 4px 0;
+}
+
+/* A project in a chosen folder (Section 6): its folder on a second line,
+   wrapped, never cut. */
+.project-folder {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+  margin: 2px 0;
+}
+
+/* A moved or missing folder: dimmed, and said in words beside it. */
+.project-card.missing .onto-name {
+  opacity: 0.7;
+}
+
+.project-missing {
+  color: var(--error-text);
+  overflow-wrap: anywhere;
+}
+
 /* Description… (reference-ontologies 5.5): the form's text area, alone. */
 .description-dialog {
   width: 480px;

@@ -18,6 +18,9 @@ BASIC IDEA
     is what stops another web page open in the same browser from uploading to,
     or deleting from, the user's library. Any new mutating call must spread
     CLIENT_HEADER into its headers; api.test.ts fails for one that does not.
+    One read carries it too: the folder browser's listing (listFolders),
+    which reveals folder names and is refused without it (projects-anywhere
+    Section 9).
 
     Every call goes through `send`, which is where a 409 `approval_required`
     becomes a question for the user (external-access Stage 1, D-066). App
@@ -80,6 +83,7 @@ import type {
   FileRole,
   ProjectDocName,
   ProjectNaming,
+  FolderListing,
   ProjectSummary,
   ProjectKind,
   ProjectTemplate,
@@ -1092,6 +1096,9 @@ export function createProject(payload: {
   description?: string;
   /** New project's Address group (design-checks 5.2), with a namespace set. */
   address?: Omit<ProjectNaming, "namespace">;
+  /** A folder the person chose (projects-anywhere 5.2): the project is made
+   *  in a new subfolder of it. Absent, Semantic Studio's folder. */
+  location?: { parent: string };
 }): Promise<ProjectSummary> {
   return send("/api/projects", {
     method: "POST",
@@ -1124,6 +1131,51 @@ export function duplicateProject(pid: string): Promise<ProjectSummary> {
 export function deleteProject(pid: string): Promise<{ trashed: string; location: string }> {
   return send(projectUrl(pid), { method: "DELETE", headers: { ...CLIENT_HEADER } }).then((r) =>
     handle<{ trashed: string; location: string }>(r),
+  );
+}
+
+// --- projects anywhere (projects-anywhere 5.3 to 5.6) -------------------------
+
+/** One folder as the folder browser shows it (8.2). A GET that sends the
+ *  client header: it reveals folder names, so the server refuses it
+ *  without one, as a write (Section 9). */
+export function listFolders(
+  path: string | null,
+  mode: "create" | "open",
+  filter = "",
+  signal?: AbortSignal,
+): Promise<FolderListing> {
+  const params = new URLSearchParams({ mode });
+  if (path) params.set("path", path);
+  if (filter) params.set("filter", filter);
+  return send(`/api/folders?${params}`, { headers: { ...CLIENT_HEADER }, signal }).then((r) =>
+    handle<FolderListing>(r),
+  );
+}
+
+/** Open project folder (5.4): put a folder holding a project.json on Home.
+ *  409 when it is already there (`detail.id` names its card). */
+export function openProjectFolder(folder: string): Promise<ProjectSummary> {
+  return send("/api/projects/locations", {
+    method: "POST",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ folder }),
+  }).then((r) => handle<ProjectSummary>(r));
+}
+
+/** Locate… (5.5 item 2): a moved project's folder found again, its id kept. */
+export function locateProject(pid: string, folder: string): Promise<ProjectSummary> {
+  return send(projectUrl(pid, "/location"), {
+    method: "PATCH",
+    headers: JSON_WRITE,
+    body: JSON.stringify({ folder }),
+  }).then((r) => handle<ProjectSummary>(r));
+}
+
+/** Remove from Home (5.6 item 1): the registry entry only; the folder stays. */
+export function removeFromHome(pid: string): Promise<{ removed: string }> {
+  return send(projectUrl(pid, "/location"), { method: "DELETE", headers: { ...CLIENT_HEADER } }).then((r) =>
+    handle<{ removed: string }>(r),
   );
 }
 
