@@ -56,7 +56,7 @@ app writes into the real per-user ontology library.
 ## Testing
 
 ```bash
-cd backend  && python -m pytest tests    # 2537 tests (+2 marked `network`, deselected)
+cd backend  && python -m pytest tests    # 2538 tests (+2 marked `network`, deselected)
 cd frontend && npm run test              # 2312 tests, vitest
 ```
 
@@ -603,6 +603,7 @@ leaves one behind.
 - Only `projects.py` reads or writes `project-locations.json`; `test_project_locations.py`'s AST scan proves it catches a planted reader first. [Projects anywhere]
 - `folder()` fullmatches the id, then asks the registry; an id it does not hold resolves under the default folder as before, so a default-folder project is byte for byte what it was. [Projects anywhere]
 - A folder path from the page passes `folders.path_error` on the string before any filesystem call: a network or device path would open SMB past the broker; `test_folders.py` records every call. Never `os.path.isabs` (true for `\\server\share`) or `realpath` (turns a mapped drive into one). [Projects anywhere]
+- Every refused root goes through `_long_name`, as the chosen path does: an environment folder named by its 8.3 short name (CI's `TEMP`) never prefixes a long path. [table's roots are expanded]
 - The server checks every door's folder again (`folders.check`); the browser's listing is a convenience, never the check. [Projects anywhere]
 - `GET /api/folders` is a guarded read: `local_guard.GUARDED_READS` and the route itself require the client header and a same-origin Origin. [Projects anywhere]
 - A `project.json` the app did not write is read capped at 1 MB and held to `check_manifest` before the registry entry is written, and again at each open of a registered project (its document paths left to the index). [Projects anywhere]

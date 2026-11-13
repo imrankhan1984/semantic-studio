@@ -3661,6 +3661,18 @@ EXPECTED OUTPUT
   8.3 short names are expanded (`GetLongPathNameW`) before the
   refused-folder table is compared, or `C:\PROGRA~1` would pass as a name
   the table does not hold.
+- **The table's roots are expanded too.** At first only the chosen path was
+  expanded, and the roots came from the environment as written. GitHub's
+  Windows runner has `TEMP` at `C:\Users\RUNNER~1\AppData\Local\Temp`, so
+  the data folder's root was short, the chosen path long, `is_under` never
+  matched, and a folder inside the data folder was accepted: AC-3's *data*
+  case answered 200 and wrote a project there. Every root of
+  `refused_roots()` and `users_dir()`, and `home()` where it is compared,
+  now goes through `_long_name`, which leaves a root that is not there as
+  it is. Reproduced here with `TEMP` set to a folder's short name;
+  `test_ac12_a_root_named_by_its_short_name_is_refused_too` sets the data
+  folder variable and `ProgramData` to short names, and goes red with the
+  expansion taken out.
 - **Why the listing is a guarded read.** It answers with folder names, which
   a foreign page must not learn. `local_guard.GUARDED_READS` holds it to the
   header and Origin rules of a write; the route asks both again.

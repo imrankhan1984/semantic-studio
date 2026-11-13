@@ -450,7 +450,12 @@ def test_ac6_a_copy_inside_the_default_folder_lists_two_ids():
 def test_ac7_same_folder_twice_refused(home):
     folder = _elsewhere(home)
     pid = _open(folder).json()["id"]
-    doors = [str(folder), str(folder) + os.sep, str(folder).replace(os.sep, os.sep + os.sep)]
+    text = str(folder)
+    # Every separator doubled but the first: a path starting // is a network
+    # path on POSIX, refused before any filesystem call (below).
+    first = text.index(os.sep) + 1
+    doubled = text[:first] + text[first:].replace(os.sep, os.sep + os.sep)
+    doors = [text, text + os.sep, doubled]
     if os.name == "nt":
         doors.append(str(folder).upper())
         doors.append(str(folder).replace("\\", "/"))
@@ -458,6 +463,8 @@ def test_ac7_same_folder_twice_refused(home):
         response = client.post("/api/projects/locations", json={"folder": door})
         assert response.status_code == 409, (door, response.text)
         assert response.json()["detail"] == {"code": "already_on_home", "id": pid, "message": "This project is already on Home."}
+    network = client.post("/api/projects/locations", json={"folder": "//" + text.lstrip("\\/")})
+    assert network.status_code == 422 and _message(network) == folders.NETWORK, network.text
     assert len(json.loads(project_store.registry_path.read_text(encoding="utf-8"))) == 1
 
 

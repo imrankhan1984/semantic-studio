@@ -183,7 +183,8 @@ def _existing_refused() -> list[Path]:
 
 def test_ac12_the_table_holds_what_the_spec_names():
     roots = {folders.key(r) for r, _ in folders.refused_roots()}
-    assert folders.key(Path(store.data_dir)) in roots
+    # As canonical() would see it: the environment may name it short (8.3).
+    assert folders.key(folders._long_name(Path(store.data_dir))) in roots
     assert folders.key(folders.app_dir()) in roots
     if os.name == "nt":
         assert folders.key(Path(os.environ["SystemRoot"])) in roots
@@ -217,6 +218,42 @@ def test_ac12_under_a_refused_folder_is_refused_too(home):
     with pytest.raises(folders.FolderRefused) as caught:
         folders.check(str(inside), "create")
     assert str(caught.value) == folders.APP_DATA
+
+
+def _short_name(path: Path) -> str:
+    import ctypes
+
+    size = ctypes.windll.kernel32.GetShortPathNameW(str(path), None, 0)
+    buffer = ctypes.create_unicode_buffer(size)
+    ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, size)
+    return buffer.value
+
+
+@pytest.mark.skipif(os.name != "nt", reason="8.3 short names are Windows'")
+def test_ac12_a_root_named_by_its_short_name_is_refused_too(home, tmp_path, monkeypatch):
+    # GitHub's Windows runner has TEMP under C:\Users\RUNNER~1: the data
+    # folder's root came from the environment short while canonical()
+    # expanded the chosen path, so nothing under it was refused.
+    data = tmp_path / "semantic studio data folder"
+    system = tmp_path / "operating system folder"
+    for root in (data, system):
+        (root / "projects").mkdir(parents=True)
+    short_data, short_system = _short_name(data), _short_name(system)
+    if short_data == str(data) or short_system == str(system):
+        pytest.skip("8.3 names are off on this volume")
+    assert "~" in short_data and "~" in short_system
+    monkeypatch.setattr(folders, "_data_dir", None)
+    monkeypatch.setenv("SEMANTIC_STUDIO_DATA_DIR", short_data)
+    monkeypatch.setenv("ProgramData", short_system)
+    for root, sentence in ((data, folders.APP_DATA), (system, folders.SYSTEM)):
+        for chosen in (root / "projects", root):
+            with pytest.raises(folders.FolderRefused) as caught:
+                folders.check(str(chosen), "create")
+            assert str(caught.value) == sentence
+    # The listing's test reads the same expanded roots.
+    listed = [f["name"] for f in folders.listing(str(tmp_path))["folders"]]
+    assert data.name not in listed and system.name not in listed
+    assert "home" in listed, "the listing loaded"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="C:\\Users is Windows'")

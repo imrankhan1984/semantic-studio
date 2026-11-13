@@ -35,7 +35,8 @@ BASIC IDEA
        a mapped drive into the \\\\server\\share it stands for, which gate 1
        would then refuse on the next request.
     3. `refusal`, against the refused-folder table (5.3 item 3), built at
-       call time from the environment and the home folder: the operating
+       call time from the environment and the home folder, each root's
+       short names expanded as gate 2 expands the path: the operating
        system's folders, AppData, other people's folders under C:\\Users,
        the app's data folder and the folder the app runs from, and anything
        under one of them. Names are compared with os.path.normcase, so case
@@ -278,7 +279,12 @@ def canonical(raw: str) -> Path:
 
 def refused_roots() -> list[tuple[Path, str]]:
     """Every refused folder and the sentence for it (5.3 item 3), built now
-    from the environment: one table, tested entry by entry."""
+    from the environment: one table, tested entry by entry.
+
+    Every root is expanded as canonical() expands the chosen path. The
+    environment may name a folder by its 8.3 short name (GitHub's Windows
+    runner has TEMP under C:\\Users\\RUNNER~1), and a short root never
+    prefixes a long path: the data folder under it went unrefused."""
     roots: list[tuple[Path, str]] = []
     if WINDOWS:
         for variable in ("SystemRoot", "windir", "ProgramFiles", "ProgramFiles(x86)",
@@ -291,14 +297,15 @@ def refused_roots() -> list[tuple[Path, str]]:
         roots += [(Path(p), SYSTEM) for p in POSIX_REFUSED]
     roots.append((data_dir(), APP_DATA))
     roots.append((app_dir(), APP_DATA))
-    return roots
+    return [(_long_name(root), sentence) for root, sentence in roots]
 
 
 def users_dir() -> Optional[Path]:
-    """C:\\Users, whose folders other than the person's own are refused."""
+    """C:\\Users, whose folders other than the person's own are refused,
+    expanded as the refused roots are."""
     if not WINDOWS:
         return None
-    return home().parent
+    return _long_name(home().parent)
 
 
 def refusal(path: Path) -> Optional[str]:
@@ -311,7 +318,7 @@ def refusal(path: Path) -> Optional[str]:
             return sentence
     users = users_dir()
     if users is not None and is_under(path, users) and key(path) != key(users):
-        if not is_under(path, home()):
+        if not is_under(path, _long_name(home())):
             return OTHER_USER
     return None
 
@@ -325,7 +332,7 @@ def child_refusal(folder: Path) -> Callable[[Path], bool]:
     roots = {key(root) for root, _sentence in refused_roots()}
     users = users_dir()
     in_users = users is not None and key(folder) == key(users)
-    mine = key(home()) if in_users else None
+    mine = key(_long_name(home())) if in_users else None
 
     def refused(child: Path) -> bool:
         if child.name.casefold() in REFUSED_NAMES or key(child) in roots:
